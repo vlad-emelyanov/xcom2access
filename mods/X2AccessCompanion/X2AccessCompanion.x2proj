@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="12.0" DefaultTargets="Default" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Guid>a3f7b2c1-8d4e-4f6a-9e5b-1c2d3e4f5a6b</Guid>
+    <Name>X2AccessCompanion</Name>
+    <Description>Companion mod for X2Access blind accessibility. Collects UI text and signals the native ASI for TTS.</Description>
+    <SteamPublishID>0</SteamPublishID>
+    <AssemblyName>X2AccessCompanion</AssemblyName>
+    <RootNamespace>X2AccessCompanion</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Folder Include="Config\" />
+    <Folder Include="Localization\" />
+    <Folder Include="Src\X2AccessCompanion\Classes\" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="Config\XComEngine.ini" />
+    <Content Include="Config\XComGame.ini" />
+    <Content Include="Localization\X2AccessCompanion.int" />
+    <Content Include="Src\X2AccessCompanion\Classes\X2DownloadableContentInfo_X2AccessCompanion.uc" />
+    <Content Include="Src\X2AccessCompanion\Classes\UIScreenListener_MainMenu.uc" />
+    <Content Include="ReadMe.txt" />
+  </ItemGroup>
+</Project>
