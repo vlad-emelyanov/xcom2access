@@ -1,0 +1,6 @@
+[submodule "deps/SRAL"]
+	path = deps/SRAL
+	url = https://github.com/m1maker/SRAL.git
+[submodule "deps/X2ModBuildCommon"]
+	path = deps/X2ModBuildCommon
+	url = https://github.com/X2CommunityCore/X2ModBuildCommon

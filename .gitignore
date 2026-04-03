@@ -1,0 +1,9 @@
+build/
+BuildCache/
+generated_sdk/
+.vs/
+*.user
+*.suo
+Thumbs.db
+Desktop.ini
+.DS_Store
