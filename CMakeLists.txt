@@ -29,15 +29,24 @@ add_library(X2Access SHARED
     src/event_dispatch.cpp
     src/process_event_hook.cpp
     src/ue3_reflection.cpp
+    # Graph A11y Kernel — engine-neutral, STL-only (see src/Graph/ControlId.hpp)
+    src/Graph/GraphBuilder.cpp
+    src/Graph/KeyGraph.cpp
+    src/Graph/GraphAnnouncer.cpp
     # Generated SDK — only the globals definition file
     "${SDK_DIR}/GameDefines.cpp"
 )
 
 target_include_directories(X2Access PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/deps/SRAL/Include
     ${SDK_DIR}
     ${SDK_DIR}/SDK_HEADERS
 )
+
+# Graph kernel conformance suite (runs on the build machine, no game needed)
+enable_testing()
+add_subdirectory(tests)
 
 # SRAL_STATIC so SRAL.h doesn't use __declspec(dllimport)
 target_compile_definitions(X2Access PRIVATE SRAL_STATIC)

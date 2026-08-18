@@ -1,0 +1,237 @@
+// Conformance tests: announcer path-diffing, dedupe, control-type ordering, leaf readouts.
+// Ported from RTAccess tests/GraphAnnouncerTests.cs.
+
+#include <functional>
+#include <string>
+#include <vector>
+
+#include "Graph/GraphAnnouncer.hpp"
+#include "TestHarness.hpp"
+
+using namespace X2Access::Graph;
+
+namespace
+{
+
+GraphNode MakeNode(const std::string& label, GraphNode* parent = nullptr)
+{
+    GraphNode n;
+    n.Id = ControlId::Structural(label);
+    n.Vtable.Announcements = {NodeAnnouncement::Static(label)};
+    n.Parent = parent;
+    return n;
+}
+
+GraphNode MakeContext(const std::string& label, const std::string& role = "", GraphNode* parent = nullptr)
+{
+    GraphNode n;
+    n.Id = ControlId::Structural("ctx:" + label);
+    n.Vtable.Announcements = {NodeAnnouncement::Static(label)};
+    if (!role.empty())
+        n.Vtable.Announcements.push_back(NodeAnnouncement::Static(role));
+    n.Parent = parent;
+    n.Focusable = false;
+    return n;
+}
+
+// Resets a pluggable announcer hook when a test scope exits (the C# tests' try/finally).
+struct Cleanup
+{
+    std::function<void()> Fn;
+    ~Cleanup() { Fn(); }
+};
+
+const ControlType TestButton{
+    "button",
+    {AnnouncementKinds::Label, AnnouncementKinds::Role, AnnouncementKinds::Value,
+        AnnouncementKinds::Enabled, AnnouncementKinds::Position},
+    []()
+    {
+        return std::vector<NodeAnnouncement>{
+            NodeAnnouncement([]() { return std::string("button"); }, false, AnnouncementKinds::Role)};
+    },
+};
+
+GraphNode TypedNode(const ControlType* type, std::vector<NodeAnnouncement> parts)
+{
+    GraphNode n;
+    n.Id = ControlId::Structural("typed");
+    n.Vtable.Type = type;
+    n.Vtable.Announcements = std::move(parts);
+    return n;
+}
+
+} // namespace
+
+TEST(EntryFromNothingReadsFullChain)
+{
+    GraphNode options = MakeContext("Options");
+    GraphNode list = MakeContext("Difficulty settings", "list", &options);
+    GraphNode node = MakeNode("Normal, radio button, selected", &list);
+
+    CHECK_EQ("Options, Difficulty settings, list, Normal, radio button, selected",
+        GraphAnnouncer::ComposeFull(&node));
+}
+
+TEST(SiblingMoveReadsLeafOnly)
+{
+    GraphNode list = MakeContext("Difficulty settings", "list");
+    GraphNode from = MakeNode("Easy", &list);
+    GraphNode to = MakeNode("Hard", &list);
+
+    CHECK_EQ("Hard", GraphAnnouncer::Compose(&from, &to));
+}
+
+TEST(EnteringNestedContextReadsEnteredLevels)
+{
+    GraphNode outer = MakeContext("Options");
+    GraphNode from = MakeNode("Back", &outer);
+    GraphNode list = MakeContext("Difficulty settings", "list", &outer);
+    GraphNode to = MakeNode("Normal", &list);
+
+    CHECK_EQ("Difficulty settings, list, Normal", GraphAnnouncer::Compose(&from, &to));
+}
+
+TEST(AscendReadsLeafOnly)
+{
+    GraphNode outer = MakeContext("Options");
+    GraphNode list = MakeContext("Difficulty settings", "list", &outer);
+    GraphNode from = MakeNode("Normal", &list);
+    GraphNode to = MakeNode("Back", &outer);
+
+    CHECK_EQ("Back", GraphAnnouncer::Compose(&from, &to));
+}
+
+TEST(DescendingFromGroupOntoItsChildReadsChildOnly)
+{
+    // The group is ON the child's chain AND is the from-node: the prefix swallows it (stepping
+    // into your own group never re-announces the group).
+    GraphNode group = MakeNode("Combat");
+    group.Expandable = true;
+    group.Expanded = true;
+    GraphNode child = MakeNode("Auto pause on combat start, toggle, on", &group);
+
+    CHECK_EQ("Auto pause on combat start, toggle, on", GraphAnnouncer::Compose(&group, &child));
+}
+
+TEST(EnteringAGroupFromOutsideReadsTheGroup)
+{
+    GraphNode group = MakeNode("Combat");
+    group.Expandable = true;
+    group.Expanded = true;
+    GraphNode child = MakeNode("Auto pause on combat start, toggle, on", &group);
+    GraphNode elsewhere = MakeNode("Tabs");
+
+    CHECK_EQ("Combat, Auto pause on combat start, toggle, on",
+        GraphAnnouncer::Compose(&elsewhere, &child));
+}
+
+TEST(ExpandedStateWordAppendsToGroups)
+{
+    GraphNode group = MakeNode("Combat");
+    group.Expandable = true;
+    group.Expanded = false;
+
+    Cleanup cleanup{[]() { GraphAnnouncer::ExpandedStateText = nullptr; }};
+    GraphAnnouncer::ExpandedStateText = [](bool e) { return std::string(e ? "expanded" : "collapsed"); };
+
+    CHECK_EQ("Combat, collapsed", GraphAnnouncer::ComposeFull(&group));
+    group.Expanded = true;
+    CHECK_EQ("Combat, expanded", GraphAnnouncer::ComposeFull(&group));
+    group.Vtable.SpeaksOwnExpansion = true; // nodes may carry their own state word
+    CHECK_EQ("Combat", GraphAnnouncer::ComposeFull(&group));
+}
+
+TEST(DuplicateContainerLabelIsSkipped)
+{
+    // A "Game difficulty" section wrapping the "Game difficulty" control: the section stays
+    // silent.
+    GraphNode section = MakeContext("Game difficulty");
+    GraphNode to = MakeNode("Game difficulty, menu button", &section);
+    CHECK_EQ("Game difficulty, menu button", GraphAnnouncer::ComposeFull(&to));
+
+    // But a control that merely STARTS with different text keeps its container.
+    GraphNode section2 = MakeContext("Game difficulty");
+    GraphNode other = MakeNode("Game difficulty presets, menu button", &section2);
+    CHECK_EQ("Game difficulty, Game difficulty presets, menu button",
+        GraphAnnouncer::ComposeFull(&other));
+}
+
+TEST(ControlTypeSuppliesRoleAndOrdering)
+{
+    // Parts declared out of order — the type's kind order sorts them; the common role merges in.
+    GraphNode node = TypedNode(&TestButton,
+        {
+            NodeAnnouncement([]() { return std::string("on"); }, false, AnnouncementKinds::Value),
+            NodeAnnouncement([]() { return std::string("Hold position"); }, false, AnnouncementKinds::Label),
+        });
+
+    CHECK_EQ("Hold position, button, on", GraphAnnouncer::ComposeFull(&node));
+}
+
+TEST(NodePartOverridesCommonOfSameKind)
+{
+    GraphNode node = TypedNode(&TestButton,
+        {
+            NodeAnnouncement([]() { return std::string("Continue"); }, false, AnnouncementKinds::Label),
+            NodeAnnouncement([]() { return std::string("menu button"); }, false, AnnouncementKinds::Role),
+        });
+
+    CHECK_EQ("Continue, menu button", GraphAnnouncer::ComposeFull(&node));
+}
+
+TEST(KindlessPartsKeepDeclarationOrderAfterKnownKinds)
+{
+    GraphNode node = TypedNode(&TestButton,
+        {
+            NodeAnnouncement([]() { return std::string("custom one"); }),
+            NodeAnnouncement([]() { return std::string("Continue"); }, false, AnnouncementKinds::Label),
+            NodeAnnouncement([]() { return std::string("custom two"); }),
+        });
+
+    CHECK_EQ("Continue, button, custom one, custom two", GraphAnnouncer::ComposeFull(&node));
+}
+
+TEST(PartFilterDropsParts)
+{
+    GraphNode node = TypedNode(&TestButton,
+        {
+            NodeAnnouncement([]() { return std::string("Continue"); }, false, AnnouncementKinds::Label),
+        });
+
+    Cleanup cleanup{[]() { GraphAnnouncer::PartFilter = nullptr; }};
+    GraphAnnouncer::PartFilter = [](const ControlType*, const NodeAnnouncement& part)
+    { return part.Kind != AnnouncementKinds::Role; };
+
+    CHECK_EQ("Continue", GraphAnnouncer::ComposeFull(&node));
+}
+
+TEST(LeafTextJoinsAnnouncementParts)
+{
+    GraphNode node;
+    node.Id = ControlId::Structural("x");
+    node.Vtable.Announcements = {
+        NodeAnnouncement::Static("Hold position"),
+        NodeAnnouncement::Static("toggle"),
+        NodeAnnouncement([]() { return std::string("on"); }, /*live*/ true),
+        NodeAnnouncement([]() { return std::string(); }), // empty at speak time — silent
+    };
+    CHECK_EQ("Hold position, toggle, on", GraphAnnouncer::ComposeFull(&node));
+}
+
+TEST(TransitionLabelLeads)
+{
+    GraphNode from = MakeNode("A");
+    GraphNode to = MakeNode("B");
+    CHECK_EQ("next column, B", GraphAnnouncer::Compose(&from, &to, "next column"));
+}
+
+TEST(ContextChangeAtSameDepthReadsNewLevel)
+{
+    GraphNode ctx1 = MakeContext("Level 1 spells", "table");
+    GraphNode from = MakeNode("Fireball", &ctx1);
+    GraphNode ctx2 = MakeContext("Level 2 spells", "table");
+    GraphNode to = MakeNode("Haste", &ctx2);
+
+    CHECK_EQ("Level 2 spells, table, Haste", GraphAnnouncer::Compose(&from, &to));
+}
