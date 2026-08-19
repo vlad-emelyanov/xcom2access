@@ -224,6 +224,63 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   Timestamps carry milliseconds; screen-transition latency is unreadable
   without them.
 
+## Dev harness (dev builds only)
+
+Loopback HTTP server for observing and driving the live game — sibling of the
+RTAccess (8772) and CyberAccess (8773) harnesses; this one owns **8774**, so
+all three can be armed at once. Source: `src/dev_server.cpp`.
+
+**Double-gated.** Compile: `-DX2ACCESS_DEVSERVER=ON` (the justfile's
+`devserver` variable, ON for the local tree; OFF means the TU is not built and
+a release `.asi` holds no socket code at all). Runtime: a marker FILE,
+`Binaries/Win64/scripts/X2Access.devserver` (optional first line = port
+override) — a file rather than an env var because neither Steam nor
+`just run` inherits our environment, and the marker survives a relaunch.
+`just arm` / `just disarm` write it.
+
+**Threading.** The accept thread owns the socket and never touches engine
+memory. Engine-facing endpoints queue a job that `DevServer::Pump()` drains on
+the GAME thread, first statement of the `EventDispatch::SetFramePump` lambda —
+the same rule as outbound ProcessEvent calls, extended to reads. `/health`,
+`/speech` and `/log` answer **off-thread** from process-memory rings, which is
+what makes them useful when the game thread is the broken thing: they still
+respond during a load movie or a hang, and `/health`'s `pump-age-ms` is how you
+tell a wedged game from a dead server. `Stop()` runs from
+`DllMain(DLL_PROCESS_DETACH)`, i.e. under the loader lock, so it does a
+**bounded** 1 s wait on the accept thread and detaches rather than `join()`ing
+— an unbounded join there can deadlock the game's shutdown.
+
+Endpoints (phase 1): `/health`, `/speech?since=N`, `/log?since=N&tail=N`,
+`/status` (movie + load screen, the screen stack's gate flags, the attached
+recipe, the tile-reader gate, and a top-first dump of `UIScreenStack.Screens`
+with each entry's flags decoded — the not-inited and removed entries the
+finders skip are shown, because the point is to answer "what is on screen"
+for a screen that has no recipe yet). An unknown path returns the endpoint
+list. `/speech` and `/log` are cursor-paged: poll with the returned `cursor:`
+value for exactly-once delivery.
+
+Driving it: `just arm`, `just dev-health` / `dev-status` / `dev-speech` /
+`dev-log`, or `just dev '<endpoint>?<query>'` for anything else.
+⛔ Scripts must call curl as `$env:SystemRoot/System32/curl.exe` — bare `curl`
+on PATH resolves to MSYS2's cygwin build, whose path translation mangles URL
+arguments into blanks. The justfile's `curl` variable already does this.
+⛔ **Shared-harness rule** (from RTAccess): do not drive the live game while
+another agent or session is driving it — give the user manual steps instead.
+
+Phase 2 (`/exec`, `/input`, `/screenshot`) and phase 3 (`/gui`, `/tile`) are
+not built yet. The `/exec` design is settled though, and it is the one place
+XCOM 2 is *easier* than both siblings: `Actor.ConsoleCommand(string, optional
+bool)` is a `native function` returning a **string** (Engine/Classes/Actor.uc,
+PlayerController.uc), so it needs no CET-Lua bridge and no `Mono.CSharp` —
+just `CallNamedFunction` on a player controller. Behind it are **1246
+`exec function`s** in the SDK sources, including all of
+`XComTacticalCheatManager` and `XComCheatManager.StartLadder(Ladder,
+Difficulty)`, which drops straight from the shell into a tactical mission.
+Caveat to verify live before relying on it: `XComPlayerController.AddCheats`
+and `XComGameInfo.AllowCheats` both sit inside `` `if(`notdefined(FINAL_RELEASE)) ``
+blocks, so whether the retail binary instantiates a CheatManager is a fact to
+establish, not to assume.
+
 ## Reverse engineering workflow
 
 Two complementary tools; the ASI itself is the third and durable one.
@@ -330,6 +387,9 @@ Remaining:
    recipes of their own. Its screen lookup caches the newest box, which a
    presentation-layer change could leave stale; covering dialogs outside the
    shell should switch that to a screen-stack walk.
+6. Dev harness phase 2 (`/exec`, `/input`, `/screenshot`) — see **Dev harness**
+   above. `/exec` + `StartLadder` is what turns item 3 from "play a mission by
+   hand, repeatedly" into a scripted loop.
 
 When researching for this project, focus on engine/native/UE3 technicals.
 Do not survey the accessibility-mod landscape — the author knows it better

@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <vector>
 
 namespace Log {
 
@@ -10,6 +11,14 @@ bool Init(const std::string& logDir);
 void Shutdown();
 
 void Write(Level level, const char* fmt, ...);
+
+#ifdef X2ACCESS_DEVSERVER
+/// The tail of the log kept in memory, for the dev harness's /log endpoint. `outBase` receives
+/// the global line index of element 0, so a caller can page with a cursor instead of re-reading
+/// the whole window (the file on disk has no such handle — tailing it cannot tell you whether
+/// you already saw a line). Any thread; the ring only exists in dev builds.
+std::vector<std::string> Recent(long long& outBase);
+#endif
 
 } // namespace Log
 

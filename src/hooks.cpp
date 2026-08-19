@@ -1,5 +1,6 @@
 #include "hooks.h"
 #include "sdk_globals.h"
+#include "dev_server.h"
 #include "event_dispatch.h"
 #include "input_arbiter.h"
 #include "menu_navigator.h"
@@ -60,6 +61,10 @@ static void RegisterEventHandlers() {
             return;
         sLastMs = now;
         try {
+            // First: the dev harness's queued jobs. Ahead of everything else so /status still
+            // answers on a frame where a subsystem below is misbehaving — the harness is most
+            // useful precisely when the thing it is observing is broken.
+            DevServer::Pump();
             // Deferred FName resolution scans GNames — once a second is plenty, and hammering
             // it every pump while GNames is still growing during load is asking for faults.
             static uint64_t sLastRetryMs = 0;

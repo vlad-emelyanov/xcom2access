@@ -90,18 +90,50 @@ void Write(Level level, const char* fmt, ...) {
     // screen-transition latency work.
     SYSTEMTIME st;
     GetLocalTime(&st);
-    fprintf(sFile, "[%04d-%02d-%02d %02d:%02d:%02d.%03d] [%s] ",
-            st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond,
-            st.wMilliseconds, LevelToStr(level));
+    char stamp[64];
+    snprintf(stamp, sizeof(stamp), "[%04d-%02d-%02d %02d:%02d:%02d.%03d] [%s] ",
+             st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond,
+             st.wMilliseconds, LevelToStr(level));
+    fputs(stamp, sFile);
 
     // Message
     va_list args;
     va_start(args, fmt);
+#ifdef X2ACCESS_DEVSERVER
+    // va_copy, not a shared formatted buffer: the FILE keeps taking messages of any length
+    // exactly as before, and only the ring's copy is bounded. A truncating refactor here would
+    // silently shorten the very log lines (screen-stack dumps) that are worth reading.
+    va_list ringArgs;
+    va_copy(ringArgs, args);
+#endif
     vfprintf(sFile, fmt, args);
     va_end(args);
 
     fprintf(sFile, "\n");
     fflush(sFile); // Crash resilience
+
+#ifdef X2ACCESS_DEVSERVER
+    {
+        char line[kRingLineMax];
+        const int n = snprintf(line, sizeof(line), "%s", stamp);
+        if (n > 0 && static_cast<size_t>(n) < sizeof(line))
+            vsnprintf(line + n, sizeof(line) - static_cast<size_t>(n), fmt, ringArgs);
+        sRing.emplace_back(line);
+        while (sRing.size() > kRingCapacity) {
+            sRing.pop_front();
+            sRingBase++;
+        }
+    }
+    va_end(ringArgs);
+#endif
 }
+
+#ifdef X2ACCESS_DEVSERVER
+std::vector<std::string> Recent(long long& outBase) {
+    std::lock_guard<std::mutex> lock(sMutex);
+    outBase = sRingBase;
+    return std::vector<std::string>(sRing.begin(), sRing.end());
+}
+#endif
 
 } // namespace Log

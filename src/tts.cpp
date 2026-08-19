@@ -1,4 +1,5 @@
 #include "tts.h"
+#include "dev_server.h"
 #include "log.h"
 
 #include <SRAL.h>
@@ -44,6 +45,10 @@ void Speak(const std::string& text, bool interrupt) {
     // The speech log: every spoken line, so a session can be reconstructed from X2Access.log
     // ("what did it actually say when I pressed Left?").
     LOG_INFO("TTS%s: \"%s\"", interrupt ? "!" : "", text.c_str());
+    // Dev harness /speech ring. Deliberately AFTER the availability/enabled gate, next to the
+    // log line: the ring answers "what did the player hear", not "what did the mod consider
+    // saying" — otherwise a muted session would read as a talkative one.
+    DevServer::RecordSpeech(text, interrupt);
     SRAL_Speak(text.c_str(), interrupt);
 }
 
@@ -69,6 +74,7 @@ void FlushQueue() {
         return;
     }
     for (const auto& text : sQueue) {
+        DevServer::RecordSpeech(text, false);
         SRAL_Speak(text.c_str(), false);
     }
     sQueue.clear();

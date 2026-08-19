@@ -18,6 +18,11 @@ add_subdirectory(deps/SRAL)
 # Generated SDK global definitions (GObjects/GNames externs)
 set(SDK_DIR "${CMAKE_SOURCE_DIR}/generated_sdk/X2SDK")
 
+# Loopback HTTP dev harness (src/dev_server.cpp). OFF here means the TU is not compiled at all,
+# so a release .asi contains no socket code — the runtime marker file is the second gate, not
+# the only one. `just` turns it ON for the local dev tree; see the justfile's devserver var.
+option(X2ACCESS_DEVSERVER "Build the loopback HTTP dev harness (dev builds only)" OFF)
+
 add_library(X2Access SHARED
     src/dllmain.cpp
     src/tts.cpp
@@ -64,6 +69,15 @@ add_subdirectory(tests)
 target_compile_definitions(X2Access PRIVATE SRAL_STATIC)
 
 target_link_libraries(X2Access PRIVATE SRAL_static)
+
+# Dev harness: one TU plus Winsock. The define is target-wide because log.cpp's /log ring and
+# tts.cpp's /speech tap are gated on it too — they cost the release build nothing.
+if(X2ACCESS_DEVSERVER)
+    target_sources(X2Access PRIVATE src/dev_server.cpp)
+    target_compile_definitions(X2Access PRIVATE X2ACCESS_DEVSERVER)
+    target_link_libraries(X2Access PRIVATE ws2_32)
+    message(STATUS "X2Access: dev harness ENABLED (loopback HTTP, marker-gated at runtime)")
+endif()
 
 # Suppress warnings on generated SDK code
 if(MSVC)

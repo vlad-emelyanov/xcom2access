@@ -1385,4 +1385,9 @@ bool IsAttached()
     return gAttached;
 }
 
+const char* AttachedRecipeName()
+{
+    return (gAttached && gActive) ? gActive->logName : nullptr;
+}
+
 } // namespace MenuNavigator

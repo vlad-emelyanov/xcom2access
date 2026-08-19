@@ -1829,6 +1829,42 @@ std::string DescribeTrackedScreens()
     return out;
 }
 
+std::string DescribeScreenStack()
+{
+    void* stack = gStackFinder.Find();
+    if (!stack)
+        return "  (no live UIScreenStack)\n";
+
+    void* screens[kMaxStackScreens] = {};
+    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    if (count <= 0)
+        return "  (stack is empty)\n";
+
+    std::string out;
+    for (int i = 0; i < count; i++) {
+        char line[192];
+        if (!screens[i]) {
+            snprintf(line, sizeof(line), "  %2d (null)\n", i);
+            out += line;
+            continue;
+        }
+        char name[64] = "?";
+        ObjClassNameAnsiRaw(screens[i], name, sizeof(name));
+        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
+        // Spelled out rather than left as a hex dword: bIsVisible is the bit that looks like it
+        // means "on screen" and does not (a live pause menu reads 0x259, no visible bit), so a
+        // dump that only prints 0x259 invites exactly the wrong conclusion.
+        snprintf(line, sizeof(line), "  %2d %-28s %p 0x%03X %s%s%s%s\n", i, name, screens[i],
+            flags,
+            (flags & kPanelInited) ? "inited " : "",
+            (flags & kPanelFocused) ? "focused " : "",
+            (flags & kPanelVisible) ? "visible " : "",
+            (flags & kPanelRemoved) ? "REMOVED " : "");
+        out += line;
+    }
+    return out;
+}
+
 // ---- in-game pause menu (UIPauseMenu) ----
 
 void* FindPauseMenu()

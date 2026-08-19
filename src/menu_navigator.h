@@ -20,4 +20,9 @@ void OnTick();
 /// §10.5): while true, X2Access_Speak events from the companion mod are dropped.
 bool IsAttached();
 
+/// The attached recipe's log name ("main menu", "settings", …), or null when detached.
+/// Diagnostics: IsAttached() alone cannot tell "the right recipe took the screen" from "a recipe
+/// whose probe matched too eagerly did".
+const char* AttachedRecipeName();
+
 } // namespace MenuNavigator

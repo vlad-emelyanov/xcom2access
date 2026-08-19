@@ -1,4 +1,5 @@
 #include "log.h"
+#include "dev_server.h"
 #include "tts.h"
 #include "input.h"
 #include "menu_navigator.h"
@@ -57,11 +58,16 @@ static void InitThread() {
     // 6. Game hooks
     Hooks::Init();
 
+    // 7. Dev harness (dev builds + marker file only; no-op otherwise). Last, so it can report
+    // on everything above, and so a failure here can never keep the mod itself from loading.
+    DevServer::Start(dir);
+
     LOG_INFO("X2Access initialization complete");
 }
 
 static void ShutdownAll() {
     LOG_INFO("X2Access shutting down");
+    DevServer::Stop(); // before the hooks: the pump it depends on goes away with them
     Hooks::Shutdown();
     Input::Shutdown();
     TTS::Shutdown();

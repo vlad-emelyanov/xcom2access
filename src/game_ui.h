@@ -114,6 +114,13 @@ void HintScreenChange();
 /// merely not focused — the three failures that look identical from the outside.
 std::string DescribeTrackedScreens();
 
+/// The game's own screen stack, top first, one line per entry: index, class name, pointer,
+/// state bits, and a decode of the bits that decide reachability. Unlike DescribeTrackedScreens
+/// this is not filtered to classes we know about, which is the point — it answers "what is
+/// actually on screen right now?" for a screen that has no recipe yet, and it shows the
+/// not-inited and removed entries the finders skip. Diagnostics only. Game thread only.
+std::string DescribeScreenStack();
+
 /// The raw UIPanel state dword behind IsScreenFocused. Diagnostics only — the navigator must
 /// key off IsScreenFocused, never off bits picked out of this by hand.
 uint32_t ScreenStateBits(void* screen);
