@@ -97,6 +97,7 @@ status:
 #
 #   just arm && just go      # arm, rebuild, relaunch — the harness comes up with the game
 #   just dev-status          # what is on screen right now
+#   just dev-gui             # the topmost screen's widget tree
 #   just dev-speech          # everything the mod has spoken this session
 #
 # /health, /speech and /log answer off the game thread on purpose: when the game is wedged
@@ -144,6 +145,18 @@ dev-exec cmd:
 # with the game backgrounded: `just dev-input Left,Left,Delete kernel`.
 dev-input keys mode="send":
     @& "{{ curl }}" -s --max-time 30 "http://127.0.0.1:{{ devserver_port }}/input?keys={{ keys }}&mode={{ mode }}"
+
+# The widget tree of a screen: class, address, state bits and the text each panel carries.
+# Default target is the topmost screen; `just dev-gui 10 "screen=UIPauseMenu"` picks another,
+# and `instance=` / `ptr=0x...` reach objects the screen stack never holds.
+dev-gui depth="8" select="":
+    @& "{{ curl }}" -s --max-time 30 "http://127.0.0.1:{{ devserver_port }}/gui?depth={{ depth }}&{{ select }}"
+
+# One object's properties with their LIVE offsets, types and values — the replacement for
+# reading SrcOrig and transcribing offsets out of the SDK dump. Same selector as dev-gui:
+# `just dev-props "screen=UIShellDifficulty" SecondWave`, `just dev-props "ptr=0x000002..."`.
+dev-props select="" filter="":
+    @& "{{ curl }}" -s --max-time 30 "http://127.0.0.1:{{ devserver_port }}/props?{{ select }}&filter={{ filter }}"
 
 # PNG of the monitor the game is on (Desktop Duplication). Defaults beside the .asi.
 dev-shot path="":

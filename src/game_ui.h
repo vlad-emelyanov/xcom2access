@@ -382,6 +382,34 @@ void* FindCompanionCDO(const char* className);
 /// `params` must match the UFunction's parameter layout. Game thread only.
 bool CallScriptFunction(void* obj, const char* funcName, void* params);
 
+// ---- dev harness only: raw object access for the /gui and /props dumps ----
+//
+// These are the four primitives the widget-tree dumper cannot get any other way; everything
+// else it needs it reads through UE3 reflection, so it hand-transcribes no offsets of its own.
+#ifdef X2ACCESS_DEVSERVER
+
+/// The screen stack's entry for `className`, or the TOPMOST usable screen when `className` is
+/// null or empty. Same inited/not-removed filter the recipes use. Game thread only.
+void* FindStackScreen(const char* className);
+
+/// Every live instance of `className` in GObjects, in scan order, up to `maxItems`; returns the
+/// count written. No usability filter, so it reaches objects the screen stack never sees
+/// (XCom3DCursor, a cheat manager, a tooltip manager). Matching is by CLASS POINTER with class
+/// default objects excluded by name — deliberately not by the object's own name, which the
+/// recipes' finders can rely on only because screens happen to keep the default naming.
+/// ALL of them are returned rather than one, because with several alive the dumper has no basis
+/// for picking and the caller deserves to see the ambiguity. Game thread only.
+int FindInstances(const char* className, void** out, int maxItems);
+
+/// Is this pointer a live entry in GObjects? The dumpers take a `?ptr=` from a previous dump,
+/// and a pointer that has since been collected must be refused rather than walked.
+bool IsLiveObject(void* obj);
+
+/// UIPanel::ChildPanels into `out`; returns the count written.
+int ReadChildPanels(void* panel, void** out, int maxItems);
+
+#endif // X2ACCESS_DEVSERVER
+
 /// Run `command` through the game's own console (`Actor.ConsoleCommand` on the local player
 /// controller) and return what it printed — empty for the many commands that say nothing, or a
 /// `[exec] …` string when the call could not be made at all. This is the whole `exec function`

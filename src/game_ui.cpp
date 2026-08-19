@@ -2234,6 +2234,87 @@ std::string ConsoleCommand(const std::string& command)
     return WcharToUtf8(buf.data(), len);
 }
 
+// ---- dev harness only: raw object access for the /gui and /props dumps -------------------------
+
+#ifdef X2ACCESS_DEVSERVER
+
+void* FindStackScreen(const char* className)
+{
+    if (className && className[0])
+        return FindStackScreenRaw(className);
+
+    // No class asked for: the topmost screen the recipes would consider. Index 0 is the top
+    // (Push inserts there), but the entry above a live screen can be a corpse the stack has
+    // not dropped yet, so skip on the same predicate the finders use rather than taking [0]
+    // blind.
+    void* stack = gStackFinder.Find();
+    if (!stack)
+        return nullptr;
+    void* screens[kMaxStackScreens] = {};
+    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    for (int i = 0; i < count; i++) {
+        if (!screens[i])
+            continue;
+        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
+        if ((flags & kPanelInited) && !(flags & kPanelRemoved))
+            return screens[i];
+    }
+    return nullptr;
+}
+
+int FindInstances(const char* className, void** out, int maxItems)
+{
+    if (!className || !className[0] || maxItems <= 0)
+        return 0;
+    UObject* classObj = FindClassRaw(className);
+    if (!classObj)
+        return 0;
+
+    int found = 0;
+    __try {
+        TArray<UObject*>* objects = UObject::GObjObjects();
+        if (!objects)
+            return 0;
+        char name[80];
+        for (int32_t i = 0; i < objects->size() && found < maxItems; i++) {
+            UObject* obj = objects->at(i);
+            if (!obj || reinterpret_cast<UObject*>(obj->Class) != classObj)
+                continue;
+            // The class default object is an instance of its own class and would otherwise be
+            // the first hit for every lookup; its name is the one thing that distinguishes it.
+            if (ObjNameAnsiRaw(obj, name, sizeof(name)) && strncmp(name, "Default__", 9) == 0)
+                continue;
+            out[found++] = obj;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return found;
+}
+
+bool IsLiveObject(void* obj)
+{
+    if (!obj)
+        return false;
+    __try {
+        TArray<UObject*>* objects = UObject::GObjObjects();
+        if (!objects)
+            return false;
+        for (int32_t i = objects->size() - 1; i >= 0; i--) {
+            if (objects->at(i) == reinterpret_cast<UObject*>(obj))
+                return true;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return false;
+}
+
+int ReadChildPanels(void* panel, void** out, int maxItems)
+{
+    return ReadPtrArrayRaw(panel, kPanelChildPanelsOffset, out, maxItems);
+}
+
+#endif // X2ACCESS_DEVSERVER
+
 } // namespace GameUI
 
 #ifdef _MSC_VER

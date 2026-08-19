@@ -16,6 +16,7 @@
 #include "dev_server.h"
 
 #include "game_ui.h"
+#include "gui_dump.h"
 #include "input_arbiter.h"
 #include "log.h"
 #include "menu_navigator.h"
@@ -613,6 +614,24 @@ bool RecvRequest(SOCKET sock, Request& out, int& status)
     return true;
 }
 
+// /gui and /props take the same selector: an address from an earlier dump, the newest instance
+// of a class anywhere, or a screen on the stack (the default, topmost when unnamed).
+GuiDump::Selector ParseSelector(const std::string& query)
+{
+    GuiDump::Selector sel;
+    const std::string ptr = QueryParam(query, "ptr");
+    if (!ptr.empty()) {
+        // Always hex, with or without the 0x a dump line prints.
+        const char* text = ptr.c_str();
+        if (ptr.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
+            text += 2;
+        sel.ptr = reinterpret_cast<void*>(_strtoui64(text, nullptr, 16));
+    }
+    sel.instance = UrlDecode(QueryParam(query, "instance"));
+    sel.screen = UrlDecode(QueryParam(query, "screen"));
+    return sel;
+}
+
 std::string Route(const Request& req, int& status)
 {
     // Off-thread endpoints first: these are exactly the ones that must keep answering when the
@@ -697,6 +716,20 @@ std::string Route(const Request& req, int& status)
         return out.empty() ? "(ran; no output, nothing logged)\n" : out;
     }
 
+    // The widget tree and the property dump. Both take the same selector, so a session reads
+    // /gui to see the tree, copies an address out of it, and drills in with /props?ptr=.
+    if (req.path == "/gui") {
+        const GuiDump::Selector sel = ParseSelector(req.query);
+        const int depth = static_cast<int>(QueryInt(req.query, "depth", 8));
+        return OnGameThread([sel, depth] { return GuiDump::Tree(sel, depth); });
+    }
+
+    if (req.path == "/props") {
+        const GuiDump::Selector sel = ParseSelector(req.query);
+        const std::string filter = UrlDecode(QueryParam(req.query, "filter"));
+        return OnGameThread([sel, filter] { return GuiDump::Props(sel, filter); });
+    }
+
     status = 404;
     return "unknown endpoint\n"
            "  GET  /health              liveness + build stamp + game-thread pump age\n"
@@ -705,7 +738,12 @@ std::string Route(const Request& req, int& status)
            "  GET  /status              screen stack, gates, navigator + tile-reader state\n"
            "  GET  /input?keys=A,B      synthetic keys (&mode=kernel drives only our layer)\n"
            "  POST /exec  <command>     run a console command, return what it printed\n"
-           "  GET  /screenshot[?path=]  PNG of the monitor the game is on\n";
+           "  GET  /gui[?depth=N]       widget tree of a screen: class, state, text\n"
+           "  GET  /props[?filter=]     one object's properties: offset, type, live value\n"
+           "  GET  /screenshot[?path=]  PNG of the monitor the game is on\n"
+           "\n"
+           "  /gui and /props select with ?screen=<Class> (the screen stack, topmost by\n"
+           "  default), ?instance=<Class> (newest instance anywhere) or ?ptr=0x<addr>\n";
 }
 
 // send() may accept fewer bytes than offered; a /status dump is small but /log is not bounded

@@ -276,12 +276,24 @@ Endpoints:
   and `&gap=` are milliseconds.
 - `/screenshot[?path=&foreground=0&output=N]` — PNG of the monitor the game is
   on, via DXGI Desktop Duplication (`src/screen_capture.cpp`).
+- `/gui[?depth=N]` — the widget tree under a screen: one line per `UIPanel`
+  with its class, address, state bits and the text it carries.
+- `/props[?filter=<substring>]` — every property the object's class chain
+  declares: **offset, type, name and live value**, grouped by declaring class.
+
+  Both take the same selector — `?screen=<Class>` (the screen stack, topmost
+  when unnamed), `?instance=<Class>` (newest instance anywhere in GObjects, so
+  it reaches objects the stack never holds — `XCom3DCursor`, a cheat manager,
+  a tooltip manager), or `?ptr=0x<addr>` copied out of an earlier dump and
+  re-validated against GObjects before it is walked. So the loop is: `/gui` to
+  see the tree, `?ptr=` from a line of it, `/props` to read that widget out.
 
 An unknown path returns the endpoint list. `/speech` and `/log` are
 cursor-paged: poll with the returned `cursor:` value for exactly-once delivery.
 
 Driving it: `just arm`, then `just dev-health` / `dev-status` / `dev-speech` /
-`dev-log` / `dev-exec "<cmd>"` / `dev-input <keys> [kernel]` / `dev-shot`, or
+`dev-log` / `dev-exec "<cmd>"` / `dev-input <keys> [kernel]` / `dev-shot` /
+`dev-gui [depth] [select]` / `dev-props [select] [filter]`, or
 `just dev '<endpoint>?<query>'` for anything else.
 ⛔ Scripts must call curl as `$env:SystemRoot/System32/curl.exe` — bare `curl`
 on PATH resolves to MSYS2's cygwin build, whose path translation mangles URL
@@ -330,7 +342,27 @@ such call:
   `appFree`. `ConsoleCommand` deliberately leaks it — a few dozen bytes per
   dev-only call beats calling the wrong deallocator.
 
-Phase 3 (`/gui` widget-tree dump, `/tile`) is not built yet.
+### `/gui` and `/props`: reflection, not transcription
+
+`src/gui_dump.cpp` reads everything through the engine's own reflection spine
+(`UStruct::Children` → `UProperty::Offset`/`ArrayDim`/`ElementSize`, the
+property's CLASS name for its type, `UBoolProperty::BitMask`,
+`UByteProperty::Enum` for enum literals), so it hand-transcribes **no offsets
+of its own** — the four raw primitives it cannot get that way (`FindStackScreen`,
+`FindAnyInstance`, `IsLiveObject`, `ReadChildPanels`) are dev-only exports from
+`game_ui.cpp` built on offsets that are already `static_assert`-pinned.
+
+That is what makes it authoritative where the SDK dump is not: the numbers come
+from the class the running process actually has, under whatever mod set is
+loaded. The Highlander's rebuild of `UIShellSoundtrackPicker` (a localized
+`FString` that `SrcOrig` never declared, moving everything after 0x430 down
+0x10) is exactly the case a dump cannot answer and this can. It also means the
+tree prints state bits **by name** — `bIsInited`/`bIsFocused`/`bIsVisible`/
+`bIsRemoved`/`bIsNavigable` — rather than decoding a flag dword at a fixed
+offset, so it stays right across a rebuild that moves them.
+
+Steps 1-2 of *Adding a screen recipe* are what this replaces. `/tile` (the tile
+reader's state as structured data) is still open.
 
 ## Reverse engineering workflow
 
@@ -386,6 +418,11 @@ loads it — it is vestigial; do not use it.
 
 The pattern, end to end (see the new-game recipes for a worked set):
 
+0. With the game on that screen and the harness armed, `just dev-gui` prints
+   its widget tree and `just dev-props "screen=<Class>"` prints every field
+   with its LIVE offset, type and value. That is steps 1-2 below done from
+   facts; read `SrcOrig` for the *why* (delegates, disabled navigation), not to
+   guess layout.
 1. Read the screen's UnrealScript in the SDK's `Development/SrcOrig/XComGame/
    Classes/` — it is the ground truth for what the widgets are, which delegate
    activation must go through, and what a sighted player can actually reach.
@@ -438,9 +475,9 @@ Remaining:
    recipes of their own. Its screen lookup caches the newest box, which a
    presentation-layer change could leave stale; covering dialogs outside the
    shell should switch that to a screen-stack walk.
-6. Dev harness phase 3 (`/gui` widget-tree dump, `/tile`) — see **Dev harness**
-   above. `/gui` would shortcut steps 1-2 of *Adding a screen recipe*, which
-   currently mean reading `SrcOrig` and transcribing offsets blind.
+6. Dev harness: `/gui` and `/props` are in (see **Dev harness** above) — built
+   2026-08-19, NOT yet run against a live game. `/tile` (the tile reader's
+   state as structured data) is the remainder of phase 3.
 
 When researching for this project, focus on engine/native/UE3 technicals.
 Do not survey the accessibility-mod landscape — the author knows it better

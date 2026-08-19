@@ -74,7 +74,7 @@ target_link_libraries(X2Access PRIVATE SRAL_static)
 # D3D/GDI+ includes). The define is target-wide because log.cpp's /log ring, tts.cpp's /speech
 # tap and the arbiter's synthetic injection are gated on it too — all free in a release build.
 if(X2ACCESS_DEVSERVER)
-    target_sources(X2Access PRIVATE src/dev_server.cpp src/screen_capture.cpp)
+    target_sources(X2Access PRIVATE src/dev_server.cpp src/screen_capture.cpp src/gui_dump.cpp)
     target_compile_definitions(X2Access PRIVATE X2ACCESS_DEVSERVER)
     target_link_libraries(X2Access PRIVATE ws2_32 shell32 d3d11 dxgi gdiplus)
     message(STATUS "X2Access: dev harness ENABLED (loopback HTTP, marker-gated at runtime)")
@@ -88,6 +88,10 @@ if(MSVC)
         src/ue3_reflection.cpp
         PROPERTIES COMPILE_FLAGS "/w"
     )
+    # The dumper keeps default warnings on purpose — it walks raw engine memory, so a real
+    # warning there is worth seeing. Only the generated FString::ToString wchar->char narrowing
+    # is silenced; nothing in our own code warns at /W3.
+    set_source_files_properties(src/gui_dump.cpp PROPERTIES COMPILE_FLAGS "/wd4244")
     # TUs including the full generated SDK — huge headers need /bigobj, and the generated
     # code is not warning-clean
     set_source_files_properties(
