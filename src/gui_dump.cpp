@@ -39,6 +39,7 @@ constexpr int kMaxNodes = 3000;   // a runaway tree must end in a truncation not
 constexpr int kMaxArrayElems = 8; // elements listed per array property
 constexpr int kMaxStaticElems = 64; // elements printed for a static array (ArrayDim > 1)
 constexpr int kMaxInstances = 32; // instances listed for an ambiguous ?instance=
+constexpr int kMaxRegistry = 512; // a screen's ChildPanels registry, for the reachability check
 constexpr int kValueChars = 160;  // per-value truncation
 
 // ---- raw, SEH-safe primitives -------------------------------------------------------------
@@ -116,6 +117,16 @@ int CopyFStringRaw(const void* fstr, wchar_t* buf, int bufWchars)
     }
 }
 
+void* ReadPtrAt(const void* obj, int32_t offset)
+{
+    __try {
+        return *reinterpret_cast<void* const*>(
+            reinterpret_cast<const uint8_t*>(obj) + offset);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
 // ---- reflection walks ----------------------------------------------------------------------
 
 struct RawProp {
@@ -174,6 +185,27 @@ int ReadOwnPropsRaw(void* structObj, RawProp* out, int maxOut)
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
     return n;
+}
+
+// The offset of a named property on the object's class chain, or -1. Used for the one field the
+// tree walk needs structurally (UIPanel::ParentPanel) — looked up rather than transcribed, so it
+// survives a rebuild that moves it.
+int32_t FindPropOffsetRaw(void* obj, const char* propName)
+{
+    void* chain[kMaxClassChain] = {};
+    char names[kMaxClassChain][64] = {};
+    const int depth = ReadClassChainRaw(obj, chain, names, kMaxClassChain);
+    RawProp props[64] = {};
+    for (int c = 0; c < depth; c++) {
+        // Read this class's properties in slices: the scratch here is a stack buffer, and the
+        // full per-class cap would be a large frame for a lookup that hits UIPanel immediately.
+        const int count = ReadOwnPropsRaw(chain[c], props, 64);
+        for (int i = 0; i < count; i++) {
+            if (strcmp(props[i].name, propName) == 0)
+                return props[i].offset;
+        }
+    }
+    return -1;
 }
 
 // ---- property values -----------------------------------------------------------------------
@@ -531,6 +563,10 @@ struct NodeInfo {
 // buffer is ~100 KB. Game thread only, and CollectNode never re-enters itself.
 std::vector<RawProp> gScratch;
 
+// UIPanel::ParentPanel's offset, resolved once per dump from the root. -1 means the lookup
+// failed, and the walk then falls back to taking ChildPanels at face value.
+int32_t gParentOffset = -1;
+
 void CollectNode(void* obj, NodeInfo& info)
 {
     void* chain[kMaxClassChain] = {};
@@ -630,11 +666,17 @@ void WalkTree(void* panel, int depth, int maxDepth, int indexInParent, std::vect
 
     void* children[kMaxChildren] = {};
     const int count = GameUI::ReadChildPanels(panel, children, kMaxChildren);
+    int printed = 0;
     for (int i = 0; i < count; i++) {
-        if (!children[i])
+        if (!children[i] || children[i] == panel)
             continue;
-        // ChildPanels is a tree in practice, but a bad read or a widget that parents itself
-        // would otherwise recurse forever.
+        // A SCREEN's ChildPanels is not its children — it is a flat registry of every panel on
+        // the screen, itself included (verified live: UITacticalHUD listed all 159, with a
+        // UIStatList that really hangs four levels down inside the shot HUD). Deeper panels list
+        // only their own children. ParentPanel is the link that means the same thing everywhere,
+        // so the walk filters on it and the tree comes out actually nested.
+        if (gParentOffset >= 0 && ReadPtrAt(children[i], gParentOffset) != panel)
+            continue;
         bool repeat = false;
         for (void* v : seen) {
             if (v == children[i]) {
@@ -643,11 +685,14 @@ void WalkTree(void* panel, int depth, int maxDepth, int indexInParent, std::vect
             }
         }
         if (repeat) {
-            out += std::string(static_cast<size_t>(depth + 1) * 2, ' ') + "(cycle)\n";
+            char cycle[96] = "?";
+            ObjClassNameRaw(children[i], cycle, sizeof(cycle));
+            out += std::string(static_cast<size_t>(depth + 1) * 2, ' ') + "(already shown: "
+                + cycle + ")\n";
             continue;
         }
         seen.push_back(children[i]);
-        WalkTree(children[i], depth + 1, maxDepth, i, seen, nodes, out);
+        WalkTree(children[i], depth + 1, maxDepth, printed++, seen, nodes, out);
     }
 }
 
@@ -666,14 +711,60 @@ std::string Tree(const Selector& sel, int maxDepth)
     if (maxDepth > 32)
         maxDepth = 32;
 
+    gParentOffset = FindPropOffsetRaw(root, "ParentPanel");
+
     std::string out = note;
     out += "root: " + DescribeObject(root) + "\n";
-    out += "depth: " + std::to_string(maxDepth) + "\n\n";
+    char head[128];
+    snprintf(head, sizeof(head), "depth: %d, children via UIPanel.ParentPanel (+0x%04X)\n\n",
+        maxDepth, static_cast<unsigned>(gParentOffset));
+    out += gParentOffset >= 0
+        ? head
+        : "depth: " + std::to_string(maxDepth)
+            + ", ParentPanel not found — showing ChildPanels raw, which on a SCREEN is a flat "
+              "registry of every panel and will look wrongly nested\n\n";
 
     std::vector<void*> seen{root};
     int nodes = 0;
     WalkTree(root, 0, maxDepth, 0, seen, nodes, out);
     out += "\n" + std::to_string(nodes) + " panels\n";
+
+    // No silent drops: anything in the root's own list that the walk never printed is named
+    // here. On a screen that list is every panel it owns, so this is a complete accounting —
+    // an entry showing up means its ParentPanel points somewhere outside this tree (or nowhere),
+    // which is a fact about the screen worth seeing rather than hiding.
+    if (gParentOffset >= 0) {
+        void* registry[kMaxRegistry] = {};
+        const int total = GameUI::ReadChildPanels(root, registry, kMaxRegistry);
+        std::string orphans;
+        int count = 0;
+        for (int i = 0; i < total; i++) {
+            if (!registry[i] || registry[i] == root)
+                continue;
+            bool shown = false;
+            for (void* v : seen) {
+                if (v == registry[i]) {
+                    shown = true;
+                    break;
+                }
+            }
+            if (shown)
+                continue;
+            count++;
+            if (count <= 24) {
+                void* parent = ReadPtrAt(registry[i], gParentOffset);
+                orphans += "  " + DescribeObject(registry[i]) + "  parent="
+                    + (parent ? DescribeObject(parent) : std::string("null")) + "\n";
+            }
+        }
+        if (count > 0) {
+            out += "\n" + std::to_string(count)
+                + " in the root's list but not under it (deeper than the depth cap, or parented "
+                  "elsewhere):\n" + orphans;
+            if (count > 24)
+                out += "  ... " + std::to_string(count - 24) + " more\n";
+        }
+    }
     return out;
 }
 

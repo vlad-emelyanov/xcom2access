@@ -384,6 +384,23 @@ tree prints state bits **by name** — `bIsInited`/`bIsFocused`/`bIsVisible`/
 `bIsRemoved`/`bIsNavigable` — rather than decoding a flag dword at a fixed
 offset, so it stays right across a rebuild that moves them.
 
+**A screen's `ChildPanels` is not its children.** It is a flat REGISTRY of every
+panel on that screen, itself included at index 0 — verified live 2026-08-19:
+`UITacticalHUD` listed all 159 of its panels, among them a `UIStatList` that
+really hangs four levels down inside `UITacticalHUD_ShotHUD`. Panels below the
+screen do list only their own children, so a naive recursive walk *looks* right
+and quietly reparents everything the recursion happens to reach last. The link
+that means the same thing at every level is `UIPanel.ParentPanel` (+0x2E0), and
+`/gui` filters on it; whatever the walk does not reach is then listed with its
+actual parent rather than dropped.
+
+First live run (2026-08-19, mid-mission) also confirmed every hand-transcribed
+`UIPanel` offset against the running class: `bIsInited` 0x10, `bIsVisible` 0x20,
+`bIsFocused` 0x40, `bIsRemoved` 0x80, `bHasTooltip` 0x100, `bIsNavigable` 0x200
+in the dword at +0x284, `CachedTooltipId` +0x2AC, `Movie` +0x2B8,
+`ChildPanels` +0x2E8. Dumping a screen we already have a recipe for is the
+calibration check worth running after any SDK regeneration.
+
 Steps 1-2 of *Adding a screen recipe* are what this replaces. `/tile` (the tile
 reader's state as structured data) is still open.
 
