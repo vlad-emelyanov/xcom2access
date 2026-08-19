@@ -181,6 +181,10 @@ constexpr uint32_t kStackScreensVisible = 0x2; // ScreensVisible — the whole U
 constexpr uint32_t kStackCinematic = 0x8;      // bCinematicMode — screens hidden for cinematics
 constexpr int32_t kStackScreensOffset = 0x6C;  // UIScreenStack::Screens (TArray<UIScreen*>)
 constexpr int kMaxStackScreens = 32;
+#ifdef X2ACCESS_DEVSERVER
+// Classes derived from one named class, for the dev dumps' ?instance= lookup.
+constexpr int kMaxDerivedClasses = 64;
+#endif
 
 // ---- generic UIList / UIPanel traversal ----
 constexpr int32_t kListItemContainerOffset = 0x3D8; // UIList::ItemContainer (UIPanel*)
@@ -2286,15 +2290,57 @@ int FindInstances(const char* className, void** out, int maxItems)
     if (!classObj)
         return 0;
 
+    // Two passes, because matching only the exact class is a trap: asking for XCom3DCursor in a
+    // live mission found NOTHING, since the cursor the game spawns is an XCom3DCursorMouse. The
+    // script side takes subclasses for granted (`local XCom3DCursor Cursor` binds the subclass
+    // fine), so an inspector that does not is wrong in the way that looks like an absent object.
+    //
+    // Pass 1 collects the class objects that DERIVE from the named one — a few thousand class
+    // objects walked, not four hundred thousand instances — so pass 2 stays a pointer compare.
+    void* derived[kMaxDerivedClasses] = {};
+    int classCount = 0;
     int found = 0;
     __try {
         TArray<UObject*>* objects = UObject::GObjObjects();
         if (!objects)
             return 0;
+
+        derived[classCount++] = classObj;
+        char clsName[64];
+        for (int32_t i = 0; i < objects->size() && classCount < kMaxDerivedClasses; i++) {
+            UObject* obj = objects->at(i);
+            if (!obj || obj == classObj)
+                continue;
+            UClass* meta = obj->Class;
+            if (!meta || !ObjNameAnsiRaw(reinterpret_cast<UObject*>(meta), clsName, sizeof(clsName))
+                || strcmp(clsName, "Class") != 0)
+                continue; // not a class object
+            // Bounded: a UE3 class chain is a dozen deep, and a corrupt SuperField must not spin.
+            UStruct* super = reinterpret_cast<UStruct*>(obj)->SuperField
+                ? reinterpret_cast<UStruct*>(reinterpret_cast<UStruct*>(obj)->SuperField)
+                : nullptr;
+            for (int step = 0; super && step < 32; step++) {
+                if (reinterpret_cast<UObject*>(super) == classObj) {
+                    derived[classCount++] = obj;
+                    break;
+                }
+                super = reinterpret_cast<UStruct*>(super->SuperField);
+            }
+        }
+
         char name[80];
         for (int32_t i = 0; i < objects->size() && found < maxItems; i++) {
             UObject* obj = objects->at(i);
-            if (!obj || reinterpret_cast<UObject*>(obj->Class) != classObj)
+            if (!obj)
+                continue;
+            bool isKind = false;
+            for (int c = 0; c < classCount; c++) {
+                if (reinterpret_cast<UObject*>(obj->Class) == derived[c]) {
+                    isKind = true;
+                    break;
+                }
+            }
+            if (!isKind)
                 continue;
             // The class default object is an instance of its own class and would otherwise be
             // the first hit for every lookup; its name is the one thing that distinguishes it.

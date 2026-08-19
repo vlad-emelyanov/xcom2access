@@ -40,6 +40,8 @@ constexpr int kMaxArrayElems = 8; // elements listed per array property
 constexpr int kMaxStaticElems = 64; // elements printed for a static array (ArrayDim > 1)
 constexpr int kMaxInstances = 32; // instances listed for an ambiguous ?instance=
 constexpr int kMaxRegistry = 512; // a screen's ChildPanels registry, for the reachability check
+constexpr int kMaxStructMembers = 12; // members printed inline per struct
+constexpr int kMaxStructDepth = 2;    // how far struct-inside-struct is expanded
 constexpr int kValueChars = 160;  // per-value truncation
 
 // ---- raw, SEH-safe primitives -------------------------------------------------------------
@@ -208,6 +210,21 @@ int32_t FindPropOffsetRaw(void* obj, const char* propName)
     return -1;
 }
 
+// A STRUCT's own chain, starting at the struct itself — unlike ReadClassChainRaw, which starts
+// at an object's class. UnrealScript structs can extend other structs, so the members are not
+// necessarily all declared on the leaf.
+int ReadStructChainRaw(void* structObj, void** out, int maxOut)
+{
+    int n = 0;
+    __try {
+        for (UStruct* s = reinterpret_cast<UStruct*>(structObj); s && n < maxOut;
+             s = reinterpret_cast<UStruct*>(s->SuperField))
+            out[n++] = s;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return n;
+}
+
 // ---- property values -----------------------------------------------------------------------
 
 enum class Kind {
@@ -224,6 +241,7 @@ struct RawValue {
     wchar_t wide[512];
     char text[96];  // object's class / struct name / enum literal / array inner type
     char decl[64];  // ObjectProperty's declared PropertyClass
+    void* strct;    // UStruct* for a struct property, or an array's struct inner type
 };
 
 Kind KindOf(const char* type)
@@ -277,6 +295,7 @@ void ReadValueRaw(void* obj, const RawProp& p, int index, RawValue& v)
     v.wide[0] = L'\0';
     v.text[0] = '\0';
     v.decl[0] = '\0';
+    v.strct = nullptr;
 
     __try {
         auto* addr = reinterpret_cast<uint8_t*>(obj) + p.offset
@@ -329,12 +348,15 @@ void ReadValueRaw(void* obj, const RawProp& p, int index, RawValue& v)
             if (UProperty* inner = reinterpret_cast<UArrayProperty*>(p.prop)->Inner) {
                 ObjClassNameRaw(inner, v.text, sizeof(v.text));
                 v.aux = static_cast<uint32_t>(inner->ElementSize);
+                if (strcmp(v.text, "StructProperty") == 0)
+                    v.strct = reinterpret_cast<UStructProperty*>(inner)->Struct;
             }
             break;
         case Kind::Struct:
             if (UStruct* s = reinterpret_cast<UStructProperty*>(p.prop)->Struct) {
                 FNameTextRaw(&reinterpret_cast<UObject*>(s)->Name, v.text, sizeof(v.text));
                 v.count = s->PropertySize;
+                v.strct = s;
             }
             break;
         default:
@@ -410,7 +432,45 @@ bool ContainsNoCase(const std::string& haystack, const std::string& needle)
     return false;
 }
 
-std::string FormatValue(const RawProp& p, const RawValue& v)
+std::string FormatValue(void* obj, const RawProp& p, int elem, const RawValue& v, int depth);
+
+// "{ X=24, Y=54, Z=9 }" — a struct's members read at their own offsets from `base`. This is the
+// difference between a tile dump saying "TTile (12 bytes)" and saying where the cursor is.
+std::string FormatStructInline(void* base, void* structObj, int depth)
+{
+    void* chain[8] = {};
+    const int levels = ReadStructChainRaw(structObj, chain, 8);
+    RawProp members[64] = {};
+
+    std::string out = "{ ";
+    int shown = 0;
+    bool more = false;
+    for (int c = 0; c < levels; c++) {
+        const int count = ReadOwnPropsRaw(chain[c], members, 64);
+        for (int i = 0; i < count; i++) {
+            if (shown >= kMaxStructMembers) {
+                more = true;
+                break;
+            }
+            RawValue mv{};
+            ReadValueRaw(base, members[i], 0, mv);
+            if (shown)
+                out += ", ";
+            out += members[i].name;
+            out += "=";
+            out += FormatValue(base, members[i], 0, mv, depth);
+            shown++;
+        }
+    }
+    if (!shown)
+        return "{}";
+    if (more)
+        out += ", ...";
+    out += " }";
+    return out;
+}
+
+std::string FormatValue(void* obj, const RawProp& p, int elem, const RawValue& v, int depth)
 {
     char buf[256];
     switch (v.kind) {
@@ -449,14 +509,36 @@ std::string FormatValue(const RawProp& p, const RawValue& v)
         snprintf(buf, sizeof(buf), "%s 0x%p . %s", v.text[0] ? v.text : "?", v.ptr,
             v.decl[0] ? v.decl : "None");
         return buf;
-    case Kind::Struct:
-        snprintf(buf, sizeof(buf), "%s (%d bytes)", v.text[0] ? v.text : "?", v.count);
-        return buf;
+    case Kind::Struct: {
+        snprintf(buf, sizeof(buf), "%s ", v.text[0] ? v.text : "?");
+        std::string out = buf;
+        if (v.strct && depth < kMaxStructDepth) {
+            auto* base = reinterpret_cast<uint8_t*>(obj) + p.offset
+                + static_cast<size_t>(elem) * static_cast<size_t>(p.elementSize);
+            out += FormatStructInline(base, v.strct, depth + 1);
+        } else {
+            snprintf(buf, sizeof(buf), "(%d bytes)", v.count);
+            out += buf;
+        }
+        return out;
+    }
     case Kind::Array: {
         snprintf(buf, sizeof(buf), "%d x %s", v.count, v.text[0] ? v.text : "?");
         std::string out = buf;
         const bool objects = IsObjectArray(v.text);
         const bool strings = strcmp(v.text, "StrProperty") == 0;
+        const bool structs = v.strct != nullptr && depth < kMaxStructDepth;
+        if (v.ptr && v.count > 0 && v.aux > 0 && structs) {
+            const int show = v.count < kMaxArrayElems ? v.count : kMaxArrayElems;
+            for (int i = 0; i < show; i++) {
+                auto* elemBase = reinterpret_cast<uint8_t*>(v.ptr) + static_cast<size_t>(i) * v.aux;
+                out += "\n        [" + std::to_string(i) + "] "
+                    + FormatStructInline(elemBase, v.strct, depth + 1);
+            }
+            if (show < v.count)
+                out += "\n        ... " + std::to_string(v.count - show) + " more";
+            return out;
+        }
         if (v.ptr && v.count > 0 && v.aux > 0 && (objects || strings)) {
             const int show = v.count < kMaxArrayElems ? v.count : kMaxArrayElems;
             for (int i = 0; i < show; i++) {
@@ -825,7 +907,7 @@ std::string Props(const Selector& sel, const std::string& filter)
                 snprintf(head, sizeof(head), "  +0x%04X  %-18s %-30s = ",
                     static_cast<unsigned>(p.offset + e * p.elementSize), p.type, name.c_str());
                 body += head;
-                body += FormatValue(p, v);
+                body += FormatValue(obj, p, e, v, 0);
                 body += "\n";
                 shown++;
             }
