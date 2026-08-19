@@ -159,11 +159,50 @@ std::string RenderSpeech(long long since)
 
 // ---- endpoint bodies ------------------------------------------------------------------------
 
+// Last-write time of the loaded .asi, "YYYY-MM-DD HH:MM:SS", or a reason it is unknown.
+// Resolved from OUR module handle rather than a composed path, so renaming the plugin or
+// loading it from somewhere else still reports the file actually running.
+std::string AsiStamp()
+{
+    HMODULE self = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCWSTR>(&AsiStamp), &self)
+        || !self)
+        return "unknown (no module handle)";
+
+    wchar_t path[MAX_PATH] = {};
+    if (!GetModuleFileNameW(self, path, MAX_PATH))
+        return "unknown (no module path)";
+
+    WIN32_FILE_ATTRIBUTE_DATA info{};
+    if (!GetFileAttributesExW(path, GetFileExInfoStandard, &info))
+        return "unknown (cannot stat)";
+
+    SYSTEMTIME utc{};
+    SYSTEMTIME local{};
+    if (!FileTimeToSystemTime(&info.ftLastWriteTime, &utc)
+        || !SystemTimeToTzSpecificLocalTime(nullptr, &utc, &local))
+        return "unknown (bad timestamp)";
+
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d", local.wYear, local.wMonth,
+        local.wDay, local.wHour, local.wMinute, local.wSecond);
+    return buf;
+}
+
+std::string gAsiStamp = "unknown";
+
 std::string HealthText()
 {
     const uint64_t last = gLastPumpMs.load();
     std::string out = "ok\n";
-    out += "build: " __DATE__ " " __TIME__ "\n";
+    // __DATE__/__TIME__ alone is a trap: it is this TU's compile time, so an incremental build
+    // that only touched gui_dump.cpp leaves it unchanged and /health cheerfully reports the old
+    // stamp for a binary that IS new. The .asi's own mtime is what actually answers "is the
+    // build I just made the one running?".
+    out += "build: " __DATE__ " " __TIME__ " (dev_server.cpp)\n";
+    out += "asi: " + gAsiStamp + "\n";
     out += "port: " + std::to_string(gPort) + "\n";
     if (last == 0)
         out += "pump: never (the game thread has not ticked yet)\n";
@@ -826,6 +865,8 @@ void Start(const std::string& asiDir)
 {
     if (gEnabled.load() || gThread.joinable())
         return;
+
+    gAsiStamp = AsiStamp();
 
     const std::string marker = asiDir + "\\X2Access.devserver";
     {
