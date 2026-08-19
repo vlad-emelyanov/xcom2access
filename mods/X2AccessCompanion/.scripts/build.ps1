@@ -47,6 +47,73 @@ $builder.AddPreMakeHook({
     }
 }.GetNewClosure())
 
+# Register the mod's script package with the SDK's make commandlet.
+#
+# `make -mods X2AccessCompanion <staging>` compiles ONLY the packages listed in
+# [UnrealEd.EditorEngine] ModEditPackages in the SDK's DefaultEngine.ini (this is
+# where the commandlet reads its mod-package list — confirmed by disassembly:
+# GetArray(GConfig, "UnrealEd.EditorEngine", "ModEditPackages", ...)). If the entry
+# is missing, make silently compiles only the base packages, produces NO
+# X2AccessCompanion.u, and the build fails at the copy step with no useful error.
+#
+# Neither X2ModBuildCommon nor ModBuddy's own CompileScripts task writes this entry,
+# so it must persist in the SDK config. A Steam "verify integrity" or a branch switch
+# rewrites DefaultEngine.ini/XComEngine.ini and WIPES it (diagnosed 2026-08-19, after a
+# full_content -> standard SDK branch switch). This pre-make hook re-adds it every build
+# so the registration self-heals, and is idempotent when already present.
+$builder.AddPreMakeHook({
+    $iniPath = Join-Path $b.sdkPath "XComGame\Config\DefaultEngine.ini"
+    $raw = Get-Content -Raw -LiteralPath $iniPath
+    if ($raw -notmatch '(?m)^\+?ModEditPackages=X2AccessCompanion\s*$') {
+        $new = [regex]::Replace(
+            $raw,
+            '(?m)^(\[UnrealEd\.EditorEngine\][^\r\n]*\r?\n)',
+            ('${1}+ModEditPackages=X2AccessCompanion' + "`r`n"),
+            1)
+        if ($new -eq $raw) {
+            ThrowFailure "Could not find [UnrealEd.EditorEngine] in $iniPath to register ModEditPackages"
+        }
+        Set-Content -NoNewline -LiteralPath $iniPath -Value $new
+        Write-Host "Registered X2AccessCompanion in [UnrealEd.EditorEngine] ModEditPackages (was missing - likely reset by Steam verify/branch switch)."
+    }
+}.GetNewClosure())
+
+# The game loads mod packages from ActiveMods in the USER config
+# (Documents\My Games\XCOM2 War of the Chosen\XComGame\Config\XComModOptions.ini). The launcher
+# normally writes it — and the game REWRITES it on exit with whatever was actually loaded, so
+# one session launched while the Mods folder was empty wipes the section for every later
+# direct XCom2.exe launch (diagnosed 2026-08-19: wiped 2026-08-18 during the C:->D: library
+# migration; both mods silently absent since, surfacing as "companion CDO NOT FOUND" while the
+# deployed files sat perfectly valid). Self-heal it every build, idempotently: our mod always,
+# the workshop Community Highlander when it is installed. NOTE: if the game is RUNNING during
+# the build, it may overwrite this again on exit — relaunch-after-build is the safe order.
+$modOptionsPath = Join-Path ([Environment]::GetFolderPath('MyDocuments')) `
+    "My Games\XCOM2 War of the Chosen\XComGame\Config\XComModOptions.ini"
+$wantedMods = @("X2AccessCompanion")
+$hlWorkshop = Join-Path $steamApps "workshop\content\268500\1134256495\X2WOTCCommunityHighlander.XComMod"
+if (Test-Path $hlWorkshop) {
+    $wantedMods += "X2WOTCCommunityHighlander"
+}
+if (Test-Path $modOptionsPath) {
+    $optsRaw = Get-Content -Raw -LiteralPath $modOptionsPath
+} else {
+    $optsRaw = "[Engine.XComModOptions]`r`n`r`n"
+}
+if ($optsRaw -notmatch '(?m)^\[Engine\.XComModOptions\]') {
+    $optsRaw = "[Engine.XComModOptions]`r`n`r`n" + $optsRaw
+}
+foreach ($mod in $wantedMods) {
+    if ($optsRaw -notmatch ('(?m)^ActiveMods="?' + [regex]::Escape($mod) + '"?\s*$')) {
+        $optsRaw = [regex]::Replace(
+            $optsRaw,
+            '(?m)^(\[Engine\.XComModOptions\][^\r\n]*\r?\n)',
+            ('${1}ActiveMods="' + $mod + '"' + "`r`n"),
+            1)
+        Write-Host "Re-enabled $mod in ActiveMods ($modOptionsPath) - the game wipes the list when it exits with no mods loaded."
+    }
+}
+Set-Content -NoNewline -LiteralPath $modOptionsPath -Value $optsRaw
+
 switch ($config)
 {
     "debug" {
