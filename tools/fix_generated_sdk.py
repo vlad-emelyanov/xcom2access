@@ -1,10 +1,38 @@
 #!/usr/bin/env python3
 """Repair CodeRed-Generator output so the full SDK compiles under MSVC.
 
-The generator emits five classes of invalid C++ in SDK_HEADERS/*.hpp; this script fixes all of
-them in place and is idempotent. Rerun it after regenerating the SDK. It deliberately does NOT
-touch GameDefines.hpp — that file is hand-maintained CodeRed boilerplate and compiles as-is
-(a previous automated pass corrupted its TArray layout; keep it excluded).
+Most of what this used to repair is now fixed IN THE GENERATOR (see
+deps/CodeRed-Generator/dllmain.cpp), because a fix at generation time cannot be forgotten:
+
+  - unterminated CONST_x literals    gone with m_useConstants = false (no SdkConstants.hpp)
+  - dotted struct field names        '.' (and < > ~ space) added to m_unsafeChars
+  - duplicate method declarations    UniquifyFunctionNames(), applied in all three passes
+  - duplicate _Params structs        same fix (both names derive from the function's ValidName)
+  - GameDefines.hpp pack region      now emitted by the generator, no longer applied by hand
+
+What is left is one case, kept here because the root cause is not yet understood:
+
+  - references to generator-suffixed enum names that were never defined
+    (ELeaderboardSortType_4) -> uint8_t, which is right because UE3 enums are one byte.
+
+The script stays wired into `just sdk-adopt` and is idempotent, so it also acts as the check
+that the generator fixes are still doing their job: if a per-file line reappears in its output,
+something regressed in the generator. It deliberately does NOT touch GameDefines.hpp.
+
+Scope note: this repairs the HEADERS so their class layouts compile (that is what
+sdk_layout_checks.cpp asserts against). It does not touch the *_classes.cpp function wrappers,
+because those are unusable and are never compiled: all 29388 of them resolve their UFunction
+from a CLASS index (GObjObjects()->at(IDX_CLASS_...)), and 2308 additionally clear FUNC_Native
+around the call, which makes ProcessEvent run a native's 2-byte script stub and return a zeroed
+param block. Outbound calls resolve functions by name at runtime instead (GameUI::
+CallNamedFunction / CallStaticNative). Do not "fix" the wrappers; do not add them to the build.
+
+Historical note — this used to say RE-APPLY BY HAND to GameDefines.hpp: a `#pragma pack(push, 0x4)` after its
+standard includes and a matching `pop` at end of file. The generator omits it there (every
+SDK_HEADERS/*.hpp gets one), which leaves FNameEntry/TArray/FName/UObject taking whatever pack
+each including TU is in — an ODR violation that misplaces FNameEntry::Name and breaks GNames
+lookup. src/sdk_layout_checks.cpp static_asserts the result, so a missed re-apply is a build
+error rather than a silent runtime failure.
 
 Fixes:
 1. `#define CONST_x "` — string value lost by the generator, unterminated literal → close it.
@@ -22,7 +50,22 @@ import os
 import re
 import sys
 
-ROOT = os.path.join(os.path.dirname(__file__), "..", "generated_sdk", "X2SDK", "SDK_HEADERS")
+DEFAULT_ROOT = os.path.join(
+    os.path.dirname(__file__), "..", "generated_sdk", "X2SDK", "SDK_HEADERS")
+
+
+def resolve_root(argv):
+    """Repair the installed SDK by default, or an explicit one given on the command line.
+
+    Taking a path matters for the regeneration flow: a fresh dump is repaired in
+    generated_sdk_new/ and only swapped in once it builds, so a bad regeneration never replaces
+    a working SDK. Accepts either the X2SDK directory or its SDK_HEADERS subdirectory.
+    """
+    if len(argv) < 2:
+        return DEFAULT_ROOT
+    root = os.path.abspath(argv[1])
+    headers = os.path.join(root, "SDK_HEADERS")
+    return headers if os.path.isdir(headers) else root
 
 
 def load(path):
@@ -153,9 +196,11 @@ def fix_duplicate_param_structs(lines):
 
 
 def main():
-    files = sorted(glob.glob(os.path.join(ROOT, "*.hpp")))
+    root = resolve_root(sys.argv)
+    print(f"repairing {root}")
+    files = sorted(glob.glob(os.path.join(root, "*.hpp")))
     if not files:
-        print(f"no headers found under {ROOT}", file=sys.stderr)
+        print(f"no headers found under {root}", file=sys.stderr)
         return 1
 
     for path in files:

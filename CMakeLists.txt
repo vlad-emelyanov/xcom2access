@@ -32,13 +32,20 @@ add_library(X2Access SHARED
     src/ue3_reflection.cpp
     src/game_ui.cpp
     src/menu_navigator.cpp
+    src/tile_reader.cpp
     # Compile-time verification of hand-transcribed offsets against the generated SDK
     src/sdk_layout_checks.cpp
     # Graph A11y Kernel — engine-neutral, STL-only (see src/Graph/ControlId.hpp)
     src/Graph/GraphBuilder.cpp
     src/Graph/KeyGraph.cpp
     src/Graph/GraphAnnouncer.cpp
-    # Generated SDK — only the globals definition file
+    # Generated SDK — the globals definition file. Since the 2026-08-19 regeneration the
+    # *_classes.cpp wrappers are CORRECT (name-based UFunction::FindFunction, no FUNC_Native
+    # games) and may be added here when a package's typed calls are worth it. Two caveats
+    # before you do: XComGame_classes.cpp alone is ~28 MB of one translation unit, and the
+    # wrappers call ProcessEvent WITHOUT an SEH guard, so a stale `this` faults instead of
+    # returning false the way GameUI::CallNamedFunction does. Field READS stay on explicit
+    # offsets through game_ui.cpp's guarded primitives regardless.
     "${SDK_DIR}/GameDefines.cpp"
 )
 

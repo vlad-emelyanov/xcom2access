@@ -2,7 +2,6 @@
 #include "log.h"
 
 #include "GameDefines.hpp"
-#include "SdkConstants.hpp"
 #include "SDK_HEADERS/Core_structs.hpp"
 #include "SDK_HEADERS/Core_classes.hpp"
 

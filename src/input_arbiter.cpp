@@ -122,6 +122,11 @@ LRESULT CALLBACK ArbiterProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         int claim = repeat ? sDownClaim[vk] : FindClaim(vk, mods);
         if (claim < 0) {
             sDownClaim[vk] = -1; // an unswallowed down clears any stale latch (lost focus mid-hold)
+            // Keys we deliberately leave to the game (Escape above all) drive the screen changes
+            // we then have to react to, so without this the log has no t0 to measure that
+            // reaction against. Presses only — repeats would flood it while a key is held.
+            if (!repeat)
+                LOG_DEBUG("InputArbiter: passed vk 0x%02X mods 0x%X to the game", vk, mods);
             break;
         }
 

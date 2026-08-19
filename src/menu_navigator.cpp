@@ -12,6 +12,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -130,6 +131,9 @@ struct Recipe {
     void* (*Probe)();                             // ready (focused) instance, or null
     std::unique_ptr<GraphRender> (*Build)();      // reads gScreen
     std::string (*ScreenName)();                  // spoken (interrupting) on attach
+    // The screen's UIList row selector, for FocusTarget::listIndex write-back; null on screens
+    // whose controls all hang off plain panels (the shell, the Ironman choice, dialogs).
+    bool (*SetListIndex)(void* screen, int index) = nullptr;
 };
 
 // Where the game's focus should follow ours (P11 write-back), per node.
@@ -145,6 +149,15 @@ const Recipe* gPending = nullptr;  // the recipe currently settling toward attac
 void* gScreen = nullptr;
 int gSettle = 0;             // consecutive ready polls before attach (§9 native settle debounce)
 uint64_t gLastPollMs = 0;
+
+// Detach→attach stopwatch. A screen change the player drives (Escape, a button) is silent until
+// the next screen attaches, and that gap is the thing players actually report, so it is measured
+// rather than guessed at: Attach logs the elapsed time and, while the gap is open, the poll logs
+// what each candidate screen looks like so a long one says WHICH screen was not ready.
+uint64_t gDetachMs = 0;
+uint64_t gGapLogMs = 0;
+uint64_t gLoadSaidMs = 0; // last "Loading" cue, 0 while none has been spoken this gap
+bool gGated = false;      // the game had the UI gated as of the last poll
 
 GraphState gState;
 std::unique_ptr<KeyGraph> gGraph;
@@ -175,11 +188,12 @@ void WriteBackFocus(const GraphNode* node)
         return;
     const FocusTarget& target = it->second;
     if (target.listIndex >= 0) {
-        GameUI::SetOptionsListIndex(gScreen, target.listIndex);
+        if (gActive->SetListIndex)
+            gActive->SetListIndex(gScreen, target.listIndex);
         return;
     }
-    if (target.clearList)
-        GameUI::SetOptionsListIndex(gScreen, -1);
+    if (target.clearList && gActive->SetListIndex)
+        gActive->SetListIndex(gScreen, -1);
     if (target.button && !GameUI::FocusButton(target.button)) {
         static int sWarned = 0;
         if (sWarned++ < 3)
@@ -266,6 +280,12 @@ void Detach()
     gLiveBase.clear();
     gLastSpoken = {};
     gSettle = 0;
+    gDetachMs = GetTickCount64();
+    gGapLogMs = 0;
+    gLoadSaidMs = 0;
+    // The screen we were on is gone, so every finder's cache is suspect exactly now. Without
+    // this, the next screen is found only when the finder's own second happens to elapse.
+    GameUI::HintScreenChange();
     LOG_INFO("MenuNavigator: detached from %s", name);
 }
 
@@ -294,7 +314,15 @@ void Attach()
         RefreshLiveBaseline(landing);
         WriteBackFocus(landing);
     }
-    LOG_INFO("MenuNavigator: attached to %s (%zu focus targets)", gActive->logName, gFocus.size());
+    if (gDetachMs) {
+        LOG_INFO("MenuNavigator: attached to %s (%zu focus targets) — %llu ms after detach",
+            gActive->logName, gFocus.size(),
+            static_cast<unsigned long long>(GetTickCount64() - gDetachMs));
+        gDetachMs = 0;
+    } else {
+        LOG_INFO(
+            "MenuNavigator: attached to %s (%zu focus targets)", gActive->logName, gFocus.size());
+    }
 }
 
 // After an adjust/activate that may have changed state: revalidate the screen (the action may
@@ -609,11 +637,475 @@ std::string OptionsName()
     return title.empty() ? Vocab::ScreenOptionsFallback : title;
 }
 
+// ---- the new-game recipes (UIShellDifficulty → UIChooseIronMan → UIShellNarrativeContent) ----
+
+// A campaign-setup row as a node. These screens use only three of the mecha widget kinds —
+// checkbox, description and value — and every row activates the same way, so one helper
+// covers them all; the settings rows keep their own builder for sliders/spinners/dropdowns.
+void AddSetupRow(GraphBuilder& b, const GameUI::OptionRow& row, const std::string& key,
+    FocusTarget focus, bool selected, std::function<void()> tooltip)
+{
+    ControlId id = ControlId::Referenced(row.handle, key);
+    gFocus[id.StructuralKey] = focus;
+
+    NodeVtable vt;
+    vt.Announcements.emplace_back(NodeAnnouncement::Static(row.label));
+    vt.Announcements.back().Kind = AnnouncementKinds::Label;
+
+    // A checkbox reads its state; anything else here is a line that does something when
+    // pressed, which is a button however the game classifies its widget internally.
+    std::string valueText;
+    if (row.widget == GameUI::OptionWidget::Checkbox) {
+        vt.Type = &CheckboxType();
+        valueText = row.checked ? Vocab::Checked : Vocab::Unchecked;
+    } else {
+        vt.Type = &ButtonType();
+        valueText = row.value;
+    }
+    if (!valueText.empty()) {
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(valueText));
+        vt.Announcements.back().Kind = AnnouncementKinds::Value;
+        // LIVE: the game changes these under us — picking a difficulty unchecks the other
+        // three, and Legend forces the tutorial off — and the watch reports that while the row
+        // stays focused. StateText answers the synchronous post-activation feedback.
+        vt.Announcements.back().Live = true;
+        vt.StateText = [valueText]() { return valueText; };
+    }
+    if (row.disabled) {
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+        vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+    }
+    vt.Announcements.emplace_back(NodeAnnouncement(
+        [selected]() { return selected ? std::string(Vocab::Selected) : std::string(); }, false,
+        AnnouncementKinds::Selected));
+
+    vt.OnActivate = [handle = row.handle]() { GameUI::SendRowCommand(handle, GameUI::kCmdEnter); };
+    vt.OnTooltip = std::move(tooltip);
+
+    b.AddItem(std::move(id), std::move(vt));
+}
+
+// A large button (the launch buttons, the Ironman choices): activation runs the game's own
+// click handler. Their panels are not always navigable, so focus write-back is opt-in.
+void AddSetupButton(
+    GraphBuilder& b, const GameUI::MenuItem& btn, const std::string& key, bool writeBackFocus)
+{
+    ControlId id = ControlId::Referenced(btn.handle, key);
+    if (writeBackFocus)
+        gFocus[id.StructuralKey] = FocusTarget{-1, btn.handle, true};
+
+    NodeVtable vt;
+    vt.Type = &ButtonType();
+    vt.Announcements.emplace_back(NodeAnnouncement::Static(btn.label));
+    vt.Announcements.back().Kind = AnnouncementKinds::Label;
+    if (btn.disabled) {
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+        vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+    }
+    vt.Announcements.emplace_back(NodeAnnouncement(
+        [focused = btn.focused]() { return focused ? std::string(Vocab::Selected) : std::string(); },
+        false, AnnouncementKinds::Selected));
+    vt.OnActivate = [handle = btn.handle]() { GameUI::ClickButton(handle); };
+    vt.OnTooltip = PanelTooltipAction(btn.handle);
+
+    b.AddItem(std::move(id), std::move(vt));
+}
+
+// Speak a fixed description on Space. Used where the text a sighted player reads in the
+// screen's side panel is not a real tooltip and so cannot go through ReadRowTooltip.
+std::function<void()> TextAction(std::string text)
+{
+    if (text.empty())
+        return nullptr; // no handler → the kernel refuses silently
+    return [text = std::move(text)]() { TTS::SpeakInterrupt(text); };
+}
+
+// A row's own hover tooltip on Space (difficulty descriptions, why-disabled reasons).
+std::function<void()> RowTooltipAction(void* handle)
+{
+    return [handle]() {
+        std::string tip = GameUI::ReadRowTooltip(handle);
+        if (!tip.empty())
+            TTS::SpeakInterrupt(tip);
+    };
+}
+
+// The difficulty screen. Two Tab-stops mirroring the game's two panels — the difficulty
+// choices and the campaign options — plus the start button. While the Second Wave panel is
+// open it REPLACES all three: the game clears the screen navigator and re-enables only that
+// panel, so those are the only controls a sighted player can reach either.
+std::unique_ptr<GraphRender> BuildDifficulty()
+{
+    gFocus.clear();
+    GameUI::DifficultyView view = GameUI::ReadDifficulty(gScreen);
+
+    GraphBuilder b;
+
+    if (view.secondWaveOpen) {
+        if (view.secondWave.empty())
+            return nullptr;
+        b.BeginStop("secondwave");
+        b.PushContext(
+            view.secondWaveTitle.empty() ? Vocab::GroupCampaignOptions : view.secondWaveTitle);
+        for (const GameUI::OptionRow& row : view.secondWave) {
+            // These rows' checkboxes are read-only: the screen's click delegate is the only
+            // path that toggles them AND keeps the rival faction-HQ options exclusive.
+            ControlId id = ControlId::Referenced(row.handle, "sw/" + row.label);
+            gFocus[id.StructuralKey] = FocusTarget{row.index, nullptr, false};
+
+            NodeVtable vt;
+            vt.Type = &CheckboxType();
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(row.label));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+            std::string valueText = row.checked ? Vocab::Checked : Vocab::Unchecked;
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(valueText));
+            vt.Announcements.back().Kind = AnnouncementKinds::Value;
+            vt.Announcements.back().Live = true;
+            vt.StateText = [valueText]() { return valueText; };
+            if (row.disabled) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+                vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+            }
+            vt.Announcements.emplace_back(NodeAnnouncement(
+                [sel = (row.index == view.secondWaveSelected)]() {
+                    return sel ? std::string(Vocab::Selected) : std::string();
+                },
+                false, AnnouncementKinds::Selected));
+            vt.OnActivate
+                = [index = row.index]() { GameUI::ToggleSecondWaveOption(gScreen, index); };
+            // The option's explanation lives in a localized array on the screen, not on the
+            // row — it is the side-panel text a sighted player reads. Space speaks it.
+            vt.OnTooltip = TextAction(GameUI::GetSecondWaveTooltip(gScreen, row.index));
+            b.AddItem(std::move(id), std::move(vt));
+        }
+        b.PopContext();
+        return b.Build();
+    }
+
+    if (view.difficulties.empty() && view.options.empty())
+        return nullptr;
+
+    // BuildMenu spawns the four rows and only then ticks the default difficulty, so for a
+    // frame or two all four read unchecked. Attaching in that window lands on row 1 instead of
+    // the selected difficulty and never corrects itself — the differ only re-speaks when the
+    // focused IDENTITY changes, and it does not. Exactly one row checked is the readiness
+    // test; until then this reads as "not built yet" and the navigator polls again.
+    bool anyChecked = false;
+    for (const GameUI::OptionRow& row : view.difficulties)
+        anyChecked = anyChecked || row.checked;
+    if (!view.difficulties.empty() && !anyChecked)
+        return nullptr;
+
+    b.BeginStop("difficulty");
+    b.PushContext(Vocab::GroupDifficulty);
+    for (const GameUI::OptionRow& row : view.difficulties) {
+        // These four are a RADIO GROUP, so the semantic selection is the CHECKED one, not the
+        // one the game's cursor happens to sit on (row 1 on arrival). That distinction is what
+        // lands first focus on the difficulty actually chosen: the kernel resolves a landing to
+        // the selected member of the stop, which is a stronger mechanism than SetStart and
+        // overrides it. Everything else on this screen keeps focus as its selection.
+        AddSetupRow(b, row, "diff/" + row.label, FocusTarget{-1, row.handle, false}, row.checked,
+            RowTooltipAction(row.handle));
+    }
+    b.PopContext();
+
+    b.BeginStop("options");
+    b.PushContext(Vocab::GroupCampaignOptions);
+    for (const GameUI::OptionRow& row : view.options) {
+        AddSetupRow(b, row, "opt/" + row.label, FocusTarget{-1, row.handle, false}, row.focused,
+            RowTooltipAction(row.handle));
+    }
+    b.PopContext();
+
+    // The start button gets no focus write-back: the game calls DisableNavigation() on it, so
+    // driving the navigator there would push focus somewhere the game refuses to keep it.
+    if (view.start.handle) {
+        b.BeginStop("start");
+        AddSetupButton(b, view.start, "diff/start", /*writeBackFocus*/ false);
+    }
+
+    return b.Build();
+}
+
+void* ProbeDifficulty()
+{
+    void* screen = GameUI::FindDifficultyScreen();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+std::string DifficultyName()
+{
+    std::string title = GameUI::ReadDifficulty(gScreen).title;
+    return title.empty() ? Vocab::ScreenDifficultyFallback : title;
+}
+
+// The Ironman choice: a warning and two buttons, nothing else on the screen.
+std::unique_ptr<GraphRender> BuildIronMan()
+{
+    gFocus.clear();
+    GameUI::IronManView view = GameUI::ReadIronMan(gScreen);
+    if (view.buttons.empty())
+        return nullptr;
+
+    GraphBuilder b;
+    b.BeginStop("buttons");
+    b.StartRow();
+    for (const GameUI::MenuItem& btn : view.buttons)
+        AddSetupButton(b, btn, "iron/" + btn.label, /*writeBackFocus*/ true);
+    b.EndRow();
+    return b.Build();
+}
+
+void* ProbeIronMan()
+{
+    void* screen = GameUI::FindIronManScreen();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+// The warning IS the screen — a sighted player reads it without hovering anything — so it is
+// spoken on arrival rather than hidden behind the tooltip key.
+std::string IronManName()
+{
+    GameUI::IronManView view = GameUI::ReadIronMan(gScreen);
+    std::string name = view.title.empty() ? Vocab::ScreenIronManFallback : view.title;
+    if (!view.body.empty())
+        name += ". " + view.body;
+    return name;
+}
+
+// The optional-narrative screen: the expansion-narrative toggle and the DLC list in one stop
+// (they read as one column on screen), then the button that actually starts the campaign.
+std::unique_ptr<GraphRender> BuildNarrative()
+{
+    gFocus.clear();
+    GameUI::NarrativeView view = GameUI::ReadNarrative(gScreen);
+    if (!view.xpack.handle && view.rows.empty())
+        return nullptr;
+
+    GraphBuilder b;
+    b.BeginStop("content");
+    if (view.xpack.handle) {
+        // Not a list row: deselect the list so the game's own selection follows ours out of it.
+        AddSetupRow(b, view.xpack, "narr/xpack", FocusTarget{-1, view.xpack.handle, true},
+            view.xpack.focused, TextAction(view.xpackTooltip));
+    }
+    for (std::size_t i = 0; i < view.rows.size(); i++) {
+        const GameUI::OptionRow& row = view.rows[i];
+        // The row's summary shows in the side panel as focus moves; Space speaks it, the same
+        // gating every other screen's descriptions get.
+        AddSetupRow(b, row, "narr/" + row.label, FocusTarget{row.index, nullptr, false},
+            row.index == view.selectedRow,
+            TextAction(i < view.summaries.size() ? view.summaries[i] : std::string()));
+    }
+
+    if (view.start.handle) {
+        b.BeginStop("start");
+        AddSetupButton(b, view.start, "narr/start", /*writeBackFocus*/ false);
+    }
+    return b.Build();
+}
+
+void* ProbeNarrative()
+{
+    void* screen = GameUI::FindNarrativeScreen();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+std::string NarrativeName()
+{
+    std::string title = GameUI::ReadNarrative(gScreen).title;
+    return title.empty() ? Vocab::ScreenNarrativeFallback : title;
+}
+
+// The soundtrack picker the difficulty screen's soundtrack row opens (Tactical Legacy Pack
+// only). Same shape as the narrative screen: a choice list, then the confirm button.
+std::unique_ptr<GraphRender> BuildSoundtrack()
+{
+    gFocus.clear();
+    GameUI::SoundtrackView view = GameUI::ReadSoundtrack(gScreen);
+    if (view.rows.empty())
+        return nullptr;
+
+    GraphBuilder b;
+    b.BeginStop("content");
+    for (const GameUI::OptionRow& row : view.rows) {
+        AddSetupRow(b, row, "snd/" + row.label, FocusTarget{row.index, nullptr, false},
+            row.index == view.selectedRow, RowTooltipAction(row.handle));
+    }
+    if (view.start.handle) {
+        b.BeginStop("start");
+        AddSetupButton(b, view.start, "snd/start", /*writeBackFocus*/ false);
+    }
+    return b.Build();
+}
+
+void* ProbeSoundtrack()
+{
+    void* screen = GameUI::FindSoundtrackScreen();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+std::string SoundtrackName()
+{
+    std::string title = GameUI::ReadSoundtrack(gScreen).title;
+    return title.empty() ? Vocab::ScreenSoundtrackFallback : title;
+}
+
+// ---- the in-game pause menu recipe (UIPauseMenu) ----
+
+// Escape over a running campaign, in the tactical layer and on the Avenger alike. One vertical
+// list of plain text rows, and WHICH rows depends on where the game is (save and restart come
+// and go with the mission, difficulty and Second Wave only outside the shell) — so nothing here
+// is positional; the list is read as it stands and activation goes back through its index.
+std::unique_ptr<GraphRender> BuildPauseMenu()
+{
+    gFocus.clear();
+    GameUI::PauseMenuView view = GameUI::ReadPauseMenu(gScreen);
+    if (view.options.empty())
+        return nullptr;
+
+    GraphBuilder b;
+    b.BeginStop("options");
+    for (size_t i = 0; i < view.options.size(); i++) {
+        const GameUI::MenuItem& opt = view.options[i];
+        const int index = static_cast<int>(i);
+
+        ControlId id = ControlId::Referenced(opt.handle, "pause/" + opt.label);
+        gFocus[id.StructuralKey] = FocusTarget{index, nullptr, false};
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(opt.label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (opt.disabled) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        }
+        vt.Announcements.emplace_back(NodeAnnouncement(
+            [selected = opt.focused]() {
+                return selected ? std::string(Vocab::Selected) : std::string();
+            },
+            false, AnnouncementKinds::Selected));
+        // Read gScreen at activation rather than capturing it: the handler runs from the input
+        // drain, a frame or more after this render, and the screen may have been rebuilt.
+        vt.OnActivate = [index]() { GameUI::ActivatePauseMenuItem(gScreen, index); };
+        b.AddItem(std::move(id), std::move(vt));
+    }
+    return b.Build();
+}
+
+void* ProbePauseMenu()
+{
+    void* screen = GameUI::FindPauseMenu();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+std::string PauseMenuName()
+{
+    std::string title = GameUI::ReadPauseMenu(gScreen).title;
+    return title.empty() ? Vocab::ScreenPauseMenuFallback : title;
+}
+
+// ---- the modal dialog recipe (UIDialogueBox) ----
+
+// The confirmations the setup screens raise (turning the tutorial off, choosing Ironman,
+// disabling the expansion narrative). The box is a PERMANENT screen that never takes stack
+// focus, so it is probed on its queue instead — and probed FIRST, because the screen it covers
+// still reports itself focused underneath.
+std::unique_ptr<GraphRender> BuildDialog()
+{
+    gFocus.clear(); // Flash-driven: no panels to drive the game's own focus onto
+
+    GameUI::DialogView view = GameUI::ReadDialog(gScreen);
+
+    // Identity has to carry the dialog's text: one dialog can be replaced by another between
+    // two polls (a callback raising the next), and without that the differ would see the same
+    // node and stay silent about a question the player has not heard.
+    const std::string key = view.title + "\n" + view.body + "\n";
+
+    GraphBuilder b;
+    b.BeginStop("buttons");
+    // The question itself is a context, not the screen name: a REPLACED dialog gets no fresh
+    // attach to speak a screen name with, and the landing readout carries only the node's own
+    // path — so the text has to live in that path to be heard at all.
+    std::string question = view.title;
+    if (!view.body.empty())
+        question += question.empty() ? view.body : ". " + view.body;
+    if (!question.empty())
+        b.PushContext(question, "", /*positions*/ false);
+    b.StartRow();
+
+    // The game gates its own Enter/Escape on these labels being non-empty; a dialog with
+    // neither cannot be answered at all, so it becomes a read-only line carrying its text.
+    if (view.accept.empty() && view.cancel.empty()) {
+        std::string text = view.body.empty() ? view.title : view.body;
+        if (text.empty())
+            return nullptr;
+        b.AddLabel(ControlId::Structural(key + "notice"), [text]() { return text; });
+        b.EndRow();
+        return b.Build();
+    }
+
+    struct Choice {
+        const std::string& label;
+        const char* suffix;
+        bool (*Resolve)(void*);
+    };
+    const Choice choices[2] = {
+        {view.accept, "accept", GameUI::DialogAccept},
+        {view.cancel, "cancel", GameUI::DialogCancel},
+    };
+    for (const Choice& choice : choices) {
+        if (choice.label.empty())
+            continue;
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(choice.label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.OnActivate = [resolve = choice.Resolve]() { resolve(gScreen); };
+        b.AddItem(ControlId::Structural(key + choice.suffix), std::move(vt));
+    }
+    b.EndRow();
+    return b.Build();
+}
+
+void* ProbeDialog()
+{
+    // The finder only hands back a box that is actually showing something, so presence is the
+    // whole readiness test here — there is no focus bit to consult.
+    return GameUI::FindDialogScreen();
+}
+
+// Just the word: the dialog's own title and body ride in the graph as a context, so naming the
+// screen only has to announce that a modal question has appeared.
+std::string DialogName()
+{
+    return Vocab::ScreenDialog;
+}
+
 // ---- the recipe roster (probe order: topmost screens first — settings stacks on the shell) ----
 
-const Recipe kOptionsRecipe{"settings", ProbeOptions, BuildOptions, OptionsName};
+const Recipe kDialogRecipe{"dialog", ProbeDialog, BuildDialog, DialogName};
+const Recipe kNarrativeRecipe{
+    "narrative content", ProbeNarrative, BuildNarrative, NarrativeName, GameUI::SetNarrativeIndex};
+const Recipe kIronManRecipe{"ironman", ProbeIronMan, BuildIronMan, IronManName};
+const Recipe kSoundtrackRecipe{
+    "soundtrack", ProbeSoundtrack, BuildSoundtrack, SoundtrackName, GameUI::SetSoundtrackIndex};
+const Recipe kOptionsRecipe{
+    "settings", ProbeOptions, BuildOptions, OptionsName, GameUI::SetOptionsListIndex};
+// The Second Wave list is the only UIList on the difficulty screen; the rest of its controls
+// hang off plain panels and take the SetSelectedNavigation path instead.
+const Recipe kDifficultyRecipe{
+    "difficulty", ProbeDifficulty, BuildDifficulty, DifficultyName, GameUI::SetSecondWaveIndex};
+// Below the setup screens it can open (difficulty, Second Wave, settings) and above nothing —
+// it is the bottom of the in-game stack the way the shell is the bottom of the menu stack.
+const Recipe kPauseMenuRecipe{
+    "pause menu", ProbePauseMenu, BuildPauseMenu, PauseMenuName, GameUI::SetPauseMenuIndex};
 const Recipe kMainMenuRecipe{"main menu", ProbeMainMenu, BuildMainMenu, MainMenuName};
-const Recipe* const kRecipes[] = {&kOptionsRecipe, &kMainMenuRecipe};
+
+// The dialog leads: it never takes stack focus, so the screen it covers still probes ready.
+const Recipe* const kRecipes[] = {&kDialogRecipe, &kNarrativeRecipe, &kIronManRecipe,
+    &kSoundtrackRecipe, &kOptionsRecipe, &kDifficultyRecipe, &kPauseMenuRecipe, &kMainMenuRecipe};
 
 // ---- key handlers (game thread, via the arbiter's drain) ----
 
@@ -783,6 +1275,27 @@ void OnTick()
     gLastPollMs = now;
 
     try {
+        // Being on top of the stack is not the same as being reachable. Starting a campaign pops
+        // the narrative screen and leaves the difficulty screen underneath inited, focused and
+        // topmost for the whole twelve seconds the loading movie plays — so the layer happily
+        // announced a screen that, to everyone else, had already gone. The stack's own gates say
+        // otherwise, and they are the same ones the game consults before opening its pause menu.
+        GameUI::StackState stack = GameUI::ReadStackState();
+        bool movie = GameUI::MoviePlaying();
+        bool gated = movie || (stack.valid && !stack.Interactive());
+        if (gated != gGated) {
+            gGated = gated;
+            LOG_INFO("MenuNavigator: UI %s (movie %d, input blocked %d, screens hidden %d, "
+                     "cinematic %d)",
+                gated ? "gated — nothing is navigable" : "ungated", movie, stack.inputBlocked,
+                stack.screensHidden, stack.cinematic);
+        }
+        if (gated) {
+            if (gAttached)
+                Detach();
+            return;
+        }
+
         if (!gAttached) {
             const Recipe* found = nullptr;
             void* screen = nullptr;
@@ -796,6 +1309,32 @@ void OnTick()
             if (!found) {
                 gPending = nullptr;
                 gSettle = 0;
+                // Only interesting while a gap is open (the player just left a screen and is
+                // waiting). Twice a second is enough to see how the state bits move, and the
+                // 15 s cutoff keeps an idle loading screen from writing forever.
+                // Every half second at first, then every five — a long gap is the interesting
+                // one, so it must not be the one that goes unlogged.
+                uint64_t idle = gDetachMs ? now - gDetachMs : 0;
+                uint64_t every = idle < 15000 ? 500 : 5000;
+                if (gDetachMs && idle < 180000 && now - gGapLogMs >= every) {
+                    gGapLogMs = now;
+                    void* shell = GameUI::FindMainMenuShell();
+                    LOG_DEBUG("MenuNavigator: %llu ms with nothing to attach — stack valid %d "
+                              "gated %d, UIFinalShell %p/0x%X, %s",
+                        static_cast<unsigned long long>(idle), stack.valid, gated, shell,
+                        GameUI::ScreenStateBits(shell),
+                        GameUI::DescribeTrackedScreens().c_str());
+                }
+                // A world change leaves nothing to read for ten seconds or more, and to a player
+                // who cannot see the loading art that silence is indistinguishable from a crash
+                // — it is what the "it hangs on the menu" reports were really about. Keyed off
+                // the game's own overlay so it can never fire during ordinary play, where having
+                // no screen attached is simply normal.
+                if (idle >= 1500 && (!gLoadSaidMs || now - gLoadSaidMs >= 10000)
+                    && GameUI::LoadScreenShowing()) {
+                    gLoadSaidMs = now;
+                    TTS::SpeakInterrupt(Vocab::Loading);
+                }
                 return;
             }
             if (found != gPending || screen != gScreen) {

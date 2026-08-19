@@ -37,6 +37,29 @@ inline constexpr const char* My2KLinked = "linked";
 inline constexpr const char* My2KNotLinked = "not linked";
 inline constexpr const char* My2KOffline = "offline";
 
+// ---- new game flow ----
+
+// Screen names for the campaign-setup screens. The difficulty and narrative screens carry
+// their own localized titles and only fall back to these; the Ironman screen and the modal
+// dialog have no title property of their own worth trusting, so these name them outright.
+inline constexpr const char* ScreenDifficultyFallback = "New campaign";
+inline constexpr const char* ScreenIronManFallback = "Ironman";
+inline constexpr const char* ScreenNarrativeFallback = "Optional narrative content";
+inline constexpr const char* ScreenSoundtrackFallback = "Soundtrack";
+inline constexpr const char* ScreenDialog = "Dialog";
+
+// The in-game Escape menu. It carries its own localized title and only falls back to this.
+inline constexpr const char* ScreenPauseMenuFallback = "Pause menu";
+
+// Spoken while the game shows its loading overlay and the layer has nothing to read. A world
+// change can take ten seconds or more, and unbroken silence there reads as a crash.
+inline constexpr const char* Loading = "Loading";
+
+// The two panels of the difficulty screen. The game draws them as separate blocks without
+// headings; naming them is what makes Tab between them meaningful.
+inline constexpr const char* GroupDifficulty = "Difficulty";
+inline constexpr const char* GroupCampaignOptions = "Campaign options";
+
 inline std::string Position(int index, int count)
 {
     return std::to_string(index) + " of " + std::to_string(count);

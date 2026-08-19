@@ -2,7 +2,6 @@
 // Does NOT include the full SdkHeaders.hpp to avoid pulling in Engine/XComGame (millions of lines).
 
 #include "GameDefines.hpp"
-#include "SdkConstants.hpp"
 #include "SDK_HEADERS/Core_structs.hpp"
 #include "SDK_HEADERS/Core_classes.hpp"
 
