@@ -7,3 +7,7 @@
 [submodule "deps/X2WOTCCommunityHighlander"]
 	path = deps/X2WOTCCommunityHighlander
 	url = https://github.com/X2CommunityCore/X2WOTCCommunityHighlander.git
+[submodule "deps/CodeRed-Generator"]
+	path = deps/CodeRed-Generator
+	url = https://github.com/alex19EP/CodeRed-Generator.git
+	branch = xcom2

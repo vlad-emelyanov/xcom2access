@@ -570,7 +570,12 @@ loads it — it is vestigial; do not use it.
     gone and everything after 0x430 moves down 0x10. A field can therefore
     exist in one build and not the other — the layout asserts are what turns
     that into a build error, and they caught exactly this one.
-- `deps/CodeRed-Generator` — the SDK dumper. It produced `generated_sdk/X2SDK/`,
+- `deps/CodeRed-Generator` (submodule of the `alex19EP/CodeRed-Generator`
+  fork, branch `xcom2`) — the SDK dumper. The fork branch carries the XCOM2
+  adaptation on top of upstream: `Engine/XCOM2/` config plus the generator
+  fixes documented above (`m_unsafeChars`, `UniquifyFunctionNames`, the
+  `GameDefines.hpp` pack region). The generic fixes are separable from the
+  XCOM2 config and are upstream-PR candidates. It produced `generated_sdk/X2SDK/`,
   which IS a build input but is **not in git** (113 MB, `.gitignore`d): if that
   folder is lost the build dies and the only recovery is a regeneration run.
   `just sdk-build` / `sdk-gen` / `sdk-adopt` / `sdk-revert` drive that; the
