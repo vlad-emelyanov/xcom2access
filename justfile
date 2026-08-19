@@ -134,6 +134,21 @@ dev-log tail="50": (dev "log?tail=" + tail)
 # Screen stack, gates, navigator and tile-reader state. Runs on the game thread.
 dev-status: (dev "status")
 
+# Run a console command and get back whatever it wrote to the game's Launch.log.
+# All 1246 SDK exec functions are reachable, cheat managers included: `just dev-exec "StartLadder 0 1"`.
+dev-exec cmd:
+    @& "{{ curl }}" -s --max-time 30 --data-binary "{{ cmd }}" "http://127.0.0.1:{{ devserver_port }}/exec"
+
+# Synthetic keys. Default tier is SendInput (drives the WHOLE game, needs the window foreground);
+# mode=kernel injects into our own arbiter queue instead, which drives ONLY our layer and works
+# with the game backgrounded: `just dev-input Left,Left,Delete kernel`.
+dev-input keys mode="send":
+    @& "{{ curl }}" -s --max-time 30 "http://127.0.0.1:{{ devserver_port }}/input?keys={{ keys }}&mode={{ mode }}"
+
+# PNG of the monitor the game is on (Desktop Duplication). Defaults beside the .asi.
+dev-shot path="":
+    @& "{{ curl }}" -s --max-time 60 "http://127.0.0.1:{{ devserver_port }}/screenshot?path={{ path }}"
+
 # ---- SDK regeneration -------------------------------------------------------
 #
 # The generated SDK is NOT in git (114 MB, .gitignore'd), so regenerating is the only way to

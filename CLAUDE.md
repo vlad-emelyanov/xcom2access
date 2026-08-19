@@ -243,43 +243,94 @@ memory. Engine-facing endpoints queue a job that `DevServer::Pump()` drains on
 the GAME thread, first statement of the `EventDispatch::SetFramePump` lambda —
 the same rule as outbound ProcessEvent calls, extended to reads. `/health`,
 `/speech` and `/log` answer **off-thread** from process-memory rings, which is
-what makes them useful when the game thread is the broken thing: they still
-respond during a load movie or a hang, and `/health`'s `pump-age-ms` is how you
-tell a wedged game from a dead server. `Stop()` runs from
+what makes them useful when the game thread is the broken thing. That is not
+hypothetical: a launch that fell into a `GetQueryData - Timed out while waiting
+for GPU to catch up` loop 14 s after boot left every game-thread endpoint
+timing out for minutes while `/health` kept answering with a rising
+`pump-age-ms` and `/log` + the game's own `Launch.log` named the cause. A
+game-thread timeout therefore means "the game is not running frames", NOT "the
+harness is broken" — check `pump-age-ms` before suspecting anything else, and
+remember the pump rides ProcessEvent traffic, so it is only as alive as the
+game is. `Stop()` runs from
 `DllMain(DLL_PROCESS_DETACH)`, i.e. under the loader lock, so it does a
 **bounded** 1 s wait on the accept thread and detaches rather than `join()`ing
 — an unbounded join there can deadlock the game's shutdown.
 
-Endpoints (phase 1): `/health`, `/speech?since=N`, `/log?since=N&tail=N`,
-`/status` (movie + load screen, the screen stack's gate flags, the attached
-recipe, the tile-reader gate, and a top-first dump of `UIScreenStack.Screens`
-with each entry's flags decoded — the not-inited and removed entries the
-finders skip are shown, because the point is to answer "what is on screen"
-for a screen that has no recipe yet). An unknown path returns the endpoint
-list. `/speech` and `/log` are cursor-paged: poll with the returned `cursor:`
-value for exactly-once delivery.
+Endpoints:
 
-Driving it: `just arm`, `just dev-health` / `dev-status` / `dev-speech` /
-`dev-log`, or `just dev '<endpoint>?<query>'` for anything else.
+- `/health` — build stamp and `pump-age-ms`.
+- `/speech?since=N` — every line `TTS::Speak` was handed, cursor-paged.
+- `/log?since=N&tail=N` — the ASI log ring, cursor-paged.
+- `/status` — movie + load screen, the screen stack's gate flags, the attached
+  recipe, the tile-reader gate, and a top-first dump of `UIScreenStack.Screens`
+  with each entry's flags decoded (the not-inited and removed entries the
+  finders skip are shown too — the point is to answer "what is on screen" for a
+  screen that has no recipe yet).
+- `/exec` — a console command (POST body, or `?cmd=`). See below.
+- `/input?keys=Down,Down,Enter` — synthetic keys. Default tier is **SendInput
+  scancodes** after raising the game window, which drives the WHOLE game (UE3
+  reads Raw Input, so a VK-only synthetic press is ignored — scancodes are not
+  optional). `&mode=kernel` instead injects into the arbiter's own queue via
+  `InputArbiter::InjectSynthetic`, driving ONLY our layer, working with the
+  game backgrounded, and reporting per key whether a claim took it. `&hold=`
+  and `&gap=` are milliseconds.
+- `/screenshot[?path=&foreground=0&output=N]` — PNG of the monitor the game is
+  on, via DXGI Desktop Duplication (`src/screen_capture.cpp`).
+
+An unknown path returns the endpoint list. `/speech` and `/log` are
+cursor-paged: poll with the returned `cursor:` value for exactly-once delivery.
+
+Driving it: `just arm`, then `just dev-health` / `dev-status` / `dev-speech` /
+`dev-log` / `dev-exec "<cmd>"` / `dev-input <keys> [kernel]` / `dev-shot`, or
+`just dev '<endpoint>?<query>'` for anything else.
 ⛔ Scripts must call curl as `$env:SystemRoot/System32/curl.exe` — bare `curl`
 on PATH resolves to MSYS2's cygwin build, whose path translation mangles URL
 arguments into blanks. The justfile's `curl` variable already does this.
 ⛔ **Shared-harness rule** (from RTAccess): do not drive the live game while
 another agent or session is driving it — give the user manual steps instead.
 
-Phase 2 (`/exec`, `/input`, `/screenshot`) and phase 3 (`/gui`, `/tile`) are
-not built yet. The `/exec` design is settled though, and it is the one place
-XCOM 2 is *easier* than both siblings: `Actor.ConsoleCommand(string, optional
-bool)` is a `native function` returning a **string** (Engine/Classes/Actor.uc,
-PlayerController.uc), so it needs no CET-Lua bridge and no `Mono.CSharp` —
-just `CallNamedFunction` on a player controller. Behind it are **1246
-`exec function`s** in the SDK sources, including all of
-`XComTacticalCheatManager` and `XComCheatManager.StartLadder(Ladder,
-Difficulty)`, which drops straight from the shell into a tactical mission.
-Caveat to verify live before relying on it: `XComPlayerController.AddCheats`
-and `XComGameInfo.AllowCheats` both sit inside `` `if(`notdefined(FINAL_RELEASE)) ``
-blocks, so whether the retail binary instantiates a CheatManager is a fact to
-establish, not to assume.
+### `/exec` and the console — three facts established live
+
+1. **The retail binary has a CheatManager.** `XComPlayerController.AddCheats`
+   and `XComGameInfo.AllowCheats` both sit inside
+   `` `if(`notdefined(FINAL_RELEASE)) `` blocks, so this was an open question.
+   `obj list class=XComTacticalCheatManager` in a live mission returns
+   `XComTacticalController_0.XComTacticalCheatManager_0` — so retail is NOT a
+   FINAL_RELEASE build and all **1246 `exec function`s** in the SDK sources are
+   reachable by name, cheat managers included. This is the one place XCOM 2 is
+   *easier* than both sibling projects: no CET-Lua bridge, no `Mono.CSharp`.
+2. **`ConsoleCommand`'s return value is useless here** — it comes back empty
+   even for commands that clearly ran (`obj list …` returns nothing and prints
+   its table; an unknown command returns nothing and logs "Command not
+   recognized"). Output goes to the game's `Launch.log`. So `/exec` snapshots
+   that file's size, runs the command, and returns what got appended; an
+   endpoint reporting only the return value would look broken for every command
+   worth running.
+3. **Route: `WorldInfo.GetWorldInfo()` (static native) →
+   `GetALocalPlayerController()` (on Actor) → `ConsoleCommand(cmd, bWriteToLog)`.**
+   No object is cached across frames, which keeps the GC rule intact.
+   The param struct is `#pragma pack(4)`: `ReturnValue` sits at **0x14**,
+   directly after the bool bitfield with no padding, and natural alignment
+   would put it at 0x18 and read garbage. Pinned by `static_assert`.
+
+### ProcessEvent's parameter semantics (decompiled, moduleBase+0x143B50)
+
+Needed before any call that passes or returns an `FString`, and true of every
+such call:
+
+- Parameters are **shallow-`memcpy`'d** into ProcessEvent's alloca'd frame —
+  not per-property deep-copied. So a buffer we own is passed by pointer.
+- The `ConstructorLink` destroy pass only runs `DestroyValue` on properties
+  whose `Offset >= ParmsSize` — true locals, **never parameters**. So the
+  engine never frees an `FString` buffer we passed in; ours merely has to
+  outlive the call.
+- The return value is written **straight into our block**: ProcessEvent passes
+  `Parms + ReturnValueOffset` as the native's result pointer. It arrives in an
+  ENGINE-allocated buffer, so reading it is free and freeing it would need
+  `appFree`. `ConsoleCommand` deliberately leaks it — a few dozen bytes per
+  dev-only call beats calling the wrong deallocator.
+
+Phase 3 (`/gui` widget-tree dump, `/tile`) is not built yet.
 
 ## Reverse engineering workflow
 
@@ -387,9 +438,9 @@ Remaining:
    recipes of their own. Its screen lookup caches the newest box, which a
    presentation-layer change could leave stale; covering dialogs outside the
    shell should switch that to a screen-stack walk.
-6. Dev harness phase 2 (`/exec`, `/input`, `/screenshot`) — see **Dev harness**
-   above. `/exec` + `StartLadder` is what turns item 3 from "play a mission by
-   hand, repeatedly" into a scripted loop.
+6. Dev harness phase 3 (`/gui` widget-tree dump, `/tile`) — see **Dev harness**
+   above. `/gui` would shortcut steps 1-2 of *Adding a screen recipe*, which
+   currently mean reading `SrcOrig` and transcribing offsets blind.
 
 When researching for this project, focus on engine/native/UE3 technicals.
 Do not survey the accessibility-mod landscape — the author knows it better

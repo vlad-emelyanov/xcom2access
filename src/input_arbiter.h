@@ -58,6 +58,18 @@ void RegisterClaim(Claim claim);
 /// exact (vk, mods) match is currently active.
 bool IsClaimed(uint8_t vk, uint8_t mods);
 
+#ifdef X2ACCESS_DEVSERVER
+/// Dev harness only: push an event into the queue as though the window procedure had claimed
+/// it, so a test can drive OUR layer without the game window being focused (or even foreground).
+/// Returns false when no active claim matches, which is the honest answer — the key would have
+/// gone to the game.
+///
+/// GAME THREAD ONLY, for the same reason the real chokepoint is: `activeWhen` is evaluated here,
+/// and the contract says it is evaluated at message time on the game thread. Note what this
+/// does NOT do — it never reaches the engine's own input, so it tests the layer, not the game.
+bool InjectSynthetic(const KeyEvent& e);
+#endif
+
 /// Game-tick pump: installs the window subclass once the game window exists (and re-installs if
 /// the window is recreated), then drains queued key events into their claims' handlers. Safe to
 /// call many times per frame — cheap and idempotent.

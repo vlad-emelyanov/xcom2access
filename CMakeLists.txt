@@ -70,12 +70,13 @@ target_compile_definitions(X2Access PRIVATE SRAL_STATIC)
 
 target_link_libraries(X2Access PRIVATE SRAL_static)
 
-# Dev harness: one TU plus Winsock. The define is target-wide because log.cpp's /log ring and
-# tts.cpp's /speech tap are gated on it too — they cost the release build nothing.
+# Dev harness: two TUs (the server, and the Desktop Duplication screenshot which owns the
+# D3D/GDI+ includes). The define is target-wide because log.cpp's /log ring, tts.cpp's /speech
+# tap and the arbiter's synthetic injection are gated on it too — all free in a release build.
 if(X2ACCESS_DEVSERVER)
-    target_sources(X2Access PRIVATE src/dev_server.cpp)
+    target_sources(X2Access PRIVATE src/dev_server.cpp src/screen_capture.cpp)
     target_compile_definitions(X2Access PRIVATE X2ACCESS_DEVSERVER)
-    target_link_libraries(X2Access PRIVATE ws2_32)
+    target_link_libraries(X2Access PRIVATE ws2_32 shell32 d3d11 dxgi gdiplus)
     message(STATUS "X2Access: dev harness ENABLED (loopback HTTP, marker-gated at runtime)")
 endif()
 

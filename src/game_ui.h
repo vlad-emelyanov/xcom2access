@@ -382,4 +382,14 @@ void* FindCompanionCDO(const char* className);
 /// `params` must match the UFunction's parameter layout. Game thread only.
 bool CallScriptFunction(void* obj, const char* funcName, void* params);
 
+/// Run `command` through the game's own console (`Actor.ConsoleCommand` on the local player
+/// controller) and return what it printed — empty for the many commands that say nothing, or a
+/// `[exec] …` string when the call could not be made at all. This is the whole `exec function`
+/// surface (1246 of them across the SDK, the cheat managers included) reachable by name, which
+/// is why the dev harness needs no scripting bridge of its own.
+///
+/// The reply comes back in an engine-allocated FString that we read and deliberately leak; see
+/// the implementation. Game thread only.
+std::string ConsoleCommand(const std::string& command);
+
 } // namespace GameUI

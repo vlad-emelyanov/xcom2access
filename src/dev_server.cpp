@@ -10,12 +10,16 @@
 
 #include <winsock2.h>
 #include <windows.h>
+#include <shlobj.h>  // SHGetKnownFolderPath: Launch.log lives under the real Documents folder,
+                     // which OneDrive redirection makes unguessable from environment variables
 
 #include "dev_server.h"
 
 #include "game_ui.h"
+#include "input_arbiter.h"
 #include "log.h"
 #include "menu_navigator.h"
+#include "screen_capture.h"
 
 #include <algorithm>
 #include <atomic>
@@ -70,6 +74,10 @@ SOCKET gListener = INVALID_SOCKET;
 std::atomic<SOCKET> gClient{INVALID_SOCKET};
 std::thread gThread;
 uint16_t gPort = kDefaultPort;
+
+// Where the .asi lives: the marker file sits here, and it is the default screenshot
+// destination — a directory the game process can certainly write to.
+std::string gAsiDir;
 
 // Last Pump() timestamp. THE liveness signal: a /health that says the pump last ran 8 seconds
 // ago tells you the game thread is wedged, which is otherwise indistinguishable from a dead
@@ -209,6 +217,291 @@ std::string StatusText()
     return out;
 }
 
+// ---- the game's own log ------------------------------------------------------------------------
+//
+// Console output does NOT come back through ConsoleCommand's return value in this build:
+// `obj list class=XComTacticalCheatManager` returns an empty FString and writes its table to
+// Launch.log, and so does "Command not recognized". An /exec that reported only the return value
+// would therefore look like it did nothing for every command worth running. So we snapshot the
+// log's size, run the command, and hand back what got appended.
+
+std::wstring GameLogPath()
+{
+    static std::wstring cached;
+    if (!cached.empty())
+        return cached;
+    PWSTR docs = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Documents, 0, nullptr, &docs)) && docs) {
+        cached = std::wstring(docs)
+            + L"\\My Games\\XCOM2 War of the Chosen\\XComGame\\Logs\\Launch.log";
+        CoTaskMemFree(docs);
+    }
+    return cached;
+}
+
+// The game holds Launch.log open for writing, so every share flag has to be granted or the
+// open fails outright rather than merely reading stale bytes.
+HANDLE OpenGameLog()
+{
+    const std::wstring path = GameLogPath();
+    if (path.empty())
+        return INVALID_HANDLE_VALUE;
+    return CreateFileW(path.c_str(), GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL, nullptr);
+}
+
+uint64_t GameLogSize()
+{
+    HANDLE file = OpenGameLog();
+    if (file == INVALID_HANDLE_VALUE)
+        return 0;
+    LARGE_INTEGER size{};
+    GetFileSizeEx(file, &size);
+    CloseHandle(file);
+    return static_cast<uint64_t>(size.QuadPart);
+}
+
+std::string ReadGameLogFrom(uint64_t offset)
+{
+    // Bounded: `obj list class=Actor` is megabytes, and a dev harness answer nobody can read is
+    // no better than no answer.
+    constexpr uint64_t kMaxTail = 256 * 1024;
+
+    HANDLE file = OpenGameLog();
+    if (file == INVALID_HANDLE_VALUE)
+        return {};
+    LARGE_INTEGER size{};
+    GetFileSizeEx(file, &size);
+    const uint64_t end = static_cast<uint64_t>(size.QuadPart);
+    std::string out;
+    if (end > offset) {
+        uint64_t start = offset;
+        bool truncated = false;
+        if (end - start > kMaxTail) {
+            start = end - kMaxTail;
+            truncated = true;
+        }
+        LARGE_INTEGER pos{};
+        pos.QuadPart = static_cast<LONGLONG>(start);
+        if (SetFilePointerEx(file, pos, nullptr, FILE_BEGIN)) {
+            out.resize(static_cast<size_t>(end - start));
+            DWORD read = 0;
+            if (ReadFile(file, out.data(), static_cast<DWORD>(out.size()), &read, nullptr))
+                out.resize(read);
+            else
+                out.clear();
+        }
+        if (truncated && !out.empty())
+            out.insert(0, "[... truncated to the last 256 KB ...]\n");
+    }
+    CloseHandle(file);
+    return out;
+}
+
+// ---- synthetic input ---------------------------------------------------------------------------
+
+// A key spec: "Down", "Shift+Period", "Ctrl+S", "F5", "A". Case-insensitive.
+struct KeySpec {
+    uint8_t vk = 0;
+    uint8_t mods = 0;
+    bool extended = false; // the arrows/nav cluster need KEYEVENTF_EXTENDEDKEY to scan correctly
+    std::string token;     // as the caller wrote it, so the reply names keys the way they asked
+};
+
+struct NamedKey {
+    const char* name;
+    uint8_t vk;
+    bool extended;
+};
+
+const NamedKey kNamedKeys[] = {
+    {"up", VK_UP, true}, {"down", VK_DOWN, true}, {"left", VK_LEFT, true},
+    {"right", VK_RIGHT, true}, {"home", VK_HOME, true}, {"end", VK_END, true},
+    {"pageup", VK_PRIOR, true}, {"pagedown", VK_NEXT, true}, {"insert", VK_INSERT, true},
+    {"delete", VK_DELETE, true}, {"del", VK_DELETE, true},
+    {"enter", VK_RETURN, false}, {"return", VK_RETURN, false},
+    {"esc", VK_ESCAPE, false}, {"escape", VK_ESCAPE, false},
+    {"space", VK_SPACE, false}, {"tab", VK_TAB, false},
+    {"backspace", VK_BACK, false}, {"back", VK_BACK, false},
+    {"comma", VK_OEM_COMMA, false}, {"period", VK_OEM_PERIOD, false},
+};
+
+bool ParseKeySpec(std::string token, KeySpec& out)
+{
+    // Modifier prefixes, repeatable: "Ctrl+Shift+Left".
+    //
+    // A SPACE separates too, and that is not a convenience: in a query string "+" means space,
+    // so "?keys=Shift+Period" arrives here as "Shift Period" no matter what the caller intended.
+    // Accepting both is what makes the obvious spelling work over a URL and in a POST body alike.
+    for (;;) {
+        const size_t plus = token.find_first_of("+ ");
+        if (plus == std::string::npos || plus == 0)
+            break;
+        std::string mod = token.substr(0, plus);
+        std::transform(mod.begin(), mod.end(), mod.begin(),
+            [](unsigned char c) { return static_cast<char>(tolower(c)); });
+        if (mod == "ctrl" || mod == "control")
+            out.mods |= InputArbiter::ModCtrl;
+        else if (mod == "shift")
+            out.mods |= InputArbiter::ModShift;
+        else if (mod == "alt")
+            out.mods |= InputArbiter::ModAlt;
+        else
+            return false;
+        token = token.substr(plus + 1);
+    }
+    if (token.empty())
+        return false;
+
+    std::string lower = token;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+        [](unsigned char c) { return static_cast<char>(tolower(c)); });
+
+    for (const NamedKey& k : kNamedKeys) {
+        if (lower == k.name) {
+            out.vk = k.vk;
+            out.extended = k.extended;
+            return true;
+        }
+    }
+    if (lower.size() >= 2 && lower[0] == 'f') {
+        const int n = atoi(lower.c_str() + 1);
+        if (n >= 1 && n <= 24) {
+            out.vk = static_cast<uint8_t>(VK_F1 + n - 1);
+            return true;
+        }
+    }
+    if (lower.size() == 1) {
+        const char c = lower[0];
+        if (c >= 'a' && c <= 'z') {
+            out.vk = static_cast<uint8_t>('A' + (c - 'a'));
+            return true;
+        }
+        if (c >= '0' && c <= '9') {
+            out.vk = static_cast<uint8_t>(c);
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<std::string> SplitCommas(const std::string& text)
+{
+    std::vector<std::string> parts;
+    size_t pos = 0;
+    while (pos <= text.size()) {
+        const size_t comma = text.find(',', pos);
+        const size_t end = (comma == std::string::npos) ? text.size() : comma;
+        std::string part = text.substr(pos, end - pos);
+        // Tolerate "Down, Down" as well as "Down,Down".
+        while (!part.empty() && isspace(static_cast<unsigned char>(part.front())))
+            part.erase(part.begin());
+        while (!part.empty() && isspace(static_cast<unsigned char>(part.back())))
+            part.pop_back();
+        if (!part.empty())
+            parts.push_back(part);
+        if (comma == std::string::npos)
+            break;
+        pos = comma + 1;
+    }
+    return parts;
+}
+
+// The game window, brought to the foreground. Both callers need it and for the same reason:
+// synthetic input goes to the FOREGROUND window, and Desktop Duplication photographs whatever is
+// VISIBLE — a backgrounded game is occluded by whatever sits on top of it.
+HWND RaiseGameWindow()
+{
+    HWND hwnd = FindWindowW(L"LaunchUnrealUWindowsClient", nullptr);
+    if (!hwnd)
+        return nullptr;
+    if (GetForegroundWindow() != hwnd) {
+        SetForegroundWindow(hwnd);
+        Sleep(120); // the engine needs a beat to notice it has focus before keys mean anything
+    }
+    return hwnd;
+}
+
+void SendScanKey(uint8_t vk, bool extended, bool down)
+{
+    INPUT in{};
+    in.type = INPUT_KEYBOARD;
+    in.ki.wVk = 0; // scancode-only: UE3 reads Raw Input, which ignores a VK-only synthetic press
+    in.ki.wScan = static_cast<WORD>(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC));
+    in.ki.dwFlags = KEYEVENTF_SCANCODE | (extended ? KEYEVENTF_EXTENDEDKEY : 0)
+        | (down ? 0 : KEYEVENTF_KEYUP);
+    SendInput(1, &in, sizeof(in));
+}
+
+// Accept thread. Raises the game window first: synthetic input goes to the FOREGROUND window,
+// so without this the keys land in whatever the user was looking at.
+std::string SendInputKeys(const std::vector<KeySpec>& keys, uint32_t holdMs, uint32_t gapMs)
+{
+    if (!RaiseGameWindow())
+        return "[input] game window not found\n";
+
+    for (const KeySpec& k : keys) {
+        if (k.mods & InputArbiter::ModCtrl) SendScanKey(VK_CONTROL, false, true);
+        if (k.mods & InputArbiter::ModShift) SendScanKey(VK_SHIFT, false, true);
+        if (k.mods & InputArbiter::ModAlt) SendScanKey(VK_MENU, false, true);
+        SendScanKey(k.vk, k.extended, true);
+        Sleep(holdMs);
+        SendScanKey(k.vk, k.extended, false);
+        if (k.mods & InputArbiter::ModAlt) SendScanKey(VK_MENU, false, false);
+        if (k.mods & InputArbiter::ModShift) SendScanKey(VK_SHIFT, false, false);
+        if (k.mods & InputArbiter::ModCtrl) SendScanKey(VK_CONTROL, false, false);
+        Sleep(gapMs);
+    }
+    return "sent " + std::to_string(keys.size()) + " key(s) via SendInput\n";
+}
+
+// Game thread. Reports per key whether a claim took it — "not claimed" is a real answer, not a
+// failure: it means that chord would have gone straight to the game.
+std::string InjectKernelKeys(const std::vector<KeySpec>& keys)
+{
+    std::string out;
+    for (const KeySpec& k : keys) {
+        InputArbiter::KeyEvent down{};
+        down.vk = k.vk;
+        down.mods = k.mods;
+        down.down = true;
+        const bool claimed = InputArbiter::InjectSynthetic(down);
+        if (claimed) {
+            InputArbiter::KeyEvent up = down;
+            up.down = false;
+            InputArbiter::InjectSynthetic(up);
+        }
+        char line[160];
+        snprintf(line, sizeof(line), "%s (vk 0x%02X mods 0x%02X): %s\n", k.token.c_str(),
+            k.vk, k.mods, claimed ? "claimed" : "NOT claimed — this chord reaches the game");
+        out += line;
+    }
+    return out;
+}
+
+// Accept thread — the capture builds its own D3D11 device and never touches the game's renderer.
+std::string ScreenshotText(const std::string& pathParam, bool foreground, int outputOverride)
+{
+    std::string path = pathParam;
+    if (path.empty())
+        path = gAsiDir + "\\X2Access-shot.png";
+
+    // Which monitor: the game's, so a multi-head setup does not photograph the empty one.
+    HMONITOR monitor = nullptr;
+    HWND hwnd = foreground ? RaiseGameWindow()
+                           : FindWindowW(L"LaunchUnrealUWindowsClient", nullptr);
+    if (hwnd)
+        monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+
+    int width = 0;
+    int height = 0;
+    const std::string error = CaptureScreenToPng(path, monitor, outputOverride, width, height);
+    if (!error.empty())
+        return error + "\n";
+    return path + "\n" + std::to_string(width) + "x" + std::to_string(height) + "\n";
+}
+
 // ---- HTTP -----------------------------------------------------------------------------------
 
 struct Request {
@@ -233,6 +526,26 @@ std::string QueryParam(const std::string& query, const char* name)
         pos = amp + 1;
     }
     return {};
+}
+
+std::string UrlDecode(const std::string& in)
+{
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size(); i++) {
+        if (in[i] == '+') {
+            out += ' ';
+        } else if (in[i] == '%' && i + 2 < in.size()
+            && isxdigit(static_cast<unsigned char>(in[i + 1]))
+            && isxdigit(static_cast<unsigned char>(in[i + 2]))) {
+            const char hex[3] = {in[i + 1], in[i + 2], '\0'};
+            out += static_cast<char>(strtoul(hex, nullptr, 16));
+            i += 2;
+        } else {
+            out += in[i];
+        }
+    }
+    return out;
 }
 
 long long QueryInt(const std::string& query, const char* name, long long fallback)
@@ -321,16 +634,78 @@ std::string Route(const Request& req, int& status)
         return RenderRing(lines, base, since);
     }
 
+    // Synthetic input. The SendInput tier deliberately stays on the accept thread: it sleeps
+    // between keys, and sleeping on the game thread would stall the frame it is trying to drive.
+    if (req.path == "/input") {
+        const std::string spec = UrlDecode(QueryParam(req.query, "keys"));
+        if (spec.empty()) {
+            status = 400;
+            return "usage: /input?keys=Down,Down,Enter[&mode=kernel][&hold=ms][&gap=ms]\n"
+                   "  names: Up Down Left Right Home End PageUp PageDown Insert Delete Enter\n"
+                   "         Esc Space Tab Backspace Comma Period F1-F24 A-Z 0-9\n"
+                   "  modifiers: Ctrl+ Shift+ Alt+ (repeatable, e.g. Ctrl+Shift+Left;\n"
+                   "             a space separates too, since \"+\" is a space in a query)\n";
+        }
+        std::vector<KeySpec> keys;
+        for (const std::string& token : SplitCommas(spec)) {
+            KeySpec k;
+            if (!ParseKeySpec(token, k)) {
+                status = 400;
+                return "[input] unrecognised key: " + token + "\n";
+            }
+            k.token = token;
+            keys.push_back(k);
+        }
+        if (QueryParam(req.query, "mode") == "kernel")
+            return OnGameThread([keys] { return InjectKernelKeys(keys); });
+        return SendInputKeys(keys, static_cast<uint32_t>(QueryInt(req.query, "hold", 40)),
+            static_cast<uint32_t>(QueryInt(req.query, "gap", 90)));
+    }
+
+    if (req.path == "/screenshot") {
+        return ScreenshotText(UrlDecode(QueryParam(req.query, "path")),
+            QueryInt(req.query, "foreground", 1) != 0,
+            static_cast<int>(QueryInt(req.query, "output", -1)));
+    }
+
     // Game-thread endpoints.
     if (req.path == "/status")
         return OnGameThread(StatusText);
 
+    if (req.path == "/exec") {
+        // Body first so a command needing no URL-encoding can just be POSTed.
+        std::string cmd = req.body;
+        if (cmd.empty())
+            cmd = UrlDecode(QueryParam(req.query, "cmd"));
+        while (!cmd.empty() && (cmd.back() == '\n' || cmd.back() == '\r'))
+            cmd.pop_back();
+        if (cmd.empty()) {
+            status = 400;
+            return "usage: /exec?cmd=<console command>   (or POST the command as the body)\n";
+        }
+        const uint64_t logBefore = GameLogSize();
+        const std::string result = OnGameThread([cmd] { return GameUI::ConsoleCommand(cmd); });
+        Sleep(250); // the game flushes Launch.log on its own schedule, not on our call's return
+        const std::string logTail = ReadGameLogFrom(logBefore);
+
+        std::string out;
+        if (!result.empty())
+            out += result + "\n";
+        if (!logTail.empty())
+            out += "--- Launch.log ---\n" + logTail;
+        // Saying so beats an empty body, which reads like a transport failure.
+        return out.empty() ? "(ran; no output, nothing logged)\n" : out;
+    }
+
     status = 404;
     return "unknown endpoint\n"
-           "  GET /health              liveness + build stamp + game-thread pump age\n"
-           "  GET /speech?since=N      everything TTS::Speak was handed, cursor-paged\n"
-           "  GET /log?since=N&tail=N  the ASI log ring, cursor-paged\n"
-           "  GET /status              screen stack, gates, navigator + tile-reader state\n";
+           "  GET  /health              liveness + build stamp + game-thread pump age\n"
+           "  GET  /speech?since=N      everything TTS::Speak was handed, cursor-paged\n"
+           "  GET  /log?since=N&tail=N  the ASI log ring, cursor-paged\n"
+           "  GET  /status              screen stack, gates, navigator + tile-reader state\n"
+           "  GET  /input?keys=A,B      synthetic keys (&mode=kernel drives only our layer)\n"
+           "  POST /exec  <command>     run a console command, return what it printed\n"
+           "  GET  /screenshot[?path=]  PNG of the monitor the game is on\n";
 }
 
 // send() may accept fewer bytes than offered; a /status dump is small but /log is not bounded
@@ -426,6 +801,8 @@ void Start(const std::string& asiDir)
         if (probe >> value && value >= 1024 && value <= 65535)
             gPort = static_cast<uint16_t>(value);
     }
+
+    gAsiDir = asiDir;
 
     WSADATA wsaData{};
     if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {

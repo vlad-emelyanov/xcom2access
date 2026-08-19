@@ -229,6 +229,17 @@ bool IsClaimed(uint8_t vk, uint8_t mods)
     return FindClaim(vk, mods) >= 0;
 }
 
+#ifdef X2ACCESS_DEVSERVER
+bool InjectSynthetic(const KeyEvent& e)
+{
+    int claim = FindClaim(e.vk, e.mods);
+    if (claim < 0)
+        return false;
+    Enqueue(e, claim);
+    return true;
+}
+#endif
+
 void OnTick()
 {
     // Install (or re-install after a window recreation) — time-throttled so the check rate is
