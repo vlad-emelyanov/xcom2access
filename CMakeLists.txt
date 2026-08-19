@@ -22,6 +22,7 @@ add_library(X2Access SHARED
     src/dllmain.cpp
     src/tts.cpp
     src/input.cpp
+    src/input_arbiter.cpp
     src/log.cpp
     src/hooks.cpp
     src/sdk_globals.cpp
@@ -29,6 +30,8 @@ add_library(X2Access SHARED
     src/event_dispatch.cpp
     src/process_event_hook.cpp
     src/ue3_reflection.cpp
+    src/game_ui.cpp
+    src/menu_navigator.cpp
     # Graph A11y Kernel — engine-neutral, STL-only (see src/Graph/ControlId.hpp)
     src/Graph/GraphBuilder.cpp
     src/Graph/KeyGraph.cpp
@@ -61,6 +64,11 @@ if(MSVC)
         src/ue3_reflection.cpp
         PROPERTIES COMPILE_FLAGS "/w"
     )
+    # game_ui.cpp is the one TU including the full generated SDK — huge headers need /bigobj
+    set_source_files_properties(
+        src/game_ui.cpp
+        PROPERTIES COMPILE_FLAGS "/w /bigobj"
+    )
 endif()
 
 # Output as .asi for Ultimate ASI Loader compatibility
@@ -73,9 +81,9 @@ set_target_properties(X2Access PROPERTIES
 # ---------------------------------------------------------------------------
 # XCOM 2 paths (override with -DXCOM2_SDK_PATH=... at configure time)
 # ---------------------------------------------------------------------------
-set(XCOM2_SDK_PATH "C:/Program Files (x86)/Steam/steamapps/common/XCOM 2 War of the Chosen SDK"
+set(XCOM2_SDK_PATH "D:/SteamLibrary/steamapps/common/XCOM 2 War of the Chosen SDK"
     CACHE PATH "Path to XCOM 2 WOTC SDK")
-set(XCOM2_GAME_PATH "C:/Program Files (x86)/Steam/steamapps/common/XCOM 2/XCom2-WarOfTheChosen"
+set(XCOM2_GAME_PATH "D:/SteamLibrary/steamapps/common/XCOM 2/XCom2-WarOfTheChosen"
     CACHE PATH "Path to XCOM 2 WOTC game directory")
 
 # ---------------------------------------------------------------------------
@@ -84,8 +92,14 @@ set(XCOM2_GAME_PATH "C:/Program Files (x86)/Steam/steamapps/common/XCOM 2/XCom2-
 set(USCRIPT_BUILD_PS1 "${CMAKE_SOURCE_DIR}/mods/X2AccessCompanion/.scripts/build.ps1")
 set(USCRIPT_MODS_DIR  "${CMAKE_SOURCE_DIR}/mods")
 
+find_program(PWSH_EXECUTABLE pwsh)
+if(NOT PWSH_EXECUTABLE)
+    # Fall back to Windows PowerShell if pwsh 7 is not installed
+    set(PWSH_EXECUTABLE powershell.exe)
+endif()
+
 add_custom_target(build_uscript
-    COMMAND powershell.exe -NonInteractive -ExecutionPolicy Bypass
+    COMMAND "${PWSH_EXECUTABLE}" -NonInteractive -ExecutionPolicy Bypass
         -File "${USCRIPT_BUILD_PS1}"
         -srcDirectory "${USCRIPT_MODS_DIR}"
         -sdkPath "${XCOM2_SDK_PATH}"

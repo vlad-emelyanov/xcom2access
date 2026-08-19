@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <ctime>
 #include <mutex>
+#include <share.h>
 #include <string>
 
 namespace Log {
@@ -16,8 +17,10 @@ bool Init(const std::string& logDir) {
     if (sFile) return true;
 
     std::string path = logDir + "\\X2Access.log";
-    if (fopen_s(&sFile, path.c_str(), "w") != 0) {
-        sFile = nullptr;
+    // _SH_DENYWR: others may READ the live log (tailing it while the game runs); only writing
+    // is exclusive. Plain fopen_s denied all sharing and made the log unreadable mid-session.
+    sFile = _fsopen(path.c_str(), "w", _SH_DENYWR);
+    if (!sFile) {
         return false;
     }
 

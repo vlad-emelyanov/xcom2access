@@ -33,8 +33,17 @@ void Unregister(const std::string& functionName);
 // Called from the ProcessEvent hook on every event — must be fast.
 void OnProcessEvent(UObject* obj, UFunction* func, void* params);
 
-// Toggle verbose logging of ALL events (rate-limited).
-void SetVerboseLogging(bool enabled);
-bool IsVerboseLogging();
+// Install the frame pump: invoked from OnProcessEvent on EVERY event (reentrancy-guarded), on
+// the game thread. ProcessEvent traffic is the only per-frame callback guaranteed to flow on
+// every screen — a handler bound to a function NAME (e.g. "Tick") fires only if some script
+// actor actually implements it, which the main menu does not. The pump must throttle itself.
+void SetFramePump(std::function<void()> pump);
+
+// Toggle discovery logging: logs each DISTINCT UFunction once
+// (function name, caller object name, caller class) to build an event
+// catalog while walking the game's menus. Enabling clears the seen-set
+// so each capture session starts fresh.
+void SetDiscoveryLogging(bool enabled);
+bool IsDiscoveryLogging();
 
 } // namespace EventDispatch

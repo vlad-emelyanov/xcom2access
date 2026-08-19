@@ -1,6 +1,8 @@
 #include "hooks.h"
 #include "sdk_globals.h"
 #include "event_dispatch.h"
+#include "input_arbiter.h"
+#include "menu_navigator.h"
 #include "process_event_hook.h"
 #include "ue3_reflection.h"
 #include "tts.h"
@@ -17,7 +19,11 @@
 
 namespace Hooks {
 
-static constexpr int SDK_INIT_MAX_ATTEMPTS = 30;
+// A cold boot (first launch after a mod deploy recompiles/loads script packages) can take
+// well over 30 s before GNames crosses the validation threshold — verified live 2026-08-19:
+// a run that timed out at 30 attempts had a fully-populated table shortly after. Two minutes
+// of patience costs nothing (background init thread); giving up early kills the whole mod.
+static constexpr int SDK_INIT_MAX_ATTEMPTS = 120;
 static constexpr int SDK_INIT_RETRY_MS = 1000;
 
 // Cached pointer to the X2AccessCompanion UIScreenListener instance.
@@ -44,9 +50,32 @@ static void SafeLogObjectName(const char* prefix, UObject* obj) {
 
 // Register initial event handlers for discovery and accessibility.
 static void RegisterEventHandlers() {
-    EventDispatch::Register("Tick", [](UObject*, UFunction*, void*) {
-        // Retry any deferred handler registrations (mod FNames load later)
-        EventDispatch::RetryPending();
+    // The per-frame pump rides ProcessEvent traffic (a handler named "Tick" only fires if some
+    // script actor implements Tick — the main menu has none). Runs on the game thread, where
+    // UI reads and ProcessEvent calls are legal.
+    EventDispatch::SetFramePump([]() {
+        static uint64_t sLastMs = 0;
+        uint64_t now = GetTickCount64();
+        if (now - sLastMs < 16) // once per frame-ish; ProcessEvent fires thousands of times/s
+            return;
+        sLastMs = now;
+        try {
+            // Deferred FName resolution scans GNames — once a second is plenty, and hammering
+            // it every pump while GNames is still growing during load is asking for faults.
+            static uint64_t sLastRetryMs = 0;
+            if (now - sLastRetryMs >= 1000) {
+                sLastRetryMs = now;
+                EventDispatch::RetryPending();
+            }
+            // Install the window subclass once the game window exists, then drain claimed
+            // key events.
+            InputArbiter::OnTick();
+            // After input (so this frame's key operations have spoken), the navigator's
+            // attach/detach poll and frame differ.
+            MenuNavigator::OnTick();
+        } catch (...) {
+            // Never leak a throw into the game's frame (spec §7.9); subsystems log their own.
+        }
     });
 
     EventDispatch::Register("OnInit", [](UObject* obj, UFunction*, void*) {
@@ -74,6 +103,11 @@ static void RegisterEventHandlers() {
     EventDispatch::Register("X2Access_Speak", [](UObject* obj, UFunction*, void*) {
         // Cache the listener for on-demand reads (e.g., ? key nav help)
         sActiveListener = obj;
+
+        // The legacy ownership gate (spec §10.5): while a graph screen owns the surface, the
+        // UnrealScript narration stands down — one keypress, one voice.
+        if (MenuNavigator::IsAttached())
+            return;
 
         std::string text = UE3Reflect::ReadStringProperty(obj, "AccessibilityData");
         if (!text.empty()) {

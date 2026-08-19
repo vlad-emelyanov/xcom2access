@@ -41,6 +41,9 @@ void Shutdown() {
 void Speak(const std::string& text, bool interrupt) {
     std::lock_guard<std::mutex> lock(sMutex);
     if (!sAvailable || !sEnabled) return;
+    // The speech log: every spoken line, so a session can be reconstructed from X2Access.log
+    // ("what did it actually say when I pressed Left?").
+    LOG_INFO("TTS%s: \"%s\"", interrupt ? "!" : "", text.c_str());
     SRAL_Speak(text.c_str(), interrupt);
 }
 

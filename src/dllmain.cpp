@@ -1,6 +1,7 @@
 #include "log.h"
 #include "tts.h"
 #include "input.h"
+#include "menu_navigator.h"
 #include "hooks.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -46,7 +47,10 @@ static void InitThread() {
     // 3. Keyboard input
     Input::Init();
 
-    // 4. Game hooks (stub)
+    // 4. Graph navigator (claims + announcer hooks — before game hooks go live)
+    MenuNavigator::Init();
+
+    // 5. Game hooks
     Hooks::Init();
 
     LOG_INFO("X2Access initialization complete");
