@@ -36,9 +36,11 @@ documented in [CLAUDE.md](CLAUDE.md).
 - Visual Studio 2019+ with C++ desktop workload (MSVC x64)
 - XCOM 2 War of the Chosen SDK (install from Steam)
 - Git submodules initialized: `git submodule update --init --recursive`
-- A checkout of [X2WOTCCommunityHighlander](https://github.com/X2CommunityCore/X2WOTCCommunityHighlander)
-  at `deps/X2WOTCCommunityHighlander` (not yet a submodule — clone it manually;
-  the companion mod compiles against its source)
+  (this includes
+  [X2WOTCCommunityHighlander](https://github.com/X2CommunityCore/X2WOTCCommunityHighlander)
+  at `deps/X2WOTCCommunityHighlander`, pinned to `v1.31.0-release` — the same
+  build as the workshop release the game loads; the companion mod compiles
+  against its source)
 
 ### Build Steps
 
@@ -151,6 +153,8 @@ always native. Full detail in [CLAUDE.md](CLAUDE.md).
   (checkbox, slider, spinner, dropdown), navigation help, and tactical tile
   facts (cover, hazards, units) resolved through the game-state history
 
-The Community Highlander is currently a compile-time dependency of the
-companion mod and will be a declared runtime requirement once the mod is
-distributed (it is the de-facto base of the WOTC modding ecosystem).
+The [X2WOTC Community Highlander](https://steamcommunity.com/workshops/filedetails/?id=1134256495)
+is a **required** dependency of the companion mod, at compile time (the mod
+builds against its source, pinned as a submodule to the same release the
+workshop ships) and at runtime (subscribe to it on the Steam Workshop and
+enable it alongside X2AccessCompanion).

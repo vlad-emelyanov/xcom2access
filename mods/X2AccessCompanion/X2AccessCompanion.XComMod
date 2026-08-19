@@ -1,5 +1,5 @@
 [mod]
 publishedFileId=0
 Title=X2AccessCompanion
-Description=Companion mod for X2Access blind accessibility ASI. Collects UI text for TTS narration.
+Description=Companion mod for X2Access blind accessibility ASI. Collects UI text for TTS narration. Requires the X2WOTC Community Highlander.
 RequiresXPACK=true

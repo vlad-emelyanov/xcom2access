@@ -543,12 +543,17 @@ loads it — it is vestigial; do not use it.
 
 - `deps/SRAL` (submodule) — speech output, linked static.
 - `deps/X2ModBuildCommon` (submodule) — UnrealScript build pipeline.
-- `deps/X2WOTCCommunityHighlander` — pure UnrealScript, no native code.
-  Compile-time include for the companion mod and the source of narration event
-  hooks. **Currently an untracked, unpinned checkout and undeclared at
-  runtime — must become a pinned submodule with the requirement declared in
-  the mod metadata/README before release.** It matches the workshop build
-  installed here (1134256495), which is what the game actually loads.
+- `deps/X2WOTCCommunityHighlander` (submodule, pinned to `v1.31.0-release`) —
+  pure UnrealScript, no native code. Compile-time include for the companion mod
+  and the source of narration event hooks; declared as a runtime requirement in
+  the README, the mod's ReadMe.txt and the .XComMod description. The pin was
+  chosen by DIFFING, not by trusting a tag: the workshop build installed here
+  (1134256495, what the game actually loads) ships its full `Src/`, and
+  `v1.31.0-release` is the tag whose tree matches it with ZERO differing files
+  (the checkout had silently drifted to `v1.31.1-beta`, 35 files ahead of the
+  runtime). When bumping the pin, re-run that check: workshop stable lags
+  master by months, and compiling against a newer CHL than the game loads
+  means layouts and hooks that don't exist at runtime.
   Note what "pure UnrealScript" means for us: the mod ships **replacement
   `XComGame.upk`, `Engine.upk` and `Core.upk`** (9.8 MB of recompiled script),
   so with it enabled every class layout comes from the Highlander's build, not

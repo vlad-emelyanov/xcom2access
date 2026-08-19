@@ -4,3 +4,6 @@
 [submodule "deps/X2ModBuildCommon"]
 	path = deps/X2ModBuildCommon
 	url = https://github.com/X2CommunityCore/X2ModBuildCommon
+[submodule "deps/X2WOTCCommunityHighlander"]
+	path = deps/X2WOTCCommunityHighlander
+	url = https://github.com/X2CommunityCore/X2WOTCCommunityHighlander.git
