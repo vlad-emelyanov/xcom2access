@@ -3,6 +3,7 @@
 #include "event_dispatch.h"
 #include "input_arbiter.h"
 #include "menu_navigator.h"
+#include "tile_reader.h"
 #include "process_event_hook.h"
 #include "ue3_reflection.h"
 #include "tts.h"
@@ -72,6 +73,8 @@ static void RegisterEventHandlers() {
             // After input (so this frame's key operations have spoken), the navigator's
             // attach/detach poll and frame differ.
             MenuNavigator::OnTick();
+            // The tile cursor's active-gate refresh (reads only; throttled internally).
+            TileReader::OnTick();
         } catch (...) {
             // Never leak a throw into the game's frame (spec §7.9); subsystems log their own.
         }

@@ -2,6 +2,7 @@
 #include "tts.h"
 #include "input.h"
 #include "menu_navigator.h"
+#include "tile_reader.h"
 #include "hooks.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -50,7 +51,10 @@ static void InitThread() {
     // 4. Graph navigator (claims + announcer hooks — before game hooks go live)
     MenuNavigator::Init();
 
-    // 5. Game hooks
+    // 5. Tactical tile cursor (claims — before game hooks go live)
+    TileReader::Init();
+
+    // 6. Game hooks
     Hooks::Init();
 
     LOG_INFO("X2Access initialization complete");
