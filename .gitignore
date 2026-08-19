@@ -9,3 +9,4 @@ Desktop.ini
 .DS_Store
 build_output.txt
 __pycache__/
+generated_sdk_old/

@@ -32,6 +32,8 @@ add_library(X2Access SHARED
     src/ue3_reflection.cpp
     src/game_ui.cpp
     src/menu_navigator.cpp
+    # Compile-time verification of hand-transcribed offsets against the generated SDK
+    src/sdk_layout_checks.cpp
     # Graph A11y Kernel — engine-neutral, STL-only (see src/Graph/ControlId.hpp)
     src/Graph/GraphBuilder.cpp
     src/Graph/KeyGraph.cpp
@@ -64,9 +66,11 @@ if(MSVC)
         src/ue3_reflection.cpp
         PROPERTIES COMPILE_FLAGS "/w"
     )
-    # game_ui.cpp is the one TU including the full generated SDK — huge headers need /bigobj
+    # TUs including the full generated SDK — huge headers need /bigobj, and the generated
+    # code is not warning-clean
     set_source_files_properties(
         src/game_ui.cpp
+        src/sdk_layout_checks.cpp
         PROPERTIES COMPILE_FLAGS "/w /bigobj"
     )
 endif()
