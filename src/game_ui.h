@@ -306,7 +306,6 @@ bool SetNarrativeIndex(void* screen, int index);
 /// Legacy Pack only): a three-way choice list plus a confirm button, structurally the
 /// narrative screen without the standalone toggle.
 struct SoundtrackView {
-    std::string title;           // m_chooseSoundtrack
     std::vector<OptionRow> rows;
     int selectedRow = -1;
     MenuItem start;

@@ -131,8 +131,9 @@ static_assert(offsetof(UX2DownloadableContentInfo, NarrativeContentSummary) == 0
 static_assert(offsetof(AUIShellSoundtrackPicker, m_List) == 0x410, "soundtrack list");
 static_assert(offsetof(AUIShellSoundtrackPicker, m_StartButton) == 0x418,
     "soundtrack start button");
-static_assert(offsetof(AUIShellSoundtrackPicker, m_chooseSoundtrack) == 0x430,
-    "soundtrack title");
+// No title assert: the retail package's localized m_chooseSoundtrack is absent from the
+// Community Highlander's rebuild (the SDK's SrcOrig for this class never declared it), so the
+// field is not one a single offset can name — see the reader's note in game_ui.cpp.
 
 // ---- in-game pause menu (flags at 0x418 are bitfields; List pins them) ----
 static_assert(offsetof(AUIPauseMenu, m_iCurrentSelection) == 0x410, "pause menu selection");

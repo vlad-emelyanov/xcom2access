@@ -945,10 +945,11 @@ void* ProbeSoundtrack()
     return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
 }
 
+// Ours rather than the game's: this screen's localized title does not exist in the Community
+// Highlander's rebuild of XComGame (see the UIShellSoundtrackPicker note in game_ui.cpp).
 std::string SoundtrackName()
 {
-    std::string title = GameUI::ReadSoundtrack(gScreen).title;
-    return title.empty() ? Vocab::ScreenSoundtrackFallback : title;
+    return Vocab::ScreenSoundtrackFallback;
 }
 
 // ---- the in-game pause menu recipe (UIPauseMenu) ----

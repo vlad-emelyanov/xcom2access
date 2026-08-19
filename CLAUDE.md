@@ -200,6 +200,29 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
 - **SEH-guard every read into engine memory** (`__try` around reflection and
   hook dispatch), and keep the ProcessEvent hot path cheap: bail on FName
   index before doing anything else.
+- **A widget's declared `Type` does not tell you what the widget IS; the
+  visible child does.** Every Second Wave (Advanced Options) row reads
+  `UIMechaListItem.Type` = `Description` while showing a live, visible
+  `UICheckbox` — the same object whose `bChecked` the campaign start reads in
+  `GetSelectedSecondWaveOptionNames`. `ReadOptionRowRaw` only looked at the
+  checkbox inside its `Type == Checkbox` branch, so those rows reported
+  "unchecked" forever. Read state from the widget POINTER, and take a row's
+  kind from a widget that is VISIBLE (`SetWidgetType` hides the widgets it
+  switches away from but leaves their pointers behind, so presence alone is not
+  enough — visibility is). The difficulty screen's own bottom rows do read
+  `Type` = Checkbox, so a screen can hold both kinds at once and "it works on
+  the other rows" proves nothing.
+- **When a control seems not to respond, prove which HALF is broken before
+  fixing either.** The above cost a full debugging cycle spent on the write
+  path — reading the game's source for `OnSecondWaveOptionClicked`, ruling out
+  the param layout against the SDK dump, regenerating the whole SDK, adding a
+  verify-and-fall-back that set the checkbox itself — because the readback said
+  "unchecked" and the readback was the broken thing. The toggle had been
+  landing correctly the entire time. **One screenshot settled it in seconds**:
+  the boxes were visibly ticked, exactly the rows the player had pressed. Our
+  own readout is never evidence about the game's state; when the two disagree,
+  ask the sighted user what the screen shows (or read the widgets live with
+  Frida) BEFORE theorizing about the call.
 - **Escaping a UIList to sibling buttons** needs
   `Navigator.CheckForOwnerHandling` plus deferred (0.01 s timer) focus — never
   mutate Navigator state inside its own `Next()`.
@@ -404,7 +427,24 @@ loads it — it is vestigial; do not use it.
   Compile-time include for the companion mod and the source of narration event
   hooks. **Currently an untracked, unpinned checkout and undeclared at
   runtime — must become a pinned submodule with the requirement declared in
-  the mod metadata/README before release.**
+  the mod metadata/README before release.** It matches the workshop build
+  installed here (1134256495), which is what the game actually loads.
+  Note what "pure UnrealScript" means for us: the mod ships **replacement
+  `XComGame.upk`, `Engine.upk` and `Core.upk`** (9.8 MB of recompiled script),
+  so with it enabled every class layout comes from the Highlander's build, not
+  the stock one. **Regenerate the SDK from a game running the same mod set the
+  players will run**; a dump is Highlander-derived if `UIScreenStack` carries
+  `OnInputSubscribers` (issue #198) and vanilla if it does not.
+  Two ways that build differs, both found by regenerating on 2026-08-19:
+  - Its added vars are APPENDED, so `UIScreenStack.Screens` (0x6C) and the gate
+    flags (0x60) sit where the vanilla dump put them — the subscriber arrays
+    land at 0x8C and after.
+  - It recompiles the whole package from the SDK's `SrcOrig`, and **`SrcOrig`
+    is not the retail package**: `UIShellSoundtrackPicker` there never declared
+    the localized `m_chooseSoundtrack`, so under the Highlander that FString is
+    gone and everything after 0x430 moves down 0x10. A field can therefore
+    exist in one build and not the other — the layout asserts are what turns
+    that into a build error, and they caught exactly this one.
 - `deps/CodeRed-Generator` — the SDK dumper. It produced `generated_sdk/X2SDK/`,
   which IS a build input but is **not in git** (113 MB, `.gitignore`d): if that
   folder is lost the build dies and the only recovery is a regeneration run.

@@ -145,13 +145,16 @@ constexpr int32_t kNarrDLCInfosOffset = 0x510;      // DLCInfos (TArray<X2Downlo
 constexpr int32_t kDLCNarrativeSummaryOffset = 0xB4; // X2DownloadableContentInfo::NarrativeContentSummary
 
 // ---- new game flow: UIShellSoundtrackPicker ----
+// No title offset here on purpose: the retail package's localized m_chooseSoundtrack (0x430)
+// does NOT exist in the Community Highlander's rebuild — the SDK's SrcOrig for this class never
+// declared it — so with the Highlander installed 0x430 is the int m_soundtrackChoice and
+// everything after it sits 0x10 lower. The screen name falls back to Vocab instead.
 constexpr int32_t kSndListOffset = 0x410;           // m_List (UIList*)
 constexpr int32_t kSndStartButtonOffset = 0x418;    // m_StartButton (UILargeButton*)
 
 // ---- tactical HUD (UITacticalHUD) ----
 constexpr int32_t kTacHudFlagsOffset = 0x410;       // flag dword holding m_isMenuRaised
 constexpr uint32_t kTacHudMenuRaised = 0x02;        // m_isMenuRaised (shot HUD up)
-constexpr int32_t kSndTitleOffset = 0x430;          // m_chooseSoundtrack (FString)
 
 // ---- modal dialog: UIDialogueBox ----
 constexpr int32_t kDialogDataOffset = 0x434;        // m_arrData (TArray<FTDialogueBoxData>)
@@ -780,6 +783,21 @@ bool ReadOptionRowRaw(void* item, RawOptionRow* out)
     out->type = ReadU8Raw(item, kMechaTypeOffset);
     out->disabled = (ReadU32Raw(item, kMechaFlagsOffset) & kMechaDisabled) != 0;
 
+    // A row's declared Type is NOT a reliable answer to "is this a checkbox". Every Second Wave
+    // row reads Type = Description while showing a live, visible UICheckbox whose bChecked is
+    // the very bit the campaign start reads (GetSelectedSecondWaveOptionNames) — verified live
+    // 2026-08-19 with the box ticked on screen. Reading state only in the Type branch made those
+    // rows report "unchecked" forever, which looked exactly like a toggle that would not take.
+    // The VISIBLE widget is the honest answer, and preferring it is safe: SetWidgetType hides
+    // the widgets it switches away from, so a visible checkbox means the row is showing one.
+    // State comes from the checkbox whenever there is one; only the row's KIND needs it visible.
+    void* checkbox = ReadPtrRaw(item, kMechaCheckboxOffset);
+    if (checkbox) {
+        out->checked = (ReadU32Raw(checkbox, kCheckboxFlagsOffset) & kCheckboxChecked) != 0;
+        if (ReadU32Raw(checkbox, kPanelFlagsOffset) & kPanelVisible)
+            out->type = kLineCheckbox;
+    }
+
     void* desc = ReadPtrRaw(item, kMechaDescOffset);
     if (desc) {
         if (CopyFStringRaw(reinterpret_cast<const uint8_t*>(desc) + kScrollHtmlOffset,
@@ -809,11 +827,8 @@ bool ReadOptionRowRaw(void* item, RawOptionRow* out)
             out->percent = static_cast<int>(ReadF32Raw(slider, kSliderPercentOffset));
         break;
     }
-    case kLineCheckbox: {
-        void* checkbox = ReadPtrRaw(item, kMechaCheckboxOffset);
-        out->checked = checkbox && (ReadU32Raw(checkbox, kCheckboxFlagsOffset) & kCheckboxChecked);
-        break;
-    }
+    case kLineCheckbox:
+        break; // state already read above, from the widget rather than the type tag
     case kLineButton: {
         void* button = ReadPtrRaw(item, kMechaButtonOffset);
         if (button)
@@ -1704,13 +1719,15 @@ bool SetSecondWaveIndex(void* screen, int index)
     return SetListIndex(ReadPtrRaw(screen, kDiffSWListOffset), index);
 }
 
+// Toggling a Second Wave option runs the screen's own OnSecondWaveOptionClicked — the delegate
+// UIList's mouse path fires, and the only path that also keeps the three faction-HQ options
+// mutually exclusive. (This looked broken for a while and was not: the toggle always landed;
+// the row's state was being READ wrong. See ReadOptionRowRaw.)
 bool ToggleSecondWaveOption(void* screen, int index)
 {
     void* list = ReadPtrRaw(screen, kDiffSWListOffset);
     if (!list || index < 0)
         return false;
-    // The screen's own delegate target, called exactly as UIList's mouse path calls it:
-    // toggles the row's checkbox AND clears the two rival faction-HQ options.
     struct {
         void* ContainerList;
         int32_t ItemIndex;
@@ -1804,7 +1821,6 @@ SoundtrackView ReadSoundtrack(void* screen)
     SoundtrackView v;
     if (!screen)
         return v;
-    v.title = CleanText(ReadFStringField(screen, kSndTitleOffset));
     void* list = ReadPtrRaw(screen, kSndListOffset);
     v.rows = ReadListRows(list);
     v.selectedRow = list ? ReadI32Raw(list, kListSelectedIndexOffset) : -1;
