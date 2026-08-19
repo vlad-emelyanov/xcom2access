@@ -381,6 +381,12 @@ void* FindCompanionCDO(const char* className);
 /// `params` must match the UFunction's parameter layout. Game thread only.
 bool CallScriptFunction(void* obj, const char* funcName, void* params);
 
+/// The UFunction object for `className.funcName`, resolved through the class object's field
+/// chain (supers included) — for callers that need the function OBJECT rather than a call
+/// (the mouse gate rewrites its dispatch fields). Cached; a missing class is retried at most
+/// once a second. Returns null until resolvable. Game thread only.
+void* FindScriptFunction(const char* className, const char* funcName);
+
 // ---- dev harness only: raw object access for the /gui and /props dumps ----
 //
 // These are the four primitives the widget-tree dumper cannot get any other way; everything

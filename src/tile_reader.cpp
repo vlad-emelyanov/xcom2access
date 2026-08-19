@@ -2,6 +2,7 @@
 #include "game_ui.h"
 #include "input_arbiter.h"
 #include "menu_navigator.h"
+#include "mouse_gate.h"
 #include "tts.h"
 #include "ue3_reflection.h"
 #include "log.h"
@@ -25,19 +26,29 @@ constexpr const char* kReaderClass = "X2AccessTileReader";
 // behind it belong on the tick, same discipline as the menu navigator's IsAttached gate).
 bool gActive = false;
 
+// Has the player used the tile cursor in THIS tactical session? Set by any successful
+// outbound reader call, cleared when the tactical HUD leaves the stack. It is what arms the
+// mouse gate: until the first press, the mouse keeps its native cursor-follow (lazy plant
+// means lazy takeover); from then on, keyboard owns the world cursor for the mission and a
+// mouse CLICK commits to the pathing pawn's preview of OUR tile — the same two-press
+// semantics the Backspace commit uses.
+bool gUsedThisTactical = false;
+
 // The gate is the screen-stack walk in GameUI::ReadTacticalGate — NOT IsScreenFocused, which
 // is right for menus but wrong here: in tactical the focus bit lives on the permanent UIReplay
 // overlay and UITacticalHUD never carries it (first live run read 0x238 and stayed inactive).
 // `why` (>= 96 bytes) gets the reason when the result is false, for the transition log.
-bool ComputeActive(char* why, size_t whyLen)
+bool ComputeActive(char* why, size_t whyLen, bool* hudOnStack)
 {
     why[0] = '\0';
+    *hudOnStack = false;
     // A graph recipe owning the surface (pause menu, a modal dialog over tactical) wins.
     if (MenuNavigator::IsAttached()) {
         snprintf(why, whyLen, "graph recipe attached");
         return false;
     }
     GameUI::TacticalGate gate = GameUI::ReadTacticalGate();
+    *hudOnStack = gate.hudOnStack;
     if (gate.blocked) {
         snprintf(why, whyLen, "blocked by %s", gate.blocker);
         return false;
@@ -74,22 +85,31 @@ void Call(const char* funcName, void* params)
         LOG_WARN("TileReader: outbound call %s failed", funcName);
         return;
     }
+    // Arm and engage the mouse gate right here (game thread, claim already implies world
+    // mode) so even this press's push survives the frame instead of waiting out the tick.
+    gUsedThisTactical = true;
+    MouseGate::SetSwallow(true);
     std::string result
         = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
     if (!result.empty())
         TTS::SpeakInterrupt(result);
 }
 
-void StepCall(int32_t screenDX, int32_t screenDY)
+// Compass cardinals, matching X2AccessTileReader's DIR_* constants (the engine's cover-flag
+// bit order). World-absolute by player decision: Up arrow is north regardless of camera.
+// No synthetic movement tick here — the player wants the game's own sounds only (the pathing
+// pawn's dash/warning cues fire natively as it follows the pushed cursor).
+constexpr int32_t kDirNorth = 0;
+constexpr int32_t kDirSouth = 1;
+constexpr int32_t kDirEast = 2;
+constexpr int32_t kDirWest = 3;
+
+void StepCall(int32_t cardinal)
 {
     struct {
-        int32_t dx;
-        int32_t dy;
-    } params{screenDX, screenDY};
+        int32_t cardinal;
+    } params{cardinal};
     Call("CursorStep", &params);
-    // Claimed keys bypass the game's own sound path (same as the menus), so the movement cue
-    // is plumbed explicitly — first live test was dead quiet.
-    GameUI::PlayNavSound();
 }
 
 void FloorCall(int32_t delta)
@@ -98,7 +118,6 @@ void FloorCall(int32_t delta)
         int32_t delta;
     } params{delta};
     Call("CursorFloor", &params);
-    GameUI::PlayNavSound();
 }
 
 void SimpleCall(const char* funcName)
@@ -127,12 +146,12 @@ void Init()
 
     auto active = [] { return gActive; };
 
-    // Arrows: camera-relative tile steps (+Y = up on screen). WASD keeps camera pan for a
-    // sighted co-pilot — the game binds both, we take only the arrow set.
-    RegisterClaim({VK_UP, ModNone, active, OnPress([] { StepCall(0, 1); }), "tile cursor: step forward"});
-    RegisterClaim({VK_DOWN, ModNone, active, OnPress([] { StepCall(0, -1); }), "tile cursor: step back"});
-    RegisterClaim({VK_LEFT, ModNone, active, OnPress([] { StepCall(-1, 0); }), "tile cursor: step left"});
-    RegisterClaim({VK_RIGHT, ModNone, active, OnPress([] { StepCall(1, 0); }), "tile cursor: step right"});
+    // Arrows: world-absolute compass steps. WASD keeps camera pan for a sighted co-pilot —
+    // the game binds both, we take only the arrow set.
+    RegisterClaim({VK_UP, ModNone, active, OnPress([] { StepCall(kDirNorth); }), "tile cursor: north"});
+    RegisterClaim({VK_DOWN, ModNone, active, OnPress([] { StepCall(kDirSouth); }), "tile cursor: south"});
+    RegisterClaim({VK_LEFT, ModNone, active, OnPress([] { StepCall(kDirWest); }), "tile cursor: west"});
+    RegisterClaim({VK_RIGHT, ModNone, active, OnPress([] { StepCall(kDirEast); }), "tile cursor: east"});
 
     // Shift+comma / Shift+period (the literal < and >): floor down / up. The UNSHIFTED keys
     // stay unclaimed — reserved for the object scanner's quick navigation.
@@ -160,7 +179,8 @@ void OnTick()
     sLastMs = now;
 
     char why[96];
-    bool active = ComputeActive(why, sizeof(why));
+    bool hudOnStack = false;
+    bool active = ComputeActive(why, sizeof(why), &hudOnStack);
     if (active != gActive) {
         gActive = active;
         if (active)
@@ -168,6 +188,14 @@ void OnTick()
         else
             LOG_INFO("TileReader: inactive — %s", why);
     }
+
+    // Mouse gate: while the tile cursor has been used this mission AND owns world mode,
+    // suppress the game's per-frame mouse re-push of the cursor (see mouse_gate.cpp). Any
+    // stand-down — targeting raised, a recipe attached, pause menu, mission over — restores
+    // the mouse instantly; leaving tactical also disarms until the next press.
+    if (!hudOnStack)
+        gUsedThisTactical = false;
+    MouseGate::SetSwallow(gActive && gUsedThisTactical);
 }
 
 } // namespace TileReader

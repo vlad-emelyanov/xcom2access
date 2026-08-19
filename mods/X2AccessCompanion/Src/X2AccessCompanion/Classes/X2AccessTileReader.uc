@@ -4,17 +4,48 @@
 // (game thread, from the tick drain) and reads NativeResult back through reflection right after
 // the call returns. Nothing here runs on its own — no listeners, no timers, no polling.
 //
-// The cursor is the game's OWN XCom3DCursor, driven through its own functions
-// (CursorSetLocation / CursorSnapToFloor / MoveToUnit), so the pathing pawn preview, the
-// camera follow, and everything else a mouse move causes still happens. The move order is the
-// game's own click path (XComTacticalInput.ClickToPath), behind a two-press preview/confirm.
+// STATE-FIRST (the first live test's lesson): the authoritative cursor tile is CurX/CurY/CurZ
+// on this CDO. The game's XCom3DCursor is PUSHED to that tile (CursorSetLocation) so the
+// pathing-pawn preview and the camera follow — but it is never read back for stepping: the
+// cursor pawn sits at body-center heights and keeps moving between presses, so position→tile
+// round-trips climbed one Z level per press and drifted tiles sideways.
+//
+// Directions are WORLD-ABSOLUTE compass cardinals (player decision 2026-08-19, replacing the
+// earlier camera-relative scheme): Up arrow = north always. The compass is derived from the
+// game's own GetCoverDirection mapping, so spoken cover edges, offsets, and steps all share
+// the exact north the engine's cover flags mean.
 //
 // GC rule: this object is a CDO — value-typed state only, NEVER object references.
 
 class X2AccessTileReader extends Object;
 
+// Cardinal indices, matching the engine's cover-flag bit order (COVER_North = bit 0).
+const DIR_NORTH = 0;
+const DIR_SOUTH = 1;
+const DIR_EAST = 2;
+const DIR_WEST = 3;
+
+// OUR compass: the world-axis deltas that "north" and "east" mean. The engine defines cover
+// N/S/E/W natively but no script API documents the axis mapping — GetCoverDirection's
+// out-value proved NOT to be a bit index (the first compass build keyed on it and shipped two
+// dead arrows and no offsets, live-diagnosed 2026-08-19 via the dev server's speech ring). So
+// the mapping is a fixed table, calibrated empirically against the cover words, which come
+// straight from the documented flag-bit order: stand by a wall, read "High cover <word>",
+// step toward <word> — the wall tile must be there. If mirrored, flip the constants below
+// (the ONLY flip points; steps, offsets, and cover words all compose from them).
+// Calibrated live 2026-08-19 against two crate faces (the cover flags are the oracle: a tile
+// adjacent to an impassable crate names its crate-facing edge): engine north = +Y, engine
+// east = -X. The first guess was rotated 180 degrees on both axes.
+const NORTH_DX = 0;
+const NORTH_DY = 1;
+const EAST_DX = -1;
+const EAST_DY = 0;
+
 // Written by every entry point; read by native immediately after the ProcessEvent returns.
 var string NativeResult;
+
+// The authoritative cursor tile. Valid only while bPlanted for the current mission.
+var int CurX, CurY, CurZ;
 
 // Lazy plant: the first press in a mission plants the cursor on the active unit and reads that
 // tile instead of acting, so a cold key never fires an action blind (RT TileExplorer parity).
@@ -30,17 +61,14 @@ var TTile PendingMoveTile;
 // Entry points (called from native)
 // ---------------------------------------------------------------------------
 
-// Step one tile. ScreenDX/ScreenDY are camera-relative screen axes: +Y = up on screen (away
-// from the camera), +X = right on screen. The world-axis mapping follows the camera's yaw
-// quadrant, so the arrows track what a sighted player sees after Q/E rotation.
-function CursorStep(int ScreenDX, int ScreenDY)
+// Step one tile toward a compass cardinal (DIR_* above).
+function CursorStep(int Cardinal)
 {
 	local XComTacticalController TC;
 	local XCom3DCursor Cursor;
 	local XComWorldData WorldData;
-	local TTile CurTile, Target, Landed;
-	local vector Pos;
-	local int FwdX, FwdY, RightX, RightY;
+	local TTile Target;
+	local int DX, DY;
 
 	NativeResult = "";
 	if (!GetContext(TC, Cursor, WorldData))
@@ -50,48 +78,39 @@ function CursorStep(int ScreenDX, int ScreenDY)
 
 	bMovePending = false;
 
-	GetScreenDirs(FwdX, FwdY, RightX, RightY);
-	CurTile = WorldData.GetTileCoordinatesFromPosition(Cursor.Location);
-	Target = CurTile;
-	Target.X += ScreenDY * FwdX + ScreenDX * RightX;
-	Target.Y += ScreenDY * FwdY + ScreenDX * RightY;
-	Target.X = Clamp(Target.X, 0, WorldData.NumX - 1);
-	Target.Y = Clamp(Target.Y, 0, WorldData.NumY - 1);
-	if (Target.X == CurTile.X && Target.Y == CurTile.Y)
+	if (!CardinalDelta(Cardinal, DX, DY))
+	{
+		// Unreachable for the four cardinals, but a press must never be silent.
+		NativeResult = "Bad direction" @ string(Cardinal);
+		return;
+	}
+	Target.X = Clamp(CurX + DX, 0, WorldData.NumX - 1);
+	Target.Y = Clamp(CurY + DY, 0, WorldData.NumY - 1);
+	Target.Z = CurZ;
+	if (Target.X == CurX && Target.Y == CurY)
 	{
 		NativeResult = "Map edge";
 		return;
 	}
 
-	// Resolve the target column's floor at the cursor's current height, then set the location
-	// with the snap SEARCH OFF: bSnapToValidPosition ran CursorSnapToFixedFloors, whose search
-	// slid the cursor several tiles to the nearest "valid" spot — one press read as a two-to-
-	// three-tile jump (first live test, 2026-08-19). One press moves exactly one tile now; a
-	// tile without a floor is still visited (it reads "Impassable" rather than blocking the
-	// survey, RT wall-parity).
-	Pos = WorldData.GetPositionFromTileCoordinates(Target);
-	Pos.Z = Cursor.Location.Z;
-	if (WorldData.GetFloorTileForPosition(Pos, Landed, false))
-		Target = Landed;
-	Pos = WorldData.GetPositionFromTileCoordinates(Target);
-	Cursor.CursorSetLocation(Pos, true, false);
+	// Follow the terrain: resolve the target column's floor near the current height. When
+	// there is no floor to resolve (a wall interior, a pit), the tile is visited at the
+	// current level anyway — it reads "Impassable" rather than blocking the survey.
+	ResolveFloor(WorldData, Target);
 
-	// Describe where the cursor ACTUALLY is — if the engine refused or drifted the set, the
-	// spoken tile must still be the true one.
-	Landed = WorldData.GetTileCoordinatesFromPosition(Cursor.Location);
-	NativeResult = DescribeTile(Landed, false);
+	SetCursorTile(Cursor, WorldData, Target);
+	NativeResult = DescribeTile(Target, false);
 }
 
-// Step one floor up (+1) or down (-1) through the cursor's own floor snap, which also moves
-// the camera cutaway the way the game expects.
+// Step one floor level up (+1) or down (-1): find the next Z in this column that has a floor
+// tile and jump the cursor there. Says so when there is none.
 function CursorFloor(int Delta)
 {
 	local XComTacticalController TC;
 	local XCom3DCursor Cursor;
 	local XComWorldData WorldData;
-	local CursorSearchResult Result;
-	local TTile Landed;
-	local int Desired;
+	local TTile Probe;
+	local int Z;
 
 	NativeResult = "";
 	if (!GetContext(TC, Cursor, WorldData))
@@ -101,14 +120,25 @@ function CursorFloor(int Delta)
 
 	bMovePending = false;
 
-	Desired = Cursor.WorldZToFloor(Cursor.Location) + Delta;
+	Probe.X = CurX;
+	Probe.Y = CurY;
+	for (Z = CurZ + Delta; Z >= 0 && Z < WorldData.NumZ; Z += Delta)
+	{
+		Probe.Z = Z;
+		if (WorldData.IsFloorTile(Probe))
+		{
+			SetCursorTile(Cursor, WorldData, Probe);
+			if (Delta > 0)
+				NativeResult = "Up." @ DescribeTile(Probe, false);
+			else
+				NativeResult = "Down." @ DescribeTile(Probe, false);
+			return;
+		}
+	}
 	if (Delta > 0)
-		Result = Cursor.CursorSnapToFloor(Desired, eCursorSearch_Up);
+		NativeResult = "No floor above";
 	else
-		Result = Cursor.CursorSnapToFloor(Desired, eCursorSearch_Down);
-
-	Landed = WorldData.GetTileCoordinatesFromPosition(Cursor.Location);
-	NativeResult = "Floor" @ string(Result.m_iEffectiveFloor + 1) $ "." @ DescribeTile(Landed, false);
+		NativeResult = "No floor below";
 }
 
 // Recenter the cursor on the active unit and read its tile.
@@ -117,8 +147,7 @@ function CursorRecenter()
 	local XComTacticalController TC;
 	local XCom3DCursor Cursor;
 	local XComWorldData WorldData;
-	local XGUnit ActiveUnit;
-	local TTile Tile;
+	local XComGameState_Unit UnitState;
 
 	NativeResult = "";
 	if (!GetContext(TC, Cursor, WorldData))
@@ -128,15 +157,14 @@ function CursorRecenter()
 
 	bMovePending = false;
 
-	ActiveUnit = TC.GetActiveUnit();
-	if (ActiveUnit == none || ActiveUnit.GetPawn() == none)
+	UnitState = ActiveUnitState();
+	if (UnitState == none)
 	{
 		NativeResult = "No unit selected";
 		return;
 	}
-	Cursor.MoveToUnit(ActiveUnit.GetPawn());
-	Tile = WorldData.GetTileCoordinatesFromPosition(Cursor.Location);
-	NativeResult = ActiveUnitName() $ "." @ DescribeTile(Tile, false);
+	SetCursorTile(Cursor, WorldData, UnitState.TileLocation);
+	NativeResult = UnitState.GetName(eNameType_Full) $ "." @ DescribeTile(UnitState.TileLocation, false);
 }
 
 // Re-read the cursor tile, verbose (adds coordinates, explicit "no cover").
@@ -153,7 +181,7 @@ function CursorAnnounce()
 	if (EnsurePlanted(TC, Cursor, WorldData))
 		return;
 
-	Tile = WorldData.GetTileCoordinatesFromPosition(Cursor.Location);
+	Tile = CurTile();
 	NativeResult = DescribeTile(Tile, true);
 }
 
@@ -181,22 +209,22 @@ function CursorMoveTo()
 	if (EnsurePlanted(TC, Cursor, WorldData))
 		return;
 
-	ActiveUnit = TC.GetActiveUnit();
-	if (ActiveUnit == none)
+	UnitState = ActiveUnitState();
+	ActiveUnit = ActiveUnitVisualizer(UnitState);
+	PathingPawn = TC.m_kPathingPawn;
+	if (ActiveUnit == none || UnitState == none)
 	{
 		NativeResult = "No unit selected";
 		return;
 	}
-	UnitState = XComGameState_Unit(`XCOMHISTORY.GetGameStateForObjectID(ActiveUnit.ObjectID));
-	PathingPawn = TC.m_kPathingPawn;
-	if (UnitState == none || PathingPawn == none || PathingPawn.bHidden)
+	if (PathingPawn == none || PathingPawn.bHidden)
 	{
 		NativeResult = "No move available";
 		bMovePending = false;
 		return;
 	}
 
-	CursorTile = WorldData.GetTileCoordinatesFromPosition(Cursor.Location);
+	CursorTile = CurTile();
 	if (SameTile(CursorTile, UnitState.TileLocation))
 	{
 		NativeResult = "Already here";
@@ -251,7 +279,7 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 {
 	local XComWorldData WorldData;
 	local vector TilePos;
-	local string Result, Part;
+	local string Result, UnitPart;
 	local FOWTileStatus FOW;
 	local byte GameplayFlags;
 
@@ -267,11 +295,15 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 	}
 
 	Result = "";
-	// A tile units cannot occupy (wall interior, hole, blocked) — the RT reader's "wall".
-	if (!WorldData.CanUnitsEnterTile(Tile))
-		AppendPart(Result, "Impassable");
+	UnitPart = "";
 	if (FOW == eFOWTileStatus_Seen)
-		AppendPart(Result, class'X2AccessHelper'.static.DescribeUnitsOnTile(Tile));
+		UnitPart = class'X2AccessHelper'.static.DescribeUnitsOnTile(Tile);
+
+	// Occupied is not impassable: a tile with a live unit on it fails CanUnitsEnterTile, and
+	// speaking "Impassable" over an ally read as a bug in the first live test.
+	if (UnitPart == "" && !WorldData.CanUnitsEnterTile(Tile))
+		AppendPart(Result, "Impassable");
+	AppendPart(Result, UnitPart);
 
 	AppendPart(Result, DescribeInteractives(Tile));
 	AppendPart(Result, DescribeCoverEdges(TilePos, bVerbose));
@@ -295,15 +327,14 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 	return Result;
 }
 
-// Per-edge cover in camera-relative words. GetCoverDirection maps a world axis delta to the
-// cover-flag bit index (N/S/E/W order — COVER_North is bit 0, low cover the same order at
-// bit 4), so the same quadrant math that steps the cursor names the edges.
+// Per-edge cover in compass words, named directly by the engine's own cover-flag order
+// (COVER_North bit 0 → "north", low cover the same order four bits up).
 private function string DescribeCoverEdges(vector TilePos, bool bVerbose)
 {
 	local XComWorldData WorldData;
 	local XComCoverPoint CP;
 	local string Result;
-	local int FwdX, FwdY, RightX, RightY;
+	local int Dir;
 
 	WorldData = `XWORLD;
 	if (!WorldData.GetCoverPointAtFloor(TilePos, CP))
@@ -312,27 +343,17 @@ private function string DescribeCoverEdges(vector TilePos, bool bVerbose)
 			return "No cover";
 		return "";
 	}
-	GetScreenDirs(FwdX, FwdY, RightX, RightY);
 	Result = "";
-	AppendCoverEdge(Result, CP.Flags, FwdX, FwdY, "ahead");
-	AppendCoverEdge(Result, CP.Flags, -FwdX, -FwdY, "behind");
-	AppendCoverEdge(Result, CP.Flags, RightX, RightY, "right");
-	AppendCoverEdge(Result, CP.Flags, -RightX, -RightY, "left");
+	for (Dir = 0; Dir < 4; Dir++)
+	{
+		if ((CP.Flags & (class'XComWorldData'.const.COVER_North << Dir)) != 0)
+			AppendPart(Result, "High cover" @ CardinalWord(Dir));
+		else if ((CP.Flags & (class'XComWorldData'.const.COVER_NLow << Dir)) != 0)
+			AppendPart(Result, "Low cover" @ CardinalWord(Dir));
+	}
 	if (Result == "" && bVerbose)
 		Result = "No cover";
 	return Result;
-}
-
-private function AppendCoverEdge(out string Result, int Flags, int DX, int DY, string Word)
-{
-	local int CoverDir;
-
-	if (!class'XComWorldData'.static.GetCoverDirection(CoverDir, DX, DY))
-		return;
-	if ((Flags & (class'XComWorldData'.const.COVER_North << CoverDir)) != 0)
-		AppendPart(Result, "High cover" @ Word);
-	else if ((Flags & (class'XComWorldData'.const.COVER_NLow << CoverDir)) != 0)
-		AppendPart(Result, "Low cover" @ Word);
 }
 
 // Doors, hackable objectives, loot — the static map features a sighted player recognizes on
@@ -340,23 +361,23 @@ private function AppendCoverEdge(out string Result, int Flags, int DX, int DY, s
 private function string DescribeInteractives(TTile Tile)
 {
 	local XComGameState_InteractiveObject IObj;
-	local string Result, Name;
+	local string Result, ObjName;
 
 	foreach `XCOMHISTORY.IterateByClassType(class'XComGameState_InteractiveObject', IObj)
 	{
 		if (!SameTile(IObj.TileLocation, Tile))
 			continue;
 		if (IObj.IsDoor())
-			Name = "Door";
+			ObjName = "Door";
 		else if (IObj.MustBeHacked())
-			Name = "Hackable object";
+			ObjName = "Hackable object";
 		else if (IObj.GetAvailableLoot().Length > 0)
-			Name = "Loot";
+			ObjName = "Loot";
 		else
-			Name = "Interactive object";
+			ObjName = "Interactive object";
 		if (IObj.LockStrength > 0)
-			Name @= "(locked)";
-		AppendPart(Result, Name);
+			ObjName @= "(locked)";
+		AppendPart(Result, ObjName);
 	}
 	return Result;
 }
@@ -365,22 +386,18 @@ private function string DescribeInteractives(TTile Tile)
 // blue/yellow move highlight, answered from the same cache the pathing pawn uses.
 private function string DescribeReachability(TTile Tile)
 {
-	local XComTacticalController TC;
 	local XGUnit ActiveUnit;
 	local XComGameState_Unit UnitState;
 	local float Cost;
 
-	TC = TacCtrl();
-	if (TC == none)
-		return "";
-	ActiveUnit = TC.GetActiveUnit();
-	if (ActiveUnit == none || ActiveUnit.m_kReachableTilesCache == none)
-		return "";
-	UnitState = XComGameState_Unit(`XCOMHISTORY.GetGameStateForObjectID(ActiveUnit.ObjectID));
+	UnitState = ActiveUnitState();
 	if (UnitState == none)
 		return "";
 	if (SameTile(Tile, UnitState.TileLocation))
 		return "Your tile";
+	ActiveUnit = ActiveUnitVisualizer(UnitState);
+	if (ActiveUnit == none || ActiveUnit.m_kReachableTilesCache == none)
+		return "";
 	Cost = ActiveUnit.m_kReachableTilesCache.GetPathCostToTile(Tile);
 	if (Cost < 0)
 		return "Out of range";
@@ -389,23 +406,15 @@ private function string DescribeReachability(TTile Tile)
 	return "1 action";
 }
 
-// Offset from the active unit in camera-relative words ("3 ahead, 2 right, 1 up"). Always
-// spoken — it proves the step registered even when the tile itself has nothing to say.
+// Offset from the active unit in compass words ("3 north, 2 east, 1 up"). Always spoken — it
+// proves the step registered even when the tile itself has nothing to say.
 private function string DescribeOffset(TTile Tile)
 {
-	local XComTacticalController TC;
-	local XGUnit ActiveUnit;
 	local XComGameState_Unit UnitState;
-	local int DX, DY, DZ, FwdX, FwdY, RightX, RightY, FwdAmt, RightAmt;
+	local int DX, DY, DZ, NDX, NDY, EDX, EDY, NorthAmt, EastAmt;
 	local string Result;
 
-	TC = TacCtrl();
-	if (TC == none)
-		return "";
-	ActiveUnit = TC.GetActiveUnit();
-	if (ActiveUnit == none)
-		return "";
-	UnitState = XComGameState_Unit(`XCOMHISTORY.GetGameStateForObjectID(ActiveUnit.ObjectID));
+	UnitState = ActiveUnitState();
 	if (UnitState == none)
 		return "";
 
@@ -413,21 +422,22 @@ private function string DescribeOffset(TTile Tile)
 	DY = Tile.Y - UnitState.TileLocation.Y;
 	DZ = Tile.Z - UnitState.TileLocation.Z;
 	if (DX == 0 && DY == 0 && DZ == 0)
-		return "At" @ ActiveUnitName();
+		return "At" @ UnitState.GetName(eNameType_Full);
 
-	GetScreenDirs(FwdX, FwdY, RightX, RightY);
-	FwdAmt = DX * FwdX + DY * FwdY;
-	RightAmt = DX * RightX + DY * RightY;
+	if (!CardinalDelta(DIR_NORTH, NDX, NDY) || !CardinalDelta(DIR_EAST, EDX, EDY))
+		return "";
+	NorthAmt = DX * NDX + DY * NDY;
+	EastAmt = DX * EDX + DY * EDY;
 
 	Result = "";
-	if (FwdAmt > 0)
-		Result = string(FwdAmt) @ "ahead";
-	else if (FwdAmt < 0)
-		Result = string(-FwdAmt) @ "behind";
-	if (RightAmt > 0)
-		AppendComma(Result, string(RightAmt) @ "right");
-	else if (RightAmt < 0)
-		AppendComma(Result, string(-RightAmt) @ "left");
+	if (NorthAmt > 0)
+		Result = string(NorthAmt) @ CardinalWord(DIR_NORTH);
+	else if (NorthAmt < 0)
+		Result = string(-NorthAmt) @ CardinalWord(DIR_SOUTH);
+	if (EastAmt > 0)
+		AppendComma(Result, string(EastAmt) @ CardinalWord(DIR_EAST));
+	else if (EastAmt < 0)
+		AppendComma(Result, string(-EastAmt) @ CardinalWord(DIR_WEST));
 	if (DZ > 0)
 		AppendComma(Result, string(DZ) @ "up");
 	else if (DZ < 0)
@@ -455,14 +465,56 @@ private function XComTacticalController TacCtrl()
 	return XComTacticalController(class'WorldInfo'.static.GetWorldInfo().GetALocalPlayerController());
 }
 
-// Plant the cursor on the active unit on the first press of a mission and read that tile
-// instead of acting. Returns true when this call did the planting (callers stop there).
+// The selected unit's state. GetActiveUnit() merely returns the controller's
+// ControllingUnitVisualizer VAR, which lags or sits empty in stretches of a mission (the first
+// live test lost every offset and reachability line to it) — the ControllingUnit
+// StateObjectReference on the same controller is the durable source, so fall back to it.
+private function XComGameState_Unit ActiveUnitState()
+{
+	local XComTacticalController TC;
+	local XGUnit ActiveUnit;
+	local int ObjectID;
+
+	TC = TacCtrl();
+	if (TC == none)
+		return none;
+	ActiveUnit = TC.GetActiveUnit();
+	if (ActiveUnit != none)
+		ObjectID = ActiveUnit.ObjectID;
+	else
+		ObjectID = TC.ControllingUnit.ObjectID;
+	if (ObjectID <= 0)
+		return none;
+	return XComGameState_Unit(`XCOMHISTORY.GetGameStateForObjectID(ObjectID));
+}
+
+// The selected unit's visualizer actor (owns the reachable-tiles cache), tolerant of the
+// controller's visualizer var being stale: resolve through the unit state when needed.
+private function XGUnit ActiveUnitVisualizer(XComGameState_Unit UnitState)
+{
+	local XComTacticalController TC;
+	local XGUnit ActiveUnit;
+
+	TC = TacCtrl();
+	if (TC != none)
+	{
+		ActiveUnit = TC.GetActiveUnit();
+		if (ActiveUnit != none)
+			return ActiveUnit;
+	}
+	if (UnitState != none)
+		return XGUnit(UnitState.GetVisualizer());
+	return none;
+}
+
+// Plant the cursor on the active unit's OWN TILE (UnitState.TileLocation — never the pawn's
+// body-center position, which reads one Z level high) on the first press of a mission, and
+// read that tile instead of acting. Returns true when this call did the planting.
 private function bool EnsurePlanted(XComTacticalController TC, XCom3DCursor Cursor,
 	XComWorldData WorldData)
 {
 	local XComGameState_BattleData BattleData;
-	local XGUnit ActiveUnit;
-	local TTile Tile;
+	local XComGameState_Unit UnitState;
 	local int MissionID;
 
 	BattleData = XComGameState_BattleData(
@@ -473,59 +525,97 @@ private function bool EnsurePlanted(XComTacticalController TC, XCom3DCursor Curs
 	if (bPlanted && MissionID == PlantedMissionID)
 		return false;
 
+	UnitState = ActiveUnitState();
+	if (UnitState == none)
+	{
+		NativeResult = "No unit selected";
+		return true; // consumed: spoke the refusal, nothing planted
+	}
+
 	bPlanted = true;
 	PlantedMissionID = MissionID;
 	bMovePending = false;
 
-	ActiveUnit = TC.GetActiveUnit();
-	if (ActiveUnit != none && ActiveUnit.GetPawn() != none)
-		Cursor.MoveToUnit(ActiveUnit.GetPawn());
-	Tile = WorldData.GetTileCoordinatesFromPosition(Cursor.Location);
-	NativeResult = "Cursor on." @ DescribeTile(Tile, false);
+	SetCursorTile(Cursor, WorldData, UnitState.TileLocation);
+	NativeResult = "Cursor on." @ DescribeTile(UnitState.TileLocation, false);
 	return true;
 }
 
-// The camera-relative screen axes as world-axis deltas, from the camera yaw quantized to the
-// nearest quadrant (the tactical camera rotates in 45-degree steps; ties break consistently).
-// If in-game testing shows left/right mirrored, flip the two Right signs — this is the single
-// flip point for the whole reader (steps, cover words, offsets all route through here).
-private function GetScreenDirs(out int FwdX, out int FwdY, out int RightX, out int RightY)
+// Adopt a tile as the authoritative cursor state and push the game's 3D cursor onto it —
+// exact tile center, snap search OFF. Every historical "the push never lands" measurement
+// was the game's own per-frame mouse re-push (XComTacticalInput.Mouse_CheckForPathing)
+// reverting it one frame later; the C++ mouse gate now suppresses that while the tile
+// cursor owns world mode, and with it gone an exact push is strictly better than a snapped
+// one: GetClosestValidCursorPosition slid a floor-up push two tiles sideways (measured live
+// 2026-08-20), and the pathing pawn must preview exactly the tile the reader spoke.
+private function SetCursorTile(XCom3DCursor Cursor, XComWorldData WorldData, TTile Tile)
 {
-	local PlayerController PC;
-	local int Quadrant;
-
-	Quadrant = 0;
-	PC = class'WorldInfo'.static.GetWorldInfo().GetALocalPlayerController();
-	if (PC != none && PC.PlayerCamera != none)
-		Quadrant = (((PC.PlayerCamera.CameraCache.POV.Rotation.Yaw & 65535) + 8192) >> 14) & 3;
-
-	switch (Quadrant)
-	{
-	case 0: FwdX = 1;  FwdY = 0;  break;
-	case 1: FwdX = 0;  FwdY = 1;  break;
-	case 2: FwdX = -1; FwdY = 0;  break;
-	case 3: FwdX = 0;  FwdY = -1; break;
-	}
-	RightX = FwdY;
-	RightY = -FwdX;
+	CurX = Tile.X;
+	CurY = Tile.Y;
+	CurZ = Tile.Z;
+	// Free the chain the way the game itself does (MoveToUnit), by zeroing the chain
+	// distances — NOT by clearing ChainedPawn, which makes CursorMode_NoCollision.Tick abort
+	// its own state every frame. ProcessChainedDistance clamps only while a distance is > 0
+	// (decompiled at VA 0x140b616e0); a stale positive m_fMaxChainedDistance is what
+	// collapsed earlier pushes back onto the unit. Our keys stand down while the shot HUD is
+	// raised, so this can never loosen an active targeting method's own clamp.
+	Cursor.m_fMaxChainedDistance = 0;
+	Cursor.m_fMinChainedDistance = 0;
+	Cursor.CursorSetLocation(WorldData.GetPositionFromTileCoordinates(Tile), false, false);
 }
 
-private function string ActiveUnitName()
+private function TTile CurTile()
 {
-	local XComTacticalController TC;
-	local XGUnit ActiveUnit;
-	local XComGameState_Unit UnitState;
+	local TTile T;
 
-	TC = TacCtrl();
-	if (TC == none)
-		return "unit";
-	ActiveUnit = TC.GetActiveUnit();
-	if (ActiveUnit == none)
-		return "unit";
-	UnitState = XComGameState_Unit(`XCOMHISTORY.GetGameStateForObjectID(ActiveUnit.ObjectID));
-	if (UnitState == none)
-		return "unit";
-	return UnitState.GetName(eNameType_Full);
+	T.X = CurX;
+	T.Y = CurY;
+	T.Z = CurZ;
+	return T;
+}
+
+// Snap a target tile to the floor of its column near the current height, so stepping follows
+// terrain (up a slope, down off a roof edge). Leaves the tile untouched when no floor resolves.
+private function ResolveFloor(XComWorldData WorldData, out TTile Tile)
+{
+	local TTile Floor;
+	local vector Pos;
+
+	Pos = WorldData.GetPositionFromTileCoordinates(Tile);
+	if (WorldData.GetFloorTileForPosition(Pos, Floor, false))
+	{
+		Tile.X = Clamp(Floor.X, 0, WorldData.NumX - 1);
+		Tile.Y = Clamp(Floor.Y, 0, WorldData.NumY - 1);
+		Tile.Z = Clamp(Floor.Z, 0, WorldData.NumZ - 1);
+	}
+}
+
+// The world-axis delta for a compass cardinal — pure table composition, infallible by
+// construction (a dead arrow can never again be a silent no-op).
+private function bool CardinalDelta(int Cardinal, out int DX, out int DY)
+{
+	switch (Cardinal)
+	{
+	case DIR_NORTH: DX = NORTH_DX;  DY = NORTH_DY;  return true;
+	case DIR_SOUTH: DX = -NORTH_DX; DY = -NORTH_DY; return true;
+	case DIR_EAST:  DX = EAST_DX;   DY = EAST_DY;   return true;
+	case DIR_WEST:  DX = -EAST_DX;  DY = -EAST_DY;  return true;
+	}
+	DX = 0;
+	DY = 0;
+	return false;
+}
+
+private function string CardinalWord(int Cardinal)
+{
+	switch (Cardinal)
+	{
+	case DIR_NORTH: return "north";
+	case DIR_SOUTH: return "south";
+	case DIR_EAST:  return "east";
+	case DIR_WEST:  return "west";
+	}
+	return "";
 }
 
 private function bool SameTile(TTile A, TTile B)

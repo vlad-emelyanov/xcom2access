@@ -37,6 +37,7 @@ add_library(X2Access SHARED
     src/ue3_reflection.cpp
     src/game_ui.cpp
     src/menu_navigator.cpp
+    src/mouse_gate.cpp
     src/tile_reader.cpp
     # Compile-time verification of hand-transcribed offsets against the generated SDK
     src/sdk_layout_checks.cpp

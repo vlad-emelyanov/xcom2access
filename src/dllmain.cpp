@@ -3,6 +3,7 @@
 #include "tts.h"
 #include "input.h"
 #include "menu_navigator.h"
+#include "mouse_gate.h"
 #include "tile_reader.h"
 #include "hooks.h"
 
@@ -67,6 +68,7 @@ static void InitThread() {
 
 static void ShutdownAll() {
     LOG_INFO("X2Access shutting down");
+    MouseGate::ForceRestore(); // first: no game code may keep dispatching into this module
     DevServer::Stop(); // before the hooks: the pump it depends on goes away with them
     Hooks::Shutdown();
     Input::Shutdown();

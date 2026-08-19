@@ -1139,6 +1139,39 @@ My2KStatus QueryMy2KStatusCached(void* shell)
 
 } // namespace
 
+void* FindScriptFunction(const char* className, const char* funcName)
+{
+    // Same lazy class resolution + retry discipline as CallStaticNative; both caches hold
+    // objects that persist for the session (class-owned, never GC'd mid-run).
+    static std::unordered_map<std::string, UObject*> sClasses;
+    static std::unordered_map<std::string, UFunction*> sFuncs;
+    static uint64_t sLastTryMs = 0;
+
+    UObject*& cls = sClasses[className];
+    if (!cls) {
+        uint64_t now = GetTickCount64();
+        if (now - sLastTryMs < 1000)
+            return nullptr;
+        sLastTryMs = now;
+        cls = FindClassRaw(className);
+        if (!cls) {
+            LOG_WARN("GameUI: class \"%s\" not found (FindScriptFunction)", className);
+            return nullptr;
+        }
+    }
+
+    UFunction*& fn = sFuncs[std::string(className) + "." + funcName];
+    if (!fn) {
+        fn = FindFunctionInClassStructRaw(cls, funcName);
+        if (!fn) {
+            LOG_WARN("GameUI: function \"%s.%s\" NOT FOUND", className, funcName);
+            return nullptr;
+        }
+        LOG_INFO("GameUI: resolved \"%s.%s\" at 0x%p", className, funcName, fn);
+    }
+    return fn;
+}
+
 void* FindMainMenuShell()
 {
     static ScreenFinder sFinder{"UIFinalShell"};

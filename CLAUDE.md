@@ -63,6 +63,18 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   "unexplored"; HaveSeen → static layout only; Seen → full). Claims stand down
   while the shot HUD is raised (`m_isMenuRaised` — targeting owns the arrows),
   while a graph recipe is attached, or when `UITacticalHUD` loses focus.
+  **Mouse gate** (`src/mouse_gate.cpp`): with the mouse the active input
+  device, `XComTacticalInput.Mouse_CheckForPathing` re-pushes the cached mouse
+  pick point through `CursorSetLocation` EVERY FRAME (last line of the input
+  state's `PostProcessCheckGameLogic`), reverting any keyboard push one frame
+  later. While the tile cursor has been used this mission AND owns world mode,
+  the gate flips that one UFunction to `FUNC_Native` with `Func` → a thunk
+  that consumes `EX_EndFunctionParms` and returns — script→script dispatch
+  goes through exactly those two fields — and restores both exactly whenever
+  targeting raises, a recipe attaches, tactical ends, or the ASI unloads.
+  Clicks, free-aim (`Mouse_CheckForFreeAim`), and camera scroll are untouched;
+  a mouse click while gated commits to the pathing pawn's preview of OUR tile,
+  the same two-press semantics as Backspace.
 - **Outbound script calls**: C++ may invoke any UnrealScript function via
   ProcessEvent. Always resolve the UFunction BY NAME at runtime and hand-roll
   the param struct (`GameUI::CallNamedFunction`; `CallStaticNative` for
@@ -110,9 +122,67 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   sanity heuristics before init proceeds.
 - Runtime `FString` is `TArray<wchar_t>` (UTF-16) even though the generated
   SDK declares `char` — `ue3_reflection.cpp` handles the conversion.
+- **The ProcessEvent hook sees only NATIVE→script dispatch.** Verified live
+  2026-08-19 with F4 discovery during a mission: a full HUD refresh (Tab
+  switched soldier, `m_arrAbilities` went 4 → 5, every panel repainted)
+  produced not ONE UI script function — no `UpdateAbilitiesArray`, no
+  `SetStats`, no `OnUnrealCommand`, no `RealizeTargets`. What does arrive is the
+  engine calling into script: `Tick` / `PostRender` / `HandleInputKey` /
+  `BeginState` on `XComTacticalInput`, `FilterButtonInput` on `UIMovie_2D`, and
+  the simulation surface the native visibility and pathing systems call —
+  `CallAbilityMeetsCondition`, `GetVisibleFlankingEnemiesOfLocation`,
+  `NumActionPointsForMoving`, `TargetIsEnemy`, `UpdateGameplayVisibility`,
+  `GetEnvironmentDamagePreview` (our own outbound calls show up as traffic too,
+  which is how `IsAnyMoviePlaying` appears). That is UE3 behaving as documented:
+  a script→script call runs through `CallFunction` → `Function->Func`
+  (`ProcessInternal`), never the virtual slot 72 we patch. **So "watch a UI
+  function by name" is not an available technique.** The obvious narration tap
+  — `UIWorldMessageMgr.Message` (every flyover, with damage and crit label),
+  `UIEventNotices.Notify` / `NotifyBanner`, `UITacticalHUDMessageBanner.SetBanner`
+  — cannot be built this way. Game-event narration belongs to companion
+  `X2EventListener`s; reaching script→script traffic would need a second hook on
+  `ProcessInternal`, which would hand us the whole script call graph and is the
+  one thing that would change this calculus. Ghidra pass 2026-08-20 costed it:
+  `ProcessInternal` is **not virtual** — the UObject vtable block around slot 72
+  matches UE3's declaration order exactly with no gaps (72 ProcessEvent,
+  73 ProcessDelegate, 74 ProcessState, 75 ProcessRemoteFunction,
+  76 InitExecution, 77 GotoLabel, 78 GotoState,
+  79 CallFunctionByNameWithArguments), so it needs an INLINE hook (the first
+  real use for MinHook, not vendored yet). Its address needs no signature scan:
+  `UFunction::Func` (+0xF0) of any SCRIPT function is the dispatch target, and
+  ProcessEvent calls exactly that at `0x140143E40` — read it once at init and
+  the hook survives a game patch. The frame it receives carries the params
+  ALREADY EVALUATED, so existing reflection reads apply unchanged; layout under
+  pack(4) is `Node` +0x14, `Object` +0x1C, `Code` +0x24, `Locals` +0x2C (the
+  `Code` offset cross-checks with what `mouse_gate.cpp` derived independently
+  from `execSetLocation`). Native calls would NOT appear in such a tap (a
+  native's `Func` is its exec thunk), and script calls made through ProcessEvent
+  would appear TWICE.
 - Some screens are Flash-driven with no UIList (e.g. key bindings): neither
   layer can enumerate rows. Future option: call
   `GFxMoviePlayer.GetVariableString` outbound to read Flash state directly.
+- **The tactical HUD holds no text.** Unlike the shell screens, every panel of
+  `UITacticalHUD` is a write-only pipe into Flash: `SetStats` resolves name,
+  rank, class, aim and effects out of the game state and hands them straight to
+  `MC.BeginFunctionOp` / `QueueString`, retaining nothing
+  (`SrcOrig/.../UITacticalHUD_SoldierInfo.uc:199`) — and the shot HUD, info
+  panel, enemy list, countdown and banner all do the same. So `/gui` on
+  tactical prints 159 panels and almost no words, and the read-the-widget
+  recipe pattern does NOT transfer. What IS readable: the ability bar
+  (`UITacticalHUD_AbilityContainer.m_arrAbilities` + `m_iCurrentIndex`, and per
+  icon `m_strAntennaText` / `m_strCooldown` / `m_strCharge` / `IsAvailable` —
+  the antenna text only while `Movie.IsMouseActive()` — verified live
+  2026-08-19: populated and localized, e.g. slot 0 "ВЫСТРЕЛ" with
+  `m_strHotkeyLabel` "1", so the whole ability bar including each entry's
+  `AvailableCode` reason needs NO companion call), the enemy refs
+  (`UITacticalHUD_Enemies.m_arrTargets`), `UITacticalHUD.CurrentTargetID` /
+  `m_isMenuRaised` / `ConcealmentMode`, and `UIObjectiveListItem.Data`
+  (`ObjectiveDisplayInfo.DisplayLabel`, plus its timer). Everything else — HP,
+  armour, action points, effects, ammo, hit chance — exists only in
+  `XCOMHISTORY`. In tactical the widget tree therefore supplies STRUCTURE and
+  SELECTION while the companion supplies the WORDS: the content provider is a
+  companion CDO, not offset transcription in `game_ui.cpp`, which is also what
+  makes the structured bridge (v2) a prerequisite rather than a nicety.
 - Best public documentation of Firaxis' UE3 internals: robojumper's
   "Too Real" series (https://robojumper.github.io/too-real/). Highlander event
   reference: https://x2communitycore.github.io/X2WOTCCommunityHighlander/
@@ -226,6 +296,27 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
 - **Escaping a UIList to sibling buttons** needs
   `Navigator.CheckForOwnerHandling` plus deferred (0.01 s timer) focus — never
   mutate Navigator state inside its own `Next()`.
+- **Sighted parity decides what gets a tab stop.** The stop list mirrors what is
+  actually ON SCREEN; anything past that is a separately-labelled scan/aid
+  surface and must never hand the player information a sighted player cannot
+  get. Both halves have already bitten during tactical design: the WOTC
+  initiative order looks like an obvious stop and is CHEAT-GATED in retail
+  (`UITurnOverlay.ShowOrHideInitiative` shows it only when
+  `CHEATMGR.bShowInitiative`), so narrating it would leak enemy turn order;
+  and the standard HUD carries no turn counter — the only counters are
+  `UISpecialMissionHUD`'s pair, and that screen (always pushed) shows them only
+  while a `UiTimer.ShouldShow`, so an untimed mission reads `Timers = 0` and
+  displays nothing. The game's own answer to "what does this HUD offer" is
+  `UITacticalHUD_MouseControls` — prev/next soldier, end turn, rotate camera,
+  call Skyranger, Chosen info, cancel shot, shot info, soldier info — and on
+  mouse/keyboard that panel IS the command surface: `CharInfoButton` /
+  `EndTurnButton` / `SkyrangerButton` are spawned only in the CONTROLLER branch
+  of `UITacticalHUD.OnInit` and read null live. Build stops from that list,
+  never from a sketch of what a HUD "should" have. Aids that genuinely
+  compensate for lost vision (the tile cursor; distance and bearing on the
+  enemy strip; a speech scrollback,
+  because speech is serial where flyovers are simultaneous and persist ~5 s)
+  stay — labelled as aids, not sold as parity.
 - `src/Graph/` stays STL-only. UE3/host concerns go in adapters outside it.
 
 ## Build & deploy
@@ -404,6 +495,18 @@ calibration check worth running after any SDK regeneration.
 Steps 1-2 of *Adding a screen recipe* are what this replaces. `/tile` (the tile
 reader's state as structured data) is still open.
 
+## Live testing without eyes or hands in the game
+
+The dev server (`src/dev_server.cpp`, loopback :8774, armed by the
+`X2Access.devserver` marker) makes a session drivable end to end from outside:
+`/speech` is exactly what the screen reader was handed (poll with the cursor),
+`/status` is the gate + screen stack, and `tools/send-game-keys.ps1` injects
+scancode-level keys (SendInput with KEYEVENTF_SCANCODE — WScript SendKeys
+silently drops arrow keys for this game, and the INPUT struct must be 40 bytes
+or SendInput injects nothing). Screenshot via PowerShell CopyFromScreen, then
+read the image. This loop found and fixed the compass 180° rotation in one
+session without the player touching the keyboard.
+
 ## Reverse engineering workflow
 
 Two complementary tools; the ASI itself is the third and durable one.
@@ -505,6 +608,31 @@ does not manage (`UIDialogueBox` is permanent and never pushed) and for the
 window while the stack itself is being rebuilt. The first fallback per class is
 logged, so "not stack-managed" is a fact in the log rather than an assumption.
 
+## The tactical layer: input ownership
+
+Three modes, and the layer must always know which one it is in:
+
+- **World mode** (default) — arrows drive the tile cursor (`src/tile_reader.cpp`).
+- **HUD mode** — the tactical recipe is FOCUSED; arrows navigate it.
+- **Targeting mode** (`UITacticalHUD.m_isMenuRaised`) — the GAME owns the
+  arrows, Tab and F1-F8. We narrate and read there; we claim nothing that
+  steers.
+
+So the recipe must be ATTACHED BUT UNFOCUSED while the cursor keeps the arrows.
+`TileReader::ComputeActive` currently stands down on
+`MenuNavigator::IsAttached()` — right for menus, wrong here: the navigator needs
+an explicit focused state and the tile reader has to gate on that instead.
+
+**Tab is taken, twice**: `eTBC_NextUnit` in world mode
+(`UIUtilities_Input.uc:451`) and `NextTarget` while the shot HUD is raised
+(`UITacticalHUD.uc:459`). **Ctrl+Tab is free** — UE3 matches modifiers strictly,
+which is why `XComInput.ini` needs a separate `Shift=True` entry for R's error
+report alongside plain R, and why F4 carries `bIgnoreAlt=True` — so a Ctrl chord
+hits no tactical binding. Ctrl+Tab therefore enters/exits the HUD layer and
+plain Tab is claimed ONLY while the layer is focused. We do NOT rebind the
+player's config: a rebind outlives an uninstall, and re-exposing NextUnit from
+our own chord would leave the game's own hint text lying.
+
 ## Current state / next steps
 
 The Graph kernel is wired and driving real screens (see **UI reading** above).
@@ -516,15 +644,70 @@ Remaining:
    generalization, not a prerequisite.
 2. Continue migrating screens to native recipes (save/load, the strategy
    layer, tactical HUD).
-3. Tile cursor IN-GAME VERIFICATION (built 2026-08-19, not yet run in a
-   mission). Compile-time-unverifiable assumptions to check live:
-   left/right mirroring of the camera-relative axes (single flip point:
-   `X2AccessTileReader.GetScreenDirs`), the cover-flag bit order behind
-   `GetCoverDirection` (`AppendCoverEdge` assumes N/S/E/W = bits 0-3, low at
-   4-7), whether `CursorSetLocation` sticks while the cursor is chained to a
-   unit, `ClickToPath` firing from an outbound call, and the shot-HUD
-   stand-down. Then: object scanner (comma/period + PageUp/Dn are reserved for
-   it), vantage read (V), interact-at-cursor.
+3. Tile cursor: VERIFIED LIVE 2026-08-19 (autonomously: `tools/send-game-keys.ps1`
+   scancode injection + dev-server speech ring + screenshots): compass steps
+   (world-absolute, engine north = +Y, east = -X, calibrated against two crate
+   faces — cover flags are the oracle: a tile adjacent to an impassable crate
+   names its crate-facing edge), offsets exact per step, per-edge cover words,
+   fog parity, reachability, floor jumps, shot-HUD/pause stand-down, lazy
+   plant, state-first stepping (never read the cursor pawn back — it sits at
+   body-center heights and is repositioned natively every frame).
+   ROOT CAUSE FOUND LIVE 2026-08-19 — the physical cursor does not follow our
+   pushes because **the game re-drives it from the mouse EVERY FRAME**:
+   `XComTacticalInput`'s active-state `PostProcessCheckGameLogic` (`:2978`)
+   unconditionally calls `Mouse_CheckForPathing` (`:3204`), which — while
+   `Get2DMovie().IsMouseActive()` — deprojects the mouse and calls
+   `CursorSetLocation(kPickPoint, false)`. So our push LANDS and is overwritten
+   in the same frame. Proof: after three arrow steps the reader's own state
+   advanced correctly (it spoke three different tiles, naming the right allies)
+   while `XCom3DCursorMouse_0.Location` stayed bit-identical — and
+   `m_bPathingNeedsUpdate` read TRUE on that same object, which only
+   `CursorSetLocation` sets, so the call reached the right instance and did run.
+   This RETIRES the earlier Ghidra conclusion that "mouse tracking is
+   event-driven and a landed push sticks": the re-trace is not in the pawn
+   physics (`physFlying`/`CalcVelocity` really are plain integration) — it is in
+   SCRIPT, one layer up, which is why decompiling the pawn found nothing. The
+   rest of that pass still holds: `ProcessChainedDistance` (VA 0x140b616e0)
+   clamps only while `ChainedPawn != none` AND a chain distance is > 0, and the
+   live cursor reads `m_fMaxChainedDistance`/`m_fMinChainedDistance` = 0 with
+   `ChainedPawn` kept, exactly as `SetCursorTile` intends — that part of the fix
+   landed and is not the problem. `CursorSetLocation` is
+   `(newLoc, bResetSpeedCurveRampUp=true, bSnapToValidPosition=true)`, so our
+   `false` is the RAMP-UP flag and snap is already defaulting on.
+   The fix is `src/mouse_gate.cpp` — RESOLVED, VERIFIED LIVE 2026-08-20: it
+   swallows that ONE script function by setting `FUNC_Native` on its
+   `UFunction` and pointing `Func` (+0xF0) at a thunk that consumes the
+   `EX_EndFunctionParms` byte and returns, restoring both fields exactly on
+   release (targeting raised, recipe attached, tactical over, DLL detach).
+   Fully wired: CMake, `TileReader::Call` engages it on first use per mission,
+   `OnTick` tracks the active gate, `DllMain` force-restores,
+   `sdk_layout_checks.cpp` pins `FunctionFlags` (0xD0 — the generated header
+   mis-declares it uint64, so only that one field can be offsetof'd; Func 0xF0
+   is dump-comment + live-verified). The full chain ran live: plant landed and
+   STUCK at the tile center, each arrow moved the pawn exactly 96 units on the
+   right axis, `LastDestinationTile` previewed OUR tile, and the two-press
+   Backspace move-to committed through `ClickToPath` — unit walked to the
+   spoken tile (screenshot-verified). The swallow was preferred over the blunt
+   lever — `UIMovie.DeactivateMouse()` also stops `Mouse_CheckForPathing`, but
+   mouse-inactive mode changes which HUD the game builds (`UITacticalHUD.OnInit`
+   spawns `UITacticalHUD_MouseControls` in the mouse branch and the
+   `CharInfoButton`/`EndTurnButton`/`SkyrangerButton` hotlinks in the other) and
+   stops `UITacticalHUD_Ability.UpdateData` refreshing `m_strAntennaText`, which
+   is where ability names come from. The swallow keeps clicks, free-aim, camera
+   scroll and every other mouse feature untouched; a mouse click while gated
+   commits to the pawn's preview of OUR tile — the same two-press semantics as
+   Backspace. With the gate in, `SetCursorTile` passes bSnapToValidPosition
+   EXPLICITLY false: every historical "push never lands" was the mouse re-push
+   (snap was never the culprit), and snap ON slid a floor-up push two tiles
+   sideways (`GetClosestValidCursorPosition`, measured 2026-08-20) where the
+   guard needs byte-exact pawn/reader agreement. Also noted:
+   `XCom3DCursorMouse.CursorSnapToFloor` is overridden to a no-op (floor keys
+   must keep setting exact Z, which they do), and `XComPathingPawn.Tick` hides
+   everything while `UIReplay` is on the stack (it is, permanently, in some
+   sessions — though the 2026-08-19 mission's stack was
+   UISpecialMissionHUD/UITurnOverlay/UITacticalHUD/UIUnitFlagManager/
+   UIEventNotices, with no UIReplay). Then: object scanner (comma/period +
+   PageUp/Dn reserved), vantage read (V), interact-at-cursor.
 4. Bridge v2 (channels/priorities, queued events).
 5. The dialog recipe attaches wherever a `UIDialogueBox` shows, including in
    the strategy and tactical layers — deliberate (a modal must be readable),

@@ -27,6 +27,15 @@ static_assert(std::is_same_v<FString::ElementType, const wchar_t>,
     "FString must be wide (UTF16_FSTRING) — XCOM 2's runtime FString is TArray<wchar_t>");
 static_assert(sizeof(FScriptDelegate) == 0x20, "engine delegate stride (see generator notes)");
 
+// ---- UFunction dispatch fields (mouse_gate.cpp rewrites FunctionFlags + Func) ----
+// Only FunctionFlags can be pinned: the generated header declares it uint64_t where the
+// engine's field is a DWORD (the dump comment says 0x0004), so everything after 0xD0 in the
+// COMPILED class sits 4 bytes late — the dump comments are authoritative, the compiled
+// layout is not. The runtime offsets mouse_gate.cpp uses (flags dword 0xD0, Func 0xF0) come
+// from the dump comments + the live-process verification in project_ue3_offsets, and every
+// FUNC_Native call the mod makes exercises the same pair.
+static_assert(offsetof(UFunction, FunctionFlags) == 0xD0, "UFunction::FunctionFlags");
+
 // ---- UIPanel (flag dword at 0x284 is bitfields; MCName pins the layout up to it) ----
 static_assert(offsetof(AUIPanel, MCName) == 0x27C, "UIPanel::MCName");
 static_assert(offsetof(AUIPanel, CachedTooltipId) == 0x2AC, "UIPanel::CachedTooltipId");
