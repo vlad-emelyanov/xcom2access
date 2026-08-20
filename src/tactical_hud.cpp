@@ -1,0 +1,153 @@
+#include "tactical_hud.h"
+#include "game_ui.h"
+#include "input_arbiter.h"
+#include "menu_navigator.h"
+#include "narrator.h"
+#include "ue3_reflection.h"
+#include "log.h"
+
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+#include <cstdint>
+#include <functional>
+#include <string>
+
+namespace TacticalHUD {
+
+namespace {
+
+constexpr const char* kReaderClass = "X2AccessTacticalReader";
+
+// Poll cadence. The same 150 ms the tile reader uses: fast enough that a target cycled with Tab
+// is spoken before the player presses again, cheap enough to leave running for a whole mission.
+constexpr uint64_t kPollIntervalMs = 150;
+
+// The claims' active predicate result, recomputed on the tick. The arbiter evaluates activeWhen
+// inside the window procedure, so it must stay a flag read — the screen-stack walk behind it
+// belongs on the tick, the same discipline as the tile reader and the menu navigator.
+bool gTargeting = false;
+
+// Is the tactical HUD usable at all (mission running, no modal over it, no recipe attached)?
+// Wider than gTargeting: the poll runs here so it can see the shot HUD go up and come down,
+// while the keys are claimed only while it is actually up.
+bool ComputeUsable(bool* menuRaised)
+{
+    *menuRaised = false;
+    if (MenuNavigator::IsAttached())
+        return false;
+    GameUI::TacticalGate gate = GameUI::ReadTacticalGate();
+    if (!gate.hudOnStack || gate.blocked)
+        return false;
+    GameUI::StackState stack = GameUI::ReadStackState();
+    if (stack.valid && !stack.Interactive())
+        return false;
+    *menuRaised = gate.menuRaised;
+    return true;
+}
+
+// One outbound call to the companion reader, then speak whatever it wrote to NativeResult.
+// Runs from the frame pump or the arbiter's tick drain — both the game thread, which is what
+// outbound ProcessEvent requires. An empty result is a deliberate "nothing to say": the poll
+// uses it on every tick where the selection has not moved.
+//
+// Everything here goes out on an INTERRUPTING channel: the selection under the player's own keys
+// outranks whatever combat narration is still queued behind it. That is the whole reason these
+// calls route through the Narrator rather than TTS directly.
+void Call(const char* funcName, Narrator::Channel channel)
+{
+    void* cdo = GameUI::FindCompanionCDO(kReaderClass);
+    if (!cdo) {
+        // FindCompanionCDO already logs the miss (companion mod not loaded). Stay silent on the
+        // poll path; the key handlers below are the ones that owe the player an answer.
+        return;
+    }
+    // No-parameter functions still get a zeroed buffer — ProcessEvent copies ParmsSize bytes.
+    int64_t zeros[2] = {};
+    if (!GameUI::CallScriptFunction(cdo, funcName, zeros)) {
+        LOG_WARN("TacticalHUD: outbound call %s failed", funcName);
+        return;
+    }
+    std::string result
+        = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
+    if (!result.empty())
+        Narrator::Say(channel, result);
+}
+
+// A pressed key must never be silent, so the on-demand handlers say so when the companion is
+// missing entirely — the one case Call() swallows.
+void CallOnDemand(const char* funcName)
+{
+    if (!GameUI::FindCompanionCDO(kReaderClass)) {
+        Narrator::Say(Narrator::Channel::Aid, "Shot reader unavailable.");
+        return;
+    }
+    Call(funcName, Narrator::Channel::Aid);
+}
+
+// Auto-repeat is off, matching the tile reader: both keys are re-reads, and a held key would
+// only stutter the same line over itself.
+std::function<void(const InputArbiter::KeyEvent&)> OnPress(const char* funcName)
+{
+    return [funcName](const InputArbiter::KeyEvent& e) {
+        if (e.down && !e.repeat)
+            CallOnDemand(funcName);
+    };
+}
+
+} // namespace
+
+void Init()
+{
+    using namespace InputArbiter;
+
+    auto active = [] { return gTargeting; };
+
+    // Delete: re-announce the whole shot. Mirrors the tile cursor's re-announce key, and the
+    // two never contend — the tile reader stands down exactly when the shot HUD is raised.
+    RegisterClaim({VK_DELETE, ModNone, active, OnPress("AnnounceShot"),
+        "shot HUD: re-announce shot"});
+
+    // H: the per-modifier to-hit breakdown — the spoken form of the shot wings a mouse player
+    // opens by clicking. Free in tactical: DefaultInput.ini's [XComGame.XComTacticalInput]
+    // block binds no command to H at all, so claiming it costs the player nothing.
+    RegisterClaim({'H', ModNone, active, OnPress("AnnounceBreakdown"),
+        "shot HUD: hit chance breakdown"});
+
+    LOG_INFO("TacticalHUD: claims registered");
+}
+
+void OnTick()
+{
+    static uint64_t sLastMs = 0;
+    uint64_t now = GetTickCount64();
+    if (now - sLastMs < kPollIntervalMs)
+        return;
+    sLastMs = now;
+
+    bool menuRaised = false;
+    bool usable = ComputeUsable(&menuRaised);
+
+    bool targeting = usable && menuRaised;
+    if (targeting != gTargeting) {
+        gTargeting = targeting;
+        LOG_INFO("TacticalHUD: targeting %s", targeting ? "raised" : "lowered");
+    }
+
+    // The poll runs across the whole usable window, not just while raised: the companion tracks
+    // what it last announced and resets that on the way down, so the next raise reads in full.
+    // Its not-raised path is a screen lookup and a bool read, which is why leaving it running
+    // for a mission is affordable.
+    if (usable)
+        Call("PollTargeting", Narrator::Channel::Focus);
+
+    // Leaving tactical — mission over, a modal taking the layer, a recipe attaching — retires
+    // whatever combat narration is still queued on both sides of the bridge. Lines about a
+    // finished fight spoken over the mission summary would be worse than losing them.
+    static bool sWasUsable = false;
+    if (sWasUsable && !usable)
+        Narrator::DropPending();
+    sWasUsable = usable;
+}
+
+} // namespace TacticalHUD
