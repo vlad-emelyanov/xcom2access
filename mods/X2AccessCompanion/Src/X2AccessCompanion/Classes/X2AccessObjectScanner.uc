@@ -4,13 +4,39 @@
 // thread, from the tick drain) and reads NativeResult back through reflection right after the call
 // returns. Nothing here runs on its own — no listeners, no timers, no polling.
 //
-// This is SLICE 1a: the `markers` category only — the world-space things the game points the
-// player at. Three contributors, deliberately one ring rather than three:
-//   1. the tutorial's required-action marker (XComTutorialMgr.NextPlayerAbilityContext),
-//   2. objective-carrying objects (XComGameState_ObjectiveInfo components),
-//   3. the evac zone.
-// A tutorial waypoint and an objective glint are the same kind of thing to a player trying to work
-// out where to go, and folding them together is what stops the tutorial being a special case.
+// Five categories, each with its own cycle key on the native side and its own remembered position:
+//   markers               — the world-space things the game points the player AT. Three
+//                           contributors in one ring: the tutorial's required-action marker
+//                           (XComTutorialMgr.NextPlayerAbilityContext), objective-carrying objects
+//                           (XComGameState_ObjectiveInfo components) and the evac zone. A tutorial
+//                           waypoint and an objective glint are the same kind of thing to a player
+//                           working out where to go, and folding them together is what stops the
+//                           tutorial being a special case.
+//   units.enemies         — visible aliens.
+//   units.squad           — your own soldiers.
+//   ground.loot           — timed loot drops, with the turns left before they evaporate.
+//   ground.reinforcements — pending drop points, with the turns left before they land.
+//   ground.evac           — the evac RECTANGLE: its size, and how many of the squad are standing
+//                           in it. Promoted out of `markers` rather than listed in both, so one
+//                           thing is never named by two rings.
+//   units.civilians       — civilians and VIPs, including the ones you have to carry out.
+//   hazards               — fire / smoke / poison / acid, one entry per TYPE with the nearest tile
+//                           and how far the blob spans. The tile cursor answers "is this tile on
+//                           fire"; without this there is no way to FIND the fire.
+//   objects.interact      — everything with a live interaction: doors, chests, terminals,
+//                           elevators. Deliberately ONE ring where the recon doc had six — since
+//                           InteractiveLabel names each object by its own interact ability, the
+//                           split bought nothing but extra presses to reach the chest.
+//   units.lost            — one summary entry, never a per-unit ring: a swarm is 10-20 bodies and
+//                           stepping through them individually is unusable.
+//   objects.towers        — ADVENT towers and their detection radius, shown ONLY while something
+//                           of ours is concealed, because that is the only time the radius means
+//                           anything. The ring's empty-skip makes a mode-dependent category free.
+//
+// The last two exist because they are where the gap is WIDEST: the game gives a sighted player a
+// countdown (a number on the HUD counter, a number on the loot waypoint) and a persistent glowing
+// mark on the ground, and gives a blind player nothing at all. Every entry in both is gated on the
+// game's own rule for drawing that mark, so the ring can never name something the screen does not.
 //
 // NO REGISTRY (and this is a deliberate departure from the RT scanner it ports). RT needs a ticked
 // WorldModel because Unity entities are mutable references; XCOM's ObjectID is a stable int over a
@@ -40,12 +66,27 @@ struct AccessMarker
 // Synthetic keys for the contributors that have no state ObjectID of their own. Negative so they
 // can never collide with one (ObjectIDs are positive).
 const KEY_TUTORIAL = -101;
+const KEY_LOST_SWARM = -102;
+const KEY_HAZARD = -200;    // minus the hazard type index — see HazardWord
 
 // Categories. Each has its own cycle key on the native side and its own remembered position, so
 // checking an enemy and then checking a marker does not lose your place in either.
 const CAT_MARKERS = 0;
 const CAT_ENEMIES = 1;
-const NUM_CATEGORIES = 8;   // headroom for the remaining categories; a static array, so free
+const CAT_SQUAD = 2;
+const CAT_LOOT = 3;
+const CAT_REINFORCEMENTS = 4;
+const CAT_EVAC = 5;
+const CAT_CIVILIANS = 6;
+const CAT_HAZARDS = 7;
+const CAT_INTERACT = 8;
+const CAT_LOST = 9;
+const CAT_TOWERS = 10;
+const CAT_COUNT = 11;       // how many are REAL — what the category ring wraps around
+const NUM_CATEGORIES = 16;  // headroom for the rest; a static array, so the slack costs nothing
+
+// Hazard types, in the order HazardWord/HazardClass/TileHasHazard agree on.
+const HAZARD_COUNT = 4;
 
 // Written by every entry point; read by native immediately after the ProcessEvent returns.
 var string NativeResult;
@@ -55,7 +96,12 @@ var string NativeResult;
 // writing another class's defaults is not, which is why the plant lives over there and not here.
 // Per-category, so each cycle key resumes where it left off. A STATIC array: fixed size, value
 // typed, no allocation — the CDO rule again.
-var int SelKeyByCategory[8];
+var int SelKeyByCategory[16];
+
+// Which ring the un-prefixed keys address. It lives HERE rather than in native because the ring
+// step has to know which categories are empty, and only this side can answer that — so putting the
+// cursor next to that answer keeps one source of truth instead of two that can drift.
+var int CurCategory;
 
 // The last thing actually announced, in any category. This is what `/` plants the tile cursor on,
 // which is the right semantics: it acts on what you just heard, not on some notion of "current
@@ -67,8 +113,9 @@ var bool bSelValid;
 // Entry points (called from native)
 // ---------------------------------------------------------------------------
 
-// Advance the selection within one category by Delta and speak it. Delta 0 re-announces without
-// moving, which is what makes a one-entry ring answerable without cycling through it.
+// Advance the selection within one NAMED category by Delta and speak it — what the dedicated
+// cycle keys call. Delta 0 re-announces without moving, which is what makes a one-entry ring
+// answerable without cycling through it.
 //
 // Selection survives a rebuild by KEY, not by index: entries appear and vanish as objectives
 // complete, enemies die and the tutorial advances, so an index would silently point at a
@@ -76,9 +123,7 @@ var bool bSelValid;
 // reset either of them.
 function ScanCategory(int Category, int Delta)
 {
-	local array<AccessMarker> Entries;
 	local TTile Origin;
-	local int Idx;
 
 	NativeResult = "";
 
@@ -94,13 +139,80 @@ function ScanCategory(int Category, int Delta)
 		return;
 	}
 
-	BuildCategory(Category, Origin, Entries);
-	if (Entries.Length == 0)
+	// A dedicated key moves the ring cursor too, so PageUp/PageDown afterwards continue in the
+	// category you last asked about rather than in some remembered other one.
+	CurCategory = Category;
+
+	NativeResult = AnnounceCategory(Category, Origin, Delta, false);
+	if (NativeResult == "")
 	{
 		bSelValid = false;
 		NativeResult = EmptyText(Category);
+	}
+}
+
+// The same, in whichever category the ring cursor is on — PageDown / PageUp, and Delta 0 for the
+// re-announce key.
+function ScanCurrent(int Delta)
+{
+	ScanCategory(CurCategory, Delta);
+}
+
+// Move the ring cursor to the next category that HAS something in it, and announce that something
+// with the category named in front of it.
+//
+// Skipping empties is the whole point: eight slots exist and a typical mission populates three, so
+// a ring that stopped on every empty one would spend most of its presses saying "no loot". The cost
+// is one BuildCategory per skipped category — a handful of history iterations, on a keypress.
+function StepCategory(int Delta)
+{
+	local TTile Origin;
+	local string Line;
+	local int Tries, Cat;
+
+	NativeResult = "";
+
+	if (!ScanOrigin(Origin))
+	{
+		NativeResult = "No scan origin";
 		return;
 	}
+
+	Cat = CurCategory;
+	for (Tries = 0; Tries < CAT_COUNT; Tries++)
+	{
+		Cat += Delta;
+		if (Cat >= CAT_COUNT)
+			Cat = 0;
+		else if (Cat < 0)
+			Cat = CAT_COUNT - 1;
+
+		Line = AnnounceCategory(Cat, Origin, 0, true);
+		if (Line != "")
+		{
+			CurCategory = Cat;
+			NativeResult = Line;
+			return;
+		}
+	}
+
+	// Every ring is empty, the one we started in included — so the cursor stays put and says so
+	// rather than silently doing nothing.
+	bSelValid = false;
+	NativeResult = "Nothing to scan";
+}
+
+// Select within a category and render the line, or "" if the category is empty. Shared by the
+// dedicated keys and the ring so there is exactly one place that decides what a selection means.
+private function string AnnounceCategory(int Category, TTile Origin, int Delta, bool bPrefixName)
+{
+	local array<AccessMarker> Entries;
+	local string Line;
+	local int Idx;
+
+	BuildCategory(Category, Origin, Entries);
+	if (Entries.Length == 0)
+		return "";
 
 	Idx = IndexOfKey(Entries, SelKeyByCategory[Category]);
 	if (Idx == INDEX_NONE)
@@ -122,7 +234,14 @@ function ScanCategory(int Category, int Delta)
 	SelZ = Entries[Idx].Tile.Z;
 	bSelValid = true;
 
-	NativeResult = FormatMarker(Entries[Idx], Origin, Idx + 1, Entries.Length);
+	Line = FormatMarker(Entries[Idx], Origin, Idx + 1, Entries.Length);
+
+	// Only the ring names the category. A dedicated key already told the player which one they
+	// pressed, and repeating it every time would be a word in front of every reading.
+	if (bPrefixName)
+		Line = CategoryName(Category) $ "." @ Line;
+
+	return Line;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,10 +257,36 @@ private function BuildCategory(int Category, TTile Origin, out array<AccessMarke
 	case CAT_MARKERS:
 		AddTutorialMarker(Origin, Entries);
 		AddObjectiveMarkers(Origin, Entries);
-		AddEvacMarker(Origin, Entries);
 		break;
 	case CAT_ENEMIES:
 		AddEnemies(Origin, Entries);
+		break;
+	case CAT_SQUAD:
+		AddSquad(Origin, Entries);
+		break;
+	case CAT_LOOT:
+		AddLoot(Origin, Entries);
+		break;
+	case CAT_REINFORCEMENTS:
+		AddReinforcements(Origin, Entries);
+		break;
+	case CAT_EVAC:
+		AddEvac(Origin, Entries);
+		break;
+	case CAT_CIVILIANS:
+		AddCivilians(Origin, Entries);
+		break;
+	case CAT_HAZARDS:
+		AddHazards(Origin, Entries);
+		break;
+	case CAT_INTERACT:
+		AddInteractables(Origin, Entries);
+		break;
+	case CAT_LOST:
+		AddLost(Origin, Entries);
+		break;
+	case CAT_TOWERS:
+		AddTowers(Origin, Entries);
 		break;
 	}
 }
@@ -155,8 +300,41 @@ private function string EmptyText(int Category)
 	{
 	case CAT_MARKERS: return "No markers";
 	case CAT_ENEMIES: return "No enemies visible";
+	case CAT_SQUAD: return "No squad";
+	case CAT_LOOT: return "No loot";
+	// Worth saying out loud rather than staying silent: "none pending" is the answer a player
+	// checks for every turn, and silence would be indistinguishable from a dead key.
+	case CAT_REINFORCEMENTS: return "No reinforcements incoming";
+	case CAT_EVAC: return "No evac zone";
+	case CAT_CIVILIANS: return "No civilians visible";
+	case CAT_HAZARDS: return "No hazards";
+	case CAT_INTERACT: return "Nothing to interact with";
+	case CAT_LOST: return "No Lost visible";
+	// Says WHY it is empty. "No towers" while revealed would read as "this map has none", which is
+	// a different and much more dangerous claim than "the radius does not apply right now".
+	case CAT_TOWERS: return "Towers shown only while concealed";
 	}
 	return "Nothing here";
+}
+
+// Spoken by the ring, in front of the entry it landed on.
+private function string CategoryName(int Category)
+{
+	switch (Category)
+	{
+	case CAT_MARKERS: return "Markers";
+	case CAT_ENEMIES: return "Enemies";
+	case CAT_SQUAD: return "Squad";
+	case CAT_LOOT: return "Loot";
+	case CAT_REINFORCEMENTS: return "Reinforcements";
+	case CAT_EVAC: return "Evac";
+	case CAT_CIVILIANS: return "Civilians";
+	case CAT_HAZARDS: return "Hazards";
+	case CAT_INTERACT: return "Objects";
+	case CAT_LOST: return "Lost";
+	case CAT_TOWERS: return "Towers";
+	}
+	return "Category" @ string(Category);
 }
 
 // Visible enemies. Units are NEVER fog-latched (docs/object-scanner-recon.md §3.1) — unlike the
@@ -171,12 +349,25 @@ private function AddEnemies(TTile Origin, out array<AccessMarker> Entries)
 	local XComGameStateHistory History;
 	local XComGameState_Unit UnitState, ActiveUnit;
 	local StateObjectReference ShooterRef;
+	local array<StateObjectReference> MineToSee, ViaSquadsight;
 	local AccessMarker M;
 
 	History = `XCOMHISTORY;
 	ActiveUnit = class'X2AccessTileReader'.static.ActiveUnitState();
 	if (ActiveUnit != none)
+	{
 		ShooterRef = ActiveUnit.GetReference();
+
+		// What the SELECTED soldier can see, and (if they are a sniper) what they reach through
+		// squadsight — the two lists UITacticalHUD_Enemies builds for the enemy strip. The ring
+		// itself stays on SQUAD visibility, which is what the unit FLAGS on the map show; these
+		// two only decide which clause the entry gets.
+		class'X2TacticalVisibilityHelpers'.static.GetAllVisibleEnemyTargetsForUnit(
+			ActiveUnit.ObjectID, MineToSee);
+		if (ActiveUnit.HasSquadsight())
+			class'X2TacticalVisibilityHelpers'.static.GetAllSquadsightEnemiesForUnit(
+				ActiveUnit.ObjectID, ViaSquadsight);
+	}
 
 	foreach History.IterateByClassType(class'XComGameState_Unit', UnitState)
 	{
@@ -190,9 +381,16 @@ private function AddEnemies(TTile Origin, out array<AccessMarker> Entries)
 		M.bIsDestination = false;
 		M.Label = UnitState.GetName(eNameType_Full);
 
+		M.Detail = "";
+
+		// Without this clause the first unshootable target reads as a bug in US rather than as a
+		// rule of the game: the squad can see it, so it is in the ring, but the soldier holding
+		// the gun cannot.
+		class'X2AccessTacticalReader'.static.AppendComma(M.Detail,
+			SightWords(UnitState.ObjectID, ActiveUnit, MineToSee, ViaSquadsight));
+
 		// The same words the shot readout uses, from the same functions — see
 		// X2AccessTacticalReader.DescribeTargetCover.
-		M.Detail = "";
 		class'X2AccessTacticalReader'.static.AppendComma(M.Detail,
 			class'X2AccessTacticalReader'.static.DescribeTargetCover(UnitState, ShooterRef));
 		class'X2AccessTacticalReader'.static.AppendComma(M.Detail,
@@ -200,6 +398,199 @@ private function AddEnemies(TTile Origin, out array<AccessMarker> Entries)
 
 		InsertByDistance(Origin, M, Entries);
 	}
+}
+
+// "" when the selected soldier sees it themselves, which is the ordinary case and needs no words.
+private function string SightWords(int TargetID, XComGameState_Unit ActiveUnit,
+	out array<StateObjectReference> MineToSee, out array<StateObjectReference> ViaSquadsight)
+{
+	if (ActiveUnit == none)
+		return "";
+	if (MineToSee.Find('ObjectID', TargetID) != INDEX_NONE)
+		return "";
+	if (ViaSquadsight.Find('ObjectID', TargetID) != INDEX_NONE)
+		return "via squadsight";
+	return "spotted by the squad";
+}
+
+// Your own soldiers. Named, unlike the aliens: GetName(eNameType_Full) gives a soldier their real
+// name, which is the thing that makes this ring navigable at all.
+//
+// No fog gate — they are yours. bIsDestination is false: a soldier's own tile is occupied, so
+// "1 action" about it would answer a question nobody asked.
+//
+// Detail is held to what the unit FLAG shows above their head — status, cover, health, shield,
+// armour. Action points are deliberately absent: the HUD shows those for the selected soldier and
+// the tile cursor answers for a tile, so putting them here would be a third voice on one fact.
+private function AddSquad(TTile Origin, out array<AccessMarker> Entries)
+{
+	local XComGameStateHistory History;
+	local XComGameState_Unit UnitState, ActiveUnit;
+	local StateObjectReference NoShooter;
+	local AccessMarker M;
+	local int ActiveID;
+
+	History = `XCOMHISTORY;
+	ActiveUnit = class'X2AccessTileReader'.static.ActiveUnitState();
+	ActiveID = (ActiveUnit != none) ? ActiveUnit.ObjectID : -1;
+
+	foreach History.IterateByClassType(class'XComGameState_Unit', UnitState)
+	{
+		// bRemovedFromPlay is what evacuating sets, so a soldier already on the Skyranger stops
+		// being somewhere on the map.
+		if (UnitState.GetTeam() != eTeam_XCom || UnitState.IsDead() || UnitState.bRemovedFromPlay)
+			continue;
+
+		M.Key = UnitState.ObjectID;
+		M.Tile = UnitState.TileLocation;
+		M.bIsDestination = false;
+		M.Label = UnitState.GetName(eNameType_Full);
+
+		M.Detail = "";
+		if (UnitState.ObjectID == ActiveID)
+			class'X2AccessTacticalReader'.static.AppendComma(M.Detail, "selected");
+		class'X2AccessTacticalReader'.static.AppendComma(M.Detail, StatusWords(UnitState));
+
+		// An EMPTY shooter ref on purpose: IsFlanked with no flanker asks "flanked by anything
+		// visible", which is exactly what the cover shield on a soldier's own flag reports.
+		class'X2AccessTacticalReader'.static.AppendComma(M.Detail,
+			class'X2AccessTacticalReader'.static.DescribeTargetCover(UnitState, NoShooter));
+		class'X2AccessTacticalReader'.static.AppendComma(M.Detail,
+			class'X2AccessTacticalReader'.static.DescribeTargetHealth(UnitState));
+
+		InsertByDistance(Origin, M, Entries);
+	}
+}
+
+// One word for the condition that changes what you do with this soldier, most urgent first. Not a
+// full effect dump: the flag carries a row of icons, but a ring entry has to stay one breath long.
+private function string StatusWords(XComGameState_Unit UnitState)
+{
+	if (UnitState.IsBleedingOut())
+		return "bleeding out";
+	if (UnitState.IsUnconscious())
+		return "unconscious";
+	if (UnitState.IsPanicked())
+		return "panicking";
+	if (UnitState.IsConcealed())
+		return "concealed";
+	return "";
+}
+
+// Timed loot drops.
+//
+// The filter is the loot marker's OWN visibility rule, copied from
+// XComGameState_LootDrop.BuildVisualizationForLootTicked: SetVisible = (turns > 0 && has loot). So
+// an entry exists here exactly when a waypoint is drawn on the ground there, and an emptied or
+// expired drop leaves both at the same instant.
+//
+// Not fog-gated, for the same reason the objective markers are not: the marker is a UI_3D waypoint
+// billboard, the same family the game keeps visible when everything else is hidden. It is moot in
+// practice anyway — loot only ever appears where the squad just killed something.
+private function AddLoot(TTile Origin, out array<AccessMarker> Entries)
+{
+	local XComGameStateHistory History;
+	local XComGameState_LootDrop Drop;
+	local AccessMarker M;
+
+	History = `XCOMHISTORY;
+
+	foreach History.IterateByClassType(class'XComGameState_LootDrop', Drop)
+	{
+		if (Drop.LootExpirationTurnsRemaining <= 0 || !Drop.HasAvailableLoot())
+			continue;
+
+		M.Key = Drop.ObjectID;
+		M.Tile = Drop.GetLootLocation();
+		M.bIsDestination = true;
+
+		// LastLootOwnerName rather than GetLootingName(): the cached string was written from the
+		// source at drop time, whereas GetLootingName re-enters the source object — and for an
+		// interactive-object source that walks into the unguarded GetVisualizer() deref this class
+		// already sidesteps in InteractiveLabel.
+		M.Label = "Loot";
+		if (Drop.LastLootOwnerName != "")
+			M.Label $= ":" @ Drop.LastLootOwnerName;
+
+		// Psi loot gets its own marker mesh on screen, so naming it here is parity, not a hint.
+		M.Detail = "";
+		if (Drop.HasPsiLoot())
+			class'X2AccessTacticalReader'.static.AppendComma(M.Detail, "psi loot");
+		class'X2AccessTacticalReader'.static.AppendComma(M.Detail,
+			"expires" @ TurnWords(Drop.LootExpirationTurnsRemaining));
+
+		InsertByDistance(Origin, M, Entries);
+	}
+}
+
+// Pending reinforcement drops: where they land and how long you have.
+//
+// bIsDestination is false — this is the one place on the map you are trying NOT to be, and
+// "1 action" would read as an invitation.
+private function AddReinforcements(TTile Origin, out array<AccessMarker> Entries)
+{
+	local XComGameStateHistory History;
+	local XComGameState_AIReinforcementSpawner Spawner;
+	local AccessMarker M;
+	local vector SpawnPos;
+
+	History = `XCOMHISTORY;
+
+	foreach History.IterateByClassType(class'XComGameState_AIReinforcementSpawner', Spawner)
+	{
+		// Countdown 0 means the group has already landed (or was told to spawn at once); the HUD
+		// counter hides itself on exactly this test.
+		if (Spawner.Countdown <= 0)
+			continue;
+		if (!HasSpawnFlare(Spawner.SpawnVisualizationType))
+			continue;
+
+		// Via a local: GetTileCoordinatesFromPosition takes its vector as `out`.
+		SpawnPos = Spawner.SpawnInfo.SpawnLocation;
+
+		M.Key = Spawner.ObjectID;
+		M.Tile = `XWORLD.GetTileCoordinatesFromPosition(SpawnPos);
+		M.bIsDestination = false;
+		M.Label = ReinforcementsLabel();
+		M.Detail = TurnWords(Spawner.Countdown);
+		InsertByDistance(Origin, M, Entries);
+	}
+}
+
+// Mirrors the guard in XComGameState_AIReinforcementSpawner.OnReinforcementSpawnerCreated. For
+// these visualization types the game never runs BuildVisualizationForSpawnerCreation, so there is
+// no flare, no psi gate and no revealed area on the ground — nothing for a sighted player to see,
+// and so nothing for the ring to name. (The Lost swarm is the one that matters: it announces itself
+// with noise and a banner, not with a mark on the map.)
+private function bool HasSpawnFlare(name VisType)
+{
+	return VisType != ''
+		&& VisType != 'TheLostSwarm'
+		&& VisType != 'ChosenSpecialNoReveal'
+		&& VisType != 'ChosenSpecialTopDownReveal';
+}
+
+// The game's OWN words for this counter, so the ring and the HUD agree in whatever language the
+// player runs — "REINFORCEMENTS" / "INCOMING" in English. Falls back to English only if the
+// localization is missing outright.
+private function string ReinforcementsLabel()
+{
+	local string Title, Body;
+
+	Title = class'UITacticalHUD_Countdown'.default.m_strReinforcementsTitle;
+	Body = class'UITacticalHUD_Countdown'.default.m_strReinforcementsBody;
+
+	if (Title == "")
+		return "Reinforcements";
+	if (Body == "")
+		return Title;
+	return Title @ Body;
+}
+
+// Always carries the number, because the number is precisely what the sighted counter shows.
+private function string TurnWords(int Turns)
+{
+	return "in" @ string(Turns) @ (Turns == 1 ? "turn" : "turns");
 }
 
 // The tutorial's required-action marker.
@@ -369,22 +760,336 @@ private function AddObjectiveMarkers(TTile Origin, out array<AccessMarker> Marke
 	}
 }
 
-private function AddEvacMarker(TTile Origin, out array<AccessMarker> Markers)
+// The evac zone, as a RECTANGLE rather than a point.
+//
+// Three things follow from that and none of them work with a centre tile. The tile spoken is the
+// nearest point INSIDE the zone (the origin clamped into the bounds), so the distance is the walk
+// that actually matters, the bearing points at the edge you would enter by, and `/` plants the
+// cursor somewhere you can stand instead of in the middle. The size is spoken because a sighted
+// player can see how big the green patch is; the count inside is spoken because the game answers
+// it with its own `IsUnitInEvacZone`, and "how many are in" is the question the Evac button exists
+// to answer.
+private function AddEvac(TTile Origin, out array<AccessMarker> Entries)
 {
+	local XComGameStateHistory History;
 	local XComGameState_EvacZone Evac;
+	local XComGameState_Unit UnitState;
 	local AccessMarker M;
+	local TTile MinT, MaxT;
+	local int Inside, Total;
 
 	Evac = class'XComGameState_EvacZone'.static.GetEvacZone(eTeam_XCom);
 	if (Evac == none)
 		return;
 
-	M.Key = Evac.ObjectID;
+	class'XComGameState_EvacZone'.static.GetEvacMinMax2D(Evac.CenterLocation, MinT, MaxT);
+
 	M.Tile = Evac.CenterLocation;
+	M.Tile.X = Clamp(Origin.X, MinT.X, MaxT.X);
+	M.Tile.Y = Clamp(Origin.Y, MinT.Y, MaxT.Y);
+
+	History = `XCOMHISTORY;
+	foreach History.IterateByClassType(class'XComGameState_Unit', UnitState)
+	{
+		if (UnitState.GetTeam() != eTeam_XCom || UnitState.IsDead() || UnitState.bRemovedFromPlay)
+			continue;
+		Total++;
+		if (Evac.IsUnitInEvacZone(UnitState))
+			Inside++;
+	}
+
+	M.Key = Evac.ObjectID;
 	M.bIsDestination = true;
-	M.Detail = "";
 	M.Label = "Evac zone";
-	InsertByDistance(Origin, M, Markers);
+	M.Detail = string(MaxT.X - MinT.X + 1) @ "by" @ string(MaxT.Y - MinT.Y + 1) @ "tiles";
+	if (Total > 0)
+		class'X2AccessTacticalReader'.static.AppendComma(M.Detail,
+			string(Inside) @ "of" @ string(Total) @ "inside");
+
+	InsertByDistance(Origin, M, Entries);
 }
+
+// Civilians and VIPs — and, deliberately, the bodies among them. The recon doc had `units.down` as
+// a category of its own; the half of it that is not already covered is exactly this, because a
+// downed SOLDIER already reads "unconscious" in the squad ring. So a carryable body belongs here
+// rather than in a third place that would name the same person a third time.
+//
+// bIsDestination is true throughout: whether you are escorting, rescuing or picking one up, the
+// answer is somewhere you walk to.
+private function AddCivilians(TTile Origin, out array<AccessMarker> Entries)
+{
+	local XComGameStateHistory History;
+	local XComGameState_Unit UnitState;
+	local AccessMarker M;
+
+	History = `XCOMHISTORY;
+
+	foreach History.IterateByClassType(class'XComGameState_Unit', UnitState)
+	{
+		if (!UnitState.IsCivilian() || UnitState.IsDead() || UnitState.bRemovedFromPlay)
+			continue;
+		if (!class'X2TacticalVisibilityHelpers'.static.CanXComSquadSeeTarget(UnitState.ObjectID))
+			continue;
+
+		M.Key = UnitState.ObjectID;
+		M.Tile = UnitState.TileLocation;
+		M.bIsDestination = true;
+		M.Label = UnitState.GetName(eNameType_Full);
+
+		M.Detail = "";
+		class'X2AccessTacticalReader'.static.AppendComma(M.Detail, StatusWords(UnitState));
+		if (UnitState.CanBeCarried() && (UnitState.IsUnconscious() || UnitState.IsBleedingOut()))
+			class'X2AccessTacticalReader'.static.AppendComma(M.Detail, "can be carried");
+
+		InsertByDistance(Origin, M, Entries);
+	}
+}
+
+// The Lost, as ONE entry however many there are.
+//
+// This is §5.1's summary-on-entry form and the reason is arithmetic: a swarm is 10-20 bodies with
+// one shared name, so a per-unit ring would be twenty identical lines and would bury the ADVENT pod
+// standing behind them. The count and the nearest one are the two facts a player acts on.
+private function AddLost(TTile Origin, out array<AccessMarker> Entries)
+{
+	local XComGameStateHistory History;
+	local XComGameState_Unit UnitState;
+	local AccessMarker M;
+	local TTile NearT;
+	local int Count, NearDist, D;
+
+	History = `XCOMHISTORY;
+
+	foreach History.IterateByClassType(class'XComGameState_Unit', UnitState)
+	{
+		if (UnitState.GetTeam() != eTeam_TheLost || UnitState.IsDead())
+			continue;
+		if (!class'X2TacticalVisibilityHelpers'.static.CanXComSquadSeeTarget(UnitState.ObjectID))
+			continue;
+
+		D = TileDistance(Origin, UnitState.TileLocation);
+		if (Count == 0 || D < NearDist)
+		{
+			NearT = UnitState.TileLocation;
+			NearDist = D;
+		}
+		Count++;
+	}
+
+	if (Count == 0)
+		return;
+
+	M.Key = KEY_LOST_SWARM;
+	M.Tile = NearT;
+	M.bIsDestination = false;
+	M.Label = (Count == 1) ? "Lost" : "Lost swarm";
+	M.Detail = (Count == 1) ? "" : string(Count) @ "visible";
+	InsertByDistance(Origin, M, Entries);
+}
+
+// Hazards, one entry per TYPE rather than per state object.
+//
+// Grouping matters here: fire SPREADS, and each spread step writes another
+// XComGameState_WorldEffectTileData, so a per-object ring would grow a new "Fire" entry every turn
+// for what the player sees as one fire. Four types means at most four entries, ever.
+private function AddHazards(TTile Origin, out array<AccessMarker> Entries)
+{
+	local int TypeIdx;
+
+	for (TypeIdx = 0; TypeIdx < HAZARD_COUNT; TypeIdx++)
+		AddHazardOfType(TypeIdx, Origin, Entries);
+}
+
+private function AddHazardOfType(int TypeIdx, TTile Origin, out array<AccessMarker> Entries)
+{
+	local XComGameStateHistory History;
+	local XComGameState_WorldEffectTileData TileData;
+	local XComWorldData WorldData;
+	local AccessMarker M;
+	local TTile MinT, MaxT, NearT, T;
+	local name WantClass;
+	local int NearDist, D, Span, i;
+	local bool bAny;
+
+	WantClass = HazardClass(TypeIdx);
+	History = `XCOMHISTORY;
+	WorldData = `XWORLD;
+
+	foreach History.IterateByClassType(class'XComGameState_WorldEffectTileData', TileData)
+	{
+		if (TileData.WorldEffectClassName != WantClass)
+			continue;
+
+		// Indexed rather than `foreach`, deliberately: the element type
+		// (WorldEffectTileDataContainer) is declared inside XComGameState_WorldEffectTileData and
+		// is referenced nowhere else in the whole SDK, so whether its name is even in scope here is
+		// untested ground. Reaching straight for the member needs no local of that type.
+		for (i = 0; i < TileData.StoredTileData.Length; i++)
+		{
+			T = TileData.StoredTileData[i].Tile;
+
+			// The state object is an INDEX of where this effect was applied; the world is the
+			// truth. A blob that has burned out keeps its state object, so every tile is re-checked
+			// against the same sparse array the tile cursor reads — which is also why the two
+			// surfaces can never disagree about whether a tile is on fire.
+			if (!TileHasHazard(WorldData, TypeIdx, T))
+				continue;
+
+			// Hazards are live world state, so they get the strict gate, not the latching one:
+			// remembering where a fire USED to be would be inventing information.
+			if (!TileSeen(WorldData, T, false))
+				continue;
+
+			D = TileDistance(Origin, T);
+			if (!bAny)
+			{
+				MinT = T;
+				MaxT = T;
+				NearT = T;
+				NearDist = D;
+				bAny = true;
+				continue;
+			}
+
+			if (T.X < MinT.X)
+				MinT.X = T.X;
+			if (T.Y < MinT.Y)
+				MinT.Y = T.Y;
+			if (T.X > MaxT.X)
+				MaxT.X = T.X;
+			if (T.Y > MaxT.Y)
+				MaxT.Y = T.Y;
+			if (D < NearDist)
+			{
+				NearT = T;
+				NearDist = D;
+			}
+		}
+	}
+
+	if (!bAny)
+		return;
+
+	Span = Max(MaxT.X - MinT.X, MaxT.Y - MinT.Y) + 1;
+
+	M.Key = KEY_HAZARD - TypeIdx;
+	M.Tile = NearT;
+	M.bIsDestination = false;
+	M.Label = HazardWord(TypeIdx);
+	M.Detail = (Span > 1) ? (string(Span) @ "tiles across") : "";
+	InsertByDistance(Origin, M, Entries);
+}
+
+// Everything with a live interaction left in it — one ring, not the recon doc's six.
+//
+// The six-way split (doors / hackable / crates / interact / level change / destructibles) was
+// written before §6.1 was answered. Now that InteractiveLabel names each object by its own
+// interact ability — "Open Door", "Hack", "Use Elevator", already localized — the split buys
+// nothing except four more Ctrl+PageDown presses to reach the chest.
+//
+// Objects carrying an ObjectiveInfo are skipped because `markers` already has them. That is the
+// same "one thing, one ring" rule the evac promotion follows.
+private function AddInteractables(TTile Origin, out array<AccessMarker> Entries)
+{
+	local XComGameStateHistory History;
+	local XComGameState_InteractiveObject Obj;
+	local XComWorldData WorldData;
+	local AccessMarker M;
+
+	History = `XCOMHISTORY;
+	WorldData = `XWORLD;
+
+	foreach History.IterateByClassType(class'XComGameState_InteractiveObject', Obj)
+	{
+		if (Obj.bRemovedFromPlay)
+			continue;
+
+		// Used up. Same test the object's own Interacted() guards on.
+		if (Obj.MaxInteractionCount >= 0 && Obj.InteractionCount >= Obj.MaxInteractionCount)
+			continue;
+
+		if (Obj.FindComponentObject(class'XComGameState_ObjectiveInfo') != none)
+			continue;
+
+		// Statics LATCH: an object stays in the ring once seen, exactly as its silhouette stays
+		// drawn for a sighted player after the squad looks away.
+		if (!TileSeen(WorldData, Obj.TileLocation, true))
+			continue;
+
+		M.Key = Obj.ObjectID;
+		M.Tile = Obj.TileLocation;
+		M.bIsDestination = true;
+		M.Label = InteractiveLabel(Obj);
+
+		M.Detail = "";
+		if (Obj.bHasBeenHacked)
+			class'X2AccessTacticalReader'.static.AppendComma(M.Detail, "hacked");
+		else if (Obj.LockStrength > 0)
+			class'X2AccessTacticalReader'.static.AppendComma(M.Detail,
+				"locked, strength" @ string(Obj.LockStrength));
+		if (Obj.HasLoot())
+			class'X2AccessTacticalReader'.static.AppendComma(M.Detail, "has loot");
+
+		InsertByDistance(Origin, M, Entries);
+	}
+}
+
+// ADVENT towers, and ONLY while something of ours is concealed.
+//
+// DetectionRange is meaningless once the squad is revealed, so listing towers then would be noise
+// dressed up as information — §5.3. The gate is "any XCom unit concealed" rather than the player
+// state's bSquadIsConcealed, because a lone Phantom ranger scouting ahead of a revealed squad is
+// precisely the situation where the radius matters most.
+private function AddTowers(TTile Origin, out array<AccessMarker> Entries)
+{
+	local XComGameStateHistory History;
+	local XComGameState_InteractiveObject Obj;
+	local XComWorldData WorldData;
+	local AccessMarker M;
+	local int RangeTiles;
+
+	if (!AnyoneConcealed())
+		return;
+
+	History = `XCOMHISTORY;
+	WorldData = `XWORLD;
+
+	foreach History.IterateByClassType(class'XComGameState_InteractiveObject', Obj)
+	{
+		if (Obj.bRemovedFromPlay || Obj.bHasBeenHacked || Obj.DetectionRange <= 0)
+			continue;
+		if (!TileSeen(WorldData, Obj.TileLocation, true))
+			continue;
+
+		M.Key = Obj.ObjectID;
+		M.Tile = Obj.TileLocation;
+		M.bIsDestination = true;
+		M.Label = InteractiveLabel(Obj);
+
+		// DetectionRange is in unreal units; a tile is WORLD_StepSize across.
+		RangeTiles = int(Obj.DetectionRange / class'XComWorldData'.const.WORLD_StepSize);
+		M.Detail = "detects within" @ string(RangeTiles)
+			@ ((RangeTiles == 1) ? "tile" : "tiles");
+
+		InsertByDistance(Origin, M, Entries);
+	}
+}
+
+private function bool AnyoneConcealed()
+{
+	local XComGameStateHistory History;
+	local XComGameState_Unit UnitState;
+
+	History = `XCOMHISTORY;
+	foreach History.IterateByClassType(class'XComGameState_Unit', UnitState)
+	{
+		if (UnitState.GetTeam() == eTeam_XCom && !UnitState.IsDead()
+			&& !UnitState.bRemovedFromPlay && UnitState.IsConcealed())
+			return true;
+	}
+	return false;
+}
+
 
 // ---------------------------------------------------------------------------
 // Naming
@@ -494,6 +1199,60 @@ private function bool ScanOrigin(out TTile Origin)
 		return false;
 	Origin = UnitState.TileLocation;
 	return true;
+}
+
+// The one fog gate in this class. bLatch is the STATIC rule — a wall, a door, a crate stays known
+// once seen — and its absence is the LIVE rule, for anything that can move or burn out. The two
+// match X2AccessTileReader.DescribeTile, which reads static layout at HaveSeen and units and
+// hazards only at Seen.
+private function bool TileSeen(XComWorldData WorldData, TTile Tile, bool bLatch)
+{
+	local FOWTileStatus FOW;
+	local byte GameplayFlags;
+
+	WorldData.GetTileFOWValue(Tile, FOW, GameplayFlags);
+
+	if (bLatch)
+		return FOW != eFOWTileStatus_NeverSeen;
+	return FOW == eFOWTileStatus_Seen;
+}
+
+// The four hazard types, by index. Three tables that must stay in step; keeping them adjacent is
+// the enforcement.
+private function name HazardClass(int TypeIdx)
+{
+	switch (TypeIdx)
+	{
+	case 0: return 'X2Effect_ApplyFireToWorld';
+	case 1: return 'X2Effect_ApplySmokeToWorld';
+	case 2: return 'X2Effect_ApplyPoisonToWorld';
+	case 3: return 'X2Effect_ApplyAcidToWorld';
+	}
+	return '';
+}
+
+private function string HazardWord(int TypeIdx)
+{
+	switch (TypeIdx)
+	{
+	case 0: return "Fire";
+	case 1: return "Smoke";
+	case 2: return "Poison";
+	case 3: return "Acid";
+	}
+	return "Hazard";
+}
+
+private function bool TileHasHazard(XComWorldData WorldData, int TypeIdx, TTile Tile)
+{
+	switch (TypeIdx)
+	{
+	case 0: return WorldData.TileContainsFire(Tile);
+	case 1: return WorldData.TileContainsSmoke(Tile);
+	case 2: return WorldData.TileContainsPoison(Tile);
+	case 3: return WorldData.TileContainsAcid(Tile);
+	}
+	return false;
 }
 
 private function int CurrentMissionID()

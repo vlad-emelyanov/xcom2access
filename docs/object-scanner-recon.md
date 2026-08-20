@@ -888,13 +888,109 @@ and said nothing about the outcome, which then missed. Three defects it exposed,
 at something to SHOOT ("out of range" about a perfectly shootable enemy — reachability is now a
 per-marker `bIsDestination` question), and the naming gap in item 1 above.
 
-**Slice 1 — IN PROGRESS.** The category dimension landed 2026-08-20 (`ScanCategory(Category,
-Delta)`, per-category selection memory in a static array on the CDO, `EmptyText` per category so
+**Slice 1 — CODE COMPLETE 2026-08-20, five categories plus the ring; live-verified through
+`units.enemies` only.** The category dimension landed first (`ScanCategory(Category, Delta)`,
+per-category selection memory in a static array on the CDO, `EmptyText` per category so
 "No enemies visible" carries the fog rule in its own wording) together with `units.enemies` on `.`
 — gated by `CanXComSquadSeeTarget`, never fog-latched, and described in the shot readout's own
-words by sharing `DescribeTargetCover`/`DescribeTargetHealth`. Remaining: `units.squad` (one table
-entry away), `ground.loot`, `ground.reinforcements`, and promoting `ground.evac` out of `markers`
-into a category of its own with size and how many of the squad are inside.
+words by sharing `DescribeTargetCover`/`DescribeTargetHealth`. `units.squad`, `ground.loot` and
+`ground.reinforcements` followed, and with five real categories the §3.2 gate for building the
+**ring** was met, so it was built rather than spending the last two free punctuation keys.
+Remaining in this slice: promoting `ground.evac` out of `markers` into a category of its own with
+size and how many of the squad are inside.
+
+*The three added categories, and where each one's parity gate comes from:*
+
+| Category | Source | Gate — the game's OWN rule for drawing the mark | Detail |
+|---|---|---|---|
+| `units.squad` | `XComGameState_Unit`, `eTeam_XCom`, not dead, not `bRemovedFromPlay` | none (they are yours) | "selected", one status word, cover, health/shield/armour |
+| `ground.loot` | `XComGameState_LootDrop` | `LootExpirationTurnsRemaining > 0 && HasAvailableLoot()` — verbatim from `BuildVisualizationForLootTicked` (`.uc:333`) | "psi loot" (its own marker mesh on screen), "expires in N turns" |
+| `ground.reinforcements` | `XComGameState_AIReinforcementSpawner` | `Countdown > 0` (what `UITacticalHUD_Countdown.RefreshCounter` hides on) **and** a visualization type that actually builds the flare | "in N turns" |
+
+Three findings behind those rows, each from the shipped source:
+
+1. **The reinforcement flare is persistent and its absence is enumerable.**
+   `BuildVisualizationForSpawnerCreation` runs `X2Action_RevealArea` with `bDestroyViewer = false`
+   and `X2Action_PlayEffect` with `bStopEffect = false` at `SpawnInfo.SpawnLocation`, so a sighted
+   player has a glowing mark on the ground for the whole countdown — full parity cover for speaking
+   the LOCATION, which the HUD counter alone does not give. But that whole call is skipped for
+   `SpawnVisualizationType` in `{'', 'TheLostSwarm', 'ChosenSpecialNoReveal',
+   'ChosenSpecialTopDownReveal'}`, so `HasSpawnFlare()` mirrors exactly that set. The Lost swarm is
+   the one that matters: it announces itself with noise and a banner, not with a mark on the map.
+2. **The countdown words are the game's own.** `UITacticalHUD_Countdown.m_strReinforcementsTitle` /
+   `m_strReinforcementsBody` ("REINFORCEMENTS" / "INCOMING" in English) are read off the class
+   defaults, so the ring and the HUD agree in whatever language the player runs. The turn count is
+   always spoken as a NUMBER because a number is precisely what the sighted counter shows.
+3. **Loot is labelled from `LastLootOwnerName`, not `GetLootingName()`.** The cached string was
+   written from the source at drop time; `GetLootingName()` re-enters the source object, and for an
+   interactive-object source that walks straight into the unguarded `GetVisualizer()` deref this
+   class already sidesteps in `InteractiveLabel`.
+
+**Slice 2 — CODE COMPLETE 2026-08-20, six more categories; NONE run live yet.** Eleven categories
+now (`CAT_COUNT = 11`, `SelKeyByCategory[16]`), and **no native change was needed for any of them**
+— that is the ring paying for itself.
+
+| Category | Source | Gate | Notes |
+|---|---|---|---|
+| `ground.evac` | `XComGameState_EvacZone` | placed | Promoted OUT of `markers`, not listed in both. Spoken tile is the origin CLAMPED into the bounds, so distance is the walk that matters, the bearing points at the edge you enter by, and `/` plants somewhere you can stand. Detail: `W by H tiles`, `N of M inside` via the game's own `IsUnitInEvacZone`. |
+| `units.civilians` | `IsCivilian()` | `CanXComSquadSeeTarget` | Absorbs the doc's `units.down`: a downed SOLDIER already reads "unconscious" in the squad ring, so only non-squad bodies were missing. "can be carried" when `CanBeCarried()` and unconscious/bleeding out. |
+| `hazards` | `XComGameState_WorldEffectTileData` | tile at FOW `Seen` (strict — a remembered fire would be invented information) | ONE entry per TYPE, four maximum. |
+| `objects.interact` | `XComGameState_InteractiveObject` | FOW `HaveSeen` (statics latch) | ONE ring, not six. |
+| `units.lost` | `eTeam_TheLost` | `CanXComSquadSeeTarget` | ONE summary entry — §5.1's recommended form. |
+| `objects.towers` | `DetectionRange > 0 && !bHasBeenHacked` | FOW `HaveSeen` **and** something of ours concealed | §5.3. |
+
+Five decisions inside those rows worth not re-deriving:
+
+1. **Hazards group by TYPE, not by state object.** Fire SPREADS, and each spread step writes another
+   `XComGameState_WorldEffectTileData` — so a per-object ring would grow a new "Fire" entry every
+   turn for what the player sees as one fire. Grouping caps it at four entries, ever.
+2. **The hazard state object is an index; the WORLD is the truth.** A burned-out blob keeps its
+   state object, so every stored tile is re-checked with `TileContainsFire/Smoke/Poison/Acid` —
+   the same sparse array `X2AccessHelper.DescribeHazards` reads, so the ring and the tile cursor
+   cannot disagree about whether a tile is on fire. `StoredTileData` is walked **by index**, not
+   with `foreach`: its element type `WorldEffectTileDataContainer` is declared inside that class and
+   referenced nowhere else in the entire SDK, so whether its name is even in scope elsewhere is
+   untested — indexing to `.Tile` needs no local of that type.
+3. **`objects.interact` is one ring because §6.1 got answered.** The six-way split predates the
+   finding that `InteractiveLabel` names each object by its own interact ability ("Open Door",
+   "Hack", "Use Elevator", already localized). With that, the split buys nothing but four more
+   `Ctrl+PageDown` presses to reach the chest. Objects carrying an `ObjectiveInfo` are skipped —
+   `markers` has them, and "one thing, one ring" is the same rule the evac promotion follows.
+4. **The tower gate is "anyone concealed", not `bSquadIsConcealed`.** A lone Phantom ranger scouting
+   ahead of a revealed squad is exactly when a detection radius matters most. `EmptyText` says
+   *"Towers shown only while concealed"* rather than "No towers", because the latter is a claim
+   about the MAP and would be false.
+5. **Squadsight got its word, and a second one nobody had asked for.** The ring stays on SQUAD
+   visibility, which is what the unit FLAGS show; but `UITacticalHUD_Enemies` builds the strip from
+   `GetAllVisibleEnemyTargetsForUnit(activeUnit)` plus `GetAllSquadsightEnemiesForUnit` when the
+   soldier `HasSquadsight()`. Comparing against both yields *"via squadsight"* and — the case
+   §5.2 missed — *"spotted by the squad"*, for an enemy the squad sees and the soldier holding the
+   gun does not. Without that clause the first unshootable target reads as a bug in us rather than
+   as a rule of the game.
+
+Deliberately still not built: `units.allies` (rare enough to sit inside civilians) and
+`objects.destructibles` (noise).
+
+*Keys, final for this slice.* Three dedicated cycle keys — the ones pressed every turn — and the
+ring for everything else. This is §3.2's own fallback ("dedicated cycle keys for the two or three
+that get used constantly, with the ring for the rest") and it is what keeps `;` and `'` free for
+the vantage read and the inspect verb they are earmarked for in §4.5.
+
+| Chord | Action |
+|---|---|
+| `B` | next marker |
+| `.` | next enemy |
+| `,` | next squad member |
+| `PageDown` / `PageUp` | next / previous **in the current category** |
+| `Ctrl+PageDown` / `Ctrl+PageUp` | next / previous **non-empty category**, announcing its name |
+| `O` | re-announce, wherever the ring cursor is |
+| `/` | plant the tile cursor on the last thing announced |
+
+The ring cursor (`CurCategory`) lives on the **CDO, not in native**, unlike the per-keyboard state
+it replaced: stepping it means knowing which categories are EMPTY, and only the model can answer
+that. Native's `gLastCategory` is gone — one source of truth. Empty categories are skipped, which
+is the whole point: eight slots exist and a typical mission populates three, so a ring that stopped
+on each empty one would spend most of its presses saying "no loot".
 
 VERIFIED LIVE 2026-08-20 (same tutorial run, deployed by hand): all three cover states spoke
 (`Солдат "Адвента", flanked, 3 of 3 health, 12 tiles, 2 south, 12 west, 4 of 4`), wrapping worked

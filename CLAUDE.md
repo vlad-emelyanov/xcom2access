@@ -85,18 +85,61 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   a mouse click while gated commits to the pathing pawn's preview of OUR tile,
   the same two-press semantics as Backspace.
 - **Object scanner** (`src/object_scanner.cpp` + companion `X2AccessObjectScanner.uc`, markers
-  AND `units.enemies` both VERIFIED LIVE 2026-08-20, `Tutorial_01`): the RT `Scanner.cs` port, a PULL surface
-  next to the
-  tile cursor's push. Categories are the ring's dimension: `markers` (the tutorial's
-  required-action marker, objective-carrying objects and the evac zone — one group, because a
-  tutorial waypoint and an objective glint are the same thing to a player working out where to go)
-  and `units.enemies`. Each category has its OWN cycle key and its OWN remembered position, so
-  checking an enemy and then a marker loses your place in neither; the `CAT_*` ids are the one
-  thing the two halves share as a NUMBER rather than a name. Keys, all gated on
-  `TileReader::IsActive()` (shared, not recomputed — the two surfaces must stand down at the same
-  instants): `B` next marker, `.` next enemy, `O` re-announce whatever was last said, `/` plant
-  the tile cursor on it. `/` acting on the LAST ANNOUNCED entry rather than on a "current
-  category" is deliberate — it acts on what you just heard. Reachability is per-entry
+  AND `units.enemies` both VERIFIED LIVE 2026-08-20, `Tutorial_01`; `units.squad`, `ground.loot`,
+  `ground.reinforcements`, six more categories and the category ring built 2026-08-20 and **not yet
+  run live**): the RT `Scanner.cs` port, a PULL surface next to the
+  tile cursor's push. Categories are the ring's dimension, ELEVEN of them: `markers` (the tutorial's
+  required-action marker and objective-carrying objects — one group, because a tutorial waypoint
+  and an objective glint are the same thing to a player working out where to go), `units.enemies`,
+  `units.squad`, `ground.loot`, `ground.reinforcements`, `ground.evac`, `units.civilians`,
+  `hazards`, `objects.interact`, `units.lost` and `objects.towers`. Each keeps its OWN
+  remembered position, so checking an enemy and then a marker loses your place in neither; the
+  `CAT_*` ids are the one thing the two halves share as a NUMBER rather than a name.
+  Six of the eleven needed **no native change at all** — the ring is what makes a category cost one
+  `case` label instead of a key. Four rules the later ones earned:
+  **hazards group by TYPE, not by state object** (fire SPREADS, and every spread step writes another
+  `XComGameState_WorldEffectTileData`, so per-object entries would grow a new "Fire" every turn for
+  one fire), and each stored tile is re-checked against `TileContainsFire/Smoke/Poison/Acid` because
+  a burned-out blob keeps its state object — the state is an INDEX, the world is the truth, and
+  sharing that oracle with `X2AccessHelper.DescribeHazards` is why the ring and the tile cursor
+  cannot disagree. ⛔ Walk `StoredTileData` **by index**: its element type
+  `WorldEffectTileDataContainer` is declared inside that class and referenced NOWHERE else in the
+  SDK, so cross-class scoping of the name is untested ground. **`ground.evac` speaks the origin
+  CLAMPED into the zone bounds**, not `CenterLocation` — a rectangle's centre gives the wrong
+  distance, the wrong bearing and a plant you may not be able to stand on. **`objects.towers` gates
+  on ANY XCom unit concealed**, not the player state's `bSquadIsConcealed`, because a lone Phantom
+  ranger ahead of a revealed squad is when a detection radius matters most; its empty text names the
+  GATE ("Towers shown only while concealed") rather than claiming the map has none. And **enemies
+  carry a sight clause**: the ring stays on squad visibility (what the unit FLAGS show), but
+  `GetAllVisibleEnemyTargetsForUnit` + `GetAllSquadsightEnemiesForUnit` — the two lists
+  `UITacticalHUD_Enemies` builds — decide between "via squadsight", "spotted by the squad" and
+  silence, so the first unshootable target does not read as a bug in us. Keys, all
+  gated on `TileReader::IsActive()` (shared, not recomputed — the two surfaces must stand down at
+  the same instants) and unchanged since the ring landed: `B` next marker, `.` next enemy,
+  `,` next squad member,
+  `PageDown`/`PageUp` next/previous within the current category, `Ctrl+PageDown`/`Ctrl+PageUp`
+  next/previous NON-EMPTY category (announcing its name), `O` re-announce whatever was last said,
+  `/` plant the tile cursor on it. Only three categories get a dedicated key — the ones pressed
+  every turn — because the ring is what stops each further category costing a key tactical does not
+  have, and it leaves `;` and `'` free for the vantage read and the inspect verb. The ring cursor
+  lives on the CDO, NOT in native: stepping it means knowing which categories are EMPTY, and only
+  the model can answer that. `/` acting on the LAST ANNOUNCED entry rather than on a "current
+  category" is deliberate — it acts on what you just heard.
+  **The two countdown categories are where the sighted/blind gap was widest**, and both gate on
+  the game's OWN rule for drawing the mark rather than on a rule of ours: loot uses
+  `LootExpirationTurnsRemaining > 0 && HasAvailableLoot()`, copied verbatim from
+  `XComGameState_LootDrop.BuildVisualizationForLootTicked`'s `SetVisible`, so an entry exists
+  exactly when a waypoint is drawn there; reinforcements use `Countdown > 0` (what
+  `UITacticalHUD_Countdown.RefreshCounter` hides on) AND a `SpawnVisualizationType` that actually
+  builds the flare — `BuildVisualizationForSpawnerCreation` is SKIPPED for `''`, `'TheLostSwarm'`,
+  `'ChosenSpecialNoReveal'` and `'ChosenSpecialTopDownReveal'`, so those spawners leave nothing on
+  the ground and get no ring entry. Speaking the reinforcement LOCATION (which the HUD counter
+  never shows) is covered because that visualization leaves a persistent effect and a revealed
+  area — `bStopEffect = false`, `bDestroyViewer = false`. Its words come from the game's own
+  `m_strReinforcementsTitle`/`m_strReinforcementsBody`, and both countdowns speak the NUMBER,
+  because a number is what the sighted counter shows. Loot is labelled from `LastLootOwnerName`,
+  never `GetLootingName()` — the latter re-enters the source object and, for an interactive-object
+  source, walks into the same unguarded `GetVisualizer()` deref `InteractiveLabel` sidesteps. Reachability is per-entry
   (`bIsDestination`): spoken for markers and objectives, which you walk to; suppressed for enemies
   and the tutorial's attack marker, where "out of range" would read as "you cannot do this" about
   a perfectly shootable target. Enemies reuse
