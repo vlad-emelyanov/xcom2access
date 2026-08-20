@@ -1,5 +1,5 @@
 // X2AccessHackingReader
-// The hacking screen's game-state half — phases 1 and 2 of the hacking layer. Same contract as
+// The hacking screen's game-state half — phases 1-3 of the hacking layer. Same contract as
 // X2AccessTileReader and X2AccessTacticalReader: the C++ layer (src/hacking_screen.cpp) owns the
 // keys and the speech, calls these functions on this class's default object via ProcessEvent
 // (game thread, from the frame pump or the arbiter's tick drain) and reads NativeResult back
@@ -47,9 +47,13 @@ var string NativeState;
 // which is exactly what the screen does.
 var int CursorIndex;
 
-// Announce-once key. The ObjectID of the thing being hacked, so a second hack in the same mission
-// re-announces even if C++ misses the falling edge. EndHack() clears it.
+// Announce-once keys. LastHackTargetID is the ObjectID of the thing being hacked, so a second
+// hack in the same mission re-announces even if C++ misses the falling edge; bAnnouncedIntro
+// carries the "already spoken" flag on its own, so a hackable that somehow reports ObjectID 0
+// cannot loop the opening burst forever. EndHack() clears all three.
 var int LastHackTargetID;
+var bool bAnnouncedIntro;
+var bool bAnnouncedResult;
 
 // ---------------------------------------------------------------------------
 // Entry points (called from native)
@@ -70,6 +74,8 @@ function PollHack()
 	if (HackScreen == none)
 	{
 		LastHackTargetID = 0;
+		bAnnouncedIntro = false;
+		bAnnouncedResult = false;
 		return;
 	}
 
@@ -86,16 +92,31 @@ function PollHack()
 	if (HackScreen.HackTargetObject != none)
 		TargetID = HackScreen.HackTargetObject.ObjectID;
 
-	if (TargetID != 0 && TargetID == LastHackTargetID)
+	// First sight of this hack: the opening burst.
+	if (!bAnnouncedIntro || TargetID != LastHackTargetID)
+	{
+		bAnnouncedIntro = true;
+		bAnnouncedResult = false;
+		LastHackTargetID = TargetID;
+		CursorIndex = Clamp(HackScreen.SelectedHackRewardOption, 0,
+			Max(CardCount(HackScreen) - 1, 0));
+
+		NativeResult = DescribeHeader(HackScreen);
+		AppendPart(NativeResult, DescribeGuaranteedSummary(HackScreen));
+		AppendPart(NativeResult, DescribeCursor(HackScreen));
+		AppendPart(NativeResult, DescribeControls(HackScreen));
 		return;
+	}
 
-	LastHackTargetID = TargetID;
-	CursorIndex = Clamp(HackScreen.SelectedHackRewardOption, 0, Max(CardCount(HackScreen) - 1, 0));
-
-	NativeResult = DescribeHeader(HackScreen);
-	AppendPart(NativeResult, DescribeGuaranteedSummary(HackScreen));
-	AppendPart(NativeResult, DescribeCursor(HackScreen));
-	AppendPart(NativeResult, DescribeControls(HackScreen));
+	// Phase 3: the reveal. bWaitingForInput is set from OnCommand("HackEnded"), i.e. the frame
+	// Flash finishes the meter and puts the result on the pad — the ONLY honest moment to speak
+	// it. The game state was submitted the instant the player pressed Enter, about three seconds
+	// earlier, and narrating from there would call the outcome while the meter is still climbing.
+	if (HackScreen.m_hackStarted && HackScreen.bWaitingForInput && !bAnnouncedResult)
+	{
+		bAnnouncedResult = true;
+		NativeResult = DescribeResult(HackScreen);
+	}
 }
 
 // Re-announce on demand (Delete): the header plus whichever card the cursor is on. Unlike the
@@ -141,6 +162,8 @@ function EndHack()
 	NativeState = "";
 	LastHackTargetID = 0;
 	CursorIndex = 0;
+	bAnnouncedIntro = false;
+	bAnnouncedResult = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -361,6 +384,58 @@ private function string DescribeCard(UIHackingScreen HackScreen, int Index)
 	if (Index == HackScreen.SelectedHackRewardOption)
 		AppendPart(Result, "Selected");
 
+	return Result;
+}
+
+// The outcome, spoken the moment the meter stops — phase 3.
+//
+// SOURCED ENTIRELY FROM THE PAD, on purpose. The tempting reads —
+// AbilityContext.ResultContext.StatContestResult, or bHasBeenHacked +
+// UserSelectedHackReward out of the history — are never written in the tutorial, which replays
+// recorded frames and never runs FinalizeHackAbility_BuildGameState. The pad animates and lights
+// up there exactly as it does on a real mission, and a sighted player cannot tell the two apart,
+// so neither may this. m_rewardsTaken is Flash's own count: the screen bumps it once per
+// OnCommand("UnlockReward"), i.e. once per card that LIT, and Firaxis names the delegate
+// parameter it hands out iRewardIndex.
+//
+// It also beats the banner Flash prints. AS_UpdateHackComplete picks its title from
+// HackRewards[RewardIndex].bBadThing, and RewardIndex falls back to slot 0 on a miss — so with an
+// ordinary (non-bBadThing) slot 0 the pad reads "Успех!" even when the gamble missed, because the
+// floor was still awarded. The lit cards are the truth; the banner is not. Neither the banner nor
+// RewardIndex is retained in script anyway.
+private function string DescribeResult(UIHackingScreen HackScreen)
+{
+	local int i, Count, Selected;
+	local string Result, Unlocked;
+	local bool bSelectedUnlocked;
+
+	Count = Min(HackScreen.m_rewardsTaken, CardCount(HackScreen));
+	Selected = HackScreen.SelectedHackRewardOption;
+
+	for (i = 0; i < Count; i++)
+	{
+		if (HackScreen.HackRewards[i] == none)
+			continue;
+		AppendComma(Unlocked, HackScreen.HackRewards[i].GetFriendlyName());
+		if (i == Selected)
+			bSelectedUnlocked = true;
+	}
+
+	if (Unlocked != "")
+		Result = HackScreen.strRewardUnlockedLabel $ ":" @ Unlocked;
+	else
+		Result = "Nothing unlocked";
+
+	// Naming the gamble that did not land, with the card's own failure strip — which is the line
+	// that matters when slot 0 is a bad thing, because then missing does not mean "nothing".
+	if (!bSelectedUnlocked && Selected > 0 && Selected < CardCount(HackScreen)
+		&& HackScreen.HackRewards[Selected] != none)
+	{
+		AppendPart(Result, "Missed:" @ HackScreen.HackRewards[Selected].GetFriendlyName());
+		AppendPart(Result, FailTextFor(HackScreen));
+	}
+
+	AppendPart(Result, HackScreen.HackCompleteAnyKeyToContinue);
 	return Result;
 }
 

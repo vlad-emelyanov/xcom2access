@@ -215,7 +215,8 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   excluded on purpose: an anchored blade is an instruction about a PLACE, so
   prefixing whoever stands there would be actively wrong.
 - **Hacking screen** (`src/hacking_screen.cpp` + companion
-  `X2AccessHackingReader.uc`, phases 1-2 built 2026-08-20, **not yet run live**;
+  `X2AccessHackingReader.uc`, phases 1-2 built AND VERIFIED LIVE 2026-08-20,
+  phase 3 built the same day but **not yet run live**;
   recon in `docs/hacking-screen-recon.md`): `UIHackingScreen` is the purest case
   of "the widget tree holds no words" — `/gui` on it prints **`1 panels`**, the
   screen and no children, because every string goes into Flash through
@@ -236,7 +237,15 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   `Enter`/`Space`/`Escape` are deliberately NOT claimed, and every claim drops
   once the hack is committed (the reveal ends with "press any key", and a key we
   swallowed would not dismiss it) — the companion reports that through a second
-  reflected-out property, `NativeState`. Detection reuses `ReadTacticalGate()`,
+  reflected-out property, `NativeState`. **Phase 3 speaks the outcome from the
+  pad, not the simulation**: `bWaitingForInput` (set from
+  `OnCommand("HackEnded")`) for WHEN and `m_rewardsTaken` (bumped per
+  `OnCommand("UnlockReward")`, i.e. per card that LIT) for WHAT, then the gamble
+  that missed named with its own failure strip. That also beats the banner Flash
+  prints, which reads `HackRewards[RewardIndex].bBadThing` and so says
+  **Успех!** even on a miss whenever slot 0 is ordinary. Cancelling is detected
+  on the C++ falling edge (`OnCancel` closes the screen before anything can be
+  read, and a pad that goes away uncommitted was cancelled). Detection reuses `ReadTacticalGate()`,
   whose `blocker` reads `UIHackingScreen` at exactly the instant the tile cursor
   stands down, so the two can never disagree. ⛔ It must NOT gate on
   `StackState::Interactive()`: the stack reports **cinematic=1** while this
@@ -717,10 +726,10 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   compile rather than a lock. Diagnose it by the SDK-side artifact: if
   `<SDK>/XComGame/Script/X2AccessCompanion.u` has a FRESH timestamp while the
   copy under the game's `Mods/` still has the old one, the compile succeeded and
-  only the deploy is stuck. `just kill` first, then rebuild. Note the asymmetry —
-  the **ASI copies fine while the game runs** (the loader does not hold it
-  exclusively), so `just install` is safe mid-session and only `build_uscript`
-  needs the game closed.
+  only the deploy is stuck. `just kill` first, then rebuild. The `.asi` is locked
+  by the running game too, but that half FAILS FAST with a plain sharing
+  violation — it is only `build_uscript` that turns the same lock into a
+  silent hang, which is what makes it worth a rule.
 - Kernel tests (no game needed): `ctest --test-dir build -C Release`.
 - Loading: Ultimate ASI Loader's `version-x64.dll` sits in
   `Binaries/Win64/`; the ASI logs to `X2Access.log` next to itself, rotating
@@ -1241,26 +1250,25 @@ Remaining:
    And it reads plain world messages only INSIDE the tutorial; turning that on
    generally needs the overlap with `X2AccessTacticalEvents` measured live first
    (`/tutorial` prints exactly what would be spoken, which is how to measure it).
-9. Hacking screen phases 1-2 are BUILT (2026-08-20, see **Hacking screen**
-   above) and awaiting a live run. Two phases remain, both in
-   `docs/hacking-screen-recon.md`: the REVEAL and a pre-commit odds read via
-   `XComGameState_Ability.GetUISummary_HackingBreakdown`, the spoken form of the
-   mouse-hover-only `UITacticalHUD_HackingTooltip`. The reveal is bound by the
-   read-the-screen rule above and its obvious implementation is the wrong one:
-   `ResultContext.StatContestResult` / `bHasBeenHacked` / `UserSelectedHackReward`
-   are never written in the tutorial, where the pad animates and lights up
-   regardless. Use the two Flash-driven signals the screen retains —
-   `bWaitingForInput` (set from `OnCommand("HackEnded")`, the instant the meter
-   finishes, and the only honest timestamp since the state is submitted ~3 s
-   early) and `m_rewardsTaken` (one per `OnCommand("UnlockReward")`, i.e. per
-   card that LIT) — and speak the lit cards. That beats the banner anyway:
-   `AS_UpdateHackComplete` picks its title from `HackRewards[RewardIndex].bBadThing`,
-   so with an ordinary slot 0 the pad reads **Успех!** even when the gamble
-   missed. One inference still needs a live check: that unlock order is card
-   order. ⚠ Three voices can land on this one event — the reveal line
+9. Hacking screen phases 1-3 are BUILT (2026-08-20, see **Hacking screen**
+   above; recon and phasing in `docs/hacking-screen-recon.md`). Phases 1-2 are
+   VERIFIED LIVE on the tutorial door: the opening burst read correctly and
+   card 3 reading back "Selected" proves the D-pad write landed on the game's
+   own field. Phase 3 awaits its first reveal, and carries one unconfirmed
+   inference — that Flash's `m_rewardsTaken` counts cards in CARD ORDER. Confirm
+   it by reading `m_rewardsTaken` from `/props?screen=UIHackingScreen` while the
+   pad still sits on "press any key" and comparing with which cards are lit.
+   ⚠ The tutorial CANNOT settle it: with the context discarded
+   `StatContestResult` stays 0, the meter fills to 100 and every card lights, so
+   only a partial unlock on a real mission tells a card index from a plain
+   count. ⚠ Three voices can land on the hack outcome — the reveal line
    (everywhere), the `UIWorldMessageMgr` flyover poll (tutorial only today) and
-   `X2AccessTacticalEvents` / `X2AccessReplayNarration` — so check each on the
-   mission where it actually fires.
+   `X2AccessTacticalEvents` / `X2AccessReplayNarration` — and they do not all
+   fire on the same mission, so check each where it actually fires. Phase 4 is
+   the remaining work: a pre-commit odds read via
+   `XComGameState_Ability.GetUISummary_HackingBreakdown`, the spoken form of the
+   mouse-hover-only `UITacticalHUD_HackingTooltip`, so a player can judge a hack
+   before spending the action point.
 
 When researching for this project, focus on engine/native/UE3 technicals.
 Do not survey the accessibility-mod landscape — the author knows it better

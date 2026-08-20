@@ -267,10 +267,10 @@ stands, in one clause, so the state can never be ambiguous.
 |---|---|---|
 | 1 | detect + announce on open, `Delete` re-announce, read all three cards | **built 2026-08-20** |
 | 2 | `Left`/`Right` card cursor + selection through `OnUnrealCommand(DPAD)` | **built 2026-08-20** |
-| 3 | reveal narration — poll `bWaitingForInput` / `m_rewardsTaken`, speak the outcome **from UI state only** | open |
+| 3 | reveal narration — poll `bWaitingForInput` / `m_rewardsTaken`, speak the outcome **from UI state only**; plus a cancel confirmation | **built 2026-08-20** |
 | 4 | pre-commit odds: `XComGameState_Ability.GetUISummary_HackingBreakdown` on the hack ability, the spoken form of `UITacticalHUD_HackingTooltip` (mouse-hover-only today) | open |
 
-### Phase 3, designed against §5
+### Phase 3, as built (designed against §5)
 
 The obvious implementation — read `ResultContext.StatContestResult` off the submitted
 `FinalizeHack` context, or `ObjectState.bHasBeenHacked` + `UserSelectedHackReward` out of the
@@ -288,7 +288,16 @@ The screen retains two Flash-driven signals, and they are enough:
   that lit up. Cards `0 .. m_rewardsTaken-1` are what the player is looking at.
 
 So the line is "these cards unlocked", read off the count against the card list phase 1 already
-describes. Note this is not a compromise — it is *better* than the title Flash prints:
+describes — `strRewardUnlockedLabel` (the pad's own "РАЗБЛОКИРОВАНО") plus the names, then the
+gamble that did not land named with its own failure strip, then the game's own
+`HackCompleteAnyKeyToContinue`. Naming the miss matters most in the case that is easy to forget:
+when slot 0 is `bBadThing`, missing does not mean "nothing happened".
+
+Cancelling gets a line too, and it has to come from the C++ side: `OnCancel` closes the screen
+immediately, so by the time we notice there is nothing left to read. The falling edge is enough —
+a pad that goes away without ever having been committed was cancelled, because that is the only
+other way out of this screen, and `gHackStarted` still holds the last polled state at that
+moment. Note this is not a compromise — it is *better* than the title Flash prints:
 `AS_UpdateHackComplete` picks `HackRewards[RewardIndex].bBadThing ? HackFailedLabel :
 HackSuccessLabel`, so with an ordinary (non-`bBadThing`) slot 0 the pad says **Успех!** even when
 the gamble missed, because slot 0 was still awarded. The lit cards are the truth; the banner is

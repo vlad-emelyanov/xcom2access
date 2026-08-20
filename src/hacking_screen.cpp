@@ -136,6 +136,12 @@ void OnTick()
         gScreenUp = up;
         LOG_INFO("HackingScreen: %s", up ? "open" : "closed");
         if (!up) {
+            // A pad that goes away without ever having been committed was cancelled — the only
+            // other way out of this screen. The player pressed Escape and the game answers with a
+            // sound and nothing else, so this is the whole confirmation they get. gHackStarted
+            // still holds the LAST polled state here, which is why it is read before the reset.
+            if (!gHackStarted)
+                Narrator::Say(Narrator::Channel::Aid, "Hack cancelled");
             // Let the companion forget what it announced, so a hack retried on the SAME object
             // after a cancel reads out again rather than opening in silence.
             Call("EndHack", Narrator::Channel::Aid);
@@ -146,8 +152,9 @@ void OnTick()
     if (!up)
         return;
 
-    // Announces once and is silent thereafter. Alert, not Focus: nothing the player pressed
-    // produced it, but a modal that has taken over the screen outranks queued combat lines and
+    // Speaks twice per hack and is silent in between: the opening burst when the pad appears,
+    // and the outcome when the meter stops. Alert, not Focus: nothing the player pressed produced
+    // either line, but a modal that has taken over the screen outranks queued combat lines and
     // should cut in — while still keeping the burst that explains it intact.
     if (!Call("PollHack", Narrator::Channel::Alert))
         return;
