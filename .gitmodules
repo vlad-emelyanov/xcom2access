@@ -1,6 +1,3 @@
-[submodule "deps/SRAL"]
-	path = deps/SRAL
-	url = https://github.com/m1maker/SRAL.git
 [submodule "deps/X2ModBuildCommon"]
 	path = deps/X2ModBuildCommon
 	url = https://github.com/X2CommunityCore/X2ModBuildCommon
@@ -11,3 +8,6 @@
 	path = deps/CodeRed-Generator
 	url = https://github.com/alex19EP/CodeRed-Generator.git
 	branch = xcom2
+[submodule "deps/prism"]
+	path = deps/prism
+	url = https://github.com/ethindp/prism.git

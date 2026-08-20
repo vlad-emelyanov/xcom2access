@@ -9,11 +9,38 @@ if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "X2Access must be built as 64-bit (x64)")
 endif()
 
-# SRAL: static build, no UIA, no tests
+# Static MSVC runtime (/MT), so the .asi drops its dependency on the VC++ redistributable —
+# an ASI is loaded before anything else in the process and must not need a side-by-side DLL.
+# ⛔ It must be cache-FORCEd, not just set: deps/prism sets CMAKE_MSVC_RUNTIME_LIBRARY itself
+# off CMAKE_BUILD_TYPE, which is EMPTY under the Visual Studio (multi-config) generator this
+# project configures with (`cmake -B build -A x64`) — so an unpinned cache silently builds a
+# /MT Prism against a /MTd X2Access in Debug.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "" FORCE)
+
+# Prism — the speech/screen-reader backend (https://github.com/ethindp/prism), replacing SRAL.
+# Same library and same pin (v0.17.3) as CyberAccess, so a speech bug reproduces across both.
+# Built STATIC into X2Access.asi: the static path is also what makes Prism define PRISM_STATIC
+# for us, so <prism.h> resolves to plain externs instead of __declspec(dllimport). Prism's own
+# default is BUILD_SHARED_LIBS ON, so the pin below has to be in the cache before its options
+# run.
+#
+# Shims OFF: the only shim Prism ships is a drop-in Tolk replacement DLL, which is for OTHER
+# programs to load — nothing here consumes it, and it is not ours to install into a shared
+# game directory. (It also wants /experimental:c11atomics, which the Visual Studio generator
+# will not carry into its configure-time probes, so enabling it fails the configure outright.)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-set(BUILD_SRAL_TEST OFF CACHE BOOL "" FORCE)
-set(SRAL_DISABLE_UIA ON CACHE BOOL "" FORCE)
-add_subdirectory(deps/SRAL)
+set(PRISM_ENABLE_SHIMS OFF CACHE BOOL "" FORCE)
+set(PRISM_ENABLE_TOLK_SHIM OFF CACHE BOOL "" FORCE)
+# Legacy backends ON: System Access and Window-Eyes. Discontinued readers, but Prism's own
+# release packages ship them, they cost a few KB, and a player still on one is a player we
+# would otherwise serve nothing at all.
+set(PRISM_ENABLE_LEGACY_BACKENDS ON CACHE BOOL "" FORCE)
+set(PRISM_ENABLE_SYSTEM_ACCESS_BACKEND ON CACHE BOOL "" FORCE)
+set(PRISM_ENABLE_WINDOW_EYES_BACKEND ON CACHE BOOL "" FORCE)
+set(PRISM_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+set(PRISM_ENABLE_DEMOS OFF CACHE BOOL "" FORCE)
+set(PRISM_ENABLE_GDEXTENSION OFF CACHE BOOL "" FORCE)
+add_subdirectory(deps/prism EXCLUDE_FROM_ALL)
 
 # Generated SDK global definitions (GObjects/GNames externs)
 set(SDK_DIR "${CMAKE_SOURCE_DIR}/generated_sdk/X2SDK")
@@ -57,7 +84,6 @@ add_library(X2Access SHARED
 
 target_include_directories(X2Access PRIVATE
     ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/deps/SRAL/Include
     ${SDK_DIR}
     ${SDK_DIR}/SDK_HEADERS
 )
@@ -66,10 +92,8 @@ target_include_directories(X2Access PRIVATE
 enable_testing()
 add_subdirectory(tests)
 
-# SRAL_STATIC so SRAL.h doesn't use __declspec(dllimport)
-target_compile_definitions(X2Access PRIVATE SRAL_STATIC)
-
-target_link_libraries(X2Access PRIVATE SRAL_static)
+# prism::prism carries PRISM_STATIC and the include dir itself (see the Prism block above).
+target_link_libraries(X2Access PRIVATE prism::prism)
 
 # Dev harness: two TUs (the server, and the Desktop Duplication screenshot which owns the
 # D3D/GDI+ includes). The define is target-wide because log.cpp's /log ring, tts.cpp's /speech

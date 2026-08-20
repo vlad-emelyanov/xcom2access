@@ -9,7 +9,7 @@ X2Access is two cooperating layers:
 - **Native ASI plugin** (`src/`) — injected via
   [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader).
   Owns speech output through
-  [SRAL](https://github.com/m1maker/SRAL) (screen readers / SAPI5), keyboard
+  [Prism](https://github.com/ethindp/prism) (screen readers / SAPI5), keyboard
   input via a window-procedure arbiter, a ProcessEvent hook that observes the
   game's script function dispatch, and the engine-neutral navigation kernel.
 - **UnrealScript companion mod** (`mods/X2AccessCompanion/`) — built with the
@@ -79,7 +79,7 @@ cmake -B build -A x64 \
 cmake --build build --target deploy --config Release
 ```
 
-This copies `X2Access.asi` to the game's `Binaries/Win64/scripts/` directory and deploys the companion mod to `XComGame/Mods/`. You still need to manually install the ASI loader and SRAL (see below).
+This copies `X2Access.asi` to the game's `Binaries/Win64/scripts/` directory and deploys the companion mod to `XComGame/Mods/`. You still need to manually install the ASI loader (see below).
 
 ### Manual
 
@@ -89,17 +89,19 @@ This copies `X2Access.asi` to the game's `Binaries/Win64/scripts/` directory and
    <Steam>/steamapps/common/XCOM 2/XCom2-WarOfTheChosen/Binaries/Win64/
    ```
 3. Create a `scripts/` folder inside `Win64/`
-4. Copy `X2Access.asi` into `scripts/` (SRAL is linked statically — no separate `SRAL.dll` needed)
-5. For NVDA support, copy `nvdaControllerClient.dll` into `Win64/` (it must resolve against the game executable's directory)
+4. Copy `X2Access.asi` into `scripts/`
+
+That is the whole install. Prism is linked statically, so there is no speech DLL to place
+beside the game — including for NVDA: Prism generates the NVDA RPC client stubs itself and
+talks to the reader over RPC, so `nvdaControllerClient.dll` is neither needed nor looked for.
 
 ### File Layout
 
 ```
 XCom2-WarOfTheChosen/Binaries/Win64/
   version.dll                  ← Ultimate ASI Loader
-  nvdaControllerClient.dll     ← NVDA support (optional)
   scripts/
-    X2Access.asi               ← This mod (SRAL statically linked)
+    X2Access.asi               ← This mod (Prism statically linked)
 ```
 
 ## Usage
@@ -133,7 +135,7 @@ always native. Full detail in [CLAUDE.md](CLAUDE.md).
 ### Native plugin (`src/`)
 
 - **dllmain.cpp** — Entry point, deferred init thread to avoid loader lock
-- **tts** — High-level speech API over statically linked SRAL: queue, interrupt, toggle
+- **tts** — High-level speech API over statically linked Prism: queue, interrupt, toggle, and a re-bind that follows a screen reader starting, stopping or dying mid-session
 - **input_arbiter** — Window-procedure subclass: claims chords per (key, modifier-mask) and swallows them before the game's input pipeline
 - **input** — Hotkey claim registrations
 - **hooks** — SDK init, handler registration, the script↔native bridge endpoint
@@ -158,3 +160,16 @@ is a **required** dependency of the companion mod, at compile time (the mod
 builds against its source, pinned as a submodule to the same release the
 workshop ships) and at runtime (subscribe to it on the Steam Workshop and
 enable it alongside X2AccessCompanion).
+
+## Third-party licenses
+
+[Prism](https://github.com/ethindp/prism) is **Mozilla Public License 2.0** and is statically
+linked into `X2Access.asi`. MPL-2.0 permits that combination and leaves this project's own
+sources untouched, but it is file-level copyleft: the source for Prism, including any change
+we make to its files, must stay available to anyone who receives the binary. We vendor it
+unmodified as the `deps/prism` submodule pinned to a published tag (`v0.17.3`), so the upstream
+repository is that source. Prism in turn bundles its own third-party code — see its `NOTICE`
+file.
+
+XCOM 2 is a trademark of Take-Two Interactive. This is an unofficial fan project, not
+affiliated with or endorsed by Firaxis Games or 2K.

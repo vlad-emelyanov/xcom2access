@@ -23,9 +23,18 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   swallows claimed key chords before the engine sees them. Handlers are queued
   and drained on the game tick. All new hotkeys and navigation input go through
   the arbiter — not GetAsyncKeyState polling, not Highlander input hooks.
-- **Speech**: `src/tts.cpp` wraps SRAL. All speech in the project goes through
-  it. Speak the focused item only; navigation help on keypress; never dump all
-  items on a screen.
+- **Speech**: `src/tts.cpp` wraps **Prism** (was SRAL until 2026-08-20 — same
+  library and same pin as CyberAccess, so a speech bug reproduces across both
+  mods). All speech in the project goes through it. Speak the focused item only;
+  navigation help on keypress; never dump all items on a screen. Prism gives us
+  three things SRAL could not: twelve backends instead of three, a *debounced
+  availability poll thread* in place of SRAL's per-utterance process-table walk,
+  and an error return from `speak` — so a reader that DIED under us (NVDA exited;
+  its RPC endpoint is gone and Prism never reconnects an existing instance) costs
+  one line instead of the rest of the session. Both the availability callback and
+  a failed `speak` route to the same `RebindBackend()`; a *backend instance* is
+  explicitly not thread-safe, so every `prism_backend_*` call stays under
+  `tts.cpp`'s mutex and the poll-thread callback only raises an atomic flag.
 - **Graph A11y Kernel** (`src/Graph/`): engine-neutral navigation core
   (Factorio Access → … → RTAccess → CyberAccess lineage). STL-only by contract
   — no UE3, SDK, or Windows includes; `tests/` compiles it standalone to
@@ -192,6 +201,18 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
 - **Outbound ProcessEvent calls: game thread only.** Trigger from the Tick
   drain (InputArbiter handlers already run there), never from the WNDPROC or
   the init thread.
+- **Nothing in `DllMain(DLL_PROCESS_DETACH)` may join a thread or touch a
+  library.** `ShutdownAll()` runs under the LOADER LOCK, and at process exit the
+  other threads are already dead, so a join never returns. This is why
+  `TTS::Shutdown` deliberately does NOT call `prism_shutdown()` or
+  `prism_log_shutdown()`: the first deletes the context, which joins the
+  `BackendEnumerator` jthread, then calls `CoUninitialize` and a run of
+  `__FUnloadDelayLoadedDLL2` (i.e. `FreeLibrary`); the second joins the logging
+  drain. Both are textbook loader-lock deadlocks. What Shutdown does instead is
+  the safe subset: clear the log handler so nothing can re-enter this module
+  after `Log::Shutdown`, `prism_backend_stop` so a player quitting does not hear
+  the rest of the sentence, and then LEAK the context on purpose — the process is
+  going away. Same reasoning as the dev server's bounded `Stop()`.
 - **Never cache UObject pointers across frames without revalidation** — GC
   moves on. Re-find via GObjects/SCREENSTACK or validate before use.
   **Type-revalidation is not enough**: after a world change the old screen is
@@ -321,6 +342,15 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
 
 ## Build & deploy
 
+- ⛔ The MSVC runtime is pinned **`MultiThreaded` (/MT), cache-`FORCE`d**, before
+  `add_subdirectory(deps/prism)`. Not optional and not cosmetic: Prism sets
+  `CMAKE_MSVC_RUNTIME_LIBRARY` itself off `CMAKE_BUILD_TYPE`, which is EMPTY
+  under the Visual Studio multi-config generator we configure with, so an
+  unpinned cache silently links a `/MT` Prism into a `/MTd` X2Access in Debug.
+  `BUILD_SHARED_LIBS OFF` must also be in the cache before that line — the static
+  path is what makes Prism define `PRISM_STATIC`, so `<prism.h>` stops saying
+  `dllimport`. The upside of /MT is that the `.asi` imports OS libraries only:
+  no VC++ redistributable on the player's machine.
 - Configure: `cmake -B build -A x64` (game/SDK paths default to
   `D:/SteamLibrary/...`; override with `-DXCOM2_GAME_PATH=` /
   `-DXCOM2_SDK_PATH=`).
@@ -541,7 +571,12 @@ loads it — it is vestigial; do not use it.
 
 ## Dependencies
 
-- `deps/SRAL` (submodule) — speech output, linked static.
+- `deps/prism` (submodule, pinned to `v0.17.3`) — speech output, linked static,
+  ⛔ **MPL-2.0, not MIT** (file-level copyleft: we vendor it unmodified and the
+  README says where the source is). Its deps are bundled under its own
+  `third_party/`, so the build is offline; it needs the Windows SDK's `midl.exe`
+  to generate the NVDA RPC client stubs, which is why no `nvdaControllerClient.dll`
+  ships beside the game any more. Replaced `deps/SRAL` on 2026-08-20.
 - `deps/X2ModBuildCommon` (submodule) — UnrealScript build pipeline.
 - `deps/X2WOTCCommunityHighlander` (submodule, pinned to `v1.31.0-release`) —
   pure UnrealScript, no native code. Compile-time include for the companion mod

@@ -1,4 +1,4 @@
-# Graph kernel conformance suite. Compiles src/Graph/** STANDALONE — no game SDK, SRAL, or
+# Graph kernel conformance suite. Compiles src/Graph/** STANDALONE — no game SDK, Prism, or
 # Windows include paths or links — which is what enforces the kernel/host boundary (spec §0).
 add_executable(GraphTests
     graph/TestHarness.hpp
