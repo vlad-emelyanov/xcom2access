@@ -1,4 +1,5 @@
 #include "tactical_hud.h"
+#include "free_aim.h"
 #include "game_ui.h"
 #include "input_arbiter.h"
 #include "menu_navigator.h"
@@ -74,6 +75,21 @@ void Call(const char* funcName, Narrator::Channel channel)
         Narrator::Say(channel, result);
 }
 
+// Which MODE the shot HUD is in, as the companion reports it through a second reflected-out
+// property — the same pattern the hacking screen uses for NativeState. Deliberately read rather
+// than re-derived in C++: the answer depends on the selected action's bFreeAim AND on the
+// targeting method's CLASS (only the four cursor-driven families count), and putting that
+// decision next to the data is what keeps a regenerated SDK or a Highlander bump from silently
+// breaking it. PollTargeting rewrites NativeState on every call, so a stale value cannot linger.
+bool ReadFreeAimFlag()
+{
+    void* cdo = GameUI::FindCompanionCDO(kReaderClass);
+    if (!cdo)
+        return false;
+    return UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeState")
+        == "freeaim";
+}
+
 // A pressed key must never be silent, so the on-demand handlers say so when the companion is
 // missing entirely — the one case Call() swallows.
 void CallOnDemand(const char* funcName)
@@ -138,8 +154,14 @@ void OnTick()
     // what it last announced and resets that on the way down, so the next raise reads in full.
     // Its not-raised path is a screen lookup and a bool read, which is why leaving it running
     // for a mission is affordable.
-    if (usable)
+    if (usable) {
         Call("PollTargeting", Narrator::Channel::Focus);
+        // Published from the same poll rather than from a tick of its own: free aim is a mode of
+        // this screen, so the whole layer costs one outbound call per interval.
+        FreeAim::SetActive(ReadFreeAimFlag());
+    } else {
+        FreeAim::SetActive(false);
+    }
 
     // Leaving tactical — mission over, a modal taking the layer, a recipe attaching — retires
     // whatever combat narration is still queued on both sides of the bridge. Lines about a

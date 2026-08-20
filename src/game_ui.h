@@ -466,6 +466,14 @@ bool CallScriptFunction(void* obj, const char* funcName, void* params);
 /// once a second. Returns null until resolvable. Game thread only.
 void* FindScriptFunction(const char* className, const char* funcName);
 
+/// The UFunction object for a function declared inside a `state`, which lives one level deeper
+/// than FindScriptFunction looks: the state is itself a UStruct on the class's field chain, and
+/// its functions hang off that. Needed because the same function name can be declared once per
+/// state (XComTacticalInput declares Mouse_CheckForFreeAim in both targeting states), so the
+/// state must be named to pick one. Cached per triple; returns null until resolvable.
+/// Game thread only.
+void* FindStateFunction(const char* className, const char* stateName, const char* funcName);
+
 // ---- dev harness only: raw object access for the /gui and /props dumps ----
 //
 // These are the four primitives the widget-tree dumper cannot get any other way; everything

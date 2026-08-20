@@ -11,24 +11,36 @@ namespace MouseGate {
 
 namespace {
 
-// Why this exists (measured live 2026-08-19, mid-mission):
+// Why this exists (measured live 2026-08-19 for world mode, 2026-08-20 for targeting):
 //
-// XComTacticalInput.Mouse_CheckForPathing pushes the mouse pick point through
-// CursorSetLocation EVERY FRAME while the mouse is the active input device — it is the last
-// call in the input state's PostProcessCheckGameLogic (XComTacticalInput.uc:3010), gated only
-// on IsMouseActive(). A Frida watch at 2 ms resolution showed a keyboard CursorSetLocation
-// push LANDING on the cursor pawn and being reverted to the byte-identical cached mouse
-// position 9 ms later; a ProcessEvent hook showed the revert entering as script->script
-// bytecode, not native. The game offers no flag that gates it (m_bCustomAllowCursorMovement
-// only drives the gamepad ribbon UI, verified in SrcOrig).
+// The game re-drives its own 3D cursor from the mouse EVERY FRAME, through one script function
+// per input state, called from that state's PostProcessCheckGameLogic:
 //
-// The mechanism: UObject::CallFunction dispatches a call to (Context->*Func)(Stack, Result)
-// whenever the callee's FunctionFlags carries FUNC_Native — for script functions Func holds
-// UObject::ProcessInternal and the flag is clear. Setting the flag and pointing Func at a
-// thunk that only consumes the call's parameter terminator makes every script callsite of
-// this ONE function a no-op, while clicks, free-aim targeting (Mouse_CheckForFreeAim), camera
-// scroll and every other mouse feature stay untouched. Both writes are plain data, restored
-// exactly on release.
+//   ActiveUnit_Moving    -> Mouse_CheckForPathing   (XComTacticalInput.uc:3010, class scope)
+//   UsingTargetingMethod -> Mouse_CheckForFreeAim   (:1104, declared INSIDE the state)
+//   UsingSecondaryTargetingMethod -> Mouse_CheckForFreeAim (:900, its own copy)
+//
+// Both deproject the mouse and call CursorSetLocation, so a keyboard push LANDS and is reverted
+// one frame later. World mode: a Frida watch at 2 ms resolution saw the revert to a
+// byte-identical cached mouse position 9 ms after the push. Targeting mode: a read-only hook on
+// execSetLocation, filtered to the cursor instance, counted 180 calls in 3.001 s — exactly 60.0
+// per second — with a stationary mouse and ONE distinct location for the whole sample. The game
+// offers no flag that gates either (m_bCustomAllowCursorMovement only drives the gamepad ribbon
+// UI; m_bAllowCursorAscensionAndDescension is read by DisableFloorChanges, which returns false
+// before it ever gets there).
+//
+// The mechanism: UObject::CallFunction dispatches to (Context->*Func)(Stack, Result) whenever the
+// callee's FunctionFlags carries FUNC_Native — for script functions Func holds
+// UObject::ProcessInternal and the flag is clear. Setting the flag and pointing Func at a thunk
+// that only consumes the call's parameter terminator makes every script callsite of that ONE
+// function a no-op. Clicks, camera scroll and every other mouse feature stay untouched; both
+// writes are plain data, restored exactly on release.
+//
+// The two families are gated INDEPENDENTLY because they are never live at the same time: the
+// pathing function is not called from a targeting state and the free-aim ones are not called
+// from the active-unit state. Engaging one while the other is engaged is therefore not a
+// conflict, just a wasted write — but keeping them separate means each surface releases exactly
+// what it took.
 
 constexpr int32_t kFnFlagsOffset = 0xD0;   // UFunction::FunctionFlags (dword; pinned in
                                            // sdk_layout_checks.cpp)
@@ -42,18 +54,12 @@ constexpr int32_t kFrameCodeOffset = 0x24; // FFrame::Code (from execSetLocation
                                            // advances lives at FFrame+0x24 in this build)
 constexpr uint8_t kExEndFunctionParms = 0x16;
 
-void* gFn = nullptr;       // the UFunction, resolved once — class-owned objects persist
-bool gRefused = false;     // resolution found something unusable; never retry
-uint32_t gOrigFlags = 0;
-void* gOrigFunc = nullptr;
-bool gInstalled = false;
-
 // Dispatch target while engaged. Convention is the member call the VM makes,
 // (Context->*Func)(Stack, Result): RCX = the XComTacticalInput instance, RDX = FFrame*,
-// R8 = result — a free function with three pointer params matches exactly. The function
-// takes no parameters, so the param stream is a single EX_EndFunctionParms byte; consume it
-// and do nothing. Guarded: a ProcessEvent-built frame points Code at the function body
-// instead, and must not be advanced.
+// R8 = result — a free function with three pointer params matches exactly. Every function gated
+// here takes no parameters, so the param stream is a single EX_EndFunctionParms byte; consume it
+// and do nothing. Guarded: a ProcessEvent-built frame points Code at the function body instead,
+// and must not be advanced.
 void SwallowThunk(void* /*self*/, void* frame, void* /*result*/)
 {
     __try {
@@ -65,12 +71,42 @@ void SwallowThunk(void* /*self*/, void* frame, void* /*result*/)
     }
 }
 
-bool ReadOriginals()
+// One gated function. `state` is null for a class-scope function; naming a state routes the
+// lookup through GameUI::FindStateFunction, which walks one level deeper — Mouse_CheckForFreeAim
+// does not exist at class scope at all (verified live 2026-08-20).
+struct Gate {
+    const char* cls;
+    const char* state; // null = class scope
+    const char* func;
+    const char* label;
+
+    void* fn = nullptr;     // resolved once — class-owned objects persist for the session
+    bool refused = false;   // resolution found something unusable; never retry
+    uint32_t origFlags = 0;
+    void* origFunc = nullptr;
+    bool installed = false;
+};
+
+enum {
+    kGatePathing = 0,
+    kGateFreeAim,
+    kGateFreeAimSecondary,
+    kGateCount,
+};
+
+Gate gGates[kGateCount] = {
+    {"XComTacticalInput", nullptr, "Mouse_CheckForPathing", "world-mode cursor follow"},
+    {"XComTacticalInput", "UsingTargetingMethod", "Mouse_CheckForFreeAim", "free-aim cursor follow"},
+    {"XComTacticalInput", "UsingSecondaryTargetingMethod", "Mouse_CheckForFreeAim",
+        "free-aim cursor follow (secondary movement)"},
+};
+
+bool ReadOriginals(Gate& g)
 {
     __try {
-        uint8_t* fn = static_cast<uint8_t*>(gFn);
-        gOrigFlags = *reinterpret_cast<uint32_t*>(fn + kFnFlagsOffset);
-        gOrigFunc = *reinterpret_cast<void**>(fn + kFnFuncOffset);
+        uint8_t* fn = static_cast<uint8_t*>(g.fn);
+        g.origFlags = *reinterpret_cast<uint32_t*>(fn + kFnFlagsOffset);
+        g.origFunc = *reinterpret_cast<void**>(fn + kFnFuncOffset);
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
@@ -79,18 +115,18 @@ bool ReadOriginals()
 
 // Engage writes Func before the flag (the flag is the dispatch gate); release clears the
 // flag before Func. Either order leaves no window where the VM can call a half-written pair.
-bool WriteGate(bool engage)
+bool WriteGate(Gate& g, bool engage)
 {
     __try {
-        uint8_t* fn = static_cast<uint8_t*>(gFn);
+        uint8_t* fn = static_cast<uint8_t*>(g.fn);
         uint32_t* flags = reinterpret_cast<uint32_t*>(fn + kFnFlagsOffset);
         void** func = reinterpret_cast<void**>(fn + kFnFuncOffset);
         if (engage) {
             *func = reinterpret_cast<void*>(&SwallowThunk);
-            *flags = gOrigFlags | kFuncNative;
+            *flags = g.origFlags | kFuncNative;
         } else {
-            *flags = gOrigFlags;
-            *func = gOrigFunc;
+            *flags = g.origFlags;
+            *func = g.origFunc;
         }
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -98,58 +134,78 @@ bool WriteGate(bool engage)
     }
 }
 
+void SetGate(Gate& g, bool on)
+{
+    if (on == g.installed)
+        return;
+
+    if (on) {
+        if (g.refused)
+            return;
+        if (!g.fn) {
+            g.fn = g.state ? GameUI::FindStateFunction(g.cls, g.state, g.func)
+                           : GameUI::FindScriptFunction(g.cls, g.func);
+            if (!g.fn)
+                return; // not resolvable yet — the finder rate-limits and logs its own miss
+            if (!ReadOriginals(g)) {
+                g.fn = nullptr;
+                return;
+            }
+            if (g.origFlags & kFuncNative) {
+                // Another mod (or a future patch) already made it native — hooking on top
+                // would fight over the same two fields. Leave the mouse alone.
+                LOG_WARN("MouseGate: %s is already FUNC_Native (flags 0x%08X) — refusing to "
+                         "gate it",
+                    g.func, g.origFlags);
+                g.refused = true;
+                return;
+            }
+            LOG_INFO("MouseGate: %s UFunction 0x%p flags 0x%08X Func 0x%p (ProcessInternal)",
+                g.label, g.fn, g.origFlags, g.origFunc);
+        }
+        if (WriteGate(g, true)) {
+            g.installed = true;
+            LOG_INFO("MouseGate: %s suppressed", g.label);
+        }
+    } else {
+        if (g.fn && WriteGate(g, false))
+            LOG_INFO("MouseGate: %s restored", g.label);
+        g.installed = false;
+    }
+}
+
 } // namespace
 
 void SetSwallow(bool on)
 {
-    if (on == gInstalled)
-        return;
+    SetGate(gGates[kGatePathing], on);
+}
 
-    if (on) {
-        if (gRefused)
-            return;
-        if (!gFn) {
-            gFn = GameUI::FindScriptFunction("XComTacticalInput", "Mouse_CheckForPathing");
-            if (!gFn)
-                return; // not resolvable yet — the finder rate-limits and logs its own miss
-            if (!ReadOriginals()) {
-                gFn = nullptr;
-                return;
-            }
-            if (gOrigFlags & kFuncNative) {
-                // Another mod (or a future patch) already made it native — hooking on top
-                // would fight over the same two fields. Leave the mouse alone.
-                LOG_WARN("MouseGate: Mouse_CheckForPathing is already FUNC_Native "
-                         "(flags 0x%08X) — refusing to gate it",
-                    gOrigFlags);
-                gRefused = true;
-                return;
-            }
-            LOG_INFO("MouseGate: UFunction 0x%p flags 0x%08X Func 0x%p (ProcessInternal)",
-                gFn, gOrigFlags, gOrigFunc);
-        }
-        if (WriteGate(true)) {
-            gInstalled = true;
-            LOG_INFO("MouseGate: mouse cursor-follow suppressed — tile cursor owns world mode");
-        }
-    } else {
-        if (gFn && WriteGate(false))
-            LOG_INFO("MouseGate: mouse cursor-follow restored");
-        gInstalled = false;
-    }
+void SetFreeAimSwallow(bool on)
+{
+    // Both targeting states, together: which one the controller is in depends on whether the
+    // ability was chosen after a move, and the aim keys behave identically in either.
+    SetGate(gGates[kGateFreeAim], on);
+    SetGate(gGates[kGateFreeAimSecondary], on);
 }
 
 bool Swallowed()
 {
-    return gInstalled;
+    for (const Gate& g : gGates) {
+        if (g.installed)
+            return true;
+    }
+    return false;
 }
 
 void ForceRestore()
 {
-    if (gInstalled) {
-        WriteGate(false);
-        gInstalled = false;
-        LOG_INFO("MouseGate: restored on shutdown");
+    for (Gate& g : gGates) {
+        if (g.installed) {
+            WriteGate(g, false);
+            g.installed = false;
+            LOG_INFO("MouseGate: %s restored on shutdown", g.label);
+        }
     }
 }
 

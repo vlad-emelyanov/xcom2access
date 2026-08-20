@@ -76,7 +76,17 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   device, `XComTacticalInput.Mouse_CheckForPathing` re-pushes the cached mouse
   pick point through `CursorSetLocation` EVERY FRAME (last line of the input
   state's `PostProcessCheckGameLogic`), reverting any keyboard push one frame
-  later. While the tile cursor has been used this mission AND owns world mode,
+  later. There is **one such function per input state** and the gate now holds
+  three: `Mouse_CheckForPathing` for world mode, and `Mouse_CheckForFreeAim` for
+  each of `UsingTargetingMethod` and `UsingSecondaryTargetingMethod` (free aim,
+  measured live 2026-08-20 at exactly **60.0 pushes/second** on the cursor with a
+  stationary mouse). They never contend — the pathing function is not called from
+  a targeting state and vice versa — so each surface releases exactly what it
+  took. ⚠ The free-aim pair is **state-scoped**, so `FindScriptFunction`'s
+  class-chain walk cannot see it at all (verified live: at class scope NOT FOUND);
+  `GameUI::FindStateFunction` walks the `UState`'s own `Children`, which
+  `docs/object-scanner-recon.md` §4.6 had already flagged as needed for the
+  `Key_Left_Shift` fix. While the tile cursor has been used this mission AND owns world mode,
   the gate flips that one UFunction to `FUNC_Native` with `Func` → a thunk
   that consumes `EX_EndFunctionParms` and returns — script→script dispatch
   goes through exactly those two fields — and restores both exactly whenever
@@ -239,6 +249,51 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   `GetHackChance` (never re-derived — sitreps, Gremlins and Skullmining all move
   the inputs) and are truncated, matching Flash: 6.42 and 2.75 print as 6% and
   2%.
+- **Free aim / AoE preview** (`src/free_aim.cpp` + the free-aim section of companion
+  `X2AccessTacticalReader.uc`, built AND VERIFIED LIVE 2026-08-20 — the tutorial's grenade step
+  was completed with it: `/` aimed at the object scanner's own *"Бросить гранату сюда"* marker,
+  the arrows stepped from there, and the throw landed; recon in `docs/free-aim-recon.md`): the
+  third tactical input mode. An ability whose target is a POINT
+  (`bFreeAim` set, `AvailableTargets` EMPTY) reads its aim point off the game's own
+  `XCom3DCursor` — grenades and everything deriving from their method, cones, lines, the blaster
+  launcher, the evac zone. **Vanilla has no keyboard aiming path at all**:
+  `UITacticalHUD_AbilityContainer.AbilityRequiresTargetingActivation` returns false unless a
+  controller is active (`:155`), so the D-pad branch is dead code, and `SetSelectionOnInputPress`
+  (`:405`, on every PRESS) sends a bare arrow to `CycleAbilitySelection` — which ABANDONS the
+  throw. Claiming the arrows therefore displaces nothing (ability cycling stays on `1`-`9`), and
+  this is where the old "targeting mode: we claim nothing that steers" rule is narrowed rather
+  than broken — see the tactical input section. Aim keys are the tile cursor's, deliberately:
+  arrows step, `Shift+,`/`Shift+.` change floor, `Delete` re-announces (ONE claim, branching in
+  script, never two racing for the chord), and the scanner's `/` retargets the AIM point instead
+  of planting the walk cursor. `Enter`/`Space`/`Escape` stay unclaimed — the game's own confirm
+  and cancel already work. Detection and every word live in the companion, which reports the mode
+  through a second reflected-out property (`NativeState`), published by `TacticalHUD::OnTick`'s
+  existing 150 ms poll — so the layer adds **no offsets, no `static_assert`s and no extra
+  outbound call**. ⛔ Three traps, each earned in recon: **do NOT reuse
+  `X2AccessTileReader.SetCursorTile`** — it zeroes `m_fMaxChainedDistance`, which under a
+  targeting method IS the throw-range limit (`X2TargetingMethod_Grenade.Init:43` sets it from
+  `GetAbilityCursorRangeMeters`; live 960 units = 15 m = 10 tiles), and its comment saying that
+  is safe "because our keys stand down while the shot HUD is raised" is exactly what free aim
+  falsifies. **Do NOT trust the pushed tile as the answer** — for a thrown object the blast
+  centre is `GrenadePath.GetEndPosition()`, where it comes to REST, so a bounced grenade lands
+  elsewhere; that resolves a frame late, which is why `PushAim` verifies the clamp synchronously
+  (reading `GetCursorFeetLocation()`, the exact inverse of the offset `CursorSetLocation` adds,
+  compared as a horizontal distance with half a tile of slack — the clamp lands on a SPHERE and
+  owes the tile grid nothing) while the landing divergence is reported by the poll. And **blast
+  contents come from `Ability.GatherAdditionalAbilityTargetsForLocation` asked about OUR tile**,
+  not from the method's `MarkedTargets` cache, because that cache only refreshes inside the
+  method's own `Update()`; it is the same list `ConfirmAbility` submits, fog-gated through
+  `X2AccessTacticalEvents.IsNarratable` (the native gather does not care what the squad can see,
+  so that filter is a real leak guard). Friendly fire is read from that list rather than from the
+  method's `bFriendlyFireAgainstUnits`, which is one frame stale; the game's own modal runs over
+  a WIDER list (`CheckForFriendlyUnit` uses the visual `GetTargetedActors`) and stays the
+  authority — ours is the early warning that keeps a blind player from ever reaching it.
+  ⚠ The first live run found the one thing 150 ms of poll interval does NOT buy: the arc resolves
+  a frame AFTER the push, so a single divergent reading is not evidence. It announced *"Blocked,
+  lands 6 north, 1 west"* about a throw that then landed perfectly — the reading was the pre-jump
+  arc, still pointing back at the shooter. A divergence now has to survive two consecutive polls
+  before it is spoken: a stale frame cannot, a real obstruction always does.
+
 - **Outbound script calls**: C++ may invoke any UnrealScript function via
   ProcessEvent. Always resolve the UFunction BY NAME at runtime and hand-roll
   the param struct (`GameUI::CallNamedFunction`; `CallStaticNative` for
@@ -972,7 +1027,12 @@ Three modes, and the layer must always know which one it is in:
 - **HUD mode** — the tactical recipe is FOCUSED; arrows navigate it.
 - **Targeting mode** (`UITacticalHUD.m_isMenuRaised`) — the GAME owns the
   arrows, Tab and F1-F8. We narrate and read there; we claim nothing that
-  steers.
+  steers. ⚠ **Narrowed 2026-08-20 to targeting with a TARGET LIST.** In free aim
+  (`docs/free-aim-recon.md`) the arrows steer nothing: the controller aiming
+  branch is dead code on mouse+keyboard, so a bare arrow lands in
+  `CycleAbilitySelection` and abandons the ability the player just chose. There
+  the rule inverts and the arrows are ours — the principle was "do not take a key
+  the game is using to steer", and here it is not.
 
 So the recipe must be ATTACHED BUT UNFOCUSED while the cursor keeps the arrows.
 `TileReader::ComputeActive` currently stands down on

@@ -66,6 +66,7 @@ add_library(X2Access SHARED
     src/menu_navigator.cpp
     src/mouse_gate.cpp
     src/tile_reader.cpp
+    src/free_aim.cpp
     src/object_scanner.cpp
     src/tactical_hud.cpp
     src/hacking_screen.cpp

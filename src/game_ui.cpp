@@ -918,6 +918,29 @@ UFunction* FindFunctionInClassRaw(UObject* obj, const char* funcName)
     return nullptr;
 }
 
+// One level of a UStruct's own field chain, matched by BOTH name and field class. The class
+// check is what makes this usable for states: properties, functions and states all share the
+// single `Children` chain, so a name match alone would happily hand back a UProperty.
+UField* FindFieldInStructRaw(void* structObj, const char* fieldName, const char* fieldClass)
+{
+    __try {
+        char name[64];
+        for (UField* field = reinterpret_cast<UStruct*>(structObj)->Children; field;
+             field = field->Next) {
+            if (!ObjNameAnsiRaw(field, name, sizeof(name)) || strcmp(name, fieldName) != 0)
+                continue;
+            UClass* cls = field->Class;
+            if (!cls)
+                continue;
+            if (ObjNameAnsiRaw(reinterpret_cast<UObject*>(cls), name, sizeof(name))
+                && strcmp(name, fieldClass) == 0)
+                return field;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return nullptr;
+}
+
 // Same walk as FindFunctionInClassRaw, but starting AT the given UStruct instead of at its
 // class — for looking a function up on a UClass object directly, which is how statics are
 // called (the generated wrappers pass the class object as `this`).
@@ -1202,6 +1225,58 @@ void* FindScriptFunction(const char* className, const char* funcName)
             return nullptr;
         }
         LOG_INFO("GameUI: resolved \"%s.%s\" at 0x%p", className, funcName, fn);
+    }
+    return fn;
+}
+
+// A UnrealScript `state` is a UStruct in its own right, hanging off the class's field chain, and
+// the functions declared inside it hang off ITS chain — one level deeper than FindScriptFunction
+// looks. The distinction is not academic: XComTacticalInput.Mouse_CheckForPathing is class-scope
+// (which is why the finder above resolves it) while Mouse_CheckForFreeAim is declared once per
+// targeting state, so a class-chain walk returns nothing for it at all. Verified live
+// 2026-08-20 — at class scope: NOT FOUND; under UsingTargetingMethod: found, flags 0x820102,
+// Func = ProcessInternal, i.e. byte-identical to the function the mouse gate already flips.
+//
+// Note there is no super walk here: states are not inherited into the child's own Children
+// chain by name in a way that would help us, and every caller so far wants one exact
+// (class, state, function) triple. Cached per triple; class resolution shares FindClassRaw's
+// once-a-second retry through the same path as FindScriptFunction.
+void* FindStateFunction(const char* className, const char* stateName, const char* funcName)
+{
+    static std::unordered_map<std::string, UObject*> sClasses;
+    static std::unordered_map<std::string, UFunction*> sFuncs;
+    static uint64_t sLastTryMs = 0;
+
+    UObject*& cls = sClasses[className];
+    if (!cls) {
+        uint64_t now = GetTickCount64();
+        if (now - sLastTryMs < 1000)
+            return nullptr;
+        sLastTryMs = now;
+        cls = FindClassRaw(className);
+        if (!cls) {
+            LOG_WARN("GameUI: class \"%s\" not found (FindStateFunction)", className);
+            return nullptr;
+        }
+    }
+
+    std::string key
+        = std::string(className) + "." + stateName + "." + funcName;
+    UFunction*& fn = sFuncs[key];
+    if (!fn) {
+        UField* state = FindFieldInStructRaw(cls, stateName, "State");
+        if (!state) {
+            LOG_WARN("GameUI: state \"%s.%s\" NOT FOUND", className, stateName);
+            return nullptr;
+        }
+        UField* found = FindFieldInStructRaw(state, funcName, "Function");
+        if (!found) {
+            LOG_WARN("GameUI: function \"%s\" NOT FOUND in state \"%s.%s\"", funcName,
+                className, stateName);
+            return nullptr;
+        }
+        fn = reinterpret_cast<UFunction*>(found);
+        LOG_INFO("GameUI: resolved \"%s\" at 0x%p", key.c_str(), fn);
     }
     return fn;
 }

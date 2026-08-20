@@ -5,6 +5,7 @@
 #include "menu_navigator.h"
 #include "mouse_gate.h"
 #include "object_scanner.h"
+#include "free_aim.h"
 #include "tile_reader.h"
 #include "tactical_hud.h"
 #include "hacking_screen.h"
@@ -60,22 +61,27 @@ static void InitThread() {
     // 5. Tactical tile cursor (claims — before game hooks go live)
     TileReader::Init();
 
-    // 6. Object scanner (claims — same; shares the tile cursor's gate, so it must come after it)
+    // 6. Free aim (claims — same; the tile cursor's arrows and floor keys again, under the
+    // opposite gate: this layer owns them exactly while the shot HUD is raised over a
+    // cursor-targeted ability, which is when the tile cursor stands down)
+    FreeAim::Init();
+
+    // 7. Object scanner (claims — same; shares BOTH cursor gates, so it must come after them)
     ObjectScanner::Init();
 
-    // 7. Shot HUD narration (claims — same)
+    // 8. Shot HUD narration (claims — same; also publishes the free-aim gate from its poll)
     TacticalHUD::Init();
 
-    // 8. Hacking overlay (claims — same; arrows and Delete, live only while the pad is up)
+    // 9. Hacking overlay (claims — same; arrows and Delete, live only while the pad is up)
     HackingScreen::Init();
 
-    // 9. Tutorial message reader (claims — same)
+    // 10. Tutorial message reader (claims — same)
     TutorialReader::Init();
 
-    // 10. Game hooks
+    // 11. Game hooks
     Hooks::Init();
 
-    // 11. Dev harness (dev builds + marker file only; no-op otherwise). Last, so it can report
+    // 12. Dev harness (dev builds + marker file only; no-op otherwise). Last, so it can report
     // on everything above, and so a failure here can never keep the mod itself from loading.
     DevServer::Start(dir);
 
