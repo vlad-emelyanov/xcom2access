@@ -1,0 +1,232 @@
+// X2AccessReplayNarration
+// Combat narration for the TUTORIAL — and for any other replay — where the event bus is dead.
+//
+// ⛔ WHY THIS EXISTS. A replay does not build game states, it plays back states that are already
+// in the history. `X2GameRuleset.SubmitGameStateContext` routes every context to
+// `XComTutorialMgr.HandleSubmittedGameStateContext` instead of `SubmitGameStateContext_Internal`
+// while `REPLAY.bInTutorial; on a matching action that handler calls ResumeReplay() /
+// StepReplayForward() and returns true, DISCARDING the player's context. StepReplayForward then
+// only advances CurrentHistoryFrame and calls BuildVisualizationFrame on a frame that was in the
+// history before the mission started. So ContextBuildGameState never runs, X2EventManager
+// .TriggerEvent is never reached, and NOT ONE listener fires — ours or the game's own. Verified
+// live 2026-08-20: a full tutorial run produced zero lines from X2AccessTacticalEvents with the
+// listener provably registered.
+//
+// So in a replay the history IS the event stream, and this walks it. Every line comes from the
+// same builders X2AccessTacticalEvents uses, so a shot reads identically whether it was narrated
+// from an event or from a frame — there is exactly one place that decides wording.
+//
+// THE GATE IS THE POINT: this runs precisely when `REPLAY.bInReplay is true, which is precisely
+// when the listeners cannot fire. The two paths can never both narrate the same action.
+//
+// SIGHTED PARITY: never read past what the player has been SHOWN. The whole tutorial script —
+// every enemy move, every hit, the ending — is in the history at mission start, so the raw history
+// end is the FUTURE. The cursor here is XComGameStateVisualizationMgr.LastStateHistoryVisualized,
+// the same "which frame is on screen" the game's own unit flags use, clamped again to the replay's
+// CurrentHistoryFrame. That also syncs narration to the animation, which is what
+// ELD_OnVisualizationBlockStarted buys the live listeners.
+//
+// GC rule: this object is a CDO — value-typed state only, NEVER object references.
+
+class X2AccessReplayNarration extends Object;
+
+// The last history frame we have spoken. Written through `self` (native calls PollReplay on the
+// CDO), which is why this needs no `config` marker — only STATIC writes through `default.` do.
+var int LastNarratedFrame;
+
+// ⛔ A RUNAWAY GUARD, NOT A PACING ONE. It was 24 for one run and that was badly wrong: normal
+// tutorial playback advances the visualized cursor in steps of 25-50 frames, because most history
+// frames carry no visualization of their own and LastStateHistoryVisualized jumps to the end of a
+// block when that block completes. Measured live 2026-08-20: 17 "seeks" in one tutorial run,
+// 597 frames dropped — among them an overwatch shot the player watched happen and never heard.
+// Ordinary play must always be narrated in full; the only real seek is StartReplay's own
+// JumpReplayToFrame, and the first-poll branch below already covers that. So this is now sized to
+// catch nothing but a genuine runaway, and it still says so in the log when it fires.
+const MAX_CATCHUP_FRAMES = 512;
+
+// ---------------------------------------------------------------------------
+// Native entry point — one call per drain
+// ---------------------------------------------------------------------------
+
+function PollReplay()
+{
+	local XComGameReplicationInfo GRI;
+	local XComReplayMgr Replay;
+	local XComGameStateVisualizationMgr VisMgr;
+	local XComGameStateHistory History;
+	local int Target, Frame;
+
+	// Deliberately NOT the `REPLAY / `XCOMVISUALIZATIONMGR macros: both dereference the GRI
+	// unconditionally, and native polls this ten times a second everywhere — including the shell,
+	// where there is no tactical GRI at all. That is two "Accessed None" script warnings per poll
+	// burying the log we actually read. One cast, one null check, both managers.
+	GRI = XComGameReplicationInfo(class'WorldInfo'.static.GetWorldInfo().GRI);
+	Replay = GRI != none ? GRI.ReplayMgr : none;
+
+	if (Replay == none || !Replay.bInReplay)
+	{
+		// Not a replay: the listeners own narration. Forget our place so the next replay starts
+		// clean rather than trying to catch up across a mission boundary.
+		LastNarratedFrame = -1;
+		return;
+	}
+
+	VisMgr = GRI.VisualizationMgr;
+	if (VisMgr == none)
+		return;
+
+	Target = VisMgr.LastStateHistoryVisualized;
+	if (Target <= 0)
+		return;
+
+	// Never past the replay's own cursor. LastStateHistoryVisualized normally lags it, but a
+	// clamp here is what guarantees we can only ever describe frames the player has reached.
+	if (Target > Replay.CurrentHistoryFrame)
+		Target = Replay.CurrentHistoryFrame;
+
+	// Nothing new, or the cursor moved backwards (the replay UI can step back; the tutorial does
+	// not, but adopting a lower Target would re-narrate everything between here and there).
+	if (Target <= LastNarratedFrame)
+		return;
+
+	if (LastNarratedFrame < 0 || Target - LastNarratedFrame > MAX_CATCHUP_FRAMES)
+	{
+		// Never silently: a skip is coverage we chose not to give, and it must be visible in the
+		// log rather than look like a stretch where nothing happened. The first adopt of a mission
+		// is not a skip — there is nothing behind us to have missed.
+		if (LastNarratedFrame >= 0)
+		{
+			`log("X2Access: replay narration skipped frames" @ string(LastNarratedFrame + 1) $ "-"
+				$ string(Target) @ "(seek, not play)", , 'X2Access');
+		}
+
+		LastNarratedFrame = Target;
+		return;
+	}
+
+	History = `XCOMHISTORY;
+
+	for (Frame = LastNarratedFrame + 1; Frame <= Target; Frame++)
+	{
+		NarrateFrame(History, Frame);
+	}
+
+	LastNarratedFrame = Target;
+}
+
+// ---------------------------------------------------------------------------
+// One history frame
+// ---------------------------------------------------------------------------
+
+private function NarrateFrame(XComGameStateHistory History, int Frame)
+{
+	local XComGameState GameState;
+	local XComGameStateContext Context;
+
+	GameState = History.GetGameStateFromHistory(Frame);
+	if (GameState == none)
+		return;
+
+	Context = GameState.GetContext();
+	if (Context == none)
+		return;
+
+	NarrateTurnChange(History, Context, Frame);
+	NarrateAbility(History, Context, Frame);
+
+	// Order matters and mirrors the live listeners' priorities: the shot, then what it did, then
+	// who it killed. A frame carries all three at once, so reading the units after the ability is
+	// what keeps "X shoots Y" ahead of "Y takes 4 damage" ahead of "Y killed".
+	NarrateUnits(History, GameState, Context, Frame);
+	NarrateConcealment(History, GameState, Frame);
+}
+
+private function NarrateTurnChange(XComGameStateHistory History, XComGameStateContext Context, int Frame)
+{
+	local XComGameStateContext_TacticalGameRule RuleContext;
+	local XComGameState_Player PlayerState;
+
+	RuleContext = XComGameStateContext_TacticalGameRule(Context);
+	if (RuleContext == none || RuleContext.GameRuleType != eGameRule_PlayerTurnBegin)
+		return;
+
+	PlayerState = XComGameState_Player(History.GetGameStateForObjectID(RuleContext.PlayerRef.ObjectID, , Frame));
+	if (PlayerState == none)
+		return;
+
+	// XCom and the aliens only — the same rule the live listener applies, and the same reason:
+	// the game gives the Lost, civilians and the Resistance no turn banner either.
+	switch (PlayerState.GetTeam())
+	{
+	case eTeam_XCom:
+		class'X2AccessNarrator'.static.Alert("Your turn.");
+		break;
+	case eTeam_Alien:
+		class'X2AccessNarrator'.static.Alert("Enemy turn.");
+		break;
+	}
+}
+
+private function NarrateAbility(XComGameStateHistory History, XComGameStateContext Context, int Frame)
+{
+	local XComGameStateContext_Ability AbilityContext;
+	local XComGameState_Ability AbilityState;
+	local string Line;
+
+	AbilityContext = XComGameStateContext_Ability(Context);
+	if (AbilityContext == none)
+		return;
+
+	AbilityState = XComGameState_Ability(History.GetGameStateForObjectID(AbilityContext.InputContext.AbilityRef.ObjectID, , Frame));
+
+	Line = class'X2AccessTacticalEvents'.static.BuildAbilityLine(AbilityState, AbilityContext);
+	if (Line != "")
+		class'X2AccessNarrator'.static.Combat(Line);
+}
+
+// Damage and deaths, read off the unit versions the frame itself carries — a delta frame holds
+// exactly the objects that changed, which is the same set the live listeners would have been
+// handed one at a time.
+private function NarrateUnits(XComGameStateHistory History, XComGameState GameState, XComGameStateContext Context, int Frame)
+{
+	local XComGameState_Unit Unit, PrevUnit;
+	local string Line;
+
+	foreach GameState.IterateByClassType(class'XComGameState_Unit', Unit)
+	{
+		Line = class'X2AccessTacticalEvents'.static.BuildDamageLine(Unit, Context);
+		if (Line != "")
+			class'X2AccessNarrator'.static.Combat(Line);
+
+		if (Unit.IsAlive())
+			continue;
+
+		// A dead unit stays dead in every later frame, so "not alive" alone would re-announce the
+		// same corpse for the rest of the mission. The transition is the event.
+		PrevUnit = XComGameState_Unit(History.GetGameStateForObjectID(Unit.ObjectID, , Frame - 1));
+		if (PrevUnit == none || !PrevUnit.IsAlive())
+			continue;
+
+		class'X2AccessTacticalEvents'.static.NarrateDeath(Unit, Context);
+	}
+}
+
+private function NarrateConcealment(XComGameStateHistory History, XComGameState GameState, int Frame)
+{
+	local XComGameState_Player PlayerState, PrevPlayer;
+
+	foreach GameState.IterateByClassType(class'XComGameState_Player', PlayerState)
+	{
+		if (PlayerState.GetTeam() != eTeam_XCom || PlayerState.bSquadIsConcealed)
+			continue;
+
+		PrevPlayer = XComGameState_Player(History.GetGameStateForObjectID(PlayerState.ObjectID, , Frame - 1));
+		if (PrevPlayer != none && PrevPlayer.bSquadIsConcealed)
+			class'X2AccessNarrator'.static.Alert("Squad concealment broken.");
+	}
+}
+
+defaultproperties
+{
+	LastNarratedFrame = -1
+}
