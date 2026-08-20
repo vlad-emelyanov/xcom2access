@@ -177,6 +177,42 @@ static_assert(offsetof(AUIListItemSpinner, Value) == 0x3DC, "UIListItemSpinner::
 static_assert(offsetof(AUIDropdown, Items) == 0x3F8, "UIDropdown::Items");
 static_assert(offsetof(AUIDropdown, SelectedItem) == 0x418, "UIDropdown::SelectedItem");
 
+// ---- tutorial mission: the modal popup ----
+static_assert(offsetof(AUITutorialBox, Title) == 0x410, "UITutorialBox::Title");
+static_assert(offsetof(AUITutorialBox, Desc) == 0x420, "UITutorialBox::Desc");
+static_assert(offsetof(AUITutorialBox, ButtonHelp) == 0x430, "UITutorialBox::ButtonHelp");
+
+// ---- tutorial mission: world messages (the readable flyover channel) ----
+static_assert(offsetof(AXComPresentationLayerBase, m_kWorldMessageManager) == 0x344,
+    "XComPresentationLayerBase::m_kWorldMessageManager");
+static_assert(offsetof(AUIWorldMessageMgr, m_arrMsgs) == 0x450, "UIWorldMessageMgr::m_arrMsgs");
+static_assert(offsetof(AUIWorldMessageMgr, m_arrActiveMessages) == 0x460,
+    "UIWorldMessageMgr::m_arrActiveMessages");
+static_assert(offsetof(AUIWorldMessageMgr, BladeHUDMessage) == 0x480,
+    "UIWorldMessageMgr::BladeHUDMessage");
+static_assert(sizeof(FTHUDMsg) == 0x78, "THUDMsg stride");
+static_assert(offsetof(FTHUDMsg, m_sId) == 0x00, "THUDMsg::m_sId");
+static_assert(offsetof(FTHUDMsg, m_txtMsg) == 0x10, "THUDMsg::m_txtMsg");
+static_assert(offsetof(FTHUDMsg, m_kFollowObject) == 0x30, "THUDMsg::m_kFollowObject");
+// The visible/important bits live in the dword at 0x34; the plain member after it pins them.
+static_assert(offsetof(FTHUDMsg, m_eBehavior) == 0x38,
+    "THUDMsg flag dword precedes m_eBehavior at 0x34");
+static_assert(offsetof(FTHUDMsg, m_eType) == 0x74, "THUDMsg::m_eType");
+
+// ---- tutorial mission: the replay manager ----
+static_assert(offsetof(AXComReplayMgr, CurrentHistoryFrame) == 0x274,
+    "XComReplayMgr::CurrentHistoryFrame");
+// bInReplay/bInTutorial are bitfields in the dword at 0x278; the plain member after them pins it.
+static_assert(offsetof(AXComReplayMgr, StepForwardStopFrame) == 0x27C,
+    "XComReplayMgr flag dword precedes StepForwardStopFrame at 0x278");
+// bIsTutorialAllowingControls is a bitfield in the dword at 0x294; NextPlayerInputFrame pins it.
+static_assert(offsetof(AXComTutorialMgr, NextPlayerInputFrame) == 0x298,
+    "XComTutorialMgr flag dword precedes NextPlayerInputFrame at 0x294");
+static_assert(offsetof(AXComTutorialMgr, InvalidSubmissionCnt) == 0x31C,
+    "XComTutorialMgr::InvalidSubmissionCnt");
+static_assert(offsetof(AXComTutorialMgr, NextPlayerAbilityContext) == 0x338,
+    "XComTutorialMgr::NextPlayerAbilityContext");
+
 // ---- tactical HUD (m_isMenuRaised is a bitfield in the dword at 0x410; the plain struct
 // member right after it pins the layout) ----
 static_assert(offsetof(AUITacticalHUD, CachedVisibility) == 0x414,

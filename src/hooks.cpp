@@ -5,6 +5,10 @@
 #include "input_arbiter.h"
 #include "menu_navigator.h"
 #include "tile_reader.h"
+#include "tactical_hud.h"
+#include "hacking_screen.h"
+#include "tutorial_reader.h"
+#include "narrator.h"
 #include "process_event_hook.h"
 #include "ue3_reflection.h"
 #include "tts.h"
@@ -80,6 +84,21 @@ static void RegisterEventHandlers() {
             MenuNavigator::OnTick();
             // The tile cursor's active-gate refresh (reads only; throttled internally).
             TileReader::OnTick();
+            // The shot HUD's targeting poll. After the tile reader, whose gate it mirrors:
+            // exactly one of the two is claiming keys at any moment.
+            TacticalHUD::OnTick();
+            // The hacking overlay's announce-once poll. Same family, same gate: while the pad
+            // is up the tile cursor's gate reports it as the blocker, so this is the one
+            // surface claiming keys.
+            HackingScreen::OnTick();
+            // The tutorial's text surfaces (modal, world messages, HUD blade) and its silent
+            // on-rails rejections. Only the tutorial mission has an XComTutorialMgr, so every
+            // other mission pays one cached pointer check here.
+            TutorialReader::OnTick();
+            // Last: drain the companion's queued combat narration and flush the speech queue.
+            // After every producer above, so a line queued this frame goes out this frame rather
+            // than waiting a tick behind the event that caused it.
+            Narrator::OnTick();
         } catch (...) {
             // Never leak a throw into the game's frame (spec §7.9); subsystems log their own.
         }

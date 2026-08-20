@@ -249,7 +249,7 @@ function CursorMoveTo()
 		Desc = string(Max(PathingPawn.PathTiles.Length - 1, 0)) @ "tiles";
 		Cost = ActiveUnit.m_kReachableTilesCache.GetPathCostToTile(Dest);
 		if (Cost >= 0 && Cost > ActiveUnit.GetMobility())
-			Desc @= ", dash";
+			Desc $= ", dash";
 		AppendPart(Desc, DescribeCoverEdges(WorldData.GetPositionFromTileCoordinates(Dest), true));
 		AppendPart(Desc, "Press again to move");
 		NativeResult = Desc;
@@ -411,18 +411,29 @@ private function string DescribeReachability(TTile Tile)
 private function string DescribeOffset(TTile Tile)
 {
 	local XComGameState_Unit UnitState;
-	local int DX, DY, DZ, NDX, NDY, EDX, EDY, NorthAmt, EastAmt;
-	local string Result;
 
 	UnitState = ActiveUnitState();
 	if (UnitState == none)
 		return "";
-
-	DX = Tile.X - UnitState.TileLocation.X;
-	DY = Tile.Y - UnitState.TileLocation.Y;
-	DZ = Tile.Z - UnitState.TileLocation.Z;
-	if (DX == 0 && DY == 0 && DZ == 0)
+	if (SameTile(Tile, UnitState.TileLocation))
 		return "At" @ UnitState.GetName(eNameType_Full);
+	return OffsetWords(UnitState.TileLocation, Tile);
+}
+
+// The compass words for one tile relative to another ("3 north, 2 east, 1 up"); empty when the
+// two are the same tile. Public and static because the object scanner speaks the same bearings
+// about the same world — sharing this keeps ONE calibration of NORTH_DX/EAST_DX (see the header),
+// so the two surfaces can never drift into disagreeing about which way north is.
+static function string OffsetWords(TTile FromTile, TTile ToTile)
+{
+	local int DX, DY, DZ, NDX, NDY, EDX, EDY, NorthAmt, EastAmt;
+	local string Result;
+
+	DX = ToTile.X - FromTile.X;
+	DY = ToTile.Y - FromTile.Y;
+	DZ = ToTile.Z - FromTile.Z;
+	if (DX == 0 && DY == 0 && DZ == 0)
+		return "";
 
 	if (!CardinalDelta(DIR_NORTH, NDX, NDY) || !CardinalDelta(DIR_EAST, EDX, EDY))
 		return "";
@@ -460,7 +471,7 @@ private function bool GetContext(out XComTacticalController TC, out XCom3DCursor
 	return Cursor != none && WorldData != none;
 }
 
-private function XComTacticalController TacCtrl()
+static function XComTacticalController TacCtrl()
 {
 	return XComTacticalController(class'WorldInfo'.static.GetWorldInfo().GetALocalPlayerController());
 }
@@ -469,7 +480,7 @@ private function XComTacticalController TacCtrl()
 // ControllingUnitVisualizer VAR, which lags or sits empty in stretches of a mission (the first
 // live test lost every offset and reachability line to it) — the ControllingUnit
 // StateObjectReference on the same controller is the durable source, so fall back to it.
-private function XComGameState_Unit ActiveUnitState()
+static function XComGameState_Unit ActiveUnitState()
 {
 	local XComTacticalController TC;
 	local XGUnit ActiveUnit;
@@ -490,7 +501,7 @@ private function XComGameState_Unit ActiveUnitState()
 
 // The selected unit's visualizer actor (owns the reachable-tiles cache), tolerant of the
 // controller's visualizer var being stale: resolve through the unit state when needed.
-private function XGUnit ActiveUnitVisualizer(XComGameState_Unit UnitState)
+static function XGUnit ActiveUnitVisualizer(XComGameState_Unit UnitState)
 {
 	local XComTacticalController TC;
 	local XGUnit ActiveUnit;
@@ -513,15 +524,10 @@ private function XGUnit ActiveUnitVisualizer(XComGameState_Unit UnitState)
 private function bool EnsurePlanted(XComTacticalController TC, XCom3DCursor Cursor,
 	XComWorldData WorldData)
 {
-	local XComGameState_BattleData BattleData;
 	local XComGameState_Unit UnitState;
 	local int MissionID;
 
-	BattleData = XComGameState_BattleData(
-		`XCOMHISTORY.GetSingleGameStateObjectForClass(class'XComGameState_BattleData', true));
-	MissionID = -1;
-	if (BattleData != none)
-		MissionID = BattleData.m_iMissionID;
+	MissionID = CurrentMissionID();
 	if (bPlanted && MissionID == PlantedMissionID)
 		return false;
 
@@ -539,6 +545,52 @@ private function bool EnsurePlanted(XComTacticalController TC, XCom3DCursor Curs
 	SetCursorTile(Cursor, WorldData, UnitState.TileLocation);
 	NativeResult = "Cursor on." @ DescribeTile(UnitState.TileLocation, false);
 	return true;
+}
+
+// Plant the cursor on the object scanner's current marker selection and read the tile out.
+//
+// The scanner owns the selection and this class owns the cursor, so the hand-off is a cross-class
+// default READ — the one direction UnrealScript allows (writing another class's defaults does not
+// compile for non-config properties, which is why this lives here and not in the scanner).
+//
+// Deliberately routed through the same SetCursorTile as every arrow step, so the pathing-pawn
+// preview, the camera follow and the C++ mouse gate behave identically whether the player walked
+// the cursor here or jumped it here — and so Backspace's two-press move-to works immediately after.
+function CursorGoToMarker()
+{
+	local XComTacticalController TC;
+	local XCom3DCursor Cursor;
+	local XComWorldData WorldData;
+	local TTile Target;
+
+	NativeResult = "";
+	if (!GetContext(TC, Cursor, WorldData))
+		return;
+
+	if (!class'X2AccessObjectScanner'.default.bSelValid)
+	{
+		NativeResult = "No marker selected";
+		return;
+	}
+
+	Target.X = Clamp(class'X2AccessObjectScanner'.default.SelX, 0, WorldData.NumX - 1);
+	Target.Y = Clamp(class'X2AccessObjectScanner'.default.SelY, 0, WorldData.NumY - 1);
+	Target.Z = Clamp(class'X2AccessObjectScanner'.default.SelZ, 0, WorldData.NumZ - 1);
+
+	bPlanted = true;
+	PlantedMissionID = CurrentMissionID();
+	bMovePending = false;
+	SetCursorTile(Cursor, WorldData, Target);
+	NativeResult = "Cursor." @ DescribeTile(Target, false);
+}
+
+private static function int CurrentMissionID()
+{
+	local XComGameState_BattleData BattleData;
+
+	BattleData = XComGameState_BattleData(
+		`XCOMHISTORY.GetSingleGameStateObjectForClass(class'XComGameState_BattleData', true));
+	return (BattleData != none) ? BattleData.m_iMissionID : -1;
 }
 
 // Adopt a tile as the authoritative cursor state and push the game's 3D cursor onto it —
@@ -592,7 +644,7 @@ private function ResolveFloor(XComWorldData WorldData, out TTile Tile)
 
 // The world-axis delta for a compass cardinal — pure table composition, infallible by
 // construction (a dead arrow can never again be a silent no-op).
-private function bool CardinalDelta(int Cardinal, out int DX, out int DY)
+static function bool CardinalDelta(int Cardinal, out int DX, out int DY)
 {
 	switch (Cardinal)
 	{
@@ -606,7 +658,7 @@ private function bool CardinalDelta(int Cardinal, out int DX, out int DY)
 	return false;
 }
 
-private function string CardinalWord(int Cardinal)
+static function string CardinalWord(int Cardinal)
 {
 	switch (Cardinal)
 	{
@@ -618,7 +670,7 @@ private function string CardinalWord(int Cardinal)
 	return "";
 }
 
-private function bool SameTile(TTile A, TTile B)
+static function bool SameTile(TTile A, TTile B)
 {
 	return A.X == B.X && A.Y == B.Y && A.Z == B.Z;
 }
@@ -632,7 +684,7 @@ private function AppendPart(out string Result, string Part)
 	Result $= Part;
 }
 
-private function AppendComma(out string Result, string Part)
+static function AppendComma(out string Result, string Part)
 {
 	if (Part == "")
 		return;

@@ -21,6 +21,7 @@
 #include "log.h"
 #include "menu_navigator.h"
 #include "screen_capture.h"
+#include "tutorial_reader.h"
 
 #include <algorithm>
 #include <atomic>
@@ -666,6 +667,7 @@ GuiDump::Selector ParseSelector(const std::string& query)
             text += 2;
         sel.ptr = reinterpret_cast<void*>(_strtoui64(text, nullptr, 16));
     }
+    sel.cdo = UrlDecode(QueryParam(query, "cdo"));
     sel.instance = UrlDecode(QueryParam(query, "instance"));
     sel.screen = UrlDecode(QueryParam(query, "screen"));
     return sel;
@@ -730,6 +732,13 @@ std::string Route(const Request& req, int& status)
     if (req.path == "/status")
         return OnGameThread(StatusText);
 
+    // The tutorial mission's state as structured data: replay frame, the on-rails rejection
+    // count, the modal, and every active world message with its RAW text next to what the reader
+    // would actually speak. That last pair is the point — markup translation is the half of this
+    // feature a screenshot cannot check.
+    if (req.path == "/tutorial")
+        return OnGameThread(TutorialReader::Describe);
+
     if (req.path == "/exec") {
         // Body first so a command needing no URL-encoding can just be POSTed.
         std::string cmd = req.body;
@@ -775,6 +784,7 @@ std::string Route(const Request& req, int& status)
            "  GET  /speech?since=N      everything TTS::Speak was handed, cursor-paged\n"
            "  GET  /log?since=N&tail=N  the ASI log ring, cursor-paged\n"
            "  GET  /status              screen stack, gates, navigator + tile-reader state\n"
+           "  GET  /tutorial            tutorial replay state + active world messages\n"
            "  GET  /input?keys=A,B      synthetic keys (&mode=kernel drives only our layer)\n"
            "  POST /exec  <command>     run a console command, return what it printed\n"
            "  GET  /gui[?depth=N]       widget tree of a screen: class, state, text\n"
@@ -782,7 +792,9 @@ std::string Route(const Request& req, int& status)
            "  GET  /screenshot[?path=]  PNG of the monitor the game is on\n"
            "\n"
            "  /gui and /props select with ?screen=<Class> (the screen stack, topmost by\n"
-           "  default), ?instance=<Class> (newest instance anywhere) or ?ptr=0x<addr>\n";
+           "  default), ?instance=<Class> (newest instance anywhere, falling back to the\n"
+           "  class default object when there is none), ?cdo=<Class> (that default object\n"
+           "  explicitly — how to read the companion models) or ?ptr=0x<addr>\n";
 }
 
 // send() may accept fewer bytes than offered; a /status dump is small but /log is not bounded

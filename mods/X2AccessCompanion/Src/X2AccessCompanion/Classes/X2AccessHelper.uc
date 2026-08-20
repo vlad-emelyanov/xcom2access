@@ -5,6 +5,14 @@
 
 class X2AccessHelper extends Object;
 
+// Written by the native-callable functions at the bottom of this file and reflected out by the
+// ASI right after the synchronous ProcessEvent returns — the same pattern X2AccessTileReader uses.
+// CDO rule: value-typed state only, never object references.
+var string NativeResult;
+
+// Must match kVocabSep in src/tutorial_reader.cpp.
+const VOCAB_SEP = "~|~";
+
 // Collect all visible button labels from a UINavigationHelp bar.
 // Returns a period-separated string of button text.
 static function string CollectNavHelp(UINavigationHelp NavHelp)
@@ -199,4 +207,83 @@ static function string DescribeUnitsOnTile(TTile Tile)
 	}
 
 	return Result;
+}
+
+// ---------------------------------------------------------------------------
+// Speech vocabulary — the game's OWN words, handed to native once per session
+// ---------------------------------------------------------------------------
+//
+// Native writes text into the tutorial's markup ("<img src='rmb_icon'>", "%KEY:LMB%") and has to
+// speak SOMETHING for it. Its built-in table is English, which is wrong the moment the game is not
+// — a Russian instruction that says "Нажмите right mouse button" is our wording intruding on the
+// game's. These two functions hand over the strings the game itself displays, so the spoken form
+// and the printed form agree.
+//
+// Both are called on the CDO and answer in NativeResult, like the rest of the native-callable
+// surface. NativeResult lives here rather than in a caller-specific class because both answers are
+// plain localized lookups with no state behind them.
+
+
+// key=value pairs, VOCAB_SEP-joined. Keys are the markup token native actually sees: an <img>
+// tag's src for a glyph, or "KEY:NAME" for a %KEY:NAME% token. Keyed rather than positional so a
+// missing entry degrades to native's built-in word instead of shifting the whole table.
+//
+// ⚠️ %KEY:LMB% is the one that MUST be here. X2MissionNarrativeTemplate.KeyBindingMarkups resolves
+// only RMB, ENTER, TAB, Q, E and P; %KEY:LMB% is substituted solely by
+// UIUtilities_Input.InsertPCIcons, which the blade path never calls — so it reaches speech RAW
+// ("Нажмите [ENTER] или %KEY:LMB% на кнопке действия", observed live 2026-08-20).
+function GetInputVocabulary()
+{
+	local string Result;
+
+	Result = Pair("lmb_icon", eLKN_LeftMouseButton);
+	Result $= VOCAB_SEP $ Pair("rmb_icon", eLKN_RightMouseButton);
+	Result $= VOCAB_SEP $ Pair("PC_mouseWheelClick", eLKN_MiddleMouseButton);
+	Result $= VOCAB_SEP $ Pair("PC_mouseLeft4", eLKN_ThumbMouseButton);
+	Result $= VOCAB_SEP $ Pair("PC_mouseLeft5", eLKN_ThumbMouseButton2);
+	Result $= VOCAB_SEP $ Pair("PC_arrowLEFT", eLKN_Left);
+	Result $= VOCAB_SEP $ Pair("PC_arrowRIGHT", eLKN_Right);
+	Result $= VOCAB_SEP $ Pair("PC_arrowUP", eLKN_Up);
+	Result $= VOCAB_SEP $ Pair("PC_arrowDOWN", eLKN_Down);
+
+	Result $= VOCAB_SEP $ Pair("KEY:LMB", eLKN_LeftMouseButton);
+	Result $= VOCAB_SEP $ Pair("KEY:RMB", eLKN_RightMouseButton);
+	Result $= VOCAB_SEP $ Pair("KEY:ENTER", eLKN_Enter);
+	Result $= VOCAB_SEP $ Pair("KEY:TAB", eLKN_Tab);
+
+	// PC_mouseWheelScroll has no single enum entry (the game names the two directions separately),
+	// so it is deliberately absent and native keeps its own word for it.
+
+	NativeResult = Result;
+}
+
+// KeyName is an index into XComKeybindingData's LocalizedKeyNames enum. Typed as int rather
+// than the enum itself so this class needs no dependson on a UI class it otherwise ignores;
+// the eLKN_* literals are visible package-wide, exactly as UIUtilities_Input uses them.
+private function string Pair(string Token, int KeyName)
+{
+	return Token $ "=" $ class'XComKeybindingData'.default.m_arrLocalizedKeyNames[KeyName];
+}
+
+// The result words the game floats over a unit when an attack resolves, VOCAB_SEP-joined.
+//
+// Native suppresses a world flyover matching one of these while the replay narrator is running,
+// because that narrator already says the result WITH attribution ("Osei: Fire at ADVENT Trooper,
+// Missed.") where the flyover is a bare word floating over someone. Note a miss arrives as an
+// ordinary world message, not a damage one: UIWorldMessageMgr.QueueWorldMessage only stamps
+// eHUDMessage_Damage when m_iDamagePrimary > 0, and a miss carries zero.
+function GetResultFlyovers()
+{
+	local string Result;
+	local int i;
+
+	Result = class'XLocalizedData'.default.MissedMessage;
+
+	for (i = 0; i < ArrayCount(class'X2TacticalGameRulesetDataStructures'.default.m_aAbilityHitResultStrings); i++)
+	{
+		if (class'X2TacticalGameRulesetDataStructures'.default.m_aAbilityHitResultStrings[i] != "")
+			Result $= VOCAB_SEP $ class'X2TacticalGameRulesetDataStructures'.default.m_aAbilityHitResultStrings[i];
+	}
+
+	NativeResult = Result;
 }

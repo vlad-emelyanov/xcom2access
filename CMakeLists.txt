@@ -66,6 +66,11 @@ add_library(X2Access SHARED
     src/menu_navigator.cpp
     src/mouse_gate.cpp
     src/tile_reader.cpp
+    src/object_scanner.cpp
+    src/tactical_hud.cpp
+    src/hacking_screen.cpp
+    src/tutorial_reader.cpp
+    src/narrator.cpp
     # Compile-time verification of hand-transcribed offsets against the generated SDK
     src/sdk_layout_checks.cpp
     # Graph A11y Kernel — engine-neutral, STL-only (see src/Graph/ControlId.hpp)

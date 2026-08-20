@@ -36,7 +36,10 @@ constexpr int kMaxPropsPerClass = 768;
 constexpr int kMaxClassChain = 32;
 constexpr int kMaxChildren = 192;
 constexpr int kMaxNodes = 3000;   // a runaway tree must end in a truncation note, not a hang
-constexpr int kMaxArrayElems = 8; // elements listed per array property
+// Elements listed per array property. Raised from 8 on 2026-08-20: the anchored tutorial blade
+// sat at index 8 of UIWorldMessageMgr.m_arrMsgs — the pool is 8 recycled slots plus one appended
+// per NAMED message, so the truncation hid precisely the entries that carry an id and matter.
+constexpr int kMaxArrayElems = 32;
 constexpr int kMaxStaticElems = 64; // elements printed for a static array (ArrayDim > 1)
 constexpr int kMaxInstances = 32; // instances listed for an ambiguous ?instance=
 constexpr int kMaxRegistry = 512; // a screen's ChildPanels registry, for the reachability check
@@ -585,11 +588,32 @@ void* Resolve(const Selector& sel, std::string& err, std::string& note)
         }
         return sel.ptr;
     }
+    if (!sel.cdo.empty()) {
+        void* obj = GameUI::FindDefaultObject(sel.cdo.c_str());
+        if (!obj) {
+            err = "no class default object Default__" + sel.cdo
+                + " — that class is not loaded (its package may not be in this build)\n";
+            return nullptr;
+        }
+        return obj;
+    }
     if (!sel.instance.empty()) {
         void* found[kMaxInstances] = {};
         const int count = GameUI::FindInstances(sel.instance.c_str(), found, kMaxInstances);
         if (count <= 0) {
-            err = "no live instance of " + sel.instance + "\n";
+            // Fall back to the class default object. Safe precisely BECAUSE nothing live
+            // matched: the reason FindInstances skips CDOs is that one would otherwise shadow a
+            // real screen, and here there is no real screen to shadow. This is what makes
+            // ?instance=X2AccessObjectScanner do the obvious thing instead of reporting an
+            // absence — those companion classes never have a non-default instance at all.
+            void* def = GameUI::FindDefaultObject(sel.instance.c_str());
+            if (def) {
+                note = "no live instance of " + sel.instance
+                    + " — showing its class default object (Default__" + sel.instance + ")\n";
+                return def;
+            }
+            err = "no live instance of " + sel.instance
+                + ", and no class default object of that name either\n";
             return nullptr;
         }
         // With several alive there is no way to tell which one the caller meant — a screen's

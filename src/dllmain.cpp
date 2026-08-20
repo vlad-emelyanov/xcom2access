@@ -4,7 +4,11 @@
 #include "input.h"
 #include "menu_navigator.h"
 #include "mouse_gate.h"
+#include "object_scanner.h"
 #include "tile_reader.h"
+#include "tactical_hud.h"
+#include "hacking_screen.h"
+#include "tutorial_reader.h"
 #include "hooks.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -40,7 +44,7 @@ static void InitThread() {
     HMODULE exe = GetModuleHandleA(nullptr);
     LOG_INFO("Process PID: %lu, EXE base: 0x%p", pid, exe);
 
-    // 2. TTS (SRAL linked statically)
+    // 2. TTS (Prism linked statically)
     if (TTS::Init()) {
         TTS::SpeakInterrupt("X2 Access loaded. XCOM 2 War of the Chosen accessibility mod active.");
     } else {
@@ -56,10 +60,22 @@ static void InitThread() {
     // 5. Tactical tile cursor (claims — before game hooks go live)
     TileReader::Init();
 
-    // 6. Game hooks
+    // 6. Object scanner (claims — same; shares the tile cursor's gate, so it must come after it)
+    ObjectScanner::Init();
+
+    // 7. Shot HUD narration (claims — same)
+    TacticalHUD::Init();
+
+    // 8. Hacking overlay (claims — same; arrows and Delete, live only while the pad is up)
+    HackingScreen::Init();
+
+    // 9. Tutorial message reader (claims — same)
+    TutorialReader::Init();
+
+    // 10. Game hooks
     Hooks::Init();
 
-    // 7. Dev harness (dev builds + marker file only; no-op otherwise). Last, so it can report
+    // 11. Dev harness (dev builds + marker file only; no-op otherwise). Last, so it can report
     // on everything above, and so a failure here can never keep the mod itself from loading.
     DevServer::Start(dir);
 

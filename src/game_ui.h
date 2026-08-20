@@ -370,6 +370,85 @@ struct TacticalGate {
 /// Game thread only.
 TacticalGate ReadTacticalGate();
 
+// ---- tutorial mission (Tutorial_01) — the text surfaces and the replay state ----
+//
+// The tutorial is a REPLAY: XComTutorialMgr extends XComReplayMgr, plays a recorded session back
+// and halts at every frame that needed player input. Two consequences shape everything here.
+// First, the WHOLE script — every popup, every required move — already sits in the history at
+// mission start, so anything reading the history must gate on CurrentHistoryFrame or it speaks
+// the future. Second, the player is on rails: a submission that does not match the recording is
+// rejected with a sound and NO TEXT, which is the accessibility failure this reader exists to
+// close.
+//
+// Four surfaces carry the tutorial's words; three of them are readable:
+//   modal popup      UITutorialBox            — real script properties, read below
+//   anchored blade   UIWorldMessageMgr        — retained in m_arrMsgs, read below
+//   HUD blade        Flash only               — presence below, words from the companion
+//   3D world markers XComTutorialMgr meshes   — the object scanner's, not this reader's
+
+/// The tutorial's modal popup. Pushed over the tactical HUD with InputState eInputState_Consume,
+/// and — unlike every other tactical panel, which pipes its text straight into Flash — it keeps
+/// its text in ordinary script properties, so reading it is a plain offset read.
+struct TutorialBoxView {
+    std::string title;
+    std::string body;
+    std::string buttonHelp; // the confirm label; empty means the game shows its generic one
+};
+
+/// The focused UITutorialBox, or null. Game thread only.
+void* FindTutorialBox();
+
+TutorialBoxView ReadTutorialBox(void* screen);
+
+/// One entry of UIWorldMessageMgr.m_arrMsgs that the manager currently lists as ACTIVE.
+struct WorldMessage {
+    int slot = -1;          // index into m_arrMsgs — the manager's own identity for the entry
+    std::string id;         // m_sId; empty on pooled anonymous messages
+    std::string text;       // m_txtMsg, RAW: <img> markup is the caller's to translate
+    int type = 0;           // EHUDMessageType: 0 World, 1 Damage, 2 Blade
+    bool visible = false;   // m_bVisible — on SCREEN this frame; an off-camera message reads
+                            // false while still being a message the game chose to publish
+    bool important = false; // m_bIsImportantMessage: named, so never recycled into the pool
+    int followObjectId = 0; // m_kFollowObject.ObjectID; 0 when anchored to a bare location
+};
+
+/// The live world-message manager (XComPresentationLayerBase.m_kWorldMessageManager), reached
+/// through the tactical HUD's own Movie -> PRES chain rather than a GObjects scan, so a manager
+/// left over from a previous mission can never win. Null outside tactical. Game thread only.
+void* FindWorldMessageMgr();
+
+/// Everything the manager currently lists as active, in its own order.
+///
+/// This is the only readable form of the game's flyover channel. UIWorldMessageMgr.Message is
+/// script->script and so never reaches our ProcessEvent hook — but the manager RETAINS every
+/// message it is showing, which makes POLLING work where hooking cannot.
+std::vector<WorldMessage> ReadWorldMessages(void* mgr);
+
+/// Is the unanchored bottom-right tutorial blade up (BladeHUDMessage != none)? Its text went
+/// straight into Flash through MC.FunctionString and is retained nowhere, so presence is all
+/// this can answer; the words come from the companion's history walk.
+bool HudBladeShowing(void* mgr);
+
+/// The replay/tutorial manager's state. `valid` is false outside the tutorial mission, which is
+/// also how "are we in the tutorial at all" gets answered.
+struct TutorialState {
+    bool valid = false;
+    bool inTutorial = false;       // bInTutorial
+    bool allowingControls = false; // bIsTutorialAllowingControls — false while the replay is
+                                   // playing back, i.e. while the player owns nothing
+    int historyFrame = 0;          // CurrentHistoryFrame — gate every history read on this
+    int nextInputFrame = 0;        // NextPlayerInputFrame
+    int invalidSubmissions = 0;    // InvalidSubmissionCnt: the on-rails rejections, which the
+                                   // game reports with a sound and no text at all
+    void* nextAbilityContext = nullptr; // XComGameStateContext_Ability*, opaque — the recorded
+                                        // action the player must reproduce. Exposed for the
+                                        // object scanner, which owns describing it; nothing in
+                                        // the message reader dereferences it.
+};
+
+/// Game thread only.
+TutorialState ReadTutorialState();
+
 // ---- outbound calls into companion-mod script ----
 
 /// The class default object of a script class, found by its "Default__<ClassName>" object
@@ -405,6 +484,13 @@ void* FindStackScreen(const char* className);
 /// ALL of them are returned rather than one, because with several alive the dumper has no basis
 /// for picking and the caller deserves to see the ambiguity. Game thread only.
 int FindInstances(const char* className, void** out, int maxItems);
+
+/// The CLASS DEFAULT OBJECT of `className` (`Default__<className>`), or null when the class is
+/// not loaded. FindInstances deliberately skips CDOs so one cannot shadow a live screen, but for
+/// the companion classes the CDO is the only instance there ever is — X2AccessObjectScanner,
+/// X2AccessTileReader and X2AccessNarrator keep their entire model on it — so without this the
+/// dumper cannot reach the objects this mod's own subsystems actually use. Game thread only.
+void* FindDefaultObject(const char* className);
 
 /// Is this pointer a live entry in GObjects? The dumpers take a `?ptr=` from a previous dump,
 /// and a pointer that has since been collected must be refused rather than walked.

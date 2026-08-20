@@ -60,6 +60,44 @@ inline constexpr const char* Loading = "Loading";
 inline constexpr const char* GroupDifficulty = "Difficulty";
 inline constexpr const char* GroupCampaignOptions = "Campaign options";
 
+// ---- tutorial mission (Tutorial_01) ----
+
+// The glyphs the game splices into tutorial text as <img src='...'> markup. Speech has to
+// TRANSLATE these, never strip them: the icon sits exactly where the key name belongs, so
+// dropping it leaves "Press , to go here" — a hole in the one sentence that matters.
+//
+// Only the mouse and arrow glyphs need naming. Everything the tutorial writes as %KEY:...%
+// already resolves to a bracketed key name ("[Q]", "[TAB]") through UIUtilities_Input.HTML_KEYMAP
+// and reads correctly as-is — and because that substitution is binding-aware, what we speak is
+// the player's ACTUAL bound key.
+inline constexpr const char* IconLeftMouse = "left mouse button";
+inline constexpr const char* IconRightMouse = "right mouse button";
+inline constexpr const char* IconMouseWheelClick = "mouse wheel click";
+inline constexpr const char* IconMouseWheelScroll = "mouse wheel scroll";
+inline constexpr const char* IconMouseButton4 = "mouse button 4";
+inline constexpr const char* IconMouseButton5 = "mouse button 5";
+inline constexpr const char* IconArrowLeft = "left arrow";
+inline constexpr const char* IconArrowRight = "right arrow";
+inline constexpr const char* IconArrowUp = "up arrow";
+inline constexpr const char* IconArrowDown = "down arrow";
+
+// How to leave the tutorial's modal popup. Without this a blind player is told nothing about
+// dismissing a screen that has taken over the game: the box is modal and consumes all input, its
+// one button calls DisableNavigation() so keyboard focus can never reach it, and the layer
+// deliberately leaves Enter/Space/Escape unclaimed so the game's own handler still gets them.
+inline constexpr const char* TutorialDismiss = "Press Enter to close.";
+
+// The tutorial refused the submission. The game's own answer is a negative sound and NO TEXT at
+// all, so this line is the entire explanation a blind player gets for why nothing happened.
+inline constexpr const char* TutorialRejected = "Not what the tutorial is waiting for.";
+
+// The re-read key found nothing to re-read.
+inline constexpr const char* TutorialNoMessage = "No tutorial message.";
+
+// The companion mod is not loaded, so the HUD blade's words cannot be recovered. Said only on a
+// pressed key — never from the poll, which must not talk about its own failures.
+inline constexpr const char* TutorialReaderUnavailable = "Tutorial reader unavailable.";
+
 inline std::string Position(int index, int count)
 {
     return std::to_string(index) + " of " + std::to_string(count);

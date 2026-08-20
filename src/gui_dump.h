@@ -20,9 +20,11 @@
 namespace GuiDump {
 
 /// How the caller named the object to dump. Checked in this order: an explicit address from an
-/// earlier dump, then the newest instance of a class, then the screen stack.
+/// earlier dump, then a class default object, then the newest instance of a class, then the
+/// screen stack.
 struct Selector {
     void* ptr = nullptr;  // raw address (validated against GObjects before it is walked)
+    std::string cdo;      // class default object (Default__<Class>) — the companion CDOs
     std::string instance; // newest live instance of this class, anywhere in GObjects
     std::string screen;   // class name on the screen stack; empty (with nothing else) = topmost
 };

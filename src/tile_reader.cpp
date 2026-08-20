@@ -170,6 +170,16 @@ void Init()
     LOG_INFO("TileReader: claims registered");
 }
 
+bool IsActive()
+{
+    return gActive;
+}
+
+void GoToMarker()
+{
+    SimpleCall("CursorGoToMarker");
+}
+
 void OnTick()
 {
     static uint64_t sLastMs = 0;

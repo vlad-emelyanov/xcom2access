@@ -84,6 +84,118 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   Clicks, free-aim (`Mouse_CheckForFreeAim`), and camera scroll are untouched;
   a mouse click while gated commits to the pathing pawn's preview of OUR tile,
   the same two-press semantics as Backspace.
+- **Object scanner** (`src/object_scanner.cpp` + companion `X2AccessObjectScanner.uc`, markers
+  AND `units.enemies` both VERIFIED LIVE 2026-08-20, `Tutorial_01`): the RT `Scanner.cs` port, a PULL surface
+  next to the
+  tile cursor's push. Categories are the ring's dimension: `markers` (the tutorial's
+  required-action marker, objective-carrying objects and the evac zone — one group, because a
+  tutorial waypoint and an objective glint are the same thing to a player working out where to go)
+  and `units.enemies`. Each category has its OWN cycle key and its OWN remembered position, so
+  checking an enemy and then a marker loses your place in neither; the `CAT_*` ids are the one
+  thing the two halves share as a NUMBER rather than a name. Keys, all gated on
+  `TileReader::IsActive()` (shared, not recomputed — the two surfaces must stand down at the same
+  instants): `B` next marker, `.` next enemy, `O` re-announce whatever was last said, `/` plant
+  the tile cursor on it. `/` acting on the LAST ANNOUNCED entry rather than on a "current
+  category" is deliberate — it acts on what you just heard. Reachability is per-entry
+  (`bIsDestination`): spoken for markers and objectives, which you walk to; suppressed for enemies
+  and the tutorial's attack marker, where "out of range" would read as "you cannot do this" about
+  a perfectly shootable target. Enemies reuse
+  `X2AccessTacticalReader.DescribeTargetCover`/`DescribeTargetHealth` verbatim, so the scanner and
+  the shot readout can never disagree about whether something is flanked. Note the ceiling on
+  enemy labels: `GetName(eNameType_Full)` gives a non-soldier its CHARACTER TEMPLATE, so every
+  ADVENT trooper reads alike and only distance/bearing/index tell them apart — which is parity,
+  not a gap, because the game gives a sighted player no per-enemy identifier either.
+  **Dev-harness note:** the companion CDOs are now inspectable — `/props?cdo=<Class>`, and
+  `?instance=` falls back to the CDO when nothing live matches (`GameUI::FindDefaultObject`).
+  That is the only way to see this subsystem's model; before it, the speech ring was the sole
+  evidence. **NO REGISTRY** — RT needs a ticked `WorldModel` because Unity entities are mutable
+  references; XCOM's `ObjectID` is a stable int over a versioned history, so the list is rebuilt
+  per keypress and only the selection persists (an int key plus its tile), keyed by ID so a
+  completed objective cannot silently shift what is selected. The tutorial contributor reads
+  `XComTutorialMgr.NextPlayerAbilityContext`, NOT the six `StaticMeshComponent`s (routinely hidden
+  at the origin while an action is still required), gated on `bIsTutorialAllowingControls` — the
+  replay's own "I have stopped and handed over control" flag — and honours the parity guard:
+  `AbilityTemplateName` / `SourceObject` / `PrimaryTarget` / `TargetLocations` /
+  `MovementPaths[0]` only, NEVER `ResultContext`, which carries the recorded hit/miss of a
+  scripted shot the player has not fired. Objective markers are deliberately NOT fog-gated —
+  that is the game's own rule (`UIUnitFlag`/`UISimpleFlag` special-case an `ObjectiveInfo`
+  component to keep the flag visible). Compass bearings come from
+  `X2AccessTileReader.OffsetWords`, now static and shared, so there is exactly ONE calibration of
+  `NORTH_DX`/`EAST_DX` and the two surfaces cannot drift apart about which way north is.
+- **Tutorial message reader** (`src/tutorial_reader.cpp` + companion
+  `X2AccessTutorial.uc`, built AND VERIFIED LIVE 2026-08-20 — all three text
+  surfaces spoke on the first run, `Tutorial_01` frame 150): the tutorial is a
+  REPLAY (`XComTutorialMgr extends XComReplayMgr`), so it plays a recording back,
+  halts at every frame that needed input, and REJECTS anything that does not
+  match — with a sound and **no text at all**. Four surfaces carry its words and
+  three are readable. The modal `UITutorialBox` keeps `Title`/`Desc`/`ButtonHelp`
+  in real script properties (it is deliberately NOT a graph recipe: it holds
+  nothing navigable — `OnInit` calls `DisableNavigation()` on both the container
+  and its button — and a recipe would claim Enter/Space/Escape, which are exactly
+  how the box is dismissed). The anchored blade and every other flyover come from
+  polling `UIWorldMessageMgr` (see the ProcessEvent bullet below). The
+  bottom-right HUD blade goes straight into Flash and its words are recovered by
+  the companion, walking the history back from `CurrentHistoryFrame` for the
+  newest un-removed `XComGameStateContext_TutorialBox`. **Markup is TRANSLATED,
+  not stripped**: `%KEY:...%` already resolves to a bracketed, binding-aware key
+  name, but the mouse/arrow glyphs arrive as `<img src='rmb_icon'>` and
+  `CleanText` would leave a hole exactly where the instruction is. Damage
+  flyovers are skipped and plain world messages are read only inside the tutorial
+  — `X2AccessTacticalEvents` already narrates those from the game state, and both
+  speaking would double every hit. Two more parity rules earned live 2026-08-20:
+  a plain world message is spoken only while `m_bVisible` (it is anchored in the
+  WORLD, and `UpdateMessageLocation` clears that bit off screen — an off-camera
+  "Unconscious" was read by nobody and named nothing), and it stays PENDING
+  rather than dropped so panning onto it still announces it; **blades are exempt
+  and must be**, because they sit at the DESTINATION rather than at the camera
+  and the tutorial's own instruction blade reads `vis=0` routinely.
+  ⛔ **World messages are queued PER UNIT** (`X2Action_ConcealmentLost` queues one
+  at each `Unit.GetLocation()`), so identical text from several slots is normal
+  and expected — a whole squad going concealed publishes the word once per
+  soldier. Do NOT "fix" that by de-duplicating on text: two soldiers falling
+  unconscious would collapse into one line — the fix is NAMING the anchor, and
+  that is what `DescribeMessageAnchor` does: it resolves
+  `m_kFollowObject.ObjectID` through the history (gated on `CurrentHistoryFrame`,
+  or the replay answers with the object as it WILL be) and reuses
+  `X2AccessTacticalEvents.IsNarratable` / `UnitName`, so a flyover line and a
+  combat-event line agree about who they name and obey one fog rule. Blades are
+  excluded on purpose: an anchored blade is an instruction about a PLACE, so
+  prefixing whoever stands there would be actively wrong.
+- **Hacking screen** (`src/hacking_screen.cpp` + companion
+  `X2AccessHackingReader.uc`, phases 1-2 built 2026-08-20, **not yet run live**;
+  recon in `docs/hacking-screen-recon.md`): `UIHackingScreen` is the purest case
+  of "the widget tree holds no words" — `/gui` on it prints **`1 panels`**, the
+  screen and no children, because every string goes into Flash through
+  `MC.FunctionOp` / `ActionScriptVoid` and is retained nowhere. So the companion
+  supplies ALL of it and this module hand-transcribes **no offsets at all** —
+  which here is correctness, not tidiness: the Highlander interleaves
+  `m_UsingSkulljackScreen` and `m_hackCanceled` into the bitfield at 0x450, so
+  `bWaitingForInput`'s **MASK** is 0x20 under the Highlander and 0x08 in vanilla,
+  and `static_assert`s pin offsets, not masks. Phase 2 fixes more than narration:
+  the screen's `OnUnrealCommand` handles only the controller's `FXS_DPAD_*`, so
+  on mouse+keyboard the reward choice is reachable **only by clicking a card on
+  the 3D pad in the soldier's hands** — verified live 2026-08-20, two synthetic
+  Right presses left `SelectedHackRewardOption` at 1. `Left`/`Right` move a
+  cursor across the (up to) three cards and, on cards 1-2, hand the screen its
+  own `OnUnrealCommand(FXS_DPAD_LEFT/RIGHT, FXS_ACTION_PRESS)` — which is the
+  int `X2HackRewardTemplateManager.AcquireHackRewards` reads back off that very
+  screen object, so there is one source of truth; `Delete` re-announces.
+  `Enter`/`Space`/`Escape` are deliberately NOT claimed, and every claim drops
+  once the hack is committed (the reveal ends with "press any key", and a key we
+  swallowed would not dismiss it) — the companion reports that through a second
+  reflected-out property, `NativeState`. Detection reuses `ReadTacticalGate()`,
+  whose `blocker` reads `UIHackingScreen` at exactly the instant the tile cursor
+  stands down, so the two can never disagree. ⛔ It must NOT gate on
+  `StackState::Interactive()`: the stack reports **cinematic=1** while this
+  screen is up, and legitimately so — `HideUIForCinematics` skips every screen
+  with `bShowDuringCinematic`, which this screen sets. Only the first
+  `Min(len, 3)` rewards are ever spoken: the movie has three panels and
+  `RefreshPreviewState` hard-loops `Index < 3`, so on the tutorial door (whose
+  array is FIVE, object rewards plus `BattleData.TacticalHackRewards`) the tail
+  is unreachable for everyone. Chances come from the screen's own
+  `GetHackChance` (never re-derived — sitreps, Gremlins and Skullmining all move
+  the inputs) and are truncated, matching Flash: 6.42 and 2.75 print as 6% and
+  2%.
 - **Outbound script calls**: C++ may invoke any UnrealScript function via
   ProcessEvent. Always resolve the UFunction BY NAME at runtime and hand-roll
   the param struct (`GameUI::CallNamedFunction`; `CallStaticNative` for
@@ -105,6 +217,78 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   `NativeResult` string property, reflected out by C++ right after the
   synchronous ProcessEvent returns. CDO rule: value-typed state only, never
   object references (GC).
+- **Tactical combat narration** (`X2AccessTacticalEvents.uc`, built 2026-08-20;
+  registration VERIFIED LIVE, the handlers themselves **still unexercised**): one
+  `CHEventListenerTemplate`, tactical only, nine events. The 2026-08-20 run put
+  *"tactical narration listener created"* in `Launch.log` and resolved
+  `Default__X2AccessNarrator` + `DrainNarration` in the ASI, so the whole path is
+  wired — but the mission played was the TUTORIAL, where no gameplay event fires
+  at all (see the replay bullet under **Engine facts**), and every drain came
+  back empty. ⛔ Do NOT read that run's `Промах!` as proof of THIS listener:
+  it is a world-message flyover that `TutorialReader` hands straight to
+  `Narrator::Say(Channel::Combat, …)` in C++. It does prove the native half of
+  Bridge v2 — a Combat line really did queue behind the targeting readout with no
+  interrupt marker — but nothing about the script half: `X2AccessNarrator`'s
+  push/drain payload and all nine handlers are still unexercised and need a
+  normal mission.
+  This is what T1 forced — the flyover/notice/banner tap is not buildable, so
+  the game's own event bus is the path. **Deferral is a per-event decision, not
+  a default**: `ELD_OnVisualizationBlockStarted` for what the player WATCHES
+  (`AbilityActivated`, `UnitTakeEffectDamage`, `UnitDied`), because a listener
+  otherwise fires at state submission, seconds ahead of the animation;
+  `ELD_OnStateSubmitted` for structural facts (`PlayerTurnBegun`, concealment,
+  panic, shields, evac), which are tied to no animation and would be dropped
+  entirely by a state that never builds a visualization block. Three details
+  that needed the game's own source: damage is SUMMED over the entries whose
+  `DamageResult.Context` matches this state (`DamageResults` accumulates for the
+  whole mission and one grenade lands as several entries); only abilities that
+  actually roll get a result word (`X2AbilityToHitCalc_DeadEye` always hits, so
+  the word would be noise), and it is the game's own localized
+  `m_aAbilityHitResultStrings`; and the interrupt pass is skipped, because
+  `AbilityActivated` re-triggers per interrupt step. Fog parity via
+  `CanXComSquadSeeTarget` with ONE documented exception — a unit stops being
+  visible the moment it dies, so a kill the squad CAUSED is always announced.
+- **Replay narration** (`X2AccessReplayNarration.uc`, built 2026-08-20, not yet
+  run live): the tutorial's stand-in for the dead event bus. Polled from
+  `Narrator::OnTick` (100 ms, next to the drain), it walks history frames and
+  emits ability / damage / death / concealment / turn lines through
+  `X2AccessTacticalEvents`'s shared builders — `BuildAbilityLine`,
+  `BuildDamageLine`, `NarrateDeath` — so a shot reads identically whether an
+  event or a frame produced it. ⛔ **Never read past what the player was SHOWN**:
+  the whole tutorial script is in the history at mission start, so the cursor is
+  `XComGameStateVisualizationMgr.LastStateHistoryVisualized` (the game's own
+  "which frame is on screen", what `UIUnitFlag` uses), clamped again to the
+  replay's `CurrentHistoryFrame`. That also syncs narration to the animation,
+  which is what `ELD_OnVisualizationBlockStarted` buys the live listeners. A jump
+  of more than 24 frames is a SEEK, not play (`StartReplay` does one) — the
+  cursor is adopted and the skip is logged, never silently swallowed. Two
+  consequences elsewhere: a MISS reaches `UIWorldMessageMgr` as an ordinary world
+  message, not a damage one (`QueueWorldMessage` stamps `eHUDMessage_Damage` only
+  when `m_iDamagePrimary > 0`), so `tutorial_reader.cpp` now drops flyovers
+  matching the game's own result strings — the attributed line outranks the bare
+  word; and it resolves the GRI by hand rather than through `` `REPLAY `` /
+  `` `XCOMVISUALIZATIONMGR ``, because those dereference a null GRI in the shell
+  ten times a second.
+- **Speech vocabulary** (`X2AccessHelper.GetInputVocabulary` /
+  `GetResultFlyovers`): the game's OWN localized words for markup native has to
+  speak. Our built-in table is English, which is wrong the moment the player is
+  not — "Нажмите right mouse button" sat three words from the game's own
+  `[ПРАВАЯ КНОПКА МЫШИ]` live. Keyed by markup token (an `<img>` `src`, or
+  `KEY:NAME`) so a missing entry degrades to the English word instead of shifting
+  a positional table. ⚠️ `%KEY:LMB%` is the one that MUST be there:
+  `X2MissionNarrativeTemplate.KeyBindingMarkups` resolves only RMB/ENTER/TAB/Q/E/P
+  and `%KEY:LMB%` is substituted solely by `UIUtilities_Input.InsertPCIcons`,
+  which the blade path never calls — so it reached speech raw.
+- **Tutorial blade recovery** (`X2AccessTutorial.uc`): the one tutorial surface
+  native cannot read. Walks the history BACKWARDS from
+  `XComTutorialMgr.CurrentHistoryFrame` (never past it — the whole tutorial
+  script is already in the history at mission start, so the raw history end is
+  the future) collecting removed `MessageID`s as it goes, and resolves the newest
+  surviving UNANCHORED blade through the mission's own
+  `X2MissionNarrativeTemplate.GetObjectiveText`, exactly as
+  `X2Action_ShowTutorialPopup.GetTutorialBoxText` does. A removal context carries
+  only `MessageID` + `Remove` — `BoxType` reads as its default — so removals must
+  be matched by id, never filtered by type.
 - **Legacy screen listeners**: `UIScreenListener_*.uc` polling listeners with
   the `AccessibilityData` bridge. Working system; migrate to native UI reading
   incrementally, do not expand this pattern to new screens without reason.
@@ -117,9 +301,28 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   path — **DLLBind is conclusively unavailable in XCOM 2** (the SDK compiler
   rejects the keyword and the runtime support is compiled out of the exe).
 - Native→script: outbound ProcessEvent calls (see ScriptCall above).
-- Planned bridge v2: structured payload (channel/priority + text, so combat
-  narration queues while focus changes interrupt) and a queue property so
-  rapid events are not lost.
+- **Bridge v2 — BUILT 2026-08-20** (`X2AccessNarrator.uc` + `src/narrator.cpp`),
+  the queued/channelled path the v1 sentinel cannot be: producers call
+  `Alert()` / `Combat()`, which append to an `ENTRY_SEP`-joined string on the
+  CDO, and C++ drains the whole burst in ONE `DrainNarration()` per 100 ms (the
+  outbound call is the cost, not the payload). Four channels on the native side
+  — `Focus`/`Aid` interrupt AND clear the queue (the player pressed a key;
+  what they asked for outranks what happened), `Alert` queues in order but marks
+  the BATCH as interrupting, `Combat` queues. That `Alert` rule is the subtle
+  one: an alert that simply cleared the queue would eat the damage line
+  explaining the kill it follows. Flush is on the frame pump, so the queue
+  orders *within* a frame and adds no latency; past the flush the screen
+  reader's own queue takes over, which is the honest limit (a burst can be
+  cancelled wholesale by an interrupt, never trimmed — hence the 24-line cap,
+  logged on overflow at both ends). A 128-line ring with channel + timestamp
+  backs the future speech-scrollback key. ⛔ **`default.X = ...` does not
+  compile unless X is a `config` property** — the UnrealScript compiler says
+  *"Can't change default values of non-config properties"*, and a static
+  producer has no other route to per-class storage, so the queue vars are
+  `config(Game)` with no ini section shipped (nothing is ever written back;
+  `SaveConfig` is never called). The payload is a delimited STRING rather than a
+  dynamic array because mutating one through `default.` is a pattern the shipped
+  SDK sources use nowhere.
 
 ## Engine facts
 
@@ -148,7 +351,15 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   function by name" is not an available technique.** The obvious narration tap
   — `UIWorldMessageMgr.Message` (every flyover, with damage and crit label),
   `UIEventNotices.Notify` / `NotifyBanner`, `UITacticalHUDMessageBanner.SetBanner`
-  — cannot be built this way. Game-event narration belongs to companion
+  — cannot be HOOKED this way. ⚠️ But `UIWorldMessageMgr` can be **POLLED**
+  (found 2026-08-20, `src/tutorial_reader.cpp`): the manager RETAINS every
+  message it is showing in `m_arrMsgs` (0x450, stride 0x78, text at +0x10) with
+  `m_arrActiveMessages` (0x460) indexing the ones on screen — so damage numbers,
+  crit labels, "Unconscious", the `UITacticalTutorialMgr` cursor-help strings
+  and the tutorial's anchored blades are all readable after all. Only the
+  *unanchored* HUD blade is genuinely lost to Flash. The rest of the paragraph
+  stands: `UIEventNotices` and `UITacticalHUDMessageBanner` retain nothing, and
+  game-event narration belongs to companion
   `X2EventListener`s; reaching script→script traffic would need a second hook on
   `ProcessInternal`, which would hand us the whole script call graph and is the
   one thing that would change this calculus. Ghidra pass 2026-08-20 costed it:
@@ -170,6 +381,28 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
 - Some screens are Flash-driven with no UIList (e.g. key bindings): neither
   layer can enumerate rows. Future option: call
   `GFxMoviePlayer.GetVariableString` outbound to read Flash state directly.
+- ⛔ **No gameplay event fires in the TUTORIAL — it replays history, it never
+  submits it** (proven live 2026-08-20: a full tutorial run produced zero lines
+  from `X2AccessTacticalEvents`, with the listener provably registered).
+  `X2GameRuleset.SubmitGameStateContext` (`:292`, `:401`) routes every context to
+  `XComTutorialMgr.HandleSubmittedGameStateContext` instead of
+  `SubmitGameStateContext_Internal` while `` `REPLAY.bInTutorial ``; on a match
+  that handler calls `ResumeReplay()`/`StepReplayForward()` and returns `true`,
+  DISCARDING the player's context, and `XComReplayMgr.StepReplayForward` merely
+  advances `CurrentHistoryFrame` and calls `BuildVisualizationFrame` on a frame
+  that was already in the history at mission start. So `ContextBuildGameState`
+  never runs and `X2EventManager.TriggerEvent` is never reached — for our
+  listeners or the game's own. Two consequences: **anything built on the event
+  bus must be tested on a normal mission** (Gatecrasher — campaign with the
+  tutorial checkbox off), and the tutorial reader's `UIWorldMessageMgr` polling
+  is not a nicety there but the ONLY narration source, which is exactly why
+  plain world messages are read inside the tutorial and nowhere else.
+  ✅ **Answered by `X2AccessReplayNarration.uc`** (built 2026-08-20): in a
+  replay the history IS the event stream, so it walks the frames instead of
+  waiting for events, through the SAME `X2AccessTacticalEvents` builders — one
+  place decides wording. Its gate is `bInReplay`, i.e. exactly when the
+  listeners cannot fire, so the two paths can never both narrate one action.
+
 - **The tactical HUD holds no text.** Unlike the shell screens, every panel of
   `UITacticalHUD` is a write-only pipe into Flash: `SetStats` resolves name,
   rank, class, aim and effects out of the game state and hands them straight to
@@ -198,6 +431,24 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
 
 ## Hard rules (each earned by a crash or a design dead end)
 
+- **When a fact is on a screen, read it FROM that screen — even when the game
+  state would also answer.** Parity is defined against what a sighted player
+  sees, and the tutorial is the case that makes this bite: it replays history
+  and never submits states (`XComTutorialMgr.HandleSubmittedGameStateContext`
+  discards the player's context, so `ContextBuildGameState` never runs), yet the
+  UI on top is driven identically — the hacking pad animates, the panels light,
+  the flyovers appear. A sighted player cannot tell the two missions apart. So a
+  readout sourced from `XCOMHISTORY`, a submitted context or the event bus is
+  silently DEAD on the mission a new blind player starts with, while one sourced
+  from the screen's own properties works in both for free — with no
+  tutorial-shaped special case. Prefer, in order: the screen's own fields and
+  functions (`UIHackingScreen.GetHackChance`, `SelectedHackRewardOption`,
+  `m_rewardsTaken`), the state objects the screen itself cached to populate
+  Flash (`UnitState`/`ObjectState` — same objects, same values, no re-lookup),
+  and only then a fresh history query. `X2AccessHackingReader.uc` is the worked
+  example: not one `XCOMHISTORY` access in the whole class. This does NOT
+  contradict the rule of thumb above — the companion still owns the words; what
+  it changes is WHERE the companion reads them from.
 - **Outbound ProcessEvent calls: game thread only.** Trigger from the Tick
   drain (InputArbiter handlers already run there), never from the WNDPROC or
   the init thread.
@@ -360,6 +611,18 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   deploy` (copies the ASI to `Binaries/Win64/scripts/` and chains
   `build_uscript`, which compiles the mod via X2ModBuildCommon and
   self-deploys to `XComGame/Mods/`).
+- ⛔ **`build_uscript` HANGS FOREVER if the game is running** (measured
+  2026-08-20: >10 min against 15 s normally). The running game holds
+  `XComGame/Mods/X2AccessCompanion/Script/X2AccessCompanion.u` open, the copy
+  step gets a sharing violation, and X2ModBuildCommon has no retry and no
+  timeout — it spins in `Start-Sleep` and never returns, so it looks like a slow
+  compile rather than a lock. Diagnose it by the SDK-side artifact: if
+  `<SDK>/XComGame/Script/X2AccessCompanion.u` has a FRESH timestamp while the
+  copy under the game's `Mods/` still has the old one, the compile succeeded and
+  only the deploy is stuck. `just kill` first, then rebuild. Note the asymmetry —
+  the **ASI copies fine while the game runs** (the loader does not hold it
+  exclusively), so `just install` is safe mid-session and only `build_uscript`
+  needs the game closed.
 - Kernel tests (no game needed): `ctest --test-dir build -C Release`.
 - Loading: Ultimate ASI Loader's `version-x64.dll` sits in
   `Binaries/Win64/`; the ASI logs to `X2Access.log` next to itself, rotating
@@ -410,6 +673,11 @@ Endpoints:
   with each entry's flags decoded (the not-inited and removed entries the
   finders skip are shown too — the point is to answer "what is on screen" for a
   screen that has no recipe yet).
+- `/tutorial` — the tutorial reader's state: replay frame, whether the player or
+  the replay owns controls, the on-rails rejection count, the modal, and every
+  active world message with its RAW text beside what the reader would SPEAK.
+  That last pair is the point — markup translation is the half of this feature
+  a screenshot cannot check.
 - `/exec` — a console command (POST body, or `?cmd=`). See below.
 - `/input?keys=Down,Down,Enter` — synthetic keys. Default tier is **SendInput
   scancodes** after raising the game window, which drives the WHOLE game (UE3
@@ -670,13 +938,84 @@ an explicit focused state and the tile reader has to gate on that instead.
 
 **Tab is taken, twice**: `eTBC_NextUnit` in world mode
 (`UIUtilities_Input.uc:451`) and `NextTarget` while the shot HUD is raised
-(`UITacticalHUD.uc:459`). **Ctrl+Tab is free** — UE3 matches modifiers strictly,
-which is why `XComInput.ini` needs a separate `Shift=True` entry for R's error
-report alongside plain R, and why F4 carries `bIgnoreAlt=True` — so a Ctrl chord
-hits no tactical binding. Ctrl+Tab therefore enters/exits the HUD layer and
-plain Tab is claimed ONLY while the layer is focused. We do NOT rebind the
-player's config: a rebind outlives an uninstall, and re-exposing NextUnit from
-our own chord would leave the game's own hint text lying.
+(`UITacticalHUD.uc:459`). **Ctrl+Tab works only because WE claim it** — UE3
+matches modifiers **LENIENTLY** (verified live 2026-08-20, and this reverses what
+this file said before). A `KeyBind`'s `Control`/`Shift`/`Alt` are modifiers the
+chord REQUIRES; modifiers the player merely happens to hold are NOT checked.
+`bIgnoreCtrl`/`bIgnoreShift`/`bIgnoreAlt` are the opt-in SUPPRESSORS — `Input.uc`:
+*"if true, the bind will not be activated if the corresponding key is held down"*
+— and the entire game config uses them exactly twice: on `R`, so `Shift+R` reaches
+ErrorReport without also reloading, and on `F4`, so Alt+F4 does not also fire the
+game action. (Those two entries are what the old "strict" reading got backwards:
+they exist to SUPPRESS a bare bind, which is only necessary because matching is
+lenient.) So a bare binding fires under ANY modifier, and `Ctrl+Tab` reaches
+`eTBC_NextUnit` unless the arbiter swallows it first. **Every modifier chord we
+advertise on a key that carries a vanilla bare binding MUST be claimed, or it
+double-fires.** Ctrl+Tab therefore enters/exits the HUD layer and plain Tab is
+claimed ONLY while the layer is focused.
+
+**The accessibility verbs outrank the vanilla bindings** (decided 2026-08-20) —
+and taking a bare letter turns out to cost **nothing: no config snippet, no
+rebind at all** (settled live 2026-08-20; the planned
+`mods/X2AccessCompanion/Config/XComInput.ini` was deleted unused). Because
+matching is lenient, every vanilla bare-key action is ALREADY reachable at
+`Ctrl+key`: the arbiter claims the bare key and swallows it, the Ctrl chord is
+not claimed so it passes through untouched, and the engine matches the vanilla
+binding with Ctrl held. Proven end to end in a live mission — bare `Left` drove
+the tile cursor with no camera movement, `Ctrl+Left` scrolled the camera: same
+key, one binding, no config file in play. The object scanner needs the bare
+letters, and of RT's keymap only `, . / ' ; H I` are free in XCOM tactical
+(`V M N P L K O U X Y Z T G J B` all carry vanilla actions) — all of those vacate
+onto Ctrl+letter for free. This LEAVES the old "we do NOT rebind the player's
+config" rule intact instead of superseding it. ⛔ Still do NOT poke
+`PlayerInput.Bindings` at runtime: `UIKeybindingsPCScreen.ReadBindings()` reads
+the live array, so a runtime edit shows up in the Controls screen and is baked
+into the player's profile permanently the moment they press Save and Exit there.
+⚠ The one thing leniency does NOT hand us is a free `Shift`. `LeftShift` is bound
+in `[XComGame.XComTacticalInput]` and its RELEASE calls `PrevUnit()`
+(`XComTacticalInput.uc:2147`, active-unit state), so every `Shift+` chord cycles
+the soldier when the player lets go — including the tile reader's already-shipped
+`Shift+,`/`Shift+.` floor keys. `Ctrl` is the safe modifier: `Key_Left_Control`
+merely toggles the pathing pawn's waypoint mode on press and untoggles it on
+release. See `docs/object-scanner-recon.md` §4.6.
+
+**Exactly two letter keys are free: H and I.** Measured across every input
+section of `DefaultInput.ini` 2026-08-20 — and it must be measured across ALL of
+them, not just `[XComGame.XComTacticalInput]`. Two traps. First, most letter
+bindings are generic `X_Key_Press | onrelease X_Key_Release` forwarders into
+`XComInputBase.InputEvent`: they look empty and are not (`Y` is Overwatch's
+default ability hotkey via `Template.DefaultKeyBinding`, and `T`, `V`, `B`, `N`
+are live the same way). Second, **`U` is bound in `[Engine.PlayerInput]`, not in
+the tactical block** (`ClearAllWaypoints`), so a tactical-section-only grep
+reports it free and is wrong. Claimed so far: `H` = shot breakdown (targeting
+only), `I` = re-read the tutorial message (tutorial only). That is the whole
+supply of bare letters; anything further needs a modifier — and the vanilla
+action it displaces stays reachable at Ctrl+letter for free, no config required
+(see the leniency paragraph above).
+
+**Targeting mode is covered** (`src/tactical_hud.cpp` + companion
+`X2AccessTacticalReader.uc`, built AND VERIFIED LIVE 2026-08-20 — a live shot read
+`Выстрел, 1 of 5. Офицер "Адвента", hit 49 percent, damage 3 to 5, in half cover, 6 of 6 health`,
+so ability slot, localized name, target, odds, damage band, cover and health all resolved). It
+watches
+only `m_isMenuRaised` — the flag `GameUI::ReadTacticalGate` already reports for
+the tile cursor — and calls `PollTargeting()` on the companion CDO every 150 ms
+while the tactical HUD is usable; the companion reads `m_iCurrentIndex` and the
+targeting method's target index from script and answers with text ONLY when the
+selection moved. **That is why Phase 1 added no offsets and no
+`static_assert` entries**: change detection sits next to the data, so a
+regenerated SDK or a Highlander bump cannot silently break it. Resolution
+mirrors `UITacticalHUD_InfoPanel.Update` and
+`UITacticalHUD_ShotWings.RefreshData` exactly — the targeting method owns the
+target INDEX and the index is into the SELECTED ACTION's own target list, and
+`LookupShotBreakdown` gets an EXPLICIT `UseAbility` because the empty-ability
+branch is the one that `RedScreen`s. Claims, live only while raised and neither
+of them steering: `Delete` re-announces the shot (it never contends with the
+tile cursor's `Delete` — that stands down exactly when the shot HUD is up) and
+`H` reads the per-modifier breakdown, the spoken form of the shot wings a mouse
+player opens by clicking. `H` was chosen because the
+`[XComGame.XComTacticalInput]` block of `DefaultInput.ini` binds no command to
+it at all.
 
 ## Current state / next steps
 
@@ -753,16 +1092,72 @@ Remaining:
    UISpecialMissionHUD/UITurnOverlay/UITacticalHUD/UIUnitFlagManager/
    UIEventNotices, with no UIReplay). Then: object scanner (comma/period +
    PageUp/Dn reserved), vantage read (V), interact-at-cursor.
-4. Bridge v2 (channels/priorities, queued events).
-5. The dialog recipe attaches wherever a `UIDialogueBox` shows, including in
+4. Tactical narration and bridge v2 are BUILT (2026-08-20) and awaiting their
+   first live run together with the targeting layer — see **Bridge v2** and
+   **Tactical combat narration** above. Two follow-ups the build deliberately
+   left open: the menu navigator, the tile reader and the `X2Access_Speak`
+   handler still call `TTS` directly rather than `Narrator::Say`, so the
+   scrollback ring holds narration only (harmless today — a recipe attaching
+   drops the tactical queue via `TacticalHUD::OnTick`); and `/tactical`, the
+   dev endpoint that would show mode, gate reasons and the last narration
+   lines, is not built. `just dev-speech` covers most of it already, since it
+   marks interrupting lines with `!`.
+5. Events NOT yet narrated, in rough value order: reinforcement drops, the
+   Chosen arriving, objective completion, will/panic thresholds, loot. Each is
+   one more `AddCHEvent` line; the cost is judgement about spam, not code.
+   `UnitMoveFinished` was deliberately dropped — the shipped sources trigger it
+   only from `DLC_2`'s Alien Ruler code, so it is not a base-game event.
+6. The dialog recipe attaches wherever a `UIDialogueBox` shows, including in
    the strategy and tactical layers — deliberate (a modal must be readable),
    but it means the layer takes over input there before those screens have
    recipes of their own. Its screen lookup caches the newest box, which a
    presentation-layer change could leave stale; covering dialogs outside the
    shell should switch that to a screen-stack walk.
-6. Dev harness: `/gui` and `/props` are in (see **Dev harness** above) — built
-   2026-08-19, NOT yet run against a live game. `/tile` (the tile reader's
-   state as structured data) is the remainder of phase 3.
+7. Dev harness: `/gui` and `/props` are in (see **Dev harness** above) — built
+   2026-08-19, NOT yet run against a live game. `/tutorial` joined them
+   2026-08-20. `/tile` (the tile reader's state as structured data) is the
+   remainder of phase 3.
+8. The tutorial reader is BUILT and VERIFIED LIVE (2026-08-20, see **Tutorial
+   message reader** above). First run, `Tutorial_01` frame 150, all three text
+   surfaces in one burst: the world flyover "Без сознания", the anchored blade
+   `IWBTest` read out of `m_arrMsgs` **slot 8** (the element the old
+   `kMaxArrayElems = 8` truncated away) with `<img src='rmb_icon' …>` spoken as
+   "right mouse button", and the Flash-only HUD blade recovered through the
+   companion's history walk carrying `[ПРАВАЯ КНОПКА МЫШИ]` — the binding-aware
+   name `%KEY:RMB%` resolves to. Still unobserved: the modal `UITutorialBox`
+   (none had fired yet) and a rejection announcement. Three things it
+   deliberately does not do. It announces that a submission was REFUSED (`InvalidSubmissionCnt` rose)
+   but never where the tutorial wanted the player to go: that reads
+   `XComTutorialMgr.NextPlayerAbilityContext`, which is the 3D marker's data and
+   belongs to the object scanner — two surfaces speaking the same thing would be
+   worse than one. It leaves `X2AccessTileReader.CursorMoveTo` alone, which still
+   says "Moving" for a move the tutorial then vetoes: `ClickToPath` returns
+   `true` before the submission is even attempted (`GameStateMoveUnit` ends in a
+   bare `return true` and `LatentSubmitGameStateContext` is asynchronous), so
+   "Moving" can only ever mean *submitted* — anywhere, not just in the tutorial.
+   And it reads plain world messages only INSIDE the tutorial; turning that on
+   generally needs the overlap with `X2AccessTacticalEvents` measured live first
+   (`/tutorial` prints exactly what would be spoken, which is how to measure it).
+9. Hacking screen phases 1-2 are BUILT (2026-08-20, see **Hacking screen**
+   above) and awaiting a live run. Two phases remain, both in
+   `docs/hacking-screen-recon.md`: the REVEAL and a pre-commit odds read via
+   `XComGameState_Ability.GetUISummary_HackingBreakdown`, the spoken form of the
+   mouse-hover-only `UITacticalHUD_HackingTooltip`. The reveal is bound by the
+   read-the-screen rule above and its obvious implementation is the wrong one:
+   `ResultContext.StatContestResult` / `bHasBeenHacked` / `UserSelectedHackReward`
+   are never written in the tutorial, where the pad animates and lights up
+   regardless. Use the two Flash-driven signals the screen retains —
+   `bWaitingForInput` (set from `OnCommand("HackEnded")`, the instant the meter
+   finishes, and the only honest timestamp since the state is submitted ~3 s
+   early) and `m_rewardsTaken` (one per `OnCommand("UnlockReward")`, i.e. per
+   card that LIT) — and speak the lit cards. That beats the banner anyway:
+   `AS_UpdateHackComplete` picks its title from `HackRewards[RewardIndex].bBadThing`,
+   so with an ordinary slot 0 the pad reads **Успех!** even when the gamble
+   missed. One inference still needs a live check: that unlock order is card
+   order. ⚠ Three voices can land on this one event — the reveal line
+   (everywhere), the `UIWorldMessageMgr` flyover poll (tutorial only today) and
+   `X2AccessTacticalEvents` / `X2AccessReplayNarration` — so check each on the
+   mission where it actually fires.
 
 When researching for this project, focus on engine/native/UE3 technicals.
 Do not survey the accessibility-mod landscape — the author knows it better

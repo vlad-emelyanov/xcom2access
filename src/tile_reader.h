@@ -20,4 +20,14 @@ void Init();
 /// navigator detached). Throttled internally — safe to call many times per frame.
 void OnTick();
 
+/// The world-mode gate, as last computed by OnTick. The object scanner shares it rather than
+/// recomputing: the two surfaces must stand down at exactly the same instants (targeting raised,
+/// a recipe attached, tactical over) or one of them starts swallowing keys the other released.
+bool IsActive();
+
+/// Plant the cursor on the object scanner's current marker selection (companion
+/// X2AccessTileReader.CursorGoToMarker) and speak the tile. Lives here rather than in the scanner
+/// so the mouse gate is armed by the same code path as every other cursor move.
+void GoToMarker();
+
 } // namespace TileReader

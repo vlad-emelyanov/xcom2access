@@ -156,6 +156,40 @@ constexpr int32_t kSndStartButtonOffset = 0x418;    // m_StartButton (UILargeBut
 constexpr int32_t kTacHudFlagsOffset = 0x410;       // flag dword holding m_isMenuRaised
 constexpr uint32_t kTacHudMenuRaised = 0x02;        // m_isMenuRaised (shot HUD up)
 
+// ---- tutorial mission: the modal popup (UITutorialBox) ----
+constexpr int32_t kTutBoxTitleOffset = 0x410;      // Title (FString)
+constexpr int32_t kTutBoxDescOffset = 0x420;       // Desc (FString)
+constexpr int32_t kTutBoxButtonHelpOffset = 0x430; // ButtonHelp (FString)
+
+// ---- tutorial mission: world messages (UIWorldMessageMgr, reached via the presentation layer) ----
+// The manager is a UIScreen the stack never holds, so it is reached the way the game reaches it:
+// XComPresentationLayerBase.m_kWorldMessageManager, off the tactical HUD's own Movie -> PRES.
+constexpr int32_t kPresWorldMsgMgrOffset = 0x344; // XComPresentationLayerBase::m_kWorldMessageManager
+constexpr int32_t kWorldMsgArrayOffset = 0x450;   // UIWorldMessageMgr::m_arrMsgs (TArray<FTHUDMsg>)
+constexpr int32_t kWorldMsgActiveOffset = 0x460;  // ::m_arrActiveMessages (TArray<int>) — indices
+constexpr int32_t kWorldMsgBladeOffset = 0x480;   // ::BladeHUDMessage (UIPanel*), the HUD blade
+constexpr int32_t kHudMsgStride = 0x78;           // sizeof(FTHUDMsg)
+constexpr int32_t kHudMsgIdOffset = 0x00;         // FTHUDMsg::m_sId (FString)
+constexpr int32_t kHudMsgTextOffset = 0x10;       // FTHUDMsg::m_txtMsg (FString)
+constexpr int32_t kHudMsgFollowOffset = 0x30;     // FTHUDMsg::m_kFollowObject.ObjectID
+constexpr int32_t kHudMsgFlagsOffset = 0x34;      // FTHUDMsg bitfield dword
+constexpr uint32_t kHudMsgVisible = 0x2;          // m_bVisible (0x1 is m_bFollowWorldLocation)
+constexpr uint32_t kHudMsgImportant = 0x4;        // m_bIsImportantMessage
+constexpr int32_t kHudMsgTypeOffset = 0x74;       // FTHUDMsg::m_eType (byte, EHUDMessageType)
+// The pool is NUM_INITIAL_INACTIVE_MESSAGES (8) recycled slots plus one appended per NAMED
+// message, so the array is small but not fixed; 64 is far past anything a mission produces.
+constexpr int kMaxWorldMessages = 64;
+
+// ---- tutorial mission: the replay manager (XComTutorialMgr : XComReplayMgr : Actor) ----
+constexpr int32_t kReplayFrameOffset = 0x274;       // XComReplayMgr::CurrentHistoryFrame
+constexpr int32_t kReplayFlagsOffset = 0x278;       // XComReplayMgr flag dword
+constexpr uint32_t kReplayInTutorial = 0x2;         // bInTutorial (0x1 is bInReplay)
+constexpr int32_t kTutFlagsOffset = 0x294;          // XComTutorialMgr flag dword
+constexpr uint32_t kTutAllowingControls = 0x8;      // bIsTutorialAllowingControls
+constexpr int32_t kTutNextInputFrameOffset = 0x298; // NextPlayerInputFrame
+constexpr int32_t kTutInvalidCountOffset = 0x31C;   // InvalidSubmissionCnt
+constexpr int32_t kTutNextAbilityCtxOffset = 0x338; // NextPlayerAbilityContext
+
 // ---- modal dialog: UIDialogueBox ----
 constexpr int32_t kDialogDataOffset = 0x434;        // m_arrData (TArray<FTDialogueBoxData>)
 constexpr int32_t kDialogAcceptOffset = 0x444;      // strAccept (FString) — the LIVE label
@@ -1565,6 +1599,7 @@ enum TrackedScreen {
     kScrPauseMenu,
     kScrLoadScreen,
     kScrTacticalHUD,
+    kScrTutorialBox,
     kTrackedScreenCount,
 };
 
@@ -1577,6 +1612,7 @@ const char* const kTrackedClassNames[kTrackedScreenCount] = {
     "UIPauseMenu",
     "UILoadScreenAnimation",
     "UITacticalHUD",
+    "UITutorialBox",
 };
 
 // The top entry of a dialog box's queue — m_arrData.Length - 1, which is where OnAccept /
@@ -1621,7 +1657,7 @@ bool IsShownRaw(void* screen)
 
 bool (*const kTrackedUsable[kTrackedScreenCount])(void*) = {
     IsFocusedRaw, IsFocusedRaw, IsFocusedRaw, IsFocusedRaw, DialogIsShowingRaw, IsFocusedRaw,
-    IsShownRaw, IsFocusedRaw,
+    IsShownRaw, IsFocusedRaw, IsFocusedRaw,
 };
 
 // Every transient screen behind ONE rate-limited GObjects pass. Independent ScreenFinders would
@@ -2190,6 +2226,150 @@ TacticalGate ReadTacticalGate()
     return gate; // no tactical HUD on the stack: not in tactical
 }
 
+// ---- tutorial mission (Tutorial_01) ----
+
+namespace {
+
+// XComTutorialMgr is an Actor, not a screen, so it gets its own finder rather than a slot in the
+// shared screen pass. No usability predicate: it has no UIPanel flag dword to test, it exists
+// only during the tutorial mission, and there is exactly one per session — so "is it still an
+// instance of its class" (which ScreenFinder revalidates on every call) is the whole test.
+ScreenFinder gTutorialMgrFinder{"XComTutorialMgr", nullptr};
+
+// An FString field WITHOUT CleanText. World-message text carries <img src='...'> markup that the
+// caller has to TRANSLATE rather than drop — CleanText would strip it silently and leave a hole
+// exactly where the key name belongs ("Press , to go here").
+std::string ReadFStringFieldRawText(const void* obj, int32_t offset)
+{
+    wchar_t buf[1024];
+    int len = CopyFStringRaw(reinterpret_cast<const uint8_t*>(obj) + offset, buf, 1024);
+    return len > 0 ? WcharToUtf8(buf, len) : std::string();
+}
+
+// A TArray<int32> at `offset`: copies up to maxItems values out. Returns the count, or -1 if the
+// array itself could not be read.
+int ReadIntArrayRaw(const void* obj, int32_t offset, int32_t* out, int maxItems)
+{
+    __try {
+        auto* arr = reinterpret_cast<const uint8_t*>(obj) + offset;
+        auto* data = *reinterpret_cast<const int32_t* const*>(arr);
+        int32_t n = *reinterpret_cast<const int32_t*>(arr + 8);
+        if (!data || n <= 0)
+            return 0;
+        if (n > maxItems)
+            n = maxItems;
+        for (int32_t i = 0; i < n; i++)
+            out[i] = data[i];
+        return n;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+}
+
+// The base of element `index` of the m_arrMsgs TArray, bounds-checked against its own count.
+const uint8_t* WorldMessageSlotRaw(void* mgr, int index)
+{
+    __try {
+        auto* arr = reinterpret_cast<const uint8_t*>(mgr) + kWorldMsgArrayOffset;
+        auto* data = *reinterpret_cast<const uint8_t* const*>(arr);
+        int32_t n = *reinterpret_cast<const int32_t*>(arr + 8);
+        if (!data || index < 0 || index >= n || n > kMaxWorldMessages)
+            return nullptr;
+        return data + static_cast<size_t>(index) * kHudMsgStride;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
+} // namespace
+
+void* FindTutorialBox()
+{
+    return FindScreen(kScrTutorialBox);
+}
+
+TutorialBoxView ReadTutorialBox(void* screen)
+{
+    TutorialBoxView v;
+    if (!screen)
+        return v;
+    v.title = CleanText(ReadFStringField(screen, kTutBoxTitleOffset));
+    v.body = CleanText(ReadFStringField(screen, kTutBoxDescOffset));
+    v.buttonHelp = CleanText(ReadFStringField(screen, kTutBoxButtonHelpOffset));
+    return v;
+}
+
+void* FindWorldMessageMgr()
+{
+    // Through the presentation layer, the way the game reaches it (`PRES.GetWorldMessenger()`),
+    // rather than by scanning GObjects for the class: a manager from a previous mission stays
+    // allocated until GC and would win a "newest instance" scan while being wired to nothing.
+    void* hud = FindTacticalHUD();
+    if (!hud)
+        return nullptr;
+    void* movie = ReadPtrRaw(hud, kPanelMovieOffset);
+    if (!movie)
+        return nullptr;
+    void* pres = ReadPtrRaw(movie, kMoviePresOffset);
+    if (!pres)
+        return nullptr;
+    return ReadPtrRaw(pres, kPresWorldMsgMgrOffset);
+}
+
+std::vector<WorldMessage> ReadWorldMessages(void* mgr)
+{
+    std::vector<WorldMessage> out;
+    if (!mgr)
+        return out;
+
+    // m_arrActiveMessages holds INDICES into m_arrMsgs. Reading the index array rather than
+    // walking m_arrMsgs is what distinguishes "showing" from "pooled and waiting": a deactivated
+    // message keeps its text in the slot it will be recycled from.
+    int32_t active[kMaxWorldMessages];
+    int count = ReadIntArrayRaw(mgr, kWorldMsgActiveOffset, active, kMaxWorldMessages);
+    if (count <= 0)
+        return out;
+
+    out.reserve(static_cast<size_t>(count));
+    for (int i = 0; i < count; i++) {
+        const uint8_t* slot = WorldMessageSlotRaw(mgr, active[i]);
+        if (!slot)
+            continue;
+        WorldMessage m;
+        m.slot = active[i];
+        m.id = ReadFStringFieldRawText(slot, kHudMsgIdOffset);
+        m.text = ReadFStringFieldRawText(slot, kHudMsgTextOffset);
+        m.type = static_cast<int>(ReadU32Raw(slot, kHudMsgTypeOffset) & 0xFF);
+        const uint32_t flags = ReadU32Raw(slot, kHudMsgFlagsOffset);
+        m.visible = (flags & kHudMsgVisible) != 0;
+        m.important = (flags & kHudMsgImportant) != 0;
+        m.followObjectId = static_cast<int>(ReadU32Raw(slot, kHudMsgFollowOffset));
+        out.push_back(std::move(m));
+    }
+    return out;
+}
+
+bool HudBladeShowing(void* mgr)
+{
+    return mgr && ReadPtrRaw(mgr, kWorldMsgBladeOffset) != nullptr;
+}
+
+TutorialState ReadTutorialState()
+{
+    TutorialState s;
+    void* mgr = gTutorialMgrFinder.Find();
+    if (!mgr)
+        return s;
+    s.valid = true;
+    s.inTutorial = (ReadU32Raw(mgr, kReplayFlagsOffset) & kReplayInTutorial) != 0;
+    s.allowingControls = (ReadU32Raw(mgr, kTutFlagsOffset) & kTutAllowingControls) != 0;
+    s.historyFrame = static_cast<int>(ReadU32Raw(mgr, kReplayFrameOffset));
+    s.nextInputFrame = static_cast<int>(ReadU32Raw(mgr, kTutNextInputFrameOffset));
+    s.invalidSubmissions = static_cast<int>(ReadU32Raw(mgr, kTutInvalidCountOffset));
+    s.nextAbilityContext = ReadPtrRaw(mgr, kTutNextAbilityCtxOffset);
+    return s;
+}
+
 std::string CleanText(const std::string& text)
 {
     // Strip <...> markup tags, collapse runs of whitespace, trim.
@@ -2384,6 +2564,17 @@ int FindInstances(const char* className, void** out, int maxItems)
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
     return found;
+}
+
+void* FindDefaultObject(const char* className)
+{
+    if (!className || !className[0])
+        return nullptr;
+    // A CDO is named Default__<Class>, and that name is exactly what FindInstances excludes it
+    // by — so the name IS the lookup here. One pass, oldest first; there is precisely one per
+    // class, created at package load.
+    std::string expected = std::string("Default__") + className;
+    return ScanForObjectNamedRaw(expected.c_str());
 }
 
 bool IsLiveObject(void* obj)
