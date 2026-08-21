@@ -309,12 +309,32 @@ private function int HitChanceOf(ShotBreakdown Breakdown)
 // Description
 // ---------------------------------------------------------------------------
 
-// "Overwatch, 3 of 7" — plus the game's own reason string when the ability is not usable
-// (the same string the info panel puts under the name in place of the help text).
+// "Overwatch, 3 of 7, 2 charges" — everything UITacticalHUD_Ability.UpdateData puts ON the icon,
+// plus the game's own reason string when the ability is not usable (the same string the info panel
+// puts under the name in place of the help text).
+//
+// The icon carries FOUR things a sighted player reads at a glance, and the first three were
+// missing until 2026-08-21:
+//   - the friendly name, as antenna text (`SetAntennaText`);
+//   - CHARGES, `m_strChargePrefix $ GetCharges()` — how many grenades are left. Shown only when
+//     the ability is not cooling down, and only when GetCharges() >= 0 (an ability with no charge
+//     system answers -1), so both conditions are mirrored here rather than guessed;
+//   - COOLDOWN REMAINING, `m_strCooldownPrefix $ GetCooldownRemaining()`. ⛔ The availability
+//     reason is NOT a substitute: GetDisplayStringForAvailabilityCode returns one fixed localized
+//     string per code, so 'AA_CooldownNotMet' says an ability is cooling down and never says for
+//     how long. The NUMBER was sighted-only;
+//   - the OBJECTIVE HIGHLIGHT, `BattleData.IsAbilityObjectiveHighlighted` — the icon is recoloured
+//     to mark the ability that completes the mission objective. That one is a real signal, unlike
+//     the perk/psionic/debuff source colours, which only restate where an ability came from.
+// The index/count is ours, but it is parity: m_arrAbilities is already filtered by
+// ShouldShowAbilityIcon and sorted by SortAbilities, so it is exactly the row on screen.
 private function string DescribeAbility(UITacticalHUD HUD, AvailableAction Action,
 	XComGameState_Ability AbilityState)
 {
+	local XComGameState_BattleData BattleData;
+	local X2AbilityTemplate Template;
 	local string Result;
+	local int Charges;
 
 	Result = AbilityState.GetMyFriendlyName();
 	if (Action.bFreeAim)
@@ -323,6 +343,24 @@ private function string DescribeAbility(UITacticalHUD HUD, AvailableAction Actio
 	if (HUD.m_kAbilityHUD != none && HUD.m_kAbilityHUD.m_arrAbilities.Length > 0)
 		Result $= "," @ string(HUD.m_kAbilityHUD.m_iCurrentIndex + 1) @ "of"
 			@ string(HUD.m_kAbilityHUD.m_arrAbilities.Length);
+
+	if (AbilityState.IsCoolingDown())
+	{
+		AppendComma(Result, "cooldown" @ string(AbilityState.GetCooldownRemaining())
+			@ (AbilityState.GetCooldownRemaining() == 1 ? "turn" : "turns"));
+	}
+	else
+	{
+		Charges = AbilityState.GetCharges();
+		if (Charges >= 0)
+			AppendComma(Result, string(Charges) @ (Charges == 1 ? "charge" : "charges"));
+	}
+
+	Template = AbilityState.GetMyTemplate();
+	BattleData = XComGameState_BattleData(
+		`XCOMHISTORY.GetSingleGameStateObjectForClass(class'XComGameState_BattleData'));
+	if (Template != none && BattleData != none && BattleData.IsAbilityObjectiveHighlighted(Template))
+		AppendComma(Result, "objective");
 
 	if (Action.AvailableCode != 'AA_Success')
 		AppendPart(Result, class'X2AbilityTemplateManager'.static
@@ -345,8 +383,24 @@ private function string DescribeTarget(AvailableAction Action,
 
 	if (Action.bFreeAim)
 		return "Free aim, no target";
+
 	if (TargetRef.ObjectID <= 0)
+	{
+		// An unusable ability has already said WHY in the game's own localized words ("Нет
+		// доступных целей."). Adding an English "No target" after it is the same fact in two
+		// languages — and it was the shape the 2026-08-21 run produced most often at the shot HUD.
+		if (Action.AvailableCode != 'AA_Success')
+			return "";
 		return "No target";
+	}
+
+	// ⛔ A SELF-TARGETED ability has no target worth naming. Overwatch, Reload and Hunker Down
+	// all resolve to the acting soldier, so this read out the player's own soldier as if they
+	// were a target — "Наблюдение, 2 of 5. Shreya Bose, in full cover, 6 of 6 health" — which
+	// drops an English name into an otherwise localized line, restates who is selected, and
+	// describes cover the game draws no reticle over. The ability name is the whole readout.
+	if (TargetRef.ObjectID == AbilityState.OwnerStateObject.ObjectID)
+		return "";
 
 	TargetUnit = XComGameState_Unit(`XCOMHISTORY.GetGameStateForObjectID(TargetRef.ObjectID));
 	if (TargetUnit != none)
@@ -356,9 +410,19 @@ private function string DescribeTarget(AvailableAction Action,
 
 	if (GetBreakdown(AbilityState, TargetRef, Breakdown))
 	{
-		AppendComma(Result, "hit" @ string(HitChanceOf(Breakdown)) $ " percent");
+		// The info panel's OWN localized labels rather than English words of ours: these are the
+		// exact captions a sighted player reads beside the two percentages (AS_SetShotChance /
+		// AS_SetCriticalChance, UITacticalHUD_InfoPanel:176-177).
+		AppendComma(Result, class'UITacticalHUD_InfoPanel'.default.m_sShotChanceLabel
+			@ string(HitChanceOf(Breakdown)) $ " percent");
 		if (Breakdown.ResultTable[eHit_Crit] > 0)
-			AppendComma(Result, "crit" @ string(Breakdown.ResultTable[eHit_Crit]) $ " percent");
+		{
+			// SpecialCritLabel renames the crit row for abilities where "crit" is the wrong word
+			// (a Reaper's Executioner, for one); the panel prefers it whenever it is set, so we do.
+			AppendComma(Result, (Breakdown.SpecialCritLabel != "" ? Breakdown.SpecialCritLabel
+				: class'UITacticalHUD_InfoPanel'.default.m_sCritChanceLabel)
+				@ string(Breakdown.ResultTable[eHit_Crit]) $ " percent");
+		}
 	}
 
 	AbilityState.GetDamagePreview(TargetRef, MinDamage, MaxDamage, AllowsShield);
@@ -433,11 +497,11 @@ private function string DescribeNonUnitTarget(StateObjectReference TargetRef)
 		`XCOMHISTORY.GetGameStateForObjectID(TargetRef.ObjectID));
 	if (IObj != none)
 	{
-		if (IObj.IsDoor())
-			return "Door";
-		if (IObj.MustBeHacked())
-			return "Hackable object";
-		return "Interactive object";
+		// The object scanner's oracle, not a category word of ours: it prefers the level
+		// designer's own FriendlyDisplayName and falls back to the LOCALIZED name of the
+		// object's interact ability. "Взлом, 3 of 7. Hackable object" was the shot HUD naming
+		// in English something the scanner names in the player's language two keys away.
+		return class'X2AccessObjectScanner'.static.InteractiveLabel(IObj);
 	}
 
 	Destructible = XComGameState_Destructible(
@@ -1134,7 +1198,7 @@ private function AppendPart(out string Result, string Part)
 	if (Part == "")
 		return;
 	if (Result != "")
-		Result $= ". ";
+		Result $= class'X2AccessTileReader'.static.EndsSentence(Result) ? " " : ". ";
 	Result $= Part;
 }
 

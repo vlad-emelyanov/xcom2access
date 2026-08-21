@@ -69,7 +69,21 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   commit only when the pathing pawn's clamped `LastDestinationTile` EQUALS the
   cursor tile, so a move can never land anywhere other than the tile just
   spoken. Readout is fog-parity gated (`GetTileFOWValue`: NeverSeen →
-  "unexplored"; HaveSeen → static layout only; Seen → full). Claims stand down
+  "unexplored"; HaveSeen → static layout only; Seen → full).
+  ⛔ **Per-edge cover: `COVER_<dir>` is PRESENCE, `COVER_<dir>Low` is a HEIGHT
+  MODIFIER on it — never an alternative.** A low-cover edge carries BOTH bits, so
+  the `if (dir) … else if (dirLow)` that shipped reported every covered edge as
+  high: 260 *"High cover"* and not one *"Low cover"* across a whole Gatecrasher
+  run (live 2026-08-21), on a map that is mostly cars and sandbags. The engine's
+  own reading is `X2AbilityToHitCalc_StandardAim.GetCoverTypeForTile` (`:934`),
+  comment included: *"if the cover flags in the specified direction don't have
+  the low cover flag, then it is high cover"*. Test presence first, height
+  second. Bit order is N/S/E/W (`0x01/0x02/0x04/0x08`, low bits four up), which
+  `DIR_NORTH..DIR_WEST` already matched — the directions were never wrong, only
+  the heights, and that is why a whole run of plausible-sounding readouts hid it.
+  The shot HUD's `DescribeTargetCover` was right throughout (it read *"in half
+  cover"* in the same run), so the two surfaces DISAGREED — a mismatch between
+  two of our own readouts is the cheapest bug signal this project has. Claims stand down
   while the shot HUD is raised (`m_isMenuRaised` — targeting owns the arrows),
   while a graph recipe is attached, or when `UITacticalHUD` loses focus.
   **Mouse gate** (`src/mouse_gate.cpp`): with the mouse the active input
@@ -341,28 +355,46 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   `NativeResult` string property, reflected out by C++ right after the
   synchronous ProcessEvent returns. CDO rule: value-typed state only, never
   object references (GC).
-- **Tactical combat narration** (`X2AccessTacticalEvents.uc`, built 2026-08-20;
-  registration VERIFIED LIVE, the handlers themselves **still unexercised**): one
-  `CHEventListenerTemplate`, tactical only, nine events. The 2026-08-20 run put
-  *"tactical narration listener created"* in `Launch.log` and resolved
-  `Default__X2AccessNarrator` + `DrainNarration` in the ASI, so the whole path is
-  wired — but the mission played was the TUTORIAL, where no gameplay event fires
-  at all (see the replay bullet under **Engine facts**), and every drain came
-  back empty. ⛔ Do NOT read that run's `Промах!` as proof of THIS listener:
-  it is a world-message flyover that `TutorialReader` hands straight to
-  `Narrator::Say(Channel::Combat, …)` in C++. It does prove the native half of
-  Bridge v2 — a Combat line really did queue behind the targeting readout with no
-  interrupt marker — but nothing about the script half: `X2AccessNarrator`'s
-  push/drain payload and all nine handlers are still unexercised and need a
-  normal mission.
+- **Tactical combat narration** (`X2AccessTacticalEvents.uc`, built 2026-08-20,
+  **VERIFIED LIVE 2026-08-21 on Gatecrasher** — the normal mission the tutorial
+  could never be): one `CHEventListenerTemplate`, tactical only, nine events. The
+  Gatecrasher run exercised ability, damage, death, turn handover and both
+  concealment events end to end, attributed and localized —
+  `Ряд. Jane Kelly: Выпад at Солдат "Адвента", хит.` /
+  `Сектоид: Пси-реанимация at Офицер "Адвента".` /
+  `Ряд. Jane Kelly, 3 damage, 4 of 7 health.` — with `Your turn.`/`Enemy turn.`
+  arriving on the Alert channel and marked interrupting in the speech ring. That
+  also settles the script half of Bridge v2, which the tutorial could not:
+  `X2AccessNarrator`'s `default.`-backed push and delimited drain really do carry
+  a burst. (An earlier 2026-08-20 tutorial run proved only registration and the
+  NATIVE half; ⛔ do not read its `Промах!` as evidence of this listener — that
+  was a world-message flyover `TutorialReader` hands straight to
+  `Narrator::Say`.) Still unexercised: panic, shields, evac.
   This is what T1 forced — the flyover/notice/banner tap is not buildable, so
   the game's own event bus is the path. **Deferral is a per-event decision, not
-  a default**: `ELD_OnVisualizationBlockStarted` for what the player WATCHES
-  (`AbilityActivated`, `UnitTakeEffectDamage`, `UnitDied`), because a listener
-  otherwise fires at state submission, seconds ahead of the animation;
-  `ELD_OnStateSubmitted` for structural facts (`PlayerTurnBegun`, concealment,
-  panic, shields, evac), which are tied to no animation and would be dropped
-  entirely by a state that never builds a visualization block. Three details
+  a default**, and for one action it is SPLIT ACROSS BOTH visualization windows:
+  `ELD_OnVisualizationBlockStarted` for the ACTION (`AbilityActivated`) and
+  `ELD_OnVisualizationBlockCompleted` for its OUTCOME (`UnitTakeEffectDamage`,
+  `UnitDied`), because a listener otherwise fires at state submission, seconds
+  ahead of the animation; `ELD_OnStateSubmitted` for structural facts
+  (`PlayerTurnBegun`, concealment, panic, shields, evac), which are tied to no
+  animation and would be dropped entirely by a state that never builds a
+  visualization block. ⛔ **The split is what puts cause before consequence, and
+  a shared window cannot.** Priority orders listeners for the SAME event only;
+  between events the order is the GAME's trigger order, and that is backwards
+  for us — `XComGameState_Unit` triggers `UnitTakeEffectDamage` (`:5874`) and
+  `UnitDied` (`:6022`) while effects are applied, and
+  `XComGameStateContext_Ability` only reaches `AbilityActivated` afterwards under
+  its own *"Trigger post-activation events"* comment (`:191`). All three on one
+  window spoke the outcome before the attack (live 2026-08-21: *"ADVENT Soldier
+  killed."* then *"Jane Kelly: Slash at ADVENT Soldier, hit."*, and worse for
+  damage — you learned you had been shot before you learned by whom), and they
+  landed in the SAME 100 ms drain, so the narrator could not reorder what it
+  could not tell apart. Blocks run sequentially, so the split also stops two
+  abilities resolving in one burst from interleaving; it is what the game's own
+  HUD does (`UIUnitFlagManager:55`, `UITacticalHUD_Enemies:68`). Note the replay
+  narrator needs none of this: walking frames in order gets the human order for
+  free. Three details
   that needed the game's own source: damage is SUMMED over the entries whose
   `DamageResult.Context` matches this state (`DamageResults` accumulates for the
   whole mission and one grenade lands as several entries); only abilities that
@@ -383,9 +415,15 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   `XComGameStateVisualizationMgr.LastStateHistoryVisualized` (the game's own
   "which frame is on screen", what `UIUnitFlag` uses), clamped again to the
   replay's `CurrentHistoryFrame`. That also syncs narration to the animation,
-  which is what `ELD_OnVisualizationBlockStarted` buys the live listeners. A jump
-  of more than 24 frames is a SEEK, not play (`StartReplay` does one) — the
-  cursor is adopted and the skip is logged, never silently swallowed. Two
+  which is what `ELD_OnVisualizationBlockStarted` buys the live listeners. ⛔ The
+  catch-up bound is a RUNAWAY guard, not a pacing one: normal playback advances
+  that cursor in steps of **25-50 frames**, because most history frames carry no
+  visualization of their own and `LastStateHistoryVisualized` jumps to the end of
+  a block when the block completes. A 24-frame bound therefore read as "seek" on
+  ordinary play and dropped 597 frames across one tutorial run — among them an
+  overwatch shot the player watched and never heard. It is 512 now, and the only
+  real seek is `StartReplay`'s own `JumpReplayToFrame`, which the first-poll
+  branch already adopts. A skip is always logged, never silently swallowed. Two
   consequences elsewhere: a MISS reaches `UIWorldMessageMgr` as an ordinary world
   message, not a damage one (`QueueWorldMessage` stamps `eHUDMessage_Damage` only
   when `m_iDamagePrimary > 0`), so `tutorial_reader.cpp` now drops flyovers
@@ -438,8 +476,17 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   orders *within* a frame and adds no latency; past the flush the screen
   reader's own queue takes over, which is the honest limit (a burst can be
   cancelled wholesale by an interrupt, never trimmed — hence the 24-line cap,
-  logged on overflow at both ends). A 128-line ring with channel + timestamp
-  backs the future speech-scrollback key. ⛔ **`default.X = ...` does not
+  logged on overflow at both ends). A 128-line ring with channel, SOURCE and timestamp
+  backs the future speech-scrollback key. ⛔ `Narrator::Source` is not a channel:
+  it records whether a line was read off a surface the game itself displayed
+  (`Flyover`) or derived from the game state (`State`), and a `State` line is
+  dropped when an identical `Flyover` line was said in the last 5 s. **One way
+  only, and never State-against-State** — inside the tutorial both paths run at
+  once and an untargeted ability comes out word-for-word twice ("Osei:
+  Overwatch"), with the flyover ~150 ms ahead; but identical text from two state
+  events is load-bearing, because two ADVENT Troopers really are both called
+  "ADVENT Trooper" and collapsing a double kill loses a kill. Same reasoning as
+  the per-unit world-message rule, applied to the other side of the bridge. ⛔ **`default.X = ...` does not
   compile unless X is a `config` property** — the UnrealScript compiler says
   *"Can't change default values of non-config properties"*, and a static
   producer has no other route to per-class storage, so the queue vars are
@@ -678,6 +725,21 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   enough — visibility is). The difficulty screen's own bottom rows do read
   `Type` = Checkbox, so a screen can hold both kinds at once and "it works on
   the other rows" proves nothing.
+- **A readout that never sounds wrong can still always be wrong — audit its
+  DISTRIBUTION, not its lines.** The tile cursor called every covered edge "high
+  cover" for two months. Every individual line was well-formed, correctly
+  directed and fog-gated; nothing in a log read as a defect. What exposed it was
+  counting: **260 "High cover", zero "Low cover"** in one Gatecrasher run, on a
+  map made of cars and sandbags. A field whose values are enumerable and whose
+  observed range collapses to one value is broken, whatever the lines sound like.
+  So after any live run, shape-count the speech ring — `grep -oP 'TTS!?: "\K[^"]*'
+  X2Access.log | sed 's/[0-9]\+/N/g' | sort | uniq -c | sort -rn` — which in the
+  same pass named the three noisiest wording defects in the build by frequency.
+  A cheap corollary: **when two of our own surfaces answer the same question,
+  make them agree or find out why they don't.** The shot HUD's
+  `DescribeTargetCover` said "in half cover" in that very run while the tile
+  cursor said "High cover"; the two disagreeing was the whole diagnosis, and it
+  is the reason `X2AccessHelper` exists as a shared oracle.
 - **When a control seems not to respond, prove which HALF is broken before
   fixing either.** The above cost a full debugging cycle spent on the write
   path — reading the game's source for `OnSecondWaveOptionClicked`, ruling out
@@ -1221,16 +1283,30 @@ Remaining:
    UISpecialMissionHUD/UITurnOverlay/UITacticalHUD/UIUnitFlagManager/
    UIEventNotices, with no UIReplay). Then: object scanner (comma/period +
    PageUp/Dn reserved), vantage read (V), interact-at-cursor.
-4. Tactical narration and bridge v2 are BUILT (2026-08-20) and awaiting their
-   first live run together with the targeting layer — see **Bridge v2** and
-   **Tactical combat narration** above. Two follow-ups the build deliberately
-   left open: the menu navigator, the tile reader and the `X2Access_Speak`
-   handler still call `TTS` directly rather than `Narrator::Say`, so the
-   scrollback ring holds narration only (harmless today — a recipe attaching
-   drops the tactical queue via `TacticalHUD::OnTick`); and `/tactical`, the
-   dev endpoint that would show mode, gate reasons and the last narration
-   lines, is not built. `just dev-speech` covers most of it already, since it
-   marks interrupting lines with `!`.
+4. Tactical narration and bridge v2 are BUILT (2026-08-20) and **VERIFIED LIVE
+   2026-08-21 on Gatecrasher**, together with the targeting layer, the tile
+   cursor, the object scanner and the shot HUD — see **Bridge v2** and
+   **Tactical combat narration** above. The run also found the ordering defect
+   that fix split across the two visualization windows. Three follow-ups still
+   open: three of the nine events (panic, shields, evac) went unexercised; the
+   menu navigator, the tile reader and the `X2Access_Speak` handler still call
+   `TTS` directly rather than `Narrator::Say`, so the scrollback ring holds
+   narration only (harmless today — a recipe attaching drops the tactical queue
+   via `TacticalHUD::OnTick`); and `/tactical`, the dev endpoint that would show
+   mode, gate reasons and the last narration lines, is not built. `just
+   dev-speech` covers most of it already, since it marks interrupting lines
+   with `!`.
+   Three wording defects the same run exposed, none of them fixed yet and all
+   visible by shape-counting the speech ring (`grep -oP 'TTS!?: "\K[^"]*' |
+   sed 's/[0-9]\+/N/g' | sort | uniq -c` — the cheapest audit this project has):
+   the no-target readout says *"Выстрел, 1 of 5. Нет доступных целей.. No
+   target"* — a doubled full stop and the same fact in two languages, because the
+   localized string already ends in a period and carries the meaning (12×); an
+   impassable tile still reports reachability, *"Impassable. Out of range. 3
+   south, 1 west"*, which is meaningless about a tile nobody can stand on (~99×,
+   the single noisiest line in the run); and recentering says the unit's name
+   three times, *"Shreya Bose. Ally: Shreya Bose. High cover south. Your tile. At
+   Shreya Bose"*.
 5. Events NOT yet narrated, in rough value order: reinforcement drops, the
    Chosen arriving, objective completion, will/panic thresholds, loot. Each is
    one more `AddCHEvent` line; the cost is judgement about spam, not code.

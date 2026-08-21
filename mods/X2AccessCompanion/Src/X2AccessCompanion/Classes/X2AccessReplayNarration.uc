@@ -134,9 +134,12 @@ private function NarrateFrame(XComGameStateHistory History, int Frame)
 	NarrateTurnChange(History, Context, Frame);
 	NarrateAbility(History, Context, Frame);
 
-	// Order matters and mirrors the live listeners' priorities: the shot, then what it did, then
-	// who it killed. A frame carries all three at once, so reading the units after the ability is
-	// what keeps "X shoots Y" ahead of "Y takes 4 damage" ahead of "Y killed".
+	// Order matters: the shot, then what it did, then who it killed. A frame carries all three at
+	// once, so reading the units after the ability is what keeps "X shoots Y" ahead of "Y takes 4
+	// damage" ahead of "Y killed". Walking the frame ourselves gets that for free — the LIVE path
+	// had to be split across the two visualization windows to reach the same order, because the
+	// game triggers damage and death BEFORE the ability that caused them (see
+	// X2AccessTacticalEvents.CreateTacticalNarrationListener).
 	NarrateUnits(History, GameState, Context, Frame);
 	NarrateConcealment(History, GameState, Frame);
 }

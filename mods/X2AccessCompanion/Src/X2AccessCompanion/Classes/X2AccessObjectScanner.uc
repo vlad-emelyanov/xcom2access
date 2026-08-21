@@ -1098,7 +1098,10 @@ private function bool AnyoneConcealed()
 // The interactive object's own words if it has any. GetLootingName() would be the game's answer
 // but it dereferences GetVisualizer() unguarded and an object whose visualizer has not been
 // created yet is a crash — so this does the same read with the null check the game omits.
-private function string InteractiveLabel(XComGameState_InteractiveObject Obj)
+// Static and public: the shot HUD names the same objects when you target one, and a door that is
+// "Взломать дверь" to the scanner and "Hackable object" to the targeting readout is two mods
+// talking about one world. Uses no instance state, so sharing it costs nothing.
+static function string InteractiveLabel(XComGameState_InteractiveObject Obj)
 {
 	local XComInteractiveLevelActor VisActor;
 	local X2AbilityTemplate InteractTemplate;

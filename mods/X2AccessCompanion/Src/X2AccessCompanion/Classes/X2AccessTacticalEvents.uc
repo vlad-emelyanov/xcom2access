@@ -10,12 +10,15 @@
 // path: these listeners resolve out of XCOMHISTORY, which is script-natural work anyway.
 //
 // DEFERRAL is a deliberate per-event choice, not a default:
-//   ELD_OnVisualizationBlockStarted for anything the player WATCHES happen (a shot, damage, a
-//   death) — an event listener otherwise fires at state-submission time, which can be several
-//   seconds ahead of the animation, and narration that runs ahead of the picture reads as a bug.
+//   ELD_OnVisualizationBlockStarted for the ACTION the player watches begin (the ability line) —
+//   an event listener otherwise fires at state-submission time, which can be several seconds ahead
+//   of the animation, and narration that runs ahead of the picture reads as a bug.
+//   ELD_OnVisualizationBlockCompleted for that action's OUTCOME (damage, death), which is when the
+//   flyover and the ragdoll appear. Splitting the two windows is also the only thing that gets
+//   cause spoken before consequence — see the block at AddCHEvent below for why.
 //   ELD_OnStateSubmitted for structural facts (turn handover, concealment, evac). These are not
-//   tied to one animation, and a state that never builds a visualization block would drop an
-//   ELD_OnVisualizationBlockStarted listener on the floor entirely.
+//   tied to one animation, and a state that never builds a visualization block would drop either
+//   visualization-window listener on the floor entirely.
 //
 // PARITY: every line here corresponds to something a sighted player is shown. Events about units
 // XCOM cannot see are dropped (IsNarratable) so narration never leaks position or composition —
@@ -43,12 +46,29 @@ static function CHEventListenerTemplate CreateTacticalNarrationListener()
 	Template.RegisterInTactical = true;
 	Template.RegisterInStrategy = false;
 
-	// Watched-and-visualized. Priority orders listeners for the SAME event only; the order between
-	// events follows the order the game triggers them, which is why each line below is written to
-	// stand on its own rather than continue the previous one.
+	// Watched-and-visualized, and SPLIT ACROSS THE TWO VISUALIZATION WINDOWS — which is what puts
+	// cause before consequence.
+	//
+	// ⛔ Priority orders listeners for the SAME event only. Between different events the order is
+	// the order the GAME triggers them, and that order is the reverse of the one a player needs:
+	// XComGameState_Unit triggers 'UnitTakeEffectDamage' (:5874) and 'UnitDied' (:6022) while the
+	// ability's effects are being applied, and XComGameStateContext_Ability only reaches
+	// 'AbilityActivated' afterwards, under its own "Trigger post-activation events" comment (:191).
+	// Registering all three on one window therefore spoke the outcome before the attack, verified
+	// live 2026-08-21 on Gatecrasher — "ADVENT Soldier killed." then "Jane Kelly: Slash at ADVENT
+	// Soldier, hit.", and worse for damage: you learned you had been shot before you learned by
+	// whom. All three landed in the same 100 ms drain, so the narrator could not reorder what it
+	// could not tell apart.
+	//
+	// The fix is the engine's own two-phase model rather than a queue of ours: the ability line is
+	// the action, so it belongs at block START (where a sighted player sees the shooter raise the
+	// weapon); damage and death are its OUTCOME, so they belong at block COMPLETE (where the
+	// flyover and the ragdoll are). Blocks run sequentially, so this also keeps two abilities
+	// resolving in one burst from interleaving. It is what the game's own HUD does — UIUnitFlagManager
+	// (:55) and UITacticalHUD_Enemies (:68) both take 'AbilityActivated' and 'UnitDied' on Completed.
 	Template.AddCHEvent('AbilityActivated', OnAbilityActivated, ELD_OnVisualizationBlockStarted, 60);
-	Template.AddCHEvent('UnitTakeEffectDamage', OnUnitTakeEffectDamage, ELD_OnVisualizationBlockStarted, 55);
-	Template.AddCHEvent('UnitDied', OnUnitDied, ELD_OnVisualizationBlockStarted, 50);
+	Template.AddCHEvent('UnitTakeEffectDamage', OnUnitTakeEffectDamage, ELD_OnVisualizationBlockCompleted, 55);
+	Template.AddCHEvent('UnitDied', OnUnitDied, ELD_OnVisualizationBlockCompleted, 50);
 
 	// Structural.
 	Template.AddCHEvent('PlayerTurnBegun', OnPlayerTurnBegun, ELD_OnStateSubmitted, 50);

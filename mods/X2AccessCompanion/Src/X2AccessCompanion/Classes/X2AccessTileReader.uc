@@ -164,7 +164,11 @@ function CursorRecenter()
 		return;
 	}
 	SetCursorTile(Cursor, WorldData, UnitState.TileLocation);
-	NativeResult = UnitState.GetName(eNameType_Full) $ "." @ DescribeTile(UnitState.TileLocation, false);
+
+	// No name prefix: DescribeTile's own DescribeUnitsOnTile leads with "Ally: <name>" for the
+	// unit standing here, which on a recenter is always this one. Prefixing it said the name
+	// three times in one line ("Shreya Bose. Ally: Shreya Bose. ... At Shreya Bose").
+	NativeResult = DescribeTile(UnitState.TileLocation, false);
 }
 
 // Re-read the cursor tile, verbose (adds coordinates, explicit "no cover").
@@ -282,6 +286,7 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 	local string Result, UnitPart;
 	local FOWTileStatus FOW;
 	local byte GameplayFlags;
+	local bool bImpassable;
 
 	WorldData = `XWORLD;
 	TilePos = WorldData.GetPositionFromTileCoordinates(Tile);
@@ -301,7 +306,8 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 
 	// Occupied is not impassable: a tile with a live unit on it fails CanUnitsEnterTile, and
 	// speaking "Impassable" over an ally read as a bug in the first live test.
-	if (UnitPart == "" && !WorldData.CanUnitsEnterTile(Tile))
+	bImpassable = (UnitPart == "" && !WorldData.CanUnitsEnterTile(Tile));
+	if (bImpassable)
 		AppendPart(Result, "Impassable");
 	AppendPart(Result, UnitPart);
 
@@ -316,7 +322,12 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 	if (WorldData.IsRampTile(Tile))
 		AppendPart(Result, "Ramp");
 
-	AppendPart(Result, DescribeReachability(Tile));
+	// "Impassable. Out of range." says one thing twice — a tile nobody can stand on has no
+	// reachability to report, and this was the single noisiest line of the 2026-08-21 run
+	// (~99 of them, against 23 actual moves). Sweeping the cursor along a wall should cost one
+	// word per tile, not three.
+	if (!bImpassable)
+		AppendPart(Result, DescribeReachability(Tile));
 	AppendPart(Result, DescribeOffset(Tile));
 
 	if (bVerbose)
@@ -328,7 +339,16 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 }
 
 // Per-edge cover in compass words, named directly by the engine's own cover-flag order
-// (COVER_North bit 0 → "north", low cover the same order four bits up).
+// (COVER_North bit 0 → "north", the matching height bit four bits up).
+//
+// ⛔ THE TWO BIT GROUPS ARE NOT ALTERNATIVES. COVER_<dir> means "this edge HAS cover";
+// COVER_<dir>Low is a HEIGHT MODIFIER on it, set only when that same cover is low. A low-cover
+// edge therefore has BOTH bits, and testing the direction bit first with an `else if` reports
+// every covered edge as high — which is exactly what shipped: 260 "High cover" and not one
+// "Low cover" across a whole Gatecrasher run (live 2026-08-21), on a map that is mostly cars
+// and sandbags. The game's own reading is X2AbilityToHitCalc_StandardAim.GetCoverTypeForTile
+// (:934), comment included: "if the cover flags in the specified direction don't have the low
+// cover flag, then it is high cover". Presence first, height second — never one or the other.
 private function string DescribeCoverEdges(vector TilePos, bool bVerbose)
 {
 	local XComWorldData WorldData;
@@ -346,10 +366,17 @@ private function string DescribeCoverEdges(vector TilePos, bool bVerbose)
 	Result = "";
 	for (Dir = 0; Dir < 4; Dir++)
 	{
-		if ((CP.Flags & (class'XComWorldData'.const.COVER_North << Dir)) != 0)
-			AppendPart(Result, "High cover" @ CardinalWord(Dir));
-		else if ((CP.Flags & (class'XComWorldData'.const.COVER_NLow << Dir)) != 0)
-			AppendPart(Result, "Low cover" @ CardinalWord(Dir));
+		if ((CP.Flags & (class'XComWorldData'.const.COVER_North << Dir)) == 0)
+			continue; // no cover at all on this edge
+
+		// FULL/HALF, not HIGH/LOW. The engine's flag is named "low" but the game's own UI, the
+		// shot readout's DescribeTargetCover and the player all say full/half cover — and this
+		// surface and that one describe the same wall. Two vocabularies for one fact is how you
+		// get a player who cannot tell whether the mod is contradicting itself.
+		if ((CP.Flags & (class'XComWorldData'.const.COVER_NLow << Dir)) != 0)
+			AppendPart(Result, "Half cover" @ CardinalWord(Dir));
+		else
+			AppendPart(Result, "Full cover" @ CardinalWord(Dir));
 	}
 	if (Result == "" && bVerbose)
 		Result = "No cover";
@@ -415,8 +442,12 @@ private function string DescribeOffset(TTile Tile)
 	UnitState = ActiveUnitState();
 	if (UnitState == none)
 		return "";
+
+	// DescribeReachability already answered this tile with "Your tile", and it is appended just
+	// ahead of us on every path that reaches here. Naming the unit a second time ("At Shreya
+	// Bose") said the same fact in different words — and on a recenter, the third time in one line.
 	if (SameTile(Tile, UnitState.TileLocation))
-		return "At" @ UnitState.GetName(eNameType_Full);
+		return "";
 	return OffsetWords(UnitState.TileLocation, Tile);
 }
 
@@ -680,8 +711,21 @@ private function AppendPart(out string Result, string Part)
 	if (Part == "")
 		return;
 	if (Result != "")
-		Result $= ". ";
+		Result $= EndsSentence(Result) ? " " : ". ";
 	Result $= Part;
+}
+
+// Localized game strings routinely arrive with their own terminator ("Нет доступных целей."), and
+// blindly adding ours produced ".." — which some screen readers pause on twice and others read as
+// an ellipsis. Public and static so every surface that joins game text to ours punctuates alike.
+static function bool EndsSentence(string Text)
+{
+	local string Last;
+
+	if (Text == "")
+		return false;
+	Last = Right(Text, 1);
+	return Last == "." || Last == "!" || Last == "?";
 }
 
 static function AppendComma(out string Result, string Part)
