@@ -31,6 +31,20 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   **Text-entry dialog**). ⛔ An observer runs INSIDE the window procedure and
   may do nothing but RECORD: no engine memory, no speech, no outbound calls —
   the same rule a claim's `activeWhen` follows. Act on the game tick.
+  ⛔ **A GLOBAL claim — one with no `activeWhen`, live on every screen in every
+  layer — has to earn the WHOLE keyboard, not just the screens it was tested
+  on.** `src/input.cpp` holds exactly one now (`?`, navigation help). It used to
+  hold five more: F1 status, F2 help, F3 engine info, F4 event-discovery logging
+  and Ctrl+Shift+S speech mute — all testing scaffolding from before the dev
+  harness, all retired 2026-08-21 because the harness answers each of them
+  better (`/health`, `/speech`, `/log`) and without spending a chord. Retiring
+  them also fixed a real theft nobody had noticed: **F2/F3/F4 are live game keys
+  in the Avenger** — `UIFacilityStaffContainer.OnUnrealCommand` maps
+  `FXS_KEY_F2..F4` to "activate staff slot 0..2" with no `` `ISCONTROLLERACTIVE ``
+  gate, so on mouse+keyboard they are the game's own direct route into staffing a
+  facility, and we swallowed all three for as long as they shipped. F1-F8 are
+  the shot HUD's target hotkeys too (`UITacticalHUD.uc:432`), which is what the
+  tactical section already promised we left alone and, until now, did not.
 - **Speech**: `src/tts.cpp` wraps **Prism** (was SRAL until 2026-08-20 — same
   library and same pin as CyberAccess, so a speech bug reproduces across both
   mods). All speech in the project goes through it. Speak the focused item only;
@@ -496,10 +510,11 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   screen reader can see, so nothing echoes their own keystrokes back. ⛔ It is
   NOT a graph recipe and it claims NOTHING: a recipe attaching turns on the
   navigator's arrows, Enter, Space, Tab, Home and End, every one of which the
-  player is using to type or to answer — and there is no spare chord for a
-  read-back key either (`F1`-`F4`, `?` and Ctrl+Shift+S are claimed globally in
-  `src/input.cpp`; everything else is a text-editing key). It **observes and
-  reads**: `InputArbiter::RegisterObserver` (a passive fan-out added for this)
+  player is using to type or to answer — and a read-back key would answer the
+  wrong question anyway: what the player needs is the echo of the key they just
+  pressed, which no on-demand chord can give. (`?` is the one global claim left
+  in `src/input.cpp`; every other free key here is a text-editing key.) It
+  **observes and reads**: `InputArbiter::RegisterObserver` (a passive fan-out added for this)
   records that a key happened, and the field itself answers what it did.
   **The Flash side is READABLE — measured live** (see
   `docs/save-load-recon.md` §7.1 for the table): AS2's global `Selection` class
