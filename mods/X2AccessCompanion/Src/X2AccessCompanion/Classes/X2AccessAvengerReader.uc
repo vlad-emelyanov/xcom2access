@@ -192,6 +192,7 @@ private function EnsureNavigationGrid(UIFacilityGrid Grid)
 	`log("X2Access: Avenger navigation grid installed;"
 		@ "overlay 0 targets=" $ string(Grid.FacilityOverlays[0].Navigator.NavigationTargets.Length)
 		@ "selected=" $ string(Grid.Navigator.SelectedIndex), , 'X2Access');
+	LogRoomGeometry(Grid);
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +206,7 @@ private function EnsureNavigationGrid(UIFacilityGrid Grid)
 private function string DescribeSelection(UIFacilityGrid Grid, int Index)
 {
 	local UIFacilityGrid_FacilityOverlay Overlay;
-	local string Result;
+	local string Result, Condition, Status;
 
 	if (Index < 0 || Index >= Grid.FacilityOverlays.Length)
 		return "";
@@ -214,13 +215,24 @@ private function string DescribeSelection(UIFacilityGrid Grid, int Index)
 	if (Overlay == none)
 		return "";
 
+	Condition = DescribeCondition(Overlay);
+	Status = Overlay.Status;
+
+	// The condition word and the status line can be the SAME word, taken twice off the same
+	// widget: the moment a room is merely un-excavated rather than tutorial-locked, the game
+	// puts m_strLocked into the status line, and that is exactly what DescribeCondition read.
+	// InStr rather than equality because the build-mode branch wraps it in GetColoredText
+	// markup, which is still present at this point (native strips it after we return).
+	if (Condition != "" && InStr(Status, Condition) != INDEX_NONE)
+		Status = "";
+
 	// The name first when the game is showing one, then always the position: the highlight box
 	// is what a sighted player reads the selection off, and its place in the ship is the part
 	// of that they can see even when no title is drawn.
 	Result = Overlay.Label;
 	AppendPart(Result, PositionWords(Index));
-	AppendPart(Result, DescribeCondition(Overlay));
-	AppendPart(Result, Overlay.Status);
+	AppendPart(Result, Condition);
+	AppendPart(Result, Status);
 	AppendPart(Result, Overlay.Queue);
 	AppendPart(Result, DescribeStaffIcons(Overlay));
 
@@ -237,17 +249,33 @@ private function string DescribeSelection(UIFacilityGrid Grid, int Index)
 // scanner's tower category naming its own gate instead of claiming the map is empty.
 private function string DescribeCondition(UIFacilityGrid_FacilityOverlay Overlay)
 {
+	// The two words the WIDGET already owns, localized. Reading them off the overlay instead of
+	// writing our own English is the same rule as everything else in this class, and it matters
+	// more here than it looks: the first live run spoke "Мостик. top right" and
+	// "row 3, column 3. locked" to a player whose game is Russian. m_strLocked is literally what
+	// the game prints in the status line once a room is un-excavated rather than tutorial-locked,
+	// so on that room this stops being our gloss and becomes the screen's own text.
 	if (Overlay.bLocked)
-		return "locked";
+		return Overlay.m_strLocked;
 	if (Overlay.bUnderConstruction)
-		return "under construction";
+		return Overlay.m_strUnderConstruction;
+
+	// Clearing needs no word of ours: UpdateClearingRoom puts Room.GetClearingInProgressLabel()
+	// straight into strTitle — unconditionally, not focus-gated — so Label already says
+	// "РАСЧИСТКА ИНОПЛАНЕТНЫХ ОБЛОМКОВ" and repeating it would be noise. The fallback covers the
+	// one case that leaves no title: a cleared flag with the project already gone.
 	if (Overlay.m_bClearing)
-		return "being cleared";
+		return Overlay.Label != "" ? "" : "being cleared";
 
 	// The orange border. On a built or core facility eUIState_Warning means exactly
 	// Facility.NeedsAttention() (UpdateFacility / UpdateCoreFacility), and unlike the room's
 	// name it is drawn whether or not the room is focused — so it is part of the at-a-glance
 	// read a sighted player gets from the ant farm without hovering anything.
+	//
+	// ⚠ English, unavoidably: this one is a gloss of a BORDER COLOUR and the game ships no
+	// string for it — the whole overlay localization block has none. Same for the position and
+	// staff phrasing below. Those are the words a companion-side vocabulary would own, which is
+	// a decision rather than a fix; the two above needed neither.
 	if (Overlay.BGColor == class'UIUtilities_Colors'.static.GetHexColorFromState(eUIState_Warning))
 		return "needs attention";
 
@@ -323,13 +351,27 @@ private function string CountedSlots(int Count, string Kind)
 // Where the highlight box is, in words.
 //
 // Derived from the CARDINAL half of InitializeNavigationGrid's own adjacency graph (the 51
-// diagonal links are FXS_VIRTUAL_LSTICK_DIAG_* only and have no keyboard chord at all), so this
-// is the game's own layout precomputed, not a sketch of one: the buildable core is 3 wide and 4
-// tall at indices 3..14 row-major, the Power Core sits to the left of the whole core, two rooms
-// sit above it and three down its right side.
+// diagonal links are FXS_VIRTUAL_LSTICK_DIAG_* only and have no keyboard chord at all), so the
+// buildable core is EXACT: it is 3 wide and 4 tall at indices 3..14 row-major, and every one of
+// those rooms' Left/Right/Up/Down links agrees with the row and column printed here.
 //
-// ⚠ These are POSITIONS, never facility names. The seven fixed rooms have names the game shows
-// only on focus, and the overlay's own Label is the only place this class takes them from.
+// ⚠ The seven fixed rooms are the graph's relations put into WORDS, and that step is a
+// judgement rather than a measurement. The first live run caught one: slot 15 read "top right"
+// while slot 2 read "right side, upper", even though the graph has 15 -> Right -> 2, so 15
+// cannot be the rightmost thing on the top row. The row now reads left / middle / right across
+// 0, 15, 2, and the right-hand column reads top / middle / bottom down 2, 18, 17.
+//
+// The durable fix is to stop guessing: LogRoomGeometry below dumps every overlay's own
+// m_RoomLocation once per grid, so the next live run hands us the real coordinates and this
+// table can be replaced with words derived from them.
+//
+// ⛔ These are POSITIONS, never facility names — and the live run showed why that matters more
+// than it seemed. InitializeNavigationGrid's local variables call slot 1 "PowerCore", slot 2
+// "Hangar" and slot 17 "Storage", but the player hears "Исследовательский отсек", "Оружейная"
+// and "Инженерный отсек". Firaxis' own shortcutRoomIndices comments (1 //Research, 17
+// //Engineering, 2 //Armory) agree with the player, not with their own variable names. A name
+// table built from the source would have been wrong for three of seven rooms; the overlay's own
+// Label is the only place this class takes a name from.
 private function string PositionWords(int Index)
 {
 	local int Row, Column;
@@ -344,14 +386,41 @@ private function string PositionWords(int Index)
 	switch (Index)
 	{
 	case 0:  return "top left";
-	case 15: return "top right";
+	case 15: return "top middle";
+	case 2:  return "top right";
 	case 16: return "upper left";
 	case 1:  return "far left";
-	case 2:  return "right side, upper";
-	case 18: return "right side, middle";
-	case 17: return "right side, lower";
+	case 18: return "middle right";
+	case 17: return "lower right";
 	}
 	return "";
+}
+
+// One line naming every overlay's world position, emitted once when the graph is installed.
+//
+// This exists to retire the guesswork in PositionWords: the ant farm is a camera view of real
+// rooms, m_RoomLocation is the room's own location (InitFacilityOverlay takes it straight from
+// RoomState.GetLocation()), and a single dump of all 19 is enough to work out which world axis
+// is screen-horizontal — the Left/Right links say which direction each axis runs — and to
+// replace seven hand-written phrases with measured ones. RoomMapIndex rides along because the
+// whole index scheme rests on FacilityOverlays being sorted into MapIndex order, and this is
+// the cheapest possible check of that assumption.
+private function LogRoomGeometry(UIFacilityGrid Grid)
+{
+	local int i;
+	local string Line;
+	local Vector Loc;
+
+	for (i = 0; i < Grid.FacilityOverlays.Length; i++)
+	{
+		if (Grid.FacilityOverlays[i] == none)
+			continue;
+		Loc = Grid.FacilityOverlays[i].m_RoomLocation;
+		Line $= " " $ string(i) $ "/" $ string(Grid.FacilityOverlays[i].RoomMapIndex)
+			$ ":(" $ string(int(Loc.X)) $ "," $ string(int(Loc.Y)) $ "," $ string(int(Loc.Z)) $ ")";
+	}
+
+	`log("X2Access: Avenger room geometry (slot/mapIndex:x,y,z)" $ Line, , 'X2Access');
 }
 
 // ---------------------------------------------------------------------------

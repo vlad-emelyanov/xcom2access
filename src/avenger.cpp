@@ -51,6 +51,14 @@ void Call(const char* funcName, Narrator::Channel channel)
     }
     std::string result
         = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
+
+    // Strip markup. The strategy layer's own text is COLOURED — GetQueueMessage hands the
+    // Armory's crew line back as "Солдаты: <font color='#53b45e'>Доступно: 11, </font>…" and
+    // UpdateLockedRoom runs m_strLockedLabel through GetColoredText — so every one of those
+    // tags reached speech verbatim on the first live run. The colours carry no information the
+    // words do not (the counts are already labelled), which is why this is a strip rather than
+    // the translation the tutorial reader's <img> markup needs.
+    result = GameUI::CleanText(result);
     if (!result.empty())
         Narrator::Say(channel, result);
 }

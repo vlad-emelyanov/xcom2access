@@ -377,9 +377,10 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   before it is spoken: a stale frame cannot, a real obstruction always does.
 
 - **Avenger ant farm** (`src/avenger.cpp` + companion `X2AccessAvengerReader.uc`, phase 1 built
-  2026-08-21 and **not yet run live**; recon in `docs/avenger-view-recon.md`, §11 is what was
-  built): the first surface where the game already HAS the keyboard navigation and merely never
-  turns it on. `UIFacilityGrid.InitScreen` builds its whole eight-way room adjacency graph inside
+  AND VERIFIED LIVE 2026-08-21 — 82 arrow presses walked the hardcoded graph, every room read its
+  name, no crash and no script warning; recon in `docs/avenger-view-recon.md`, §11 is what was
+  built and §12 is the run): the first surface where the game already HAS the keyboard navigation
+  and merely never turns it on. `UIFacilityGrid.InitScreen` builds its whole eight-way room adjacency graph inside
   `` `if( `ISCONTROLLERACTIVE) `` — and that macro is **not a hardware check**, it is the 2D
   movie's mouse-active flag (`Core/Globals.uci:207`). ⛔ Do NOT flip the flag: mouse-inactive mode
   changes which HUD the game builds (the same reason the tile cursor uses a swallow instead of
@@ -424,6 +425,24 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   re-announces (never contends with the tile cursor's or the shot HUD's `Delete` — those gate on
   tactical), displacing only `[Engine.PlayerInput]`'s `Toggledebugcamera`, which stays reachable
   at `Ctrl+Delete` for free.
+  Three things the first live run settled. ⛔ **The source's own room names are WRONG and the
+  overlay's are right**: `InitializeNavigationGrid` calls slot 1 `PowerCore`, slot 2 `Hangar` and
+  slot 17 `Storage`, but the player hears *Исследовательский отсек*, *Оружейная* and *Инженерный
+  отсек* — and Firaxis' own `shortcutRoomIndices` comments in the same function (`1 //Research`,
+  `17 //Engineering`, `2 //Armory`) side with the player. A name table built from the source would
+  have been wrong for three of seven fixed rooms, so do NOT "simplify" the `Label` read into a
+  lookup. **The strategy layer's text is COLOURED** — `GetQueueMessage` returns
+  `Солдаты: <font color='#53b45e'>Доступно: 11, </font>…` and `UpdateLockedRoom` runs
+  `m_strLockedLabel` through `GetColoredText` — so `NativeResult` goes through `GameUI::CleanText`;
+  a STRIP, not the translation the tutorial reader's `<img>` markup needs, because the colours
+  carry nothing the labelled numbers do not. And **the condition words come off the widget too**:
+  `m_strLocked` ("[НЕДОСТУПНО]") and `m_strUnderConstruction` ("ИДЕТ СТРОИТЕЛЬСТВО") are localized
+  AND, for an un-excavated room, literally what the game prints in the status line — which is why
+  `Status` is dropped when it CONTAINS the condition (`InStr`, not equality: the build-mode branch
+  wraps it in markup). Clearing emits no word at all, because `UpdateClearingRoom` sets `strTitle`
+  unconditionally and `Label` already says it. ⚠ What stays English is what the game ships no
+  string for: `needs attention` (a gloss of a border colour), the position phrases and the staff
+  phrasing — a companion-side vocabulary is the open decision there, not a bug.
 
 - **Save / load** (`src/game_ui.cpp` + the save/load recipe in
   `menu_navigator.cpp` + companion `X2AccessSaveReader.uc`, built AND VERIFIED
@@ -1620,27 +1639,30 @@ Remaining:
    `XComGameState_Ability.GetUISummary_HackingBreakdown`, the spoken form of the
    mouse-hover-only `UITacticalHUD_HackingTooltip`, so a player can judge a hack
    before spending the action point.
-10. The Avenger's ant farm is BUILT (2026-08-21, see **Avenger ant farm** above;
-    recon and the phase-1 write-up in `docs/avenger-view-recon.md`, §11) and
-    awaits its first live run — the ungate itself was already confirmed live
-    2026-08-20 through `/call`, so what is unproven is the narration around it.
-    Four things the first run has to check: that the announcement fires at all
-    (`just dev-log` should carry `Avenger: ant farm active` and
-    `Avenger navigation grid installed`); that a RESTING MOUSE does not steal the
-    selection back (nothing re-pushes per frame the way `Mouse_CheckForPathing`
-    does in tactical, but a pointer sitting over a room while we navigate is the
-    case to try); that leaving and re-entering the grid re-announces (the C++
-    falling-edge poll is what lets the companion see the screen go); and — the
-    one thing only a screenshot settles — whether the seven fixed rooms' POSITION
-    phrases match where those rooms actually are. The buildable core's
-    `row R, column C` is exact (indices 3-14, row-major, from the graph itself);
-    the outer ring's wording is the graph's relations put into words and is the
-    part to improve. Post-tutorial, re-measure whether `Label` populates on
-    keyboard focus as predicted — that is what makes rooms speak their names, and
-    it cannot be observed while the whole ship is `bTutorialLocked`. Then the
-    rest of the layer: inside a room (`UIFacility` + 22 subclasses, staff slots),
-    the resource strip, the to-do widget and the event queue — §2 and §4 of the
-    recon, all of which are retained-widget reads rather than new offsets.
+10. The Avenger's ant farm is BUILT and VERIFIED LIVE (2026-08-21, see **Avenger
+    ant farm** above; `docs/avenger-view-recon.md` §11 is the design, §12 the
+    run). Three bugs were found and fixed the same day — markup reaching speech,
+    English condition words the widget already owned localized, and one position
+    phrase that contradicted the graph. What is still unexercised, in order of
+    how much it costs a player:
+    **Inside a room is TOTAL SILENCE** — Down x7 and Up x4 in the Commander's
+    Quarters produced nothing, because `UIFacility`'s navigator is empty when the
+    room has no staff slots (recon gap 3). A player can now navigate TO a room
+    and go blind on arrival, which makes this the next piece of work, not a
+    polish item. **The countdown path has never run**: `Status` was empty on
+    every single read because nothing on the ship was building, so construction
+    time, "PAUSED" and clearing are all unproven. **`Delete` was never pressed**
+    (no `vk 0x2E` in the log), so the re-announce key is untested.
+    One measurement is already instrumented and needs no setup: `LogRoomGeometry`
+    dumps every overlay's own `m_RoomLocation` plus `RoomMapIndex` once per grid
+    install, so the NEXT run hands over the real coordinates. Use them to replace
+    the seven hand-written position phrases for the fixed rooms with measured
+    ones (the buildable core's `row R, column C` is already exact, straight from
+    the graph) — and to check, for the first time, that `FacilityOverlays` really
+    is sorted into MapIndex order, which the whole index scheme assumes.
+    Then the rest of the layer: inside a room (`UIFacility` + 22 subclasses,
+    staff slots), the resource strip, the to-do widget and the event queue — §2
+    and §4 of the recon, all retained-widget reads rather than new offsets.
 
 When researching for this project, focus on engine/native/UE3 technicals.
 Do not survey the accessibility-mod landscape — the author knows it better

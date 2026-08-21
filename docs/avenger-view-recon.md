@@ -896,3 +896,102 @@ outer ring's wording is the part that could be improved.
    the same read-back-the-write check that settled the Second Wave checkboxes.
 4. **Leaving and re-entering the grid re-announces** (the falling-edge poll).
 5. Post-tutorial: does `Label` populate on keyboard focus as §6.1 predicts?
+
+---
+
+## 12. ✅ FIRST LIVE RUN (2026-08-21) — it works, and what it taught
+
+Session 12:29–12:41, early campaign (post-tutorial, ship partly unlocked).
+82 arrow presses, 66 spoken lines, no crash, no script warning.
+
+### Confirmed
+
+- **The ungate lands, once.** `Launch.log`:
+  `Avenger navigation grid installed; overlay 0 targets=13 selected=15` — both
+  numbers exactly as §6.1 predicted from source (13 = Right + Down +
+  DiagDownRight; 15 = the CIC), emitted immediately after the loading movie
+  ended and never repeated.
+- **Arrows walk the graph.** Every traced move matched the hardcoded adjacency,
+  including `Left`/`Right`, which the pre-ungate linear fallback cannot do
+  (`HorizontalNavigation = false`).
+- **Edge silence works.** Left from the Living Quarters, Right from the Armory,
+  Up from the Commander's Quarters — all correctly produced nothing.
+- **§6.1's room-name prediction is TRUE**, it was only invisible in the
+  tutorial: Мостик, Жилой отсек, Оружейная, Бар/Мемориал, Инженерный отсек,
+  Каюта шефа, Исследовательский отсек all read on keyboard focus.
+- **`needs attention` is real and correct** — it fired on the Armory, whose
+  queue line explains it (11 available, 1 wounded).
+- **The falling-edge poll works**: entering the Commander's Quarters logged
+  `blocker 'UIFacility_CIC'`, and coming back re-announced the room.
+- **No `Accessed None` spam** from `OnSelectedRoomChanged` across ~100 moves
+  over empty rooms — the risk §6.1 flagged is a non-issue. **No mouse steal**
+  either.
+
+### ⛔ The source's room names are wrong; the overlay's are right
+
+`InitializeNavigationGrid` calls slot 1 `PowerCore`, slot 2 `Hangar` and slot 17
+`Storage`. Live, those three rooms read **Исследовательский отсек**,
+**Оружейная** and **Инженерный отсек**. Firaxis' own `shortcutRoomIndices`
+comments in the same function (`1 //Research`, `17 //Engineering`, `2 //Armory`)
+agree with the player, not with their own variable names.
+
+**A name table built from the source would have been wrong for three of seven
+fixed rooms.** This is the strongest possible vindication of taking every name
+from the overlay's own `Label` — and the reason a future session must not
+"simplify" it into a lookup.
+
+### Three bugs found and fixed the same day
+
+1. **HTML markup reached speech.** The Armory spoke
+   `"…Солдаты: <font color='#53b45e'>Доступно: 11, </font>…"` —
+   `GetQueueMessage` returns colour-tagged text, and `UpdateLockedRoom` runs
+   `m_strLockedLabel` through `GetColoredText` too. Fixed by running
+   `NativeResult` through `GameUI::CleanText` in `avenger.cpp`. A **strip**, not
+   the translation the tutorial reader's `<img>` markup needs: the colours carry
+   nothing the labelled numbers do not.
+2. **Half-translated output** — *"Мостик. top right"*, *"row 3, column 3.
+   locked"* to a player whose game is Russian. Two of the three condition words
+   were ours when the widget already owned them:
+   `m_strLocked` = "[НЕДОСТУПНО]" and `m_strUnderConstruction` =
+   "ИДЕТ СТРОИТЕЛЬСТВО". `m_strLocked` is not merely a translation — it is
+   literally what the game prints in the status line once a room is
+   un-excavated rather than tutorial-locked, so on that room our gloss becomes
+   the screen's own text. Clearing now emits **no** word at all: its
+   `strTitle` is set unconditionally to `Room.GetClearingInProgressLabel()`, so
+   `Label` already says it.
+   That created a duplication risk (the same word from the widget twice, once
+   as our condition and once in `Status`), so `DescribeSelection` now drops
+   `Status` when it contains the condition — `InStr`, not equality, because the
+   build-mode branch wraps it in markup.
+   ⚠ Still English and unavoidably so: **`needs attention`** (a gloss of a
+   border colour; the overlay's whole localization block has no such string),
+   the position phrases and the staff phrasing. Those are what a companion-side
+   vocabulary would own — a decision, not a fix.
+3. **A position phrase contradicted the graph.** Slot 15 read "top right" while
+   slot 2 read "right side, upper", but the graph has 15 → Right → 2, so 15
+   cannot be the rightmost thing on the top row. The top row now reads
+   left / middle / right across 0, 15, 2 and the right column reads
+   top / middle / bottom down 2, 18, 17.
+
+### Instrumented, not guessed: room geometry
+
+The seven fixed rooms' phrases remain the one part of this that is judgement
+rather than measurement. `LogRoomGeometry` now dumps every overlay's own
+`m_RoomLocation` (plus `RoomMapIndex`) once per grid install, so **the next live
+run hands over the real coordinates for free.** The Left/Right links say which
+direction each world axis runs, which is enough to replace all seven phrases
+with measured ones — and `RoomMapIndex` rides along because the whole index
+scheme rests on `FacilityOverlays` being sorted into MapIndex order, and that
+assumption has never actually been checked.
+
+### Still untested / still missing
+
+- **`Delete` was never pressed** (no `vk 0x2E` in the log). Re-announce
+  unexercised.
+- **`Status` was empty every single time.** Construction countdowns, "PAUSED",
+  clearing — nothing on the ship was building. The whole countdown path is
+  unexercised.
+- **Inside a room: total silence.** After entering the Commander's Quarters,
+  Down ×7 and Up ×4 produced nothing — recon gap 3, `UIFacility`'s navigator is
+  empty when the room has no staff slots. **This is now the biggest hole in the
+  layer:** a player can navigate *to* a room and go blind on arrival.
