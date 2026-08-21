@@ -1772,7 +1772,54 @@ would build a different facility from the one just spoken. A disabled row is
 passed through rather than refused: `OnAccept` re-tests and plays its own
 refusal, which keeps the refusal where the game can be right about why.
 
-## 16.4 Known gaps (Avenger layer)
+## 16.4 ✅ FIRST LIVE RUN (2026-08-21) — and the gate that was only half a gate
+
+The choose-facility recipe worked on the first press:
+
+    22:25:21  passed vk 0x0D to the game
+    22:25:22  found UIChooseFacility instance
+    22:25:22  TTS: "ПОСТРОИТЬ ОТСЕК, ВЫБЕРИТЕ ОТСЕК"
+    22:25:22  TTS: "Центр подготовки, button, 1 of 6"
+    22:25:22  MenuNavigator: attached to choose facility (6 focus targets)
+
+Six facilities by name with *Мастерская* flagged unavailable, and Tab gave the
+card line by line: *125 Материалы*, *ЭНЕРГИЯ: -3.0000*, *ВРЕМЯ СТРОИТЕЛЬСТВА,
+12 дн.*, *ЕЖЕМЕСЯЧНАЯ СТОИМОСТЬ ОБСЛУЖИВАНИЯ: §30*, then the write-up.
+
+⛔ `-3.0000` — UnrealScript's `Abs` is FLOAT, so `string()` on its result prints
+four decimals. The game's own line wraps it in `int()`; dropping that cast was
+the whole bug. Fixed the same day.
+
+**But the same session found build mode silent**, and that one is the more
+instructive failure. The gate for the ant farm exists in BOTH halves:
+`ReadAvengerGate` in C++ had been taught (§13) to tolerate `UIBuildFacilities`
+sitting above the grid, but the companion's own `GetGrid` had not:
+
+    Grid = UIFacilityGrid(Stack.GetCurrentScreen());   // UIBuildFacilities in build mode -> none
+
+So native said *go ahead* on every 150 ms poll while script said *not on the
+grid*. Measured: ten arrow presses over four seconds, the gate logging ACTIVE
+throughout, and not one word spoken — and because the `none` branch is the "left
+the ant farm" branch, it cleared `bWasOnGrid` too, forgetting where the cursor
+had been.
+
+**A gate is only as good as its other half.** When a surface has a native gate
+AND a script gate, changing one is changing half a rule.
+
+The fix reads `` `HQPRES.m_kFacilityGrid ``, which is not a guess about layering
+— it is the exact object `UIBuildFacilities.OnUnrealCommand` forwards its keys
+to. After it, build mode reads the line the mode exists for:
+
+    Инопланетные обломки. row 2, column 1. [НЕДОСТУПНО]. РАСЧИСТИТЕ СОСЕДНИЙ ОТСЕК, ЧТОБЫ РАЗБЛОКИРОВАТЬ
+    Инопланетные обломки. row 1, column 1. Расчистить инопланетные обломки. НАГРАДА: Материалы x21
+    Открытая энергокатушка. row 3, column 2. [НЕДОСТУПНО]
+
+One wording defect the same ring gave up: *"5 дн.. 1 of 1 staff slots filled"* —
+a doubled full stop. The ant farm is narrate-only, so it joins its own phrases
+and never inherited the kernel's `AppendPhrase` rule. Any surface composing
+speech outside a graph recipe owes the same check.
+
+## 16.5 Known gaps (Avenger layer)
 
 - `UIFacility_Infirmary` spawns its own `PatientList` (`UIList`) — the only
   facility subclass that adds navigable content of its own. Unread.

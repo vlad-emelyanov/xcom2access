@@ -482,6 +482,24 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   dirty check immediately before the matching Flash op, so the retained value IS what Flash was
   last told, and the class holds not one `XCOMHISTORY` access. That is what buys parity for free:
   the room NAME is set under `if( bIsFocused )`, so it appears exactly when the game shows it.
+  ⛔ **BUILD MODE PUTS A SCREEN ON TOP OF THE GRID, AND BOTH HALVES OF THE GATE HAVE TO KNOW.**
+  `ReadAvengerGate` was taught to tolerate `UIBuildFacilities` (see the debris-room bullet); the
+  COMPANION's own `GetGrid` was not, and resolved the grid as
+  `UIFacilityGrid(GetCurrentScreen())` — which in build mode is `UIBuildFacilities`, so the cast
+  answered `none`, `PollGrid` bailed on its first line, and the "left the ant farm" branch cleared
+  `bWasOnGrid` as well. Native said *go ahead* ten times a second while script said *not on the
+  grid*: measured live 2026-08-21 as ten arrow presses with the gate ACTIVE and not one word
+  spoken, on the one screen where a player is choosing a room to build in. The fix reads
+  `` `HQPRES.m_kFacilityGrid `` — not a guess about layering but the very object
+  `UIBuildFacilities.OnUnrealCommand` forwards its keys to. **A gate is only as good as its other
+  half**; when a surface has a native gate AND a script gate, changing one is changing half a
+  rule. What it restored is the line the mode exists for: `strLabel` is where `UpdateEmptyRoom`
+  puts *ПОСТРОИТЬ ОТСЕК* and `UpdateLockedRoom` puts *[НЕДОСТУПНО]*, and the run after the fix
+  read *"Инопланетные обломки. row 2, column 1. [НЕДОСТУПНО]. РАСЧИСТИТЕ СОСЕДНИЙ ОТСЕК, ЧТОБЫ
+  РАЗБЛОКИРОВАТЬ"* and *"Расчистить инопланетные обломки. НАГРАДА: Материалы x21"*.
+  ⛔ The ant farm is narrate-only, so it joins its OWN phrases and had to be given the
+  `AppendPhrase` rule by hand — it was voicing *"5 дн.. 1 of 1 staff slots filled"* at a room
+  being cleared. Any surface that composes speech outside a graph recipe owes the same check.
   Two parity rulings from the live pass, and they go OPPOSITE ways. ⛔ A tutorial-locked room's
   name must NOT be spoken — `UpdateTutorialLocked()` is the one update branch that sets no title
   in any case, focused or not, and a screenshot confirmed a sighted player selecting that room is
@@ -773,8 +791,10 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
 
 - **Choosing what to build in a room** (`FindChooseFacilityScreen`/`ReadChooseFacility` in
   `src/game_ui.cpp` + the `choose facility` recipe in `menu_navigator.cpp` + companion
-  `X2AccessBuildFacilityReader.uc`, built 2026-08-21, **not yet run live**; recon
-  `docs/avenger-view-recon.md` §16): `UIChooseFacility`, the screen build mode's Enter opens and
+  `X2AccessBuildFacilityReader.uc`, built AND **VERIFIED LIVE 2026-08-21** — six facilities read
+  by name with the greyed one flagged, and Tab gave the whole card: *125 Материалы*,
+  *ЭНЕРГИЯ: -3*, *ВРЕМЯ СТРОИТЕЛЬСТВА, 12 дн.*, *ЕЖЕМЕСЯЧНАЯ СТОИМОСТЬ ОБСЛУЖИВАНИЯ: §30* and the
+  write-up; recon `docs/avenger-view-recon.md` §16): `UIChooseFacility`, the screen build mode's Enter opens and
   the only route by which a facility ever gets onto the Avenger. ⛔ **It LOOKS like a commodity
   screen and is not one**: a `UIList` beside a panel of cost, power, upkeep, time, requirements
   and a description — but it `extends UIScreen` rather than `UIInventory`, so

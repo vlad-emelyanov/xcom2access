@@ -467,20 +467,38 @@ private function UIFacilityGrid GetGrid()
 	return Grid;
 }
 
-private function AppendPart(out string Result, string Part)
+// ⛔ NEVER join two spoken phrases with a bare separator — the kernel's AppendPhrase rule, which
+// every graph recipe inherits and the ant farm, being narrate-only, has to apply itself. The
+// game ends plenty of its own strings with '.', '!', '?' or ':', and blind joining voiced
+// "5 дн.. 1 of 1 staff slots filled" at the player (measured live 2026-08-21, on a room being
+// cleared: the clearing estimate ends in a period and the staff line followed it). A
+// self-punctuated part takes a plain SPACE; everything else takes the separator.
+private function bool EndsSentence(string Text)
+{
+	local string Last;
+
+	if (Text == "")
+		return false;
+
+	Last = Right(Text, 1);
+	return Last == "." || Last == "!" || Last == "?" || Last == ":" || Last == ";";
+}
+
+private function AppendJoined(out string Result, string Part, string Separator)
 {
 	if (Part == "")
 		return;
 	if (Result != "")
-		Result $= ". ";
+		Result $= EndsSentence(Result) ? " " : Separator;
 	Result $= Part;
+}
+
+private function AppendPart(out string Result, string Part)
+{
+	AppendJoined(Result, Part, ". ");
 }
 
 private function AppendComma(out string Result, string Part)
 {
-	if (Part == "")
-		return;
-	if (Result != "")
-		Result $= ", ";
-	Result $= Part;
+	AppendJoined(Result, Part, ", ");
 }
