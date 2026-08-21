@@ -581,6 +581,66 @@ struct AvengerGate {
 /// Game thread only.
 AvengerGate ReadAvengerGate();
 
+// ---- inside a room (UIFacility and its 22 subclasses) ----
+//
+// ⛔ The room SCREEN is not the room's content. All seven FIXED rooms declare ZERO staff slots —
+// CommandersQuarters, CIC, PowerCore (Research), Hangar (Armory), LivingQuarters, BarMemorial
+// and Storage (Engineering) — so their UIFacility screens hold nothing navigable at all, and a
+// reader built around the staff strip would be silent on every room a new player can reach.
+// (Measured live 2026-08-21: the Research lab is 3 panels, staff container hidden, and all
+// twelve buildable slots on that Avenger were still unexcavated.)
+//
+// The content is one screen DOWN, in UIAvengerHUD.Shortcuts — the submenu the game auto-opens
+// for the room you just entered, and where the Lab's "New Research / View Scientists" and the
+// Armory's "Soldiers / Recruit / Memorial" actually live. That is not a layering accident to
+// route around; it is where the game itself puts a room's verbs, and its own input path agrees
+// (UIFacility.OnUnrealCommand returns false, UIScreenStack.OnInput walks LIFO, the keys land on
+// the shortcut list). So this view spans both screens deliberately.
+//
+// Every field is a RETAINED widget read — no XCOMHISTORY, no Flash, nothing to go stale.
+
+struct RoomAction {          // one row of the room's shortcut submenu
+    void* handle = nullptr;  // UIListItemString
+    int index = 0;           // the GAME's list index (padding rows are skipped, not renumbered)
+    std::string label;       // Text, P10-cleaned — already localized
+    bool disabled = false;   // bDisabled: the game draws it greyed and refuses the click
+    bool urgent = false;     // bIsBad
+    bool warning = false;    // bIsWarning
+};
+
+struct RoomView {
+    void* facility = nullptr;  // the UIFacility subclass on top of the stack
+    void* shortcuts = nullptr; // UIAvengerShortcuts, on UIAvengerHUD below it
+    void* list = nullptr;      // UIAvengerShortcuts::List — the submenu
+    std::string location;      // FacilityHeader.LocationField ("AVENGER")
+    std::string room;          // FacilityHeader.RoomField ("Research lab") — the room's name
+    std::string category;      // CategoryLabels[CurrentCategory]; empty when not in the bar
+    std::string staffTitle;    // UIStaffContainer::Title ("SCIENTISTS")
+    std::string staffSkill;    // UIStaffContainer::Skill — the ship-wide crew count for the kind
+    bool staffVisible = false; // the container's own bIsVisible, which the GAME sets meaningfully
+    int staffSlots = 0;        // StaffSlots.Length — zero on every fixed room
+    std::vector<RoomAction> actions;
+    int selected = -1;         // List::SelectedIndex
+};
+
+/// The room screen, when one is the CURRENT screen (topmost non-null stack entry, matching
+/// GetCurrentScreen). Matches any UIFacility subclass by walking the instance's class chain —
+/// an exact name compare would miss all 22. Game thread only.
+void* FindRoomScreen();
+
+RoomView ReadRoom(void* screen);
+
+/// P11 write-back: UIList::SetSelectedIndex on the submenu. Verified live to fire
+/// OnSelectionChanged, move Navigator's selection and call the row's OnReceiveFocus — so the
+/// game's own highlight follows ours rather than drifting from it. Game thread only.
+bool SetRoomActionSelection(const RoomView& view, int index);
+
+/// Activate a row the way the game's own keyboard path does: select it, then hand the LIST an
+/// Enter, which fires OnItemClicked(self, SelectedIndex). Selecting first is load-bearing —
+/// that delegate reads SelectedIndex and ignores the row the caller had in mind, the same trap
+/// UISaveGame.OnAccept sets. Refuses a disabled row, as the game does. Game thread only.
+bool ActivateRoomAction(const RoomView& view, const RoomAction& action);
+
 // ---- tutorial mission (Tutorial_01) — the text surfaces and the replay state ----
 //
 // The tutorial is a REPLAY: XComTutorialMgr extends XComReplayMgr, plays a recorded session back

@@ -2834,6 +2834,191 @@ AvengerGate ReadAvengerGate()
     return gate;
 }
 
+// ---- inside a room (UIFacility and its 22 subclasses) ----
+//
+// The room SCREEN is not the room's content, and that is the whole shape of this reader.
+// UIFacility carries a staff strip, optional room-function buttons and an upgrade button — and
+// on the seven FIXED rooms it carries none of them: CommandersQuarters, CIC, PowerCore
+// (Research), Hangar (Armory), LivingQuarters, BarMemorial and Storage (Engineering) each
+// declare ZERO StaffSlotDefs, so their screens are empty and their navigators hold nothing.
+// Measured live 2026-08-21 in the Research lab: 3 panels total, staff container hidden.
+//
+// The content is one screen DOWN. UIFacility.OnUnrealCommand returns false when it has nothing,
+// and UIScreenStack.OnInput walks LIFO, so the keys fall through to UIAvengerHUD →
+// Shortcuts.OnUnrealCommand → List. Entering a room auto-opens that list for the room's own
+// category (SelectCategoryForFacilityScreen → ShowList → List.SetSelectedNavigation), which is
+// where the Armory's "Soldiers / Recruit / Memorial" and the Lab's "New Research / View
+// Scientists" actually live. Confirmed live 2026-08-21: two Downs moved List.SelectedIndex
+// 2 → 0 → 1 with ItemCount 4 (three rows plus the padding row) — Next with wrap, padding skipped.
+//
+// Everything here is a RETAINED widget read: no XCOMHISTORY, no Flash. FacilityHeader keeps
+// LocationField/RoomField, the staff container keeps Title/Icon/Skill, and each row keeps its
+// own localized Text. Verified live: RoomField="Исследовательский отсек",
+// Text="Показать ученых", Title="УЧЕНЫЕ", Skill="0".
+
+namespace {
+
+constexpr int32_t kAvengerHudShortcutsOffset = 0x43C;      // UIAvengerHUD::Shortcuts
+constexpr int32_t kAvengerHudFacilityHeaderOffset = 0x454; // UIAvengerHUD::FacilityHeader
+constexpr int32_t kScreenHeaderLocationOffset = 0x3D8;     // UIX2ScreenHeader::LocationField
+constexpr int32_t kScreenHeaderRoomOffset = 0x3E8;         // UIX2ScreenHeader::RoomField
+constexpr int32_t kShortcutsListOffset = 0x7F8;            // UIAvengerShortcuts::List
+constexpr int32_t kShortcutsCategoryLabelsOffset = 0x3F0;  // ::CategoryLabels[5], stride 0x10
+constexpr int32_t kShortcutsCurrentCategoryOffset = 0x83C; // ::CurrentCategory
+constexpr int32_t kFacilityStaffContainerOffset = 0x608;   // UIFacility::m_kStaffSlotContainer
+constexpr int32_t kStaffContainerTitleOffset = 0x3D8;      // UIStaffContainer::Title
+constexpr int32_t kStaffContainerSkillOffset = 0x408;      // UIStaffContainer::Skill
+constexpr int32_t kStaffContainerSlotsOffset = 0x418;      // UIStaffContainer::StaffSlots
+constexpr int32_t kListItemStringTextOffset = 0x3F4;       // UIListItemString::Text
+constexpr int32_t kListItemStringFlagsOffset = 0x414;      // bDisabled/bIsBad/bIsGood/bIsWarning
+constexpr uint32_t kListItemDisabled = 0x1;
+constexpr uint32_t kListItemBad = 0x2;
+constexpr uint32_t kListItemWarning = 0x8;
+
+constexpr int kShortcutCategoryCount = 5;
+constexpr int kMaxRoomActions = 16;
+
+// Is `obj` an instance of `baseClass`, or of anything derived from it? The room screen is one of
+// 22 subclasses (UIFacility_Powercore, UIFacility_Armory, …), so an exact class-name compare
+// would miss every one of them — the same trap ScanInstanceRaw documents for XCom3DCursor.
+// Walking the instance's own class chain costs a dozen name compares and needs no GObjects pass.
+bool IsKindOfRaw(void* obj, const char* baseClass)
+{
+    if (!obj)
+        return false;
+    __try {
+        auto* cls = reinterpret_cast<UStruct*>(reinterpret_cast<UObject*>(obj)->Class);
+        char name[64];
+        // Bounded like every other SuperField walk here: a UE3 chain is a dozen deep, and a
+        // corrupt link must not spin.
+        for (int step = 0; cls && step < 32; step++) {
+            if (!ObjNameAnsiRaw(reinterpret_cast<UObject*>(cls), name, sizeof(name)))
+                return false;
+            if (strcmp(name, baseClass) == 0)
+                return true;
+            cls = reinterpret_cast<UStruct*>(cls->SuperField);
+        }
+        return false;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+} // namespace
+
+void* FindRoomScreen()
+{
+    void* stack = gStackFinder.Find();
+    if (!stack)
+        return nullptr;
+
+    void* screens[kMaxStackScreens] = {};
+    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+
+    // Topmost non-null entry only — the same GetCurrentScreen definition ReadAvengerGate uses.
+    // A UIFacility further down the stack is one the player has navigated AWAY from (the
+    // facility summary and the choose-research screen both push over it), and narrating that
+    // would name the wrong room.
+    for (int i = 0; i < count; i++) {
+        if (!screens[i])
+            continue;
+        if (!IsKindOfRaw(screens[i], "UIFacility"))
+            return nullptr;
+        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
+        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+            return nullptr;
+        return screens[i];
+    }
+    return nullptr;
+}
+
+RoomView ReadRoom(void* screen)
+{
+    RoomView v;
+    if (!screen)
+        return v;
+    v.facility = screen;
+
+    // The header and the shortcut bar both live on UIAvengerHUD, which sits UNDER the room
+    // screen and under the grid. That is not a layering accident to route around — it is where
+    // the game itself keeps the room's name and the room's menu.
+    void* hud = FindStackScreenRaw("UIAvengerHUD");
+    if (hud) {
+        void* header = ReadPtrRaw(hud, kAvengerHudFacilityHeaderOffset);
+        if (header) {
+            v.location = ReadFStringField(header, kScreenHeaderLocationOffset);
+            v.room = ReadFStringField(header, kScreenHeaderRoomOffset);
+        }
+        v.shortcuts = ReadPtrRaw(hud, kAvengerHudShortcutsOffset);
+    }
+
+    if (v.shortcuts) {
+        v.list = ReadPtrRaw(v.shortcuts, kShortcutsListOffset);
+        int cat = ReadI32Raw(v.shortcuts, kShortcutsCurrentCategoryOffset);
+        // -1 is a room the shortcut bar does not carry (Living Quarters, the Bar). Legitimate,
+        // and the reason the empty case names the room rather than reporting a fault.
+        if (cat >= 0 && cat < kShortcutCategoryCount)
+            v.category
+                = ReadFStringField(v.shortcuts, kShortcutsCategoryLabelsOffset + cat * 0x10);
+    }
+
+    void* staff = ReadPtrRaw(screen, kFacilityStaffContainerOffset);
+    if (staff) {
+        uint32_t flags = ReadU32Raw(staff, kPanelFlagsOffset);
+        // The one place a child widget's bIsVisible IS the right test (the CLAUDE.md exception
+        // for children): UIFacilityStaffContainer.Refresh calls Hide() deliberately when the
+        // facility has no slots, and Show() when at least one is visible. On the fixed rooms it
+        // is hidden and still carries a title and a crew count, which are worth speaking.
+        v.staffVisible = (flags & kPanelVisible) != 0;
+        v.staffTitle = ReadFStringField(staff, kStaffContainerTitleOffset);
+        v.staffSkill = ReadFStringField(staff, kStaffContainerSkillOffset);
+        void* slots[16] = {};
+        v.staffSlots = ReadPtrArrayRaw(staff, kStaffContainerSlotsOffset, slots, 16);
+    }
+
+    if (v.list) {
+        v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
+        void* rows[kMaxRoomActions] = {};
+        int rowCount = ReadListItemsRaw(v.list, rows, kMaxRoomActions);
+        for (int i = 0; i < rowCount; i++) {
+            if (!rows[i])
+                continue;
+            RoomAction a;
+            a.label = ReadFStringField(rows[i], kListItemStringTextOffset);
+            // DoShowList appends a plain UIPanel as bottom padding, with DisableNavigation and
+            // no text. Skipping it by its EMPTINESS rather than by its position keeps every
+            // remaining index equal to the game's, which is what SetSelectedIndex and the
+            // OnItemClicked delegates are expressed in.
+            if (a.label.empty())
+                continue;
+            a.handle = rows[i];
+            a.index = i;
+            uint32_t rowFlags = ReadU32Raw(rows[i], kListItemStringFlagsOffset);
+            a.disabled = (rowFlags & kListItemDisabled) != 0;
+            a.urgent = (rowFlags & kListItemBad) != 0;
+            a.warning = (rowFlags & kListItemWarning) != 0;
+            v.actions.push_back(std::move(a));
+        }
+    }
+    return v;
+}
+
+bool SetRoomActionSelection(const RoomView& view, int index)
+{
+    return SetListIndex(view.list, index);
+}
+
+bool ActivateRoomAction(const RoomView& view, const RoomAction& action)
+{
+    if (!view.list || action.disabled)
+        return false;
+    // Select, then accept — and the selection step is load-bearing for the same reason it is on
+    // the save rows: UIList.OnUnrealCommand fires OnItemClicked(self, SelectedIndex), ignoring
+    // whatever row the caller had in mind. A stale render would otherwise open the wrong screen.
+    SetListIndex(view.list, action.index);
+    return SendRowCommand(view.list, kCmdEnter);
+}
+
 // ---- tutorial mission (Tutorial_01) ----
 
 namespace {

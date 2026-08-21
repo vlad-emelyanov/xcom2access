@@ -458,6 +458,57 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   string for: `needs attention` (a gloss of a border colour), the position phrases and the staff
   phrasing — a companion-side vocabulary is the open decision there, not a bug.
 
+- **Inside a room** (`FindRoomScreen`/`ReadRoom` in `src/game_ui.cpp` + the `avenger room` recipe
+  in `menu_navigator.cpp`, built 2026-08-21, **not yet run live**; recon
+  `docs/avenger-view-recon.md` §4 and §13): ⛔ **the room SCREEN is not the room's content, and
+  building for its staff strip would have produced a reader that is silent on every room a new
+  player can reach.** All seven FIXED rooms declare **zero** `StaffSlotDefs` — CommandersQuarters,
+  CIC, PowerCore (Research), Hangar (Armory), LivingQuarters, BarMemorial, Storage (Engineering) —
+  so `RealizeStaffSlots` calls `Navigator.RemoveControl` and `UIFacility`'s navigator holds
+  nothing. Staff slots exist only in BUILDABLE facilities, and measured live 2026-08-21 all twelve
+  buildable slots read `BGColor="0x828282"` (unexcavated) on an ordinary early campaign. The
+  Commander's-Quarters silence of the previous session was therefore not one broken room but the
+  shape of the whole layer.
+  The content is one screen **down**: `UIFacility.OnUnrealCommand` returns false when it has
+  nothing, `UIScreenStack.OnInput` walks LIFO, and the keys land on `UIAvengerHUD` →
+  `Shortcuts.OnUnrealCommand` → `List` — the submenu the game AUTO-OPENS for the room just
+  entered (`SelectCategoryForFacilityScreen` → `ShowList` → `List.SetSelectedNavigation`). That is
+  where the Lab's *New Research / View Scientists* and the Armory's *Soldiers / Recruit /
+  Memorial* live. Confirmed live: two Downs moved `List.SelectedIndex` 2 → 0 → 1 with
+  `ItemCount` 4 — Next **with wrap**, the padding row skipped. So the view spans two screens on
+  purpose, and the recipe's nodes come from both.
+  **This is a RECIPE, and the contrast with the ant farm one bullet up is the whole ruling.**
+  Graph recipes are the RULE in this project — they buy focus tracking, a stable reading order,
+  and stops on panels the game makes unfocusable; game-native narrate-only is the EXCEPTION and
+  each one must be justified. The test: *narrate-only is justified only when taking the arrows
+  would destroy information we cannot reproduce.* The ant farm passes — the room NAME is set
+  inside `if( bIsFocused )`, so our own focus model would leave every room nameless (measured
+  live: of nineteen overlays exactly ONE carried a `Label`, the focused one), plus the camera
+  swoop and the highlight box. In here nothing is destroyed, and three things are bought: a stop
+  on the crew line (`UIStaffContainer.Title` + `Skill`, e.g. *"SCIENTISTS: 0"* — drawn in the
+  room, reachable by no keyboard in the game, and the number that decides whether the room's
+  verbs will do anything, which is why it reads BEFORE the actions); the row's `bIsBad`/
+  `bIsWarning` colouring, a whole channel of meaning speech otherwise loses; and focus tracking
+  on a screen where the game's own is invisible anyway — `UIStaffSlot.OnReceiveFocus` sends its
+  highlight op only under `` `ISCONTROLLERACTIVE ``.
+  Every word is a RETAINED widget read, no `XCOMHISTORY` and no Flash: `FacilityHeader`
+  (`UIX2ScreenHeader`) keeps `LocationField`/`RoomField`, the staff container keeps
+  `Title`/`Icon`/`Skill` **even while hidden**, and each row keeps its own localized `Text`.
+  Verified live: `RoomField="Исследовательский отсек"`, `Text="Показать ученых"`,
+  `Title="УЧЕНЫЕ"`, `Skill="0"`. ⛔ The name comes from `RoomField` and must keep coming from
+  there: the room TEMPLATES' own `DataName`s are systematically wrong — `PowerCore` is the
+  Research lab, `Hangar` is the Armory, `Storage` is Engineering — the same trap as the ant
+  farm's local variables, one layer up and in the shipped data rather than in one function.
+  Activation is select-then-Enter on the LIST (`SetSelectedIndex` then
+  `SendRowCommand(list, kCmdEnter)`), because `UIList.OnUnrealCommand` fires
+  `OnItemClicked(self, SelectedIndex)` and ignores the row the caller had in mind — the same trap
+  `UISaveGame.OnAccept` sets, so the same guard. Rows are matched by the GAME's index (padding
+  skipped but never renumbered) and re-read at activation, since `DoShowList` respawns every row
+  on a category change. An empty list is a legitimate state, not a fault: Living Quarters and the
+  Bar carry no shortcut category at all (`CurrentCategory` = -1), so the node names the way out.
+  Probe insists the facility screen is TOPMOST, which is what keeps this recipe from attaching
+  over the choose-research screen or the facility summary that the room's own verbs push.
+
 - **Save / load** (`src/game_ui.cpp` + the save/load recipe in
   `menu_navigator.cpp` + companion `X2AccessSaveReader.uc`, built AND VERIFIED
   LIVE 2026-08-21 — the load screen read its whole list on the first run and
@@ -1660,11 +1711,11 @@ Remaining:
     English condition words the widget already owned localized, and one position
     phrase that contradicted the graph. What is still unexercised, in order of
     how much it costs a player:
-    **Inside a room is TOTAL SILENCE** — Down x7 and Up x4 in the Commander's
-    Quarters produced nothing, because `UIFacility`'s navigator is empty when the
-    room has no staff slots (recon gap 3). A player can now navigate TO a room
-    and go blind on arrival, which makes this the next piece of work, not a
-    polish item. **The countdown path has never run**: `Status` was empty on
+    ✅ **Inside a room is BUILT** (2026-08-21, the `avenger room` recipe — see
+    **Inside a room** above and recon §13) and answers the silence §12 recorded:
+    `UIFacility`'s navigator is empty because NO FIXED ROOM HAS STAFF SLOTS, and
+    the room's real menu was one screen down in `UIAvengerHUD.Shortcuts` all
+    along. Not yet run live. **The countdown path has never run**: `Status` was empty on
     every single read because nothing on the ship was building, so construction
     time, "PAUSED" and clearing are all unproven. **`Delete` was never pressed**
     (no `vk 0x2E` in the log), so the re-announce key is untested.
@@ -1675,9 +1726,24 @@ Remaining:
     ones (the buildable core's `row R, column C` is already exact, straight from
     the graph) — and to check, for the first time, that `FacilityOverlays` really
     is sorted into MapIndex order, which the whole index scheme assumes.
-    Then the rest of the layer: inside a room (`UIFacility` + 22 subclasses,
-    staff slots), the resource strip, the to-do widget and the event queue — §2
-    and §4 of the recon, all retained-widget reads rather than new offsets.
+    Then the rest of the layer, in value order. **The commodity list is the big
+    one**: `UIChooseResearch` — a tech's name, cost, days and description — is
+    the Research lab's actual UI, and it shares `UISimpleCommodityScreen` /
+    `UIInventory` with about TEN screens (choose project, psi ability, view
+    objectives, all three archives, build items, storage, implants, the XCOM
+    database), so ONE recipe covers the lot. Each row retains the whole
+    `Commodity` struct (`Title`/`Desc`/`Cost`/`Requirements`/`OrderHours`) plus
+    `ItemRef`, and the card's words are statics over it
+    (`GetStrategyCostString`, `GetTimeRemainingString`, `GetTechReqString`) — no
+    history query. Two stops there exist for no sighted keyboard at all:
+    `UIItemCard`, never added to a navigator, and `UIInventory_BuildItems`' three
+    tabs, which call `DisableNavigation()` while Left/Right still switch them and
+    `SetCategory` prints the new name into Flash. After that: personnel lists
+    (`UIPersonnel` and the staff drop-down, rows retaining only `UnitRef`), the
+    room's Flash-only status panels via the companion, then the resource strip,
+    the to-do widget and the event queue — §2 of the recon, and note §2.5 was
+    CORRECTED: the event queue IS retained (`UIEventQueue_ListItem.Title` /
+    `DaysValue`, read live).
 
 When researching for this project, focus on engine/native/UE3 technicals.
 Do not survey the accessibility-mod landscape — the author knows it better

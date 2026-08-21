@@ -285,4 +285,34 @@ static_assert(offsetof(AUISquadSelect_UtilityItem, Button) == 0x3E0, "utility sl
 static_assert(offsetof(AUISquadSelect_UtilityItem, SlotIndex) == 0x3F0, "utility slot index");
 static_assert(offsetof(AUISquadSelect_UtilityItem, SlotType) == 0x3F4, "utility slot type");
 
+// ---- inside a room: UIFacility, the Avenger HUD's header and its shortcut submenu ----
+//
+// This layer reads ACROSS two screens: the room screen on top and UIAvengerHUD below it, which
+// is where the game keeps the room's name and the room's menu. Both halves are pinned here.
+static_assert(offsetof(AUIFacility, m_kStaffSlotContainer) == 0x608, "facility staff container");
+static_assert(offsetof(AUIFacility, m_kRoomContainer) == 0x610, "facility room container");
+static_assert(offsetof(AUIFacility, UpgradeButton) == 0x648, "facility upgrade button");
+
+static_assert(offsetof(AUIAvengerHUD, Shortcuts) == 0x43C, "avenger HUD shortcut bar");
+static_assert(offsetof(AUIAvengerHUD, FacilityHeader) == 0x454, "avenger HUD facility header");
+
+static_assert(offsetof(AUIX2ScreenHeader, LocationField) == 0x3D8, "screen header location");
+static_assert(offsetof(AUIX2ScreenHeader, RoomField) == 0x3E8, "screen header room name");
+
+static_assert(offsetof(AUIAvengerShortcuts, CategoryLabels) == 0x3F0, "shortcut category labels");
+static_assert(sizeof(((AUIAvengerShortcuts*)nullptr)->CategoryLabels) == 0x50,
+    "CategoryLabels is five FStrings, stride 0x10 — the reader indexes it by hand");
+static_assert(offsetof(AUIAvengerShortcuts, List) == 0x7F8, "shortcut submenu list");
+static_assert(offsetof(AUIAvengerShortcuts, CurrentCategory) == 0x83C, "shortcut current room");
+
+static_assert(offsetof(AUIStaffContainer, Title) == 0x3D8, "staff container title");
+static_assert(offsetof(AUIStaffContainer, Skill) == 0x408, "staff container crew count");
+static_assert(offsetof(AUIStaffContainer, StaffSlots) == 0x418, "staff container slots");
+
+// UIListItemString's bitfield is at 0x414 (bDisabled / bIsBad / bIsGood / bIsWarning); Text
+// before it and ConfirmText after it pin the dword, the same way the squad card's is pinned.
+static_assert(offsetof(AUIListItemString, Text) == 0x3F4, "list item text");
+static_assert(offsetof(AUIListItemString, ConfirmText) == 0x418,
+    "UIListItemString flag dword precedes ConfirmText at 0x414");
+
 } // namespace

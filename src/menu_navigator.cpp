@@ -1713,6 +1713,136 @@ std::string SaveLoadName()
     return name;
 }
 
+// ---- inside a room on the Avenger (UIFacility + 22 subclasses) ----
+//
+// A RECIPE rather than a narrate-only reader, and the contrast with the ant farm next door is
+// the reason why. The ant farm keeps the game's own navigation because taking it would destroy
+// information we cannot rebuild: UIFacilityGrid_FacilityOverlay sets the room NAME inside
+// `if( bIsFocused )`, so a focus model of ours would leave every room nameless (measured live
+// 2026-08-21 — of nineteen overlays, exactly one carried a Label, the focused one), and the
+// camera swoop and highlight box come from the same navigator. None of that is true in here.
+// Driving the submenu ourselves costs nothing and buys the three things only a recipe gives:
+// a stop on the crew line, which the game draws but makes unfocusable; a stable reading order;
+// and focus tracking on a screen where the game's own is invisible on mouse+keyboard
+// (UIStaffSlot.OnReceiveFocus sends its highlight op only under `ISCONTROLLERACTIVE).
+//
+// ⛔ The nodes come from TWO screens. The room screen is on top; its menu belongs to
+// UIAvengerHUD underneath. That is the game's own arrangement, not a layering problem to route
+// around — see the RoomView comment in game_ui.h.
+
+std::unique_ptr<GraphRender> BuildRoom()
+{
+    gFocus.clear();
+
+    GameUI::RoomView view = GameUI::ReadRoom(gScreen);
+
+    GraphBuilder b;
+
+    // The crew line first, and as its own stop: "SCIENTISTS: 0" is drawn in the room and is
+    // reachable by no keyboard in the game. It is also the one number that decides whether the
+    // room's verbs will do anything — a lab with no scientists researches nothing — so it reads
+    // before the actions rather than after them.
+    if (!view.staffTitle.empty() && !view.staffSkill.empty()) {
+        b.BeginStop("crew");
+        const std::string crew = view.staffTitle + Vocab::RoomCrewSeparator + view.staffSkill;
+        b.AddLabel(ControlId::Structural("room/crew"), [crew]() { return crew; });
+    }
+
+    b.BeginStop("actions");
+
+    if (view.actions.empty()) {
+        // Not a fault. Living Quarters and the Bar/Memorial carry no shortcut category at all
+        // (CurrentCategory reads -1), so the game shows no submenu either — and on a room that
+        // does have one, this is also the state while the list is still being rebuilt. Naming
+        // the way out matters more here than anywhere else: with no nodes to move between, a
+        // player has nothing to feel their way with.
+        b.AddLabel(ControlId::Structural("room/empty"), []() {
+            return std::string(Vocab::RoomNoActions) + ". " + Vocab::RoomLeaveHint;
+        });
+        return b.Build();
+    }
+
+    for (const GameUI::RoomAction& action : view.actions) {
+        ControlId id
+            = ControlId::Referenced(action.handle, "room/" + std::to_string(action.index));
+        const int index = action.index;
+        gFocus[id.StructuralKey] = FocusTarget{index, nullptr, false, nullptr};
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(action.label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+
+        if (action.disabled) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        } else {
+            // Re-read at activation rather than closing over the row pointer: the handler runs
+            // from the input drain, a frame or more after this render, and DoShowList calls
+            // List.ClearItems() and respawns every row whenever the category changes. Matching
+            // on the index — which is the game's own, padding skipped but not renumbered — is
+            // what makes that safe.
+            vt.OnActivate = [index]() {
+                GameUI::RoomView live = GameUI::ReadRoom(gScreen);
+                for (const GameUI::RoomAction& a : live.actions) {
+                    if (a.index == index) {
+                        GameUI::ActivateRoomAction(live, a);
+                        return;
+                    }
+                }
+            };
+        }
+
+        // The game colours a row red or amber off Urgency, which is a whole channel of meaning
+        // speech loses by default. Reported as the "!" badge kind, so it orders with the ant
+        // farm's attention word rather than inventing a second vocabulary for the same idea.
+        if (action.urgent || action.warning) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(
+                action.urgent ? Vocab::RoomUrgent : Vocab::RoomWarning));
+            vt.Announcements.back().Kind = kKindAttention;
+        }
+
+        b.AddItem(std::move(id), std::move(vt));
+    }
+    return b.Build();
+}
+
+void* ProbeRoom()
+{
+    void* screen = GameUI::FindRoomScreen();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+std::string RoomName()
+{
+    GameUI::RoomView view = GameUI::ReadRoom(gScreen);
+    // RoomField is what the game itself prints in the header, and it is the ONLY name worth
+    // using: the room templates' own DataNames are systematically wrong here — the template
+    // called PowerCore is the Research lab, Hangar is the Armory and Storage is Engineering.
+    // Same trap as the ant farm's, one layer up. Fall back to the category label, which is the
+    // same room named by the shortcut bar, before ever reaching a word of ours.
+    std::string name = view.room;
+    if (name.empty())
+        name = view.category;
+    if (name.empty())
+        name = Vocab::ScreenRoomFallback;
+    return name;
+}
+
+// P11 write-back for the submenu. Driving the game's own UIList.SetSelectedIndex is what keeps
+// its highlight, its scroll position and its OnSelectionChanged delegates in step with our
+// focus — verified live 2026-08-21 to do all three.
+bool SetRoomListIndex(void* screen, int index)
+{
+    GameUI::RoomView view = GameUI::ReadRoom(screen);
+    return GameUI::SetRoomActionSelection(view, index);
+}
+
+// Above the ant farm it is entered from, below anything the room's own verbs push over it
+// (choose-research, the facility summary, a dialog) — which is also why ProbeRoom insists the
+// facility screen is TOPMOST rather than merely present.
+const Recipe kRoomRecipe{"avenger room", ProbeRoom, BuildRoom, RoomName, SetRoomListIndex};
+
 // Above the pause menu and the shell it is opened from, below any dialog it raises.
 const Recipe kSaveLoadRecipe{"save/load", ProbeSaveLoad, BuildSaveLoad, SaveLoadName};
 
@@ -1720,7 +1850,7 @@ const Recipe kSaveLoadRecipe{"save/load", ProbeSaveLoad, BuildSaveLoad, SaveLoad
 // pause menu — has to resolve before it, or the layer would attach to the screen underneath.
 const Recipe* const kRecipes[] = {&kDialogRecipe, &kNarrativeRecipe, &kIronManRecipe,
     &kSoundtrackRecipe, &kOptionsRecipe, &kDifficultyRecipe, &kSaveLoadRecipe, &kPauseMenuRecipe,
-    &kSquadSelectRecipe, &kMainMenuRecipe};
+    &kArmoryLoadoutRecipe, &kSquadSelectRecipe, &kRoomRecipe, &kMainMenuRecipe};
 
 // ---- key handlers (game thread, via the arbiter's drain) ----
 

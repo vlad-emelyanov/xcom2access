@@ -173,7 +173,22 @@ last stood on the grid. Anything of ours that speaks the to-do list either has
 to accept that staleness (which matches what the sighted player's icons show —
 they are stale too) or call `UpdateCategories()` itself.
 
-### 2.5 Event queue — `UIEventQueue` ⛔ not retained on the widget *[not seen live]*
+### 2.5 Event queue — `UIEventQueue` ✅ RETAINED after all (corrected 2026-08-21)
+
+⚠️ **This section said "not retained on the widget" and was wrong.** Measured
+live 2026-08-21 with `/gui depth=4 screen=UIAvengerHUD`, the row widget carries
+its words directly:
+
+```
+UIEventQueue_ListItem  Title="ТЕХНОЛОГИЯ: Гибридные материалы"
+                       daysLabel="дн."  DaysValue="3"
+                       ImagePath="img:///UILibrary_Common.UIEvent_science"
+```
+
+So the ship's queue — what is being researched, built or trained and how long is
+left — is a plain widget read, not a `GetEvents()` re-query. The paragraph below
+describes the SOURCE of that data and still holds; only the retention claim was
+wrong.
 
 The timeline of pending projects, bottom-right. Fed
 `array<HQEvent>` by `UIAvengerHUD.ShowEventQueue()` →
@@ -995,3 +1010,148 @@ assumption has never actually been checked.
   Down ×7 and Up ×4 produced nothing — recon gap 3, `UIFacility`'s navigator is
   empty when the room has no staff slots. **This is now the biggest hole in the
   layer:** a player can navigate *to* a room and go blind on arrival.
+
+---
+
+## 13. Inside a room — measured, and phase 2 as built (2026-08-21)
+
+§4 above described the room screen. This section replaces its *conclusion*: the
+room screen is not where a room's content is, and a reader built around its
+staff strip would be silent on every room a new player can reach.
+
+### 13.1 The finding that reshaped it — no fixed room has staff slots
+
+Counting `StaffSlotDefs.AddItem` per template in
+`X2StrategyElement_DefaultFacilities.uc`:
+
+| Facility | Slots | | Facility | Slots |
+|---|---|---|---|---|
+| CommandersQuarters | **0** | | Laboratory | 2 |
+| CIC | **0** | | Workshop | 2 |
+| PowerCore *(Research)* | **0** | | ProvingGround | 1 |
+| Hangar *(Armory)* | **0** | | PowerRelay | 2 |
+| LivingQuarters | **0** | | AdvancedWarfareCenter | 2 |
+| BarMemorial | **0** | | ShadowChamber | 2 |
+| Storage *(Engineering)* | **0** | | OfficerTrainingSchool | 1 |
+| | | | UFODefense | 1 |
+| | | | ResistanceComms | 2 |
+| | | | PsiChamber | 3 |
+
+Every non-zero count is a **buildable** facility. The seven fixed rooms have
+none, so `RealizeStaffSlots()` calls `Navigator.RemoveControl(...)` and
+`UIFacility`'s navigator is empty — which is exactly the Commander's-Quarters
+silence §12 recorded, generalised to every room on a new ship.
+
+Confirmed live 2026-08-21 on an ordinary early campaign: `/gui` on
+`UIFacility_Powercore` printed **3 panels** (screen, hidden staff container,
+research bar), and all twelve buildable overlays on the grid read
+`BGColor="0x828282"` — unexcavated. **There was no staffed room in the campaign
+at all.** The staff-strip-versus-submenu arrow contention §4 worried about
+cannot arise until the player builds something, and never in their first hours.
+
+### 13.2 Where the content actually is
+
+`UIFacility.OnUnrealCommand` returns false when it has nothing;
+`UIScreenStack.OnInput` walks LIFO; so the keys fall through to `UIAvengerHUD` →
+`Shortcuts.OnUnrealCommand` → `List`. Entering a room auto-opens that submenu
+for the room's own category (`SelectCategoryForFacilityScreen` → `ShowList` →
+`ListContainer.SetSelectedNavigation` + `List.SetSelectedNavigation`).
+
+Measured live, in the Research lab:
+
+```
+stack (top first)  UIFacility_Powercore / UIFacilityGrid / UIAvengerHUD / UIEventNotices
+CurrentCategory    0            CategoryLabels[0] = "ИССЛЕДОВАТЕЛЬСКИЙ ОТСЕК"
+List.ItemCount     4            (3 rows + the DoShowList padding row)
+List.SelectedIndex 2  →Down,Down→  1  →Down→  2
+```
+
+2 → 0 → 1 then 1 → 2 is **Next with wrap**, padding skipped. So the arrows do
+drive the submenu, and the room's verbs were reachable by keyboard all along —
+just unspoken.
+
+### 13.3 Recipe, not narrate-only — and the test that decides
+
+Graph recipes are the **rule**; game-native narrate-only is the **exception**,
+and each exception needs a justification. The test:
+
+> Narrate-only is justified only when taking the arrows would destroy
+> information we cannot reproduce.
+
+The ant farm (§11) passes, and the live pass proved it rather than argued it:
+of nineteen `UIFacilityGrid_FacilityOverlay`s, **exactly one carried a `Label`**
+— the focused one — because `UpdateData` sets the room name inside
+`if( bIsFocused )`. Our own focus model would leave every room nameless. Add the
+camera swoop and the highlight box and it clears the bar comfortably.
+
+Inside a room nothing is destroyed, and a recipe buys three things:
+
+1. **A stop on the crew line.** `UIStaffContainer` keeps `Title` and `Skill`
+   even while hidden — live, `"УЧЕНЫЕ"` / `"0"`. It is drawn in the room,
+   focusable by no keyboard in the game, and it is the number that decides
+   whether the room's verbs will do anything, so it reads *before* the actions.
+2. **The row's urgency.** `bIsBad`/`bIsWarning` colour a row red or amber; that
+   channel is lost to speech by default.
+3. **Focus tracking on a screen where the game's own is invisible.**
+   `UIStaffSlot.OnReceiveFocus` sends its highlight op only under
+   `` `ISCONTROLLERACTIVE ``.
+
+### 13.4 What was built
+
+`GameUI::FindRoomScreen` / `ReadRoom` / `SetRoomActionSelection` /
+`ActivateRoomAction` in `game_ui.cpp`, and the `avenger room` recipe in
+`menu_navigator.cpp`. Fifteen new `static_assert`s pin every offset (proved
+enforced by deliberately breaking one). Notes worth keeping:
+
+- **The view spans two screens on purpose.** The room screen is on top; its menu
+  belongs to `UIAvengerHUD` underneath. That is the game's own arrangement.
+- **`FindRoomScreen` matches the class CHAIN**, not the name — the screen is one
+  of 22 subclasses, so an exact compare would miss all of them. It also demands
+  the facility be the **topmost** entry, which is what stops the recipe
+  attaching over `UIChooseResearch` or `UIFacilitySummary`.
+- **The name comes from `FacilityHeader.RoomField`, never a template name.**
+  `PowerCore` is the Research lab, `Hangar` is the Armory, `Storage` is
+  Engineering — the §12 naming trap again, this time in shipped data rather than
+  in one function's locals.
+- **Padding rows are skipped, not renumbered.** `DoShowList` appends a
+  navigation-disabled `UIPanel` with no text; dropping it by its emptiness keeps
+  every remaining index equal to the game's, which is what `SetSelectedIndex`
+  and `OnItemClicked` are expressed in.
+- **Activation is select-then-Enter on the LIST.** `UIList.OnUnrealCommand`
+  fires `OnItemClicked(self, SelectedIndex)` and ignores the row handed to it —
+  the same trap `UISaveGame.OnAccept` sets, so the same guard. Rows are re-read
+  at activation because a category change respawns all of them.
+- **An empty list is legitimate.** Living Quarters and the Bar carry no shortcut
+  category (`CurrentCategory` = -1), so the game shows no submenu either; the
+  node says so and names the way out.
+
+### 13.5 First live run must check
+
+- Entering each of the seven fixed rooms speaks the room name, then the crew
+  line, then the actions — and Escape still leaves.
+- Activating *New Research* from the Lab opens `UIChooseResearch` **and the
+  recipe detaches** (the probe should stop matching the instant that screen
+  pushes).
+- The Armory's three actions read, and the one carrying the "!" badge speaks its
+  urgency word.
+- A room with no category (Living Quarters) says *Nothing to do here* rather
+  than going silent.
+- The ant farm still owns the grid: `avenger room` must never appear in
+  `AttachedRecipeName()` while `UIFacilityGrid` is current.
+- Shape-count the speech ring afterwards
+  (`grep -oP 'TTS!?: "\K[^"]*' | sed 's/[0-9]\+/N/g' | sort | uniq -c | sort -rn`)
+  — the rule that caught the tile cursor's two-month cover bug.
+
+### 13.6 Still open
+
+- **A staffed room has never been exercised** (none exists to test on). When one
+  is built: does the staff strip eat Up/Down before the submenu sees them? Only
+  Engineering (`UIFacility_Storage`) hand-wrote a crossing between the two
+  (`SelectStaffing`/`DeselectStaffing`); no other facility did.
+- **The room's own status panels are still Flash-only** — the research bar and
+  the covert-ops status pipe their text out and retain nothing. They need the
+  companion (their strings come from helpers on the screen itself:
+  `GetResearchString`, `GetProgressString`), and they are the natural phase 3.
+- **`UIFacilityStaffContainer.InitStaffContainer` has dead code**: a
+  `Navigator.HorizontalNavigation = true` after its `return`. Once a recipe owns
+  the arrows it stops mattering, which is why it was not "fixed".

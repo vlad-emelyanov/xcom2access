@@ -73,6 +73,20 @@ inline constexpr const char* SaveLoadEmpty = "No saved games";
 inline constexpr const char* SaveLoadBusy = "Working, please wait";
 inline constexpr const char* KeyBackspace = "Backspace";
 
+// Inside a room on the Avenger. The room's menu is the game's own shortcut submenu, which sits
+// on the HUD screen BELOW the room — so "nothing here" is a real and legitimate state (Living
+// Quarters and the Bar are not in the shortcut bar at all), not a failure to find the list.
+inline constexpr const char* ScreenRoomFallback = "Room";
+inline constexpr const char* RoomNoActions = "Nothing to do here";
+inline constexpr const char* RoomLeaveHint = "Escape to leave the room";
+// The crew line the staff container carries even when it is hidden: "SCIENTISTS: 0". Both
+// halves come off the widget already localized; this is only the joint between them.
+inline constexpr const char* RoomCrewSeparator = ": ";
+// bIsBad / bIsWarning on a submenu row — the game colours these red and amber, which is a fact
+// a sighted player gets for free and speech otherwise loses entirely.
+inline constexpr const char* RoomUrgent = "urgent";
+inline constexpr const char* RoomWarning = "attention";
+
 // The text-entry dialog (naming a save). The field is a Flash TextField, so no screen reader
 // sees the keystrokes and this layer has to echo them itself — hence the boundary words and the
 // punctuation table below.
