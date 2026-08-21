@@ -394,32 +394,57 @@ private function string DescribeCard(UIHackingScreen HackScreen, int Index)
 // UserSelectedHackReward out of the history — are never written in the tutorial, which replays
 // recorded frames and never runs FinalizeHackAbility_BuildGameState. The pad animates and lights
 // up there exactly as it does on a real mission, and a sighted player cannot tell the two apart,
-// so neither may this. m_rewardsTaken is Flash's own count: the screen bumps it once per
-// OnCommand("UnlockReward"), i.e. once per card that LIT, and Firaxis names the delegate
-// parameter it hands out iRewardIndex.
+// so neither may this.
+//
+// ⛔ But the lit cards are NOT the rewards. AcquireHackRewards only ever considers
+// i == 0 || i == SelectedHackRewardOption, so an unselected middle card cannot be awarded no
+// matter what the meter did — while the meter lights panels by threshold, and the thresholds
+// descend with the odds, so passing card 3's lights cards 1 and 2 as well. Worse, on a MISS
+// InitiateHack inflates the bar for drama:
+//     DisplayedScore = Max(DisplayedScore, Rand(100 - SelectedHackChance - 1));
+//     // "does not affect the outcome of the hack at all, is only used for a more exciting display"
+// so a middle card can light on a hack that won nothing. Naming the lit prefix (which is what
+// this did before 2026-08-21) therefore credits the player with rewards that were never in play.
+//
+// What m_rewardsTaken DOES answer is the only question that matters: did the SELECTED card land.
+// A panel lights when the bar passes 100 - GetHackChance(index), and the inflation above is
+// bounded at 100 - SelectedHackChance - 2 — strictly under the selected card's own threshold —
+// so the selected panel can never light on a miss, and always lights on a win. Hence
+// m_rewardsTaken > SelectedHackRewardOption, and the award set is rebuilt the way the game
+// builds it rather than read off the lights.
 //
 // It also beats the banner Flash prints. AS_UpdateHackComplete picks its title from
 // HackRewards[RewardIndex].bBadThing, and RewardIndex falls back to slot 0 on a miss — so with an
 // ordinary (non-bBadThing) slot 0 the pad reads "Успех!" even when the gamble missed, because the
-// floor was still awarded. The lit cards are the truth; the banner is not. Neither the banner nor
-// RewardIndex is retained in script anyway.
+// floor was still awarded. Neither the banner nor RewardIndex is retained in script anyway.
 private function string DescribeResult(UIHackingScreen HackScreen)
 {
-	local int i, Count, Selected;
+	local int Selected, Cards;
+	local bool bWon;
 	local string Result, Unlocked;
-	local bool bSelectedUnlocked;
+	local X2HackRewardTemplate Floor, Gamble;
 
-	Count = Min(HackScreen.m_rewardsTaken, CardCount(HackScreen));
+	Cards = CardCount(HackScreen);
 	Selected = HackScreen.SelectedHackRewardOption;
+	if (Selected < 0 || Selected >= Cards)
+		Selected = 0;
 
-	for (i = 0; i < Count; i++)
-	{
-		if (HackScreen.HackRewards[i] == none)
-			continue;
-		AppendComma(Unlocked, HackScreen.HackRewards[i].GetFriendlyName());
-		if (i == Selected)
-			bSelectedUnlocked = true;
-	}
+	// Card 0 is not selectable, so a selection of 0 means this hack offered no gamble at all.
+	bWon = Selected > 0 && HackScreen.m_rewardsTaken > Selected;
+
+	if (Cards > 0)
+		Floor = HackScreen.HackRewards[0];
+	if (Selected > 0)
+		Gamble = HackScreen.HackRewards[Selected];
+
+	// Slot 0 splits two ways, exactly as AcquireHackRewards splits it: an ordinary slot 0 is the
+	// floor and is always awarded, while a bBadThing slot 0 is the PENALTY and lands only when
+	// nothing else did (an empty Templates list is what promotes the FeedbackTemplate).
+	if (Floor != none && !Floor.bBadThing)
+		AppendComma(Unlocked, Floor.GetFriendlyName());
+
+	if (bWon && Gamble != none)
+		AppendComma(Unlocked, Gamble.GetFriendlyName());
 
 	if (Unlocked != "")
 		Result = HackScreen.strRewardUnlockedLabel $ ":" @ Unlocked;
@@ -428,11 +453,15 @@ private function string DescribeResult(UIHackingScreen HackScreen)
 
 	// Naming the gamble that did not land, with the card's own failure strip — which is the line
 	// that matters when slot 0 is a bad thing, because then missing does not mean "nothing".
-	if (!bSelectedUnlocked && Selected > 0 && Selected < CardCount(HackScreen)
-		&& HackScreen.HackRewards[Selected] != none)
+	if (!bWon && Gamble != none)
 	{
-		AppendPart(Result, "Missed:" @ HackScreen.HackRewards[Selected].GetFriendlyName());
+		AppendPart(Result, "Missed:" @ Gamble.GetFriendlyName());
 		AppendPart(Result, FailTextFor(HackScreen));
+
+		// And when it is a bad thing, say WHAT it cost — the strip announces that there is a
+		// penalty, the name says which one the squad just took.
+		if (Floor != none && Floor.bBadThing)
+			AppendPart(Result, HackScreen.FeedbackHeader $ ":" @ Floor.GetFriendlyName());
 	}
 
 	AppendPart(Result, HackScreen.HackCompleteAnyKeyToContinue);

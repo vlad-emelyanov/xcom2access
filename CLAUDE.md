@@ -239,10 +239,27 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   swallowed would not dismiss it) — the companion reports that through a second
   reflected-out property, `NativeState`. **Phase 3 speaks the outcome from the
   pad, not the simulation**: `bWaitingForInput` (set from
-  `OnCommand("HackEnded")`) for WHEN and `m_rewardsTaken` (bumped per
-  `OnCommand("UnlockReward")`, i.e. per card that LIT) for WHAT, then the gamble
-  that missed named with its own failure strip. That also beats the banner Flash
-  prints, which reads `HackRewards[RewardIndex].bBadThing` and so says
+  `OnCommand("HackEnded")`) for WHEN, and for WHAT the award set the game itself
+  would build — because ⛔ **the lit cards are NOT the rewards**.
+  `AcquireHackRewards` only ever considers `i == 0 || i == SelectedHackRewardOption`,
+  so an unselected middle card cannot be awarded whatever the meter did, while
+  the meter lights panels by threshold and the thresholds DESCEND with the odds
+  — passing card 3's lights cards 1 and 2 as well, and on a MISS `InitiateHack`
+  further inflates the bar for drama
+  (`Max(DisplayedScore, Rand(100 - SelectedHackChance - 1))`, whose own comment
+  says it "does not affect the outcome of the hack at all"). Naming the lit
+  prefix therefore credits the player with rewards that were never in play: that
+  is what shipped 2026-08-20 and was corrected 2026-08-21, the first live reveal
+  having read correctly only because the player had selected card 2, where
+  prefix and award coincide. What `m_rewardsTaken` DOES answer is the only
+  question that matters — a panel lights at `100 - GetHackChance(index)` and the
+  inflation is bounded at `100 - SelectedHackChance - 2`, strictly under the
+  selected card's own threshold, so `m_rewardsTaken > SelectedHackRewardOption`
+  is an exact did-the-gamble-land test. The award is then rebuilt the way the
+  game builds it: slot 0 always, UNLESS it is `bBadThing`, in which case it is
+  the PENALTY and lands only when the gamble missed — and then it is named, so
+  "missed" says what it cost rather than only that there was a cost. That also
+  beats the banner Flash prints, which reads `HackRewards[RewardIndex].bBadThing` and so says
   **Успех!** even on a miss whenever slot 0 is ordinary. Cancelling is detected
   on the C++ falling edge (`OnCancel` closes the screen before anything can be
   read, and a pad that goes away uncommitted was cancelled). Detection reuses `ReadTacticalGate()`,
@@ -1250,18 +1267,19 @@ Remaining:
    And it reads plain world messages only INSIDE the tutorial; turning that on
    generally needs the overlap with `X2AccessTacticalEvents` measured live first
    (`/tutorial` prints exactly what would be spoken, which is how to measure it).
-9. Hacking screen phases 1-3 are BUILT (2026-08-20, see **Hacking screen**
-   above; recon and phasing in `docs/hacking-screen-recon.md`). Phases 1-2 are
-   VERIFIED LIVE on the tutorial door: the opening burst read correctly and
+9. Hacking screen phases 1-3 are BUILT and VERIFIED LIVE (recon and phasing in
+   `docs/hacking-screen-recon.md`): phases 1-2 on the tutorial door 2026-08-20 —
    card 3 reading back "Selected" proves the D-pad write landed on the game's
-   own field. Phase 3 awaits its first reveal, and carries one unconfirmed
-   inference — that Flash's `m_rewardsTaken` counts cards in CARD ORDER. Confirm
-   it by reading `m_rewardsTaken` from `/props?screen=UIHackingScreen` while the
-   pad still sits on "press any key" and comparing with which cards are lit.
-   ⚠ The tutorial CANNOT settle it: with the context discarded
-   `StatContestResult` stays 0, the meter fills to 100 and every card lights, so
-   only a partial unlock on a real mission tells a card index from a plain
-   count. ⚠ Three voices can land on the hack outcome — the reveal line
+   own field — and phase 3 on a REAL mission 2026-08-21, which spoke
+   *"РАЗБЛОКИРОВАНО: Обезвредить детонатор, Вражеский протокол. Нажмите любую
+   клавишу"* after a 4 percent gamble landed. That run also retired the open
+   inference, in the direction that made the shipped code wrong:
+   `m_rewardsTaken` does not index the awarded cards, it counts LIT panels, and
+   the two coincide only when the player selected card 2 — which is what the run
+   happened to do. See **Hacking screen** above for the rule that replaced it.
+   Still unexercised: the cancel line (`Escape` out of the pad) and any hack
+   whose slot 0 is `bBadThing`, where a miss has to name the penalty. ⚠ Three
+   voices can land on the hack outcome — the reveal line
    (everywhere), the `UIWorldMessageMgr` flyover poll (tutorial only today) and
    `X2AccessTacticalEvents` / `X2AccessReplayNarration` — and they do not all
    fire on the same mission, so check each where it actually fires. Phase 4 is
