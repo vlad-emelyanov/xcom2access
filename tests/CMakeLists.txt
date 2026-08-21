@@ -7,7 +7,9 @@ add_executable(GraphTests
     graph/KeyGraphTests.cpp
     graph/GraphAnnouncerTests.cpp
     graph/FlyoutTests.cpp
+    graph/GraphSheetTests.cpp
     ${CMAKE_SOURCE_DIR}/src/Graph/GraphBuilder.cpp
+    ${CMAKE_SOURCE_DIR}/src/Graph/GraphSheet.cpp
     ${CMAKE_SOURCE_DIR}/src/Graph/KeyGraph.cpp
     ${CMAKE_SOURCE_DIR}/src/Graph/GraphAnnouncer.cpp
 )

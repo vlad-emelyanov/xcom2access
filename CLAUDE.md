@@ -62,6 +62,30 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   — no UE3, SDK, or Windows includes; `tests/` compiles it standalone to
   enforce this. It consumes structured `GraphRender` snapshots; this is why UI
   reading belongs in C++ (feeding it through a string bridge cannot work).
+  ⛔ **A TABLE IS NOT A LIST, and the kernel has a `GraphSheet` for the
+  difference** (ported from WrathAccess 2026-08-21, with the host vocabulary
+  lifted into a `SheetConfig` so it can live inside the kernel rather than beside
+  it; 11 conformance tests). A list row is one thing with one name and flattens
+  into a sentence losing nothing. A table row is several facts under headings
+  drawn ONCE at the top, and speech has three problems a sighted reader does not:
+  a cell read alone is a value with no idea what it means; reading the whole row
+  every time makes every arrow press a paragraph on a twenty-soldier roster; and
+  focus snapping back to the first cell makes a COLUMN impossible to read down,
+  which is the single most useful thing a table offers. The sheet answers all
+  three with graph primitives and no announcer changes — the column header is the
+  **Left/Right edge label**, the row name is the **Up/Down edge label** into a
+  non-primary cell, and the whole-row readout is the **primary's own extra
+  announcement parts**, so column 0 IS the flat list and the cells to its right
+  are the same facts made addressable. Two kernel fields carry it:
+  `NodeVtable::Column` plus `KeyGraph::SlideToColumn`, which restores your column
+  after a NON-directional jump (a row vanishing under you — ordinary arrow moves
+  never consult it, they already went where you pointed), and
+  `NodeVtable::LandGroup`, the general row-vanish rule: land on the nearest
+  survivor of the SAME group, never on a header or a lead line. Sparse rows are
+  first-class — a null cell keeps its column NUMBER while being unlandable, which
+  is what lets Up/Down match columns across ragged rows and fall to the primary
+  where a row has no cell there. **Reach for a sheet whenever a screen draws
+  column headings**; the roster is the first user.
 - **UI reading**: `src/game_ui.cpp` reads `UIScreen`/`UIPanel`/`UIList` object
   trees through EXPLICIT field offsets (never the generated class layouts) and
   `src/menu_navigator.cpp` turns them into GraphRenders — one *recipe* per
@@ -698,9 +722,22 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   `DeceasedListItem` name/kills/missions/last operation/date, the plain item name/status/location
   for scientists and engineers. ⛔ **No `Caps()`**: every row caps the name before handing it to
   Flash, and that is a visual style, not information — a reader that spells out all-caps words
-  would turn every soldier into an acronym. The memorial's four numeric columns borrow the SORT
-  HEADER's own localized caption (`m_strButtonLabels[]`), because a bare *"3"* under a heading no
-  keyboard reaches is not information.
+  would turn every soldier into an acronym.
+  ⛔ **It is a TABLE, and it is emitted as one** (`GraphSheet` — see the kernel section below).
+  Column 0 is the person's NAME and carries every other cell as extra announcement parts, so
+  walking DOWN reads the whole row exactly as a flat list would; stepping RIGHT lands on one fact
+  at a time, each announced with the heading the game draws over it. Every column takes a heading
+  the GAME ships — `m_strButtonLabels[]`, the same localized array the sort headers are drawn
+  from, all nine populated — and that constraint is what merges the soldier's TIME cell into
+  STATUS: the row draws them stacked in one column and the only time heading the game has is
+  *ДАТА*, right for the memorial's date of death and actively wrong for *"5 days until return"*.
+  The mental state folds in there too, for the same reason (no heading exists) and because
+  `GetMentalStateStringsSeparate` overwrites the time pair anyway. Columns are therefore
+  rank/class/status/location for soldiers, kills/missions/operation/date for the memorial, and
+  status/location for scientists and engineers. The wire format for rows is POSITIONAL —
+  `col=` per heading, `cell=` per value **including the empty ones** — because an empty cell is a
+  real thing (a scientist has no rank) and dropping it would shift every column after it, the one
+  mistake a table cannot survive.
   **This is a READER, not a rescue** — `UIPersonnel.OnUnrealCommand` already walks the list on
   Up/Down (through its `default:` branch into `m_kList.Navigator`), switches tabs on Left/Right,
   accepts on Enter/Space and backs out on Escape, all on mouse+keyboard. Three stops, in the

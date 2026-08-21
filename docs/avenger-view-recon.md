@@ -1658,10 +1658,70 @@ sharper reason: the frame differ rebuilds ten times a second, and
 6. Shape-count the ring afterwards. A roster of one status value across twenty
    soldiers would be this layer's version of the tile cursor's 260 "High cover".
 
-## 15.10 Known gaps
+## 15.10 The roster is a TABLE — GraphSheet (2026-08-21)
 
+The first build flattened each row into one sentence. That is right for a LIST
+and wrong for a table, and this screen is a table: four columns under headings
+the game draws once, at the top, and never again.
+
+Three problems speech has with that which a sighted reader does not:
+
+- a cell read alone is a value with nothing to anchor it — *"3"* under a heading
+  you cannot see;
+- reading the whole row every time is the only alternative, and twenty soldiers
+  by six facts is a paragraph per arrow press;
+- focus snapping back to the first cell makes a COLUMN impossible to read down,
+  which is the single most useful thing a table offers ("who is wounded?" should
+  be twenty words, not twenty paragraphs).
+
+`GraphSheet` (ported from WrathAccess into `src/Graph/`) answers all three with
+graph primitives and no announcer changes:
+
+| Framing rule | Graph mechanism |
+|---|---|
+| column header on column change | Left/Right **edge label** (the destination column's heading) |
+| row name when off the primary | Up/Down **edge label** into a non-primary cell |
+| whole-row readout | the **primary's own extra announcement parts** |
+| keeping your column | `NodeVtable::Column` + `KeyGraph::SlideToColumn` |
+| never landing on a heading | `NodeVtable::LandGroup` |
+
+So column 0 IS the flat list, and the cells to its right are the same facts made
+addressable — one graph, two readings.
+
+Two kernel additions were needed and are covered by 11 new conformance tests.
+`Column` is consulted only on NON-directional jumps (a row vanishing under you);
+an ordinary arrow move already went where the player pointed. `LandGroup` is the
+general row-vanish rule: land on the nearest survivor of the same group, next
+first then previous, never a header or a lead line.
+
+⛔ Sparse rows are first-class. A null cell keeps its column NUMBER while being
+unlandable, which is what lets Up/Down match columns across ragged rows (a
+scientist has no rank) and fall to the primary where a row has no cell there.
+
+**Columns come from the game, and that constrains what a column can be.** Every
+heading is `m_strButtonLabels[]` — the same localized array the sort headers are
+drawn from, all nine populated. There is no heading for a soldier's recovery
+countdown (the only time heading is *ДАТА*, right for the memorial's date of
+death and wrong here) and none at all for mental state, so both fold into the
+STATUS cell — which is also where the row draws them, stacked. A column with a
+blank heading is worse than no column.
+
+## 15.11 Known gaps
+
+- ⛔ **`UIChooseFacility` has no recipe and is SILENT** — the list of facilities
+  you can build in an excavated room, reached from build mode. It looks like a
+  `UIInventory` (a `UIList` beside a detail panel with cost, power, upkeep, time
+  and requirements) but it `extends UIScreen`, so the commodity recipe does not
+  see it. Measured live 2026-08-21: with `UIBuildFacilities` topmost the ant farm
+  narrates the grid correctly, but the screen its Enter opens says nothing. This
+  is the next recipe in this layer.
 - `UIFacility_Infirmary` spawns its own `PatientList` (`UIList`) — the only
   facility subclass that adds navigable content of its own. Unread.
+- ⚠ Entering the Avenger from the geoscape, the first one or two grid
+  announcements arrive with a POSITION and no room name (*"top middle"* twice,
+  measured live) — the overlays are announced before the game has written their
+  `Label`. It settles immediately after. A readiness gate on a non-empty label
+  would fix it.
 - A mod adding a SECOND bottom-bar button gets `Vocab::RoomFunctionFallback`
   ("Room action") rather than a wrong label; the widget retains nothing else.
 - The soldier row's bond icon and its tooltip (`BondmateTooltip`, a real

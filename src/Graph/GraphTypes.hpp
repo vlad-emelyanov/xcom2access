@@ -197,6 +197,19 @@ struct NodeVtable
     /// Set when this node's announcements already include its list position, so the announcer
     /// doesn't append the auto-stamped one.
     bool SpeaksOwnPosition = false;
+
+    /// The node's LANDING GROUP — the general row-vanish rule. When the focused node disappears,
+    /// reconcile lands on the nearest survivor OF THE SAME GROUP (next row first, then previous),
+    /// never on a header, a lead line or another panel. Only nodes stamped with a group take part;
+    /// the vanished node's group is remembered at focus time. Empty = not a group member.
+    std::string LandGroup;
+
+    /// The node's LOGICAL COLUMN in a tabular row (0 = the row's primary), or -1 when not tabular.
+    /// Stamped by GraphSheet; the engine uses it to PRESERVE the column when focus jumps
+    /// NON-directionally — the reconcile fallback after a row vanishes — by sliding along the
+    /// destination row's Left/Right edges to the same column. Ordinary arrow moves never consult
+    /// it: they already went where the player pointed.
+    int Column = -1;
 };
 
 /// A directed edge to another node, with an optional spoken transition line (a "lane change" —
@@ -329,6 +342,15 @@ struct GraphState
 
     /// Remembered position per Tab-stop: where Tab lands when cycling back into a stop.
     std::unordered_map<std::string, ControlId> StopMemory;
+
+    /// The logical column focus last sat on in a tabular row (NodeVtable::Column), or -1. The
+    /// reconcile fallbacks slide to this column when the focused row vanished, so acting on rows
+    /// in sequence keeps your place in the table rather than dumping you back at column 0.
+    int LastColumn = -1;
+
+    /// The focused node's NodeVtable::LandGroup (empty when it had none) — the row-vanish
+    /// fallback prefers survivors of this group.
+    std::string LastLandGroup;
 
     /// The expanded groups (by id). The builder consults this for groups declared without an
     /// explicit state; the engine's expand/collapse operations mutate it. Screens hold NO

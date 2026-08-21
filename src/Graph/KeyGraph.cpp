@@ -94,7 +94,31 @@ void KeyGraph::Reconcile(GraphRender& render, GraphState& state)
             if (GraphNode* structural = render.NodeAt(old))
                 resolved = structural->Id;
 
-        // Fallback: nearest survivor walking the previous order backward.
+        // Tier 3 — the GENERAL row-vanish rule: land on the nearest survivor OF THE SAME LANDING
+        // GROUP (this list's rows), next-first then previous — never a header, a lead line or
+        // another panel. Only nodes stamped with a LandGroup take part; the vanished node's group
+        // was remembered at focus time.
+        if (!resolved.IsValid() && !state.KeyOrder.empty() && !state.LastLandGroup.empty())
+        {
+            int oldIndex = IndexOf(state.KeyOrder, old);
+            if (oldIndex >= 0)
+            {
+                const int count = static_cast<int>(state.KeyOrder.size());
+                for (int off = 1; off < count && !resolved.IsValid(); off++)
+                {
+                    resolved = GroupSurvivorAt(render, state, oldIndex + off); // next row first
+                    if (!resolved.IsValid())
+                        resolved = GroupSurvivorAt(render, state, oldIndex - off);
+                }
+                if (resolved.IsValid())
+                    resolved = SlideToColumn(render, resolved, state.LastColumn);
+            }
+        }
+
+        // Fallback: nearest survivor walking the previous order backward. The order interleaves a
+        // table's row CELLS, so when a whole row vanished the walk lands on the previous row's LAST
+        // cell — a different column. Slide along that row to the column focus was on, so acting on
+        // rows in sequence keeps your place in the table.
         if (!resolved.IsValid() && !state.KeyOrder.empty())
         {
             int oldIndex = IndexOf(state.KeyOrder, old);
@@ -102,7 +126,7 @@ void KeyGraph::Reconcile(GraphRender& render, GraphState& state)
                 for (int i = oldIndex; i >= 0; i--)
                     if (GraphNode* survivor = render.NodeAt(state.KeyOrder[i]))
                     {
-                        resolved = survivor->Id;
+                        resolved = SlideToColumn(render, survivor->Id, state.LastColumn);
                         break;
                     }
         }
@@ -119,7 +143,66 @@ void KeyGraph::Reconcile(GraphRender& render, GraphState& state)
 
     state.CurKey = resolved;
     RememberStop(render, state, resolved);
+    RememberColumn(render, state, resolved);
+    RememberLandGroup(render, state, resolved);
     state.KeyOrder = ComputeOrder(render);
+}
+
+ControlId KeyGraph::GroupSurvivorAt(const GraphRender& render, const GraphState& state, int index)
+{
+    if (index < 0 || index >= static_cast<int>(state.KeyOrder.size()))
+        return {};
+    GraphNode* n = render.NodeAt(state.KeyOrder[index]);
+    if (!n)
+        return {};
+    return n->Vtable.LandGroup == state.LastLandGroup ? n->Id : ControlId{};
+}
+
+void KeyGraph::RememberColumn(const GraphRender& render, GraphState& state, const ControlId& key)
+{
+    GraphNode* node = render.NodeAt(key);
+    // Only a TABULAR node updates it. Leaving the last column alone when focus passes over an
+    // untabbed node (a section header between two tables) is what lets the column survive the
+    // trip: forgetting it there would drop the player back at column 0 on the next row.
+    if (node && node->Vtable.Column >= 0)
+        state.LastColumn = node->Vtable.Column;
+}
+
+void KeyGraph::RememberLandGroup(const GraphRender& render, GraphState& state, const ControlId& key)
+{
+    GraphNode* node = render.NodeAt(key);
+    state.LastLandGroup = node ? node->Vtable.LandGroup : std::string();
+}
+
+ControlId KeyGraph::SlideToColumn(const GraphRender& render, const ControlId& start, int prefCol)
+{
+    GraphNode* node = render.NodeAt(start);
+    if (!node || prefCol < 0)
+        return start;
+    int col = node->Vtable.Column;
+    if (col < 0 || col == prefCol)
+        return start;
+
+    const GraphDir dir = col < prefCol ? GraphDir::Right : GraphDir::Left;
+    GraphNode* cur = node;
+    while (cur->Vtable.Column != prefCol)
+    {
+        const Transition* t = cur->GetTransition(dir);
+        if (!t)
+            break;
+        GraphNode* next = render.NodeAt(t->Destination);
+        if (!next || next->Vtable.Column < 0)
+            break;
+        if (dir == GraphDir::Right && next->Vtable.Column > prefCol)
+            break; // sparse row: stop at the last cell below the wanted column
+        if (dir == GraphDir::Left && next->Vtable.Column < prefCol)
+        {
+            cur = next; // overshot: the nearest cell below it is the answer
+            break;
+        }
+        cur = next;
+    }
+    return cur->Id;
 }
 
 std::vector<ControlId> KeyGraph::ComputeOrder(const GraphRender& render)
@@ -170,6 +253,9 @@ void KeyGraph::SetCurrent(GraphNode* node)
     _state->CurKey = node->Id;
     if (!node->StopKey.empty())
         _state->StopMemory[node->StopKey] = node->Id;
+    if (node->Vtable.Column >= 0)
+        _state->LastColumn = node->Vtable.Column;
+    _state->LastLandGroup = node->Vtable.LandGroup;
 }
 
 // ---- navigation operations ----

@@ -14,6 +14,12 @@ inline constexpr const char* ScreenOptionsFallback = "Settings";
 inline constexpr const char* RoleButton = "button";
 inline constexpr const char* RoleTicker = "news ticker";
 inline constexpr const char* RoleTab = "tab";
+// A region emitted by GraphSheet with column headings, announced once on entry so a player knows
+// Left/Right will step across facts rather than out of the list.
+inline constexpr const char* RoleTable = "table";
+/// An empty CELL in such a region. It must say something: silence there is indistinguishable
+/// from a cell that failed to resolve, or from no cell at all.
+inline constexpr const char* TableBlank = "blank";
 inline constexpr const char* RoleCheckbox = "checkbox";
 inline constexpr const char* RoleSlider = "slider";
 inline constexpr const char* RoleSpinner = "spinner";
@@ -124,6 +130,8 @@ inline constexpr const char* CommodityOwned = "owned";
 // direction) carried entirely by a glyph, so speech has to supply the words for both.
 inline constexpr const char* ScreenPersonnelFallback = "Personnel";
 inline constexpr const char* PersonnelEmpty = "Nobody here";
+// The row's promotion badge — an icon, and therefore a whole affordance speech loses by default.
+inline constexpr const char* PersonnelPromote = "promotion available";
 inline constexpr const char* PersonnelSortBy = "sort by";
 inline constexpr const char* SortAscending = "ascending";
 inline constexpr const char* SortDescending = "descending";

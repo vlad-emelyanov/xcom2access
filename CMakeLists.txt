@@ -79,6 +79,7 @@ add_library(X2Access SHARED
     src/sdk_layout_checks.cpp
     # Graph A11y Kernel — engine-neutral, STL-only (see src/Graph/ControlId.hpp)
     src/Graph/GraphBuilder.cpp
+    src/Graph/GraphSheet.cpp
     src/Graph/KeyGraph.cpp
     src/Graph/GraphAnnouncer.cpp
     # Generated SDK — the globals definition file. Since the 2026-08-19 regeneration the

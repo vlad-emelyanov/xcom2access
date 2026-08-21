@@ -197,9 +197,18 @@ public:
     /// the caller should navigate instead.
     bool TryAdjust(int sign, bool large);
 
+    /// From `start`, walk its row's Left/Right edges to the cell at `prefCol` — or the nearest
+    /// cell BELOW it in a sparse row. Returns `start` unchanged when either side is not tabular
+    /// (Column < 0) or the column already matches. Horizontal edges never leave a row, so the walk
+    /// cannot escape it. Public for the conformance tests.
+    static ControlId SlideToColumn(const GraphRender& render, const ControlId& start, int prefCol);
+
 private:
     static GraphNode* StopLandingIn(const GraphRender& render, const GraphState& state, const std::string& stopKey);
     static void RememberStop(const GraphRender& render, GraphState& state, const ControlId& key);
+    static void RememberColumn(const GraphRender& render, GraphState& state, const ControlId& key);
+    static void RememberLandGroup(const GraphRender& render, GraphState& state, const ControlId& key);
+    static ControlId GroupSurvivorAt(const GraphRender& render, const GraphState& state, int index);
     void SetCurrent(GraphNode* node);
     void SetExpanded(GraphNode* group, bool expanded);
     GraphNode* FirstChildOf(const GraphNode* group);

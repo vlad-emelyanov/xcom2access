@@ -73,7 +73,8 @@ const FLD_SEP = "~:~";
 //   kind=header title                                        (only when the strip is hidden)
 //   kind=tab    tab=<EUIPersonnelType>  label  selected      (omitted when there is one tab)
 //   kind=sort   index=<i>  label  selected  desc             (the VISIBLE header's columns)
-//   kind=row    index=<i>  name rank class status time mental loc kills missions op date promote
+//   kind=cols   col=<h1>  col=<h2> ...                       (the TABLE's column headings)
+//   kind=row    index=<i>  name  cell=<v1>  cell=<v2> ...    (positional; empties are KEPT)
 //   kind=empty  text                                          (the game's own empty-list line)
 //
 // Every index is the GAME's — the list's own item index for a row, the header's own child index
@@ -92,6 +93,7 @@ function DescribePersonnel()
 	AppendHeader(Screen);
 	AppendTabs(Screen);
 	AppendSortColumns(Screen);
+	AppendColumns(Screen);
 	AppendRows(Screen);
 }
 
@@ -202,8 +204,68 @@ private function UIPanel VisibleSortHeader(UIPersonnel Screen)
 }
 
 // ---------------------------------------------------------------------------------------
-// Rows
+// Columns and rows — the TABLE
 // ---------------------------------------------------------------------------------------
+
+// THE ROSTER IS A TABLE, and native builds it as one (GraphSheet): column 0 is the person's
+// NAME and every other column is one fact under a heading. So the wire format is positional
+// rather than named — one `col=` per heading, then one `cell=` per row in the SAME ORDER,
+// EMPTY VALUES INCLUDED. An empty cell is a real thing (a scientist has no rank; an unstaffed
+// soldier has no location) and dropping it would shift every column after it, which is the one
+// mistake a table cannot survive.
+//
+// WHICH ROW CLASS the list is showing decides the columns, and the test is
+// PopulateListInstantly's own — m_eListType OR m_eCurrentTab — because a screen pinned to one
+// list type never touches m_eCurrentTab at all.
+
+private function bool ShowingSoldiers(UIPersonnel Screen)
+{
+	return Screen.m_eListType == eUIPersonnel_Soldiers
+		|| Screen.m_eCurrentTab == eUIPersonnel_Soldiers;
+}
+
+private function bool ShowingDeceased(UIPersonnel Screen)
+{
+	return Screen.m_eListType == eUIPersonnel_Deceased
+		|| Screen.m_eCurrentTab == eUIPersonnel_Deceased;
+}
+
+// ⛔ Every column takes a heading the GAME ships — m_strButtonLabels, the same localized array
+// the sort headers are drawn from, all nine of them populated. A column with a blank heading is
+// worse than no column: stepping into it announces a value with nothing to anchor it.
+//
+// That constraint is what merges the soldier's TIME into STATUS. The row draws them stacked in
+// one column, and the only heading the game has for time is "ДАТА" — right for the memorial's
+// date of death, actively wrong for "5 days until return". The value carries its own label
+// anyway (statusTimeLabel), so nothing is lost by folding it in.
+private function AppendColumns(UIPersonnel Screen)
+{
+	local string Rec;
+
+	Rec = "kind=cols";
+
+	if (ShowingDeceased(Screen))
+	{
+		Rec $= FLD_SEP $ "col=" $ Screen.m_strButtonLabels[ePersonnelSoldierSortType_Kills];
+		Rec $= FLD_SEP $ "col=" $ Screen.m_strButtonLabels[ePersonnelSoldierSortType_Missions];
+		Rec $= FLD_SEP $ "col=" $ Screen.m_strButtonLabels[ePersonnelSoldierSortType_Operations];
+		Rec $= FLD_SEP $ "col=" $ Screen.m_strButtonLabels[ePersonnelSoldierSortType_Time];
+	}
+	else if (ShowingSoldiers(Screen))
+	{
+		Rec $= FLD_SEP $ "col=" $ Screen.m_strButtonLabels[ePersonnelSoldierSortType_Rank];
+		Rec $= FLD_SEP $ "col=" $ Screen.m_strButtonLabels[ePersonnelSoldierSortType_Class];
+		Rec $= FLD_SEP $ "col=" $ Screen.m_strButtonLabels[ePersonnelSoldierSortType_Status];
+		Rec $= FLD_SEP $ "col=" $ Screen.m_strButtonLabels[ePersonnelSoldierSortType_Location];
+	}
+	else
+	{
+		Rec $= FLD_SEP $ "col=" $ Screen.m_strButtonLabels[ePersonnelSoldierSortType_Status];
+		Rec $= FLD_SEP $ "col=" $ Screen.m_strButtonLabels[ePersonnelSoldierSortType_Location];
+	}
+
+	Emit(Rec);
+}
 
 private function AppendRows(UIPersonnel Screen)
 {
@@ -233,22 +295,28 @@ private function AppendRows(UIPersonnel Screen)
 
 		Rec = "kind=row" $ FLD_SEP $ "index=" $ string(i);
 
+		// Matched by ROW CLASS, not by the tab: UIPersonnel_Armory pins m_eListType to soldiers
+		// and never sets a tab, so the widget the game actually spawned is the honest test.
 		if (UIPersonnel_DeceasedListItem(Row) != none)
-			Rec $= DeceasedFields(Screen, Unit);
+			Rec $= DeceasedCells(Unit);
 		else if (UIPersonnel_SoldierListItem(Row) != none)
-			Rec $= SoldierFields(Unit);
+			Rec $= SoldierCells(Unit);
 		else
-			Rec $= StaffFields(Unit);
+			Rec $= StaffCells(Unit);
+
+		if (Unit.ShowPromoteIcon())
+			Rec $= FLD_SEP $ "promote=1";
 
 		Emit(Rec);
 	}
 }
 
 // UIPersonnel_SoldierListItem.UpdateData, re-derived. Its status is the SEPARATE form — status,
-// a time label and a time value — because an active soldier's mental state overwrites the last
-// two, which is how "СОСРЕДОТОЧЕН" and its countdown reach the same columns a wounded soldier's
-// recovery days use.
-private function string SoldierFields(XComGameState_Unit Unit)
+// a time label and a time value — because an ACTIVE soldier's mental state overwrites the last
+// two, which is how "СОСРЕДОТОЧЕН" and its will countdown reach the same place a wounded
+// soldier's recovery days use. All three land in the one status cell, in the order the row
+// stacks them.
+private function string SoldierCells(XComGameState_Unit Unit)
 {
 	local X2SoldierClassTemplate SoldierClass;
 	local string Out, Status, TimeLabel, TimeValue, Mental;
@@ -264,59 +332,50 @@ private function string SoldierFields(XComGameState_Unit Unit)
 		TimeValue = (TimeNum == 0) ? "" : string(TimeNum);
 	}
 
-	// The row itself reads SoldierClass.DataName unguarded and SoldierClass.DisplayName guarded,
-	// which is a shipped inconsistency rather than a promise; both are guarded here, because an
-	// Accessed None from OUR class in the game's log is noise in the one place a bug gets
-	// diagnosed. A rank name resolves without the class — GetShortRankName falls back to the
-	// generic ladder — so nothing is lost by asking for it that way.
-	Out = FLD_SEP $ "rank=" $ class'X2ExperienceConfig'.static.GetShortRankName(
-		Unit.GetRank(), SoldierClass != none ? SoldierClass.DataName : '');
-	Out $= FLD_SEP $ "name=" $ Unit.GetName(eNameType_FullNick);
-	if (SoldierClass != none)
-		Out $= FLD_SEP $ "class=" $ SoldierClass.DisplayName;
-	Out $= FLD_SEP $ "status=" $ Status;
-	// The two halves the row draws stacked in one column: "5" over "ДНЕЙ ДО ВОЗВРАЩЕНИЯ".
-	// Value first, then the label that gives it a unit — the order the number is read in.
-	if (TimeValue != "")
-		Out $= FLD_SEP $ "time=" $ TimeValue @ TimeLabel;
 	if (Mental != "")
-		Out $= FLD_SEP $ "mental=" $ Mental;
-	Out $= FLD_SEP $ "loc=" $ LocationOf(Unit);
-	if (Unit.ShowPromoteIcon())
-		Out $= FLD_SEP $ "promote=1";
+		Status @= Mental;
+	// "5" over "ДНЕЙ ДО ВОЗВРАЩЕНИЯ" — value first, then the label that gives the number a unit.
+	if (TimeValue != "")
+		Status @= TimeValue @ TimeLabel;
+
+	// The row reads SoldierClass.DataName unguarded and DisplayName guarded, which is a shipped
+	// inconsistency rather than a promise; both are guarded here, because an Accessed None from
+	// OUR class in the game's log is noise in the one place a bug gets diagnosed. A rank name
+	// resolves without the class anyway — GetShortRankName falls back to the generic ladder.
+	Out = FLD_SEP $ "name=" $ Unit.GetName(eNameType_FullNick);
+	Out $= FLD_SEP $ "cell=" $ class'X2ExperienceConfig'.static.GetShortRankName(
+		Unit.GetRank(), SoldierClass != none ? SoldierClass.DataName : '');
+	Out $= FLD_SEP $ "cell=" $ (SoldierClass != none ? SoldierClass.DisplayName : "");
+	Out $= FLD_SEP $ "cell=" $ Status;
+	Out $= FLD_SEP $ "cell=" $ LocationOf(Unit);
 
 	return Out;
 }
 
-// UIPersonnel_DeceasedListItem.UpdateData. The three numbers and the date are bare columns on
-// screen, under headings a blind player never reaches — so each carries the heading the sort
-// header uses for it, out of the screen's own localized m_strButtonLabels.
-private function string DeceasedFields(UIPersonnel Screen, XComGameState_Unit Unit)
+// UIPersonnel_DeceasedListItem.UpdateData. Four bare columns on screen under headings a blind
+// player never reaches — which is exactly what the table's column headers restore.
+private function string DeceasedCells(XComGameState_Unit Unit)
 {
 	local string Out;
 
 	Out = FLD_SEP $ "name=" $ Unit.GetName(eNameType_FullNick);
-	Out $= FLD_SEP $ "killsLabel=" $ Screen.m_strButtonLabels[ePersonnelSoldierSortType_Kills];
-	Out $= FLD_SEP $ "kills=" $ string(Unit.GetNumKills());
-	Out $= FLD_SEP $ "missionsLabel=" $ Screen.m_strButtonLabels[ePersonnelSoldierSortType_Missions];
-	Out $= FLD_SEP $ "missions=" $ string(Unit.GetNumMissions());
-	Out $= FLD_SEP $ "opLabel=" $ Screen.m_strButtonLabels[ePersonnelSoldierSortType_Operations];
-	Out $= FLD_SEP $ "op=" $ Unit.GetKIAOp();
-	Out $= FLD_SEP $ "dateLabel=" $ Screen.m_strButtonLabels[ePersonnelSoldierSortType_Time];
-	Out $= FLD_SEP $ "date=" $ class'X2StrategyGameRulesetDataStructures'.static.GetDateString(Unit.GetKIADate(), true);
+	Out $= FLD_SEP $ "cell=" $ string(Unit.GetNumKills());
+	Out $= FLD_SEP $ "cell=" $ string(Unit.GetNumMissions());
+	Out $= FLD_SEP $ "cell=" $ Unit.GetKIAOp();
+	Out $= FLD_SEP $ "cell=" $ class'X2StrategyGameRulesetDataStructures'.static.GetDateString(Unit.GetKIADate(), true);
 
 	return Out;
 }
 
 // UIPersonnel_ListItem.UpdateData — scientists and engineers. The skill column the row draws is
 // a hardcoded "0" in the shipped source, so there is nothing to read there and nothing is said.
-private function string StaffFields(XComGameState_Unit Unit)
+private function string StaffCells(XComGameState_Unit Unit)
 {
 	local string Out;
 
 	Out = FLD_SEP $ "name=" $ Unit.GetName(eNameType_Full);
-	Out $= FLD_SEP $ "status=" $ class'UIUtilities_Strategy'.static.GetPersonnelStatus(Unit);
-	Out $= FLD_SEP $ "loc=" $ LocationOf(Unit);
+	Out $= FLD_SEP $ "cell=" $ class'UIUtilities_Strategy'.static.GetPersonnelStatus(Unit);
+	Out $= FLD_SEP $ "cell=" $ LocationOf(Unit);
 
 	return Out;
 }
@@ -395,6 +454,10 @@ function ClickPersonnelSort(int Index)
 	if (Index < 0 || Index >= Buttons.Length)
 		return;
 
+	// OnMouseEvent's args are the Flash payload, which this handler never reads. Cleared
+	// explicitly rather than left default: the compiler warns on an unassigned local, and a
+	// warning we shrug at is one we stop reading.
+	NoArgs.Length = 0;
 	Buttons[Index].OnMouseEvent(class'UIUtilities_Input'.const.FXS_L_MOUSE_UP, NoArgs);
 }
 

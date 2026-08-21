@@ -8,6 +8,7 @@
 
 #include "Graph/GraphAnnouncer.hpp"
 #include "Graph/GraphBuilder.hpp"
+#include "Graph/GraphSheet.hpp"
 #include "Graph/KeyGraph.hpp"
 
 #define WIN32_LEAN_AND_MEAN
@@ -3045,52 +3046,16 @@ void BuildPersonnelSort(GraphBuilder& b, const std::vector<WireRecord>& records)
         b.EndRow();
 }
 
-// One row's line, in reading order. ⛔ NOT the screen's column order: the row draws rank first
-// and the name second, and speech puts the NAME first because it is the identifier a player is
-// scanning for — the same call the save rows made about their leading timestamp. Everything
-// after it is the game's own column text, dropped when the game is not drawing it.
-std::string ComposePersonnelRow(const WireRecord& rec)
-{
-    struct Part {
-        const char* label; // an optional caption the game draws over the column
-        const char* value;
-    };
-    const Part parts[] = {
-        {nullptr, "name"},
-        {nullptr, "rank"},
-        {nullptr, "class"},
-        {nullptr, "status"},
-        {nullptr, "time"},
-        {nullptr, "mental"},
-        {nullptr, "loc"},
-        {"killsLabel", "kills"},
-        {"missionsLabel", "missions"},
-        {"opLabel", "op"},
-        {"dateLabel", "date"},
-    };
+// The roster is a TABLE, so it is emitted as one — GraphSheet, not a list of flattened
+// sentences. Column 0 is the person's NAME and carries every other cell as extra announcement
+// parts, so walking DOWN reads the whole row exactly as a flat list would; stepping RIGHT lands
+// on one fact at a time, each announced with the column heading the game draws over it, and
+// Up/Down then reads that ONE column down the roster. On twenty soldiers, "who is wounded" stops
+// being twenty paragraphs and becomes twenty words.
 
-    std::string line;
-    for (const Part& part : parts) {
-        const std::string value = RecField(rec, part.value);
-        if (value.empty())
-            continue;
-        if (part.label) {
-            // A bare number under a heading nobody reaches is not information: the memorial's
-            // kills, missions, operation and date all borrow the sort header's own localized
-            // caption. AppendPhrase does the join, so a caption already ending in a colon does
-            // not also collect a comma.
-            std::string pair = RecField(rec, part.label);
-            if (pair.empty()) {
-                AppendPhrase(line, value);
-                continue;
-            }
-            AppendPhrase(pair, value);
-            AppendPhrase(line, pair);
-            continue;
-        }
-        AppendPhrase(line, value);
-    }
-    return line;
+SheetConfig PersonnelSheetConfig()
+{
+    return SheetConfig{Vocab::TableBlank, Vocab::RoleTable, &TextType()};
 }
 
 std::unique_ptr<GraphRender> BuildPersonnel()
@@ -3106,7 +3071,6 @@ std::unique_ptr<GraphRender> BuildPersonnel()
     BuildPersonnelSort(b, records);
 
     b.BeginStop("list");
-    b.SetRegion("list");
 
     if (view.rows.empty()) {
         // The game's own empty line — "НЕТ ПОГИБШИХ СОЛДАТ" in the memorial, and one per tab
@@ -3123,8 +3087,19 @@ std::unique_ptr<GraphRender> BuildPersonnel()
         return b.Build();
     }
 
+    std::vector<std::string> columns;
+    if (const WireRecord* cols = FindRecord(records, "cols"))
+        columns = RecFieldAll(*cols, "col");
+
+    GraphSheet sheet(b, "personnel/", PersonnelSheetConfig());
+    // No region label: the screen is already named by RecipeName, and a second title here would
+    // repeat it on every entry.
+    sheet.Region("", columns);
+
     ControlId start;
     bool haveStart = false;
+    const int rowCount = static_cast<int>(view.rows.size());
+    int position = 0;
 
     for (const GameUI::PersonnelRow& row : view.rows) {
         const WireRecord* rec = nullptr;
@@ -3135,47 +3110,94 @@ std::unique_ptr<GraphRender> BuildPersonnel()
                 break;
             }
         }
-        std::string label = rec ? ComposePersonnelRow(*rec) : std::string();
-        if (label.empty())
-            label = Vocab::SoldierFallback;
 
-        ControlId id
-            = ControlId::Referenced(row.handle, "personnel/" + std::to_string(row.index));
+        std::string name = rec ? RecField(*rec, "name") : std::string();
+        if (name.empty())
+            name = Vocab::SoldierFallback;
+        std::vector<std::string> cells
+            = rec ? RecFieldAll(*rec, "cell") : std::vector<std::string>();
+        const bool promote = rec && !RecField(*rec, "promote").empty();
+
         const int index = row.index;
-        gFocus[id.StructuralKey] = FocusTarget{index, nullptr, false, nullptr};
+        position++;
 
-        if (index == view.selected && !haveStart) {
-            start = id;
-            haveStart = true;
+        NodeVtable primary;
+        primary.Type = &ButtonType();
+        primary.Announcements.emplace_back(NodeAnnouncement::Static(name));
+        primary.Announcements.back().Kind = AnnouncementKinds::Label;
+        // The row's other facts, carried on the PRIMARY as extra parts — this is what keeps the
+        // flat reading and the tabular one the same graph. Value-kind so they land where a
+        // control's value lands rather than after the position count, and stable_sort holds
+        // their declaration order, so they read left to right as the row is drawn.
+        for (const std::string& cell : cells) {
+            if (cell.empty())
+                continue;
+            primary.Announcements.emplace_back(NodeAnnouncement::Static(cell));
+            primary.Announcements.back().Kind = AnnouncementKinds::Value;
         }
-        if (!haveStart && index == 0)
-            start = id; // the game selects row 0 when nothing else is selected
 
-        NodeVtable vt;
-        vt.Type = &ButtonType();
-        vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
-        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (promote) {
+            // The row draws a badge for a soldier ready to be promoted — a whole affordance
+            // carried by an icon, which speech otherwise loses entirely.
+            primary.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::PersonnelPromote));
+            primary.Announcements.back().Kind = kKindAttention;
+        }
 
         if (row.disabled) {
             // Real, and the game enforces it: every OnXSelected delegate opens by testing
             // IsDisabled and doing nothing. The armory sets it on soldiers away on covert
             // actions; the tutorial sets it on everyone but the one soldier the script wants.
-            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
-            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+            primary.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            primary.Announcements.back().Kind = AnnouncementKinds::Enabled;
         } else {
             // Re-read at activation: the handler runs from the input drain, a frame or more
             // after this render, and any sort or tab change respawns every row. The index is
             // the game's own, which is what makes matching on it safe.
-            vt.OnActivate = [index]() {
+            primary.OnActivate = [index]() {
                 GameUI::ActivatePersonnelRow(GameUI::ReadPersonnel(gScreen), index);
             };
         }
-        b.AddItem(std::move(id), std::move(vt));
+
+        // A sheet is raw mode underneath, so the builder stamps no automatic positions — and on
+        // a roster "4 of 20" is one of the facts a blind player most wants, so it is added
+        // explicitly. Position-kind, so the user's per-kind filter still governs it.
+        primary.Announcements.emplace_back(
+            NodeAnnouncement::Static(Vocab::Position(position, rowCount)));
+        primary.Announcements.back().Kind = AnnouncementKinds::Position;
+
+        std::vector<std::function<std::string()>> producers;
+        producers.reserve(cells.size());
+        for (const std::string& cell : cells) {
+            // An empty cell is left NULL rather than blank: a sparse column is not landable, so
+            // arrowing across a scientist's row does not stop on the rank they do not have —
+            // while the columns AFTER it keep their numbers, which is what lets Up/Down match
+            // columns across rows of different shapes.
+            if (cell.empty())
+                producers.push_back(nullptr);
+            else
+                producers.push_back([cell]() { return cell; });
+        }
+
+        sheet.Row(std::move(primary), row.handle, std::move(producers));
+
+        // The primary's own key, rebuilt the way GraphSheet builds it, so the focus write-back
+        // finds it. Every CELL inherits the row's list index too: selecting is what Enter reads
+        // back, and a player acting from column 3 must act on the row they are in.
+        for (int col = 0; col <= static_cast<int>(cells.size()); col++) {
+            std::string key = GraphSheet::RowKey("personnel/", row.handle, col);
+            gFocus[key] = FocusTarget{index, nullptr, false, nullptr};
+            if (col == 0 && !haveStart && (index == view.selected || position == 1)) {
+                start = ControlId::Referenced(row.handle, key);
+                haveStart = index == view.selected;
+            }
+        }
     }
+    sheet.Finish();
 
     // Land where the game itself lands. UpdateList ends with Navigator.SetSelected(m_kList), so
     // the roster — not the tab strip above it — is what a sighted player is already on.
-    b.SetStart(std::move(start));
+    if (start.IsValid())
+        b.SetStart(std::move(start));
 
     return b.Build();
 }
