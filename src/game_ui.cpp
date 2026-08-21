@@ -3682,6 +3682,75 @@ int ReadChildPanels(void* panel, void** out, int maxItems)
     return ReadPtrArrayRaw(panel, kPanelChildPanelsOffset, out, maxItems);
 }
 
+FlashValue FlashCall(void* movie, const char* funcName, const char* path)
+{
+    FlashValue v;
+    if (!funcName || !funcName[0]) {
+        v.error = "no function named";
+        return v;
+    }
+    if (!movie) {
+        v.error = "no movie to ask (the panel's Movie is null — not inited yet?)";
+        return v;
+    }
+
+    // Whitelist, because the block below is a LAYOUT and not a guess. The two deliberately
+    // excluded neighbours are the ones whose shape differs: GetVariable returns an FASValue
+    // struct, and Invoke takes an array of them as a second parameter.
+    const std::string fn = funcName;
+    if (fn == "GetVariableString" || fn == "ActionScriptString")
+        v.kind = FlashValue::Kind::Text;
+    else if (fn == "GetVariableNumber" || fn == "ActionScriptFloat")
+        v.kind = FlashValue::Kind::Number;
+    else if (fn == "ActionScriptInt")
+        v.kind = FlashValue::Kind::Int;
+    else if (fn == "GetVariableBool")
+        v.kind = FlashValue::Kind::Bool;
+    else if (fn == "ActionScriptVoid")
+        v.kind = FlashValue::Kind::Void;
+    else {
+        v.error = fn
+            + " is not one of the path functions this endpoint knows the return shape of. "
+              "Use GetVariableString / GetVariableNumber / GetVariableBool / ActionScriptString "
+              "/ ActionScriptInt / ActionScriptFloat / ActionScriptVoid — GetVariable (an "
+              "FASValue struct) and Invoke (an array of them) have a different parameter block "
+              "and would be misread here";
+        return v;
+    }
+
+    uint8_t block[64] = {};
+    if (!FlashCallRaw(movie, funcName, path ? path : "", block, sizeof(block))) {
+        v.error = "GFxMoviePlayer." + fn
+            + " could not be resolved or called on that object (is it really a movie?)";
+        return v;
+    }
+    v.called = true;
+
+    switch (v.kind) {
+    case FlashValue::Kind::Text: {
+        wchar_t buf[4096];
+        const int len = CopyFStringRaw(block + kFlashRetOffset, buf, 4096);
+        if (len > 0)
+            v.text = WcharToUtf8(buf, len);
+        break;
+    }
+    case FlashValue::Kind::Number:
+        v.number = *reinterpret_cast<const float*>(block + kFlashRetOffset);
+        break;
+    case FlashValue::Kind::Int:
+        v.number = *reinterpret_cast<const int32_t*>(block + kFlashRetOffset);
+        break;
+    case FlashValue::Kind::Bool:
+        // UBOOL returns arrive as bit 0 of the dword, which is how the generated param struct
+        // declares it (`bool ReturnValue : 1`).
+        v.number = (*reinterpret_cast<const uint32_t*>(block + kFlashRetOffset) & 1u) ? 1 : 0;
+        break;
+    case FlashValue::Kind::Void:
+        break;
+    }
+    return v;
+}
+
 #endif // X2ACCESS_DEVSERVER
 
 } // namespace GameUI

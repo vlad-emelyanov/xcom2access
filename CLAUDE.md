@@ -825,7 +825,17 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   properties (`.text`, `.length`, `.maxChars`, `.caretIndex`) read straight
   through `GetVariableString`. `docs/save-load-recon.md` §7.1 has the measured
   table. A path that does not resolve answers 0 or an empty string, so a probe
-  needs a value it can tell apart from silence.
+  needs a value it can tell apart from silence. `/flash?field=` is the same read
+  made PANEL-RELATIVE (`just dev-field`): it composes the path off the selected
+  panel's own `MCPath`, exactly as `UIMCController` does, so any widget in a
+  `/gui` dump can be asked what it actually shows. ⛔ That is a VERIFICATION
+  tool and must not become a reading strategy — Firaxis' own comment on those
+  getters is *"an immediate and blocking operation … very expensive, use
+  sparingly"*, and the shipped game takes its own advice: two call sites in the
+  whole of `XComGame`. Flash also holds only the rendered TEXT, never the
+  semantics (which row is selected, what a number means, whether a button is
+  disabled), and no field name in it can be `static_assert`ed — so the
+  companion CDO stays the way words are read at runtime.
 - ⛔ **No gameplay event fires in the TUTORIAL — it replays history, it never
   submits it** (proven live 2026-08-20: a full tutorial run produced zero lines
   from `X2AccessTacticalEvents`, with the listener provably registered).
@@ -1184,13 +1194,43 @@ Endpoints:
   where it could not be `static_assert`ed. Class-scope functions only — a
   state-scoped one needs `GameUI::FindStateFunction`.
 
-  All three take the same selector — `?screen=<Class>` (the screen stack,
+- `/flash?field=<name>` — the same read as `/call` with a path argument, but
+  **panel-relative**: it resolves the SELECTED panel's own `MCPath` and reads
+  `<MCPath>.<field>`. That is Firaxis' own composition —
+  `UIMCController.GetString(Field)` is literally
+  `Movie.GetVariableString(Panel.MCPath $ "." $ Field)` — so a child field
+  nests the way their comment says it does
+  (`GetNum("string_of_child_mc.field_string")`). Both handles come out of
+  reflection (`Movie` and `MCPath` by property name), so this verb transcribes
+  no offsets of its own. `&fn=` picks the getter and therefore the return type
+  — `GetVariableString` (default) / `Number` / `Bool`, or
+  `ActionScriptString` / `Int` / `Float` / `Void`; `GetVariable` and `Invoke`
+  are REFUSED by name rather than guessed at, because their parameter blocks
+  differ (an `FASValue` struct, and an array of them) and reading either
+  through the shared block would print half a pointer as a number. Omitting
+  `&field=` asks for the MCPath itself, which is the cheapest test that the
+  panel resolves in the movie at all. **Why it exists**: this is the answer to
+  the hard rule that *our own readout is never evidence about the game's
+  state*. For every screen that pipes its text into Flash and retains none of
+  it — the whole tactical HUD, the save rows, the squad cards, all of which
+  `/gui` prints as wordless — "what does the screen actually say?" had no
+  answer short of asking a sighted person. Flash still holds it. ⚠ Blank is
+  AMBIGUOUS: an unresolved path answers exactly like an empty field (the live
+  probe told them apart only because AS2's real `Selection` accessors answer
+  −1 where an unresolved path answers 0), so the endpoint says so on every
+  blank reading. ⛔ **Verification only, never the speech path** —
+  `UIMCController.uc` labels these getters *"an immediate and blocking
+  operation, doing this is very expensive, use sparingly"*, and the whole
+  shipped game calls one exactly twice (`UISquadSelect_ListItem:716`).
+
+  All four take the same selector — `?screen=<Class>` (the screen stack,
   topmost when unnamed), `?instance=<Class>` (newest instance anywhere in
   GObjects, so it reaches objects the stack never holds — `XCom3DCursor`, a
   cheat manager, a tooltip manager), or `?ptr=0x<addr>` copied out of an earlier
   dump and re-validated against GObjects before it is walked. So the loop is:
   `/gui` to see the tree, `?ptr=` from a line of it, `/props` to read that
-  widget out, `/call` to make it do something.
+  widget out, `/call` to make it do something — and `/flash` to check what it
+  actually put on screen.
 
 An unknown path returns the endpoint list. `/speech` and `/log` are
 cursor-paged: poll with the returned `cursor:` value for exactly-once delivery.
@@ -1198,7 +1238,8 @@ cursor-paged: poll with the returned `cursor:` value for exactly-once delivery.
 Driving it: `just arm`, then `just dev-health` / `dev-status` / `dev-speech` /
 `dev-log` / `dev-exec "<cmd>"` / `dev-input <keys> [kernel]` / `dev-shot` /
 `dev-gui [depth] [select]` / `dev-props [select] [filter]` /
-`dev-call <fn> [select]` / `dev-flash <fn> <arg> [select]`, or
+`dev-call <fn> [select]` / `dev-flash <fn> <arg> [select]` /
+`dev-field [select] [field] [fn]`, or
 `just dev '<endpoint>?<query>'` for anything else.
 ⛔ Scripts must call curl as `$env:SystemRoot/System32/curl.exe` — bare `curl`
 on PATH resolves to MSYS2's cygwin build, whose path translation mangles URL

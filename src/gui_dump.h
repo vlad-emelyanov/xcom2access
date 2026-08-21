@@ -69,6 +69,31 @@ std::string Props(const Selector& sel, const std::string& filter);
 std::string Call(const Selector& sel, const std::string& funcName,
     const std::vector<std::string>& args);
 
+/// Read one Flash field of the selected panel — the fourth verb on the same selector, and the
+/// one that reaches the half of the UI neither /gui nor /props can see.
+///
+/// This exists for VERIFICATION rather than for runtime use. CLAUDE.md carries a hard rule
+/// earned by a full wasted debugging cycle: *our own readout is never evidence about the game's
+/// state; when the two disagree, ask what the screen actually shows.* For a screen that pipes
+/// its text straight into Flash and retains none of it — the whole tactical HUD, the save rows,
+/// the squad cards — "what the screen shows" had no answer short of a sighted person looking at
+/// it. It does now: whatever the game last told Flash is still IN Flash, at a path composed from
+/// the panel's own `MCPath`.
+///
+/// `field` is relative to that MCPath, and nests the way Firaxis' own `UIMCController` says it
+/// does ("Also works for to access fields in children, like so: GetNum(\"string_of_child_mc.
+/// field_string\")"). An EMPTY field asks for the MCPath itself, which is the cheapest test that
+/// the panel resolves in the movie at all.
+///
+/// `funcName` picks the getter and therefore the return type; empty means `GetVariableString`.
+/// Absolute paths (AS2 globals like `Selection.getCaretIndex`) are not this verb's business —
+/// they go through `/call` with an `&arg=`, which is where they already work.
+///
+/// ⛔ Dev harness only, and it must stay that way: `UIMCController.uc` labels these getters
+/// "an immediate and blocking operation … very expensive, use sparingly", and the whole shipped
+/// game calls one exactly twice. Nothing in the speech path may read this way. Game thread only.
+std::string Flash(const Selector& sel, const std::string& field, const std::string& funcName);
+
 } // namespace GuiDump
 
 #endif // X2ACCESS_DEVSERVER

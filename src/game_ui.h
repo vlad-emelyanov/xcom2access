@@ -919,6 +919,32 @@ bool IsLiveObject(void* obj);
 /// UIPanel::ChildPanels into `out`; returns the count written.
 int ReadChildPanels(void* panel, void** out, int maxItems);
 
+/// One call into GFxMoviePlayer's path API, for the harness's /flash endpoint.
+///
+/// Every one of those functions has the SAME parameter shape — an FString path in at 0x00, the
+/// answer at 0x10 — so the only thing that varies is the return KIND, and it is decided by the
+/// name rather than guessed at. That distinction matters: `GetVariable` answers with an FASValue
+/// struct and `Invoke` takes an ARRAY of them, so reading either through this block would print
+/// a plausible-looking number that is really half a pointer. Unknown names are refused.
+///
+/// ⚠ An unresolved path and an empty field answer ALIKE here (empty string, 0, false) — the
+/// distinction the first live probe used was that the real `Selection` accessors answer -1 when
+/// nothing is focused while an unresolved path answers 0. Ask for something you can predict.
+struct FlashValue {
+    enum class Kind { Void, Text, Number, Int, Bool };
+    bool called = false;  // the UFunction was found and ProcessEvent ran
+    std::string error;    // why not, when it did not
+    Kind kind = Kind::Text;
+    std::string text;  // Kind::Text
+    double number = 0; // Kind::Number / Int / Bool (1 or 0)
+};
+
+/// `movie` is the UIMovie / GFxMoviePlayer to ask; `path` is an ActionScript path in it.
+/// Costs one outbound call, and for a string answer leaks the engine-allocated FString it comes
+/// back in — the same bargain ConsoleCommand makes, and the reason this is dev-only.
+/// Game thread only.
+FlashValue FlashCall(void* movie, const char* funcName, const char* path);
+
 #endif // X2ACCESS_DEVSERVER
 
 /// Run `command` through the game's own console (`Actor.ConsoleCommand` on the local player

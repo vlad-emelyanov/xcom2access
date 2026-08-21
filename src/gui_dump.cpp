@@ -1266,6 +1266,116 @@ std::string Call(const Selector& sel, const std::string& funcName,
     return head;
 }
 
+std::string Flash(const Selector& sel, const std::string& field, const std::string& funcName)
+{
+    std::string err;
+    std::string note;
+    void* obj = Resolve(sel, err, note);
+    if (!obj)
+        return "[flash] " + err;
+
+    char line[256];
+    std::string head = note;
+    head += "object:   " + DescribeObject(obj) + "\n";
+
+    // Both handles come out of REFLECTION, so this verb hand-transcribes no offsets of its own —
+    // the same contract the tree and the property dump keep, and the reason it stays right
+    // across a Highlander rebuild that moves fields around.
+    const int32_t movieOff = FindPropOffsetRaw(obj, "Movie");
+    void* movie = obj;
+    if (movieOff >= 0) {
+        movie = ReadPtrAt(obj, movieOff);
+        if (!movie) {
+            snprintf(line, sizeof(line),
+                "movie:    Movie is NULL at +0x%X — this panel has not been inited into a "
+                "movie, so it has no Flash side yet.\n",
+                movieOff);
+            return head + line;
+        }
+        head += "movie:    " + DescribeObject(movie) + "\n";
+    } else {
+        // No Movie property: the caller selected the movie itself (?instance=UIMovie_2D), which
+        // is the right way to reach an absolute path.
+        head += "movie:    (the selected object itself — it declares no Movie property)\n";
+    }
+
+    // The panel's own path INTO that movie. MCPath is composed by the game as ONE FName
+    // (`name(ParentPanel.MCPath $ "." $ MCName)`), so a path ending in _0 really is an FName
+    // instance number and FNameTextRaw prints it back the way the game wrote it.
+    std::string base;
+    const int32_t mcOff = FindPropOffsetRaw(obj, "MCPath");
+    if (mcOff >= 0) {
+        char name[256] = "";
+        if (FNameTextRaw(reinterpret_cast<const uint8_t*>(obj) + mcOff, name, sizeof(name)))
+            base = name;
+        if (base.empty() || base == "None") {
+            snprintf(line, sizeof(line),
+                "MCPath:   None at +0x%X — the panel has no path in the movie (not inited, or "
+                "it is a pure UnrealScript container). Nothing to ask.\n",
+                mcOff);
+            return head + line;
+        }
+        head += "MCPath:   " + base + "\n";
+    }
+
+    std::string path = base;
+    if (!field.empty()) {
+        if (!path.empty())
+            path += ".";
+        path += field;
+    }
+    if (path.empty()) {
+        return head
+            + "nothing to ask: the object has no MCPath and no &field= was given. Pass a field, "
+              "or use /call with an &arg= for an absolute path.\n";
+    }
+
+    const std::string fn = funcName.empty() ? std::string("GetVariableString") : funcName;
+    head += "path:     " + path + "\n";
+    head += "fn:       " + fn + "\n";
+
+    const GameUI::FlashValue v = GameUI::FlashCall(movie, fn.c_str(), path.c_str());
+    LOG_INFO("DevServer: /flash %s %s on 0x%p — %s", fn.c_str(), path.c_str(), movie,
+        v.called ? "answered" : "refused");
+
+    if (!v.called)
+        return head + "NOT CALLED: " + v.error + "\n";
+
+    switch (v.kind) {
+    case GameUI::FlashValue::Kind::Text:
+        head += "value:    \"" + Truncate(v.text, 2000) + "\" ("
+            + std::to_string(v.text.size()) + " bytes)\n";
+        break;
+    case GameUI::FlashValue::Kind::Number:
+        snprintf(line, sizeof(line), "value:    %g\n", v.number);
+        head += line;
+        break;
+    case GameUI::FlashValue::Kind::Int:
+        snprintf(line, sizeof(line), "value:    %lld\n", static_cast<long long>(v.number));
+        head += line;
+        break;
+    case GameUI::FlashValue::Kind::Bool:
+        head += std::string("value:    ") + (v.number != 0 ? "true" : "false") + "\n";
+        break;
+    case GameUI::FlashValue::Kind::Void:
+        head += "value:    (void — the call ran and answers with nothing)\n";
+        break;
+    }
+
+    // The one caveat that has to travel with every reading: Flash does not distinguish "no such
+    // path" from "that field is empty". The first live probe told them apart only because the
+    // real Selection accessors answer -1 where an unresolved path answers 0.
+    const bool blank = (v.kind == GameUI::FlashValue::Kind::Text && v.text.empty())
+        || (v.kind != GameUI::FlashValue::Kind::Text && v.kind != GameUI::FlashValue::Kind::Void
+            && v.number == 0);
+    if (blank) {
+        head += "          ⚠ blank/zero is ambiguous here: an UNRESOLVED path answers exactly\n"
+                "          the same as an empty field. Drop &field= to check the MCPath itself\n"
+                "          resolves, then add one level at a time.\n";
+    }
+    return head;
+}
+
 } // namespace GuiDump
 
 #ifdef _MSC_VER

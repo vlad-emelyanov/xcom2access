@@ -212,6 +212,17 @@ None of this is specific to naming a save. It is the same question behind the
 key-bindings screen, which CLAUDE.md lists as unreadable by either layer because
 it is Flash-driven with no `UIList`.
 
+And it generalizes one step further, which is why the harness now carries
+`/flash?field=` (`just dev-field`): the paths above are ABSOLUTE, but every
+`UIPanel` knows its own `MCPath`, and `UIMCController.GetString` composes
+`Movie.GetVariableString(Panel.MCPath $ "." $ Field)`. So any widget printed by
+`/gui` can be asked what it actually put on screen — which is the first time
+this project has been able to check a readout against the display without a
+sighted person looking at it. ⛔ A measuring instrument, not a reading strategy:
+those getters are blocking VM round-trips (`UIMCController.uc:170`, *"very
+expensive, use sparingly"*), Flash holds the rendered text and none of the
+semantics, and no field name in it can be pinned by a `static_assert`.
+
 ## 8. Not covered here
 
 - `UIProgressDialogue` (the progress modal on consoles and async loads); on PC

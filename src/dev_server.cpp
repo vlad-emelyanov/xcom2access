@@ -818,6 +818,19 @@ std::string Route(const Request& req, int& status)
         return OnGameThread([sel, fn, args] { return GuiDump::Call(sel, fn, args); });
     }
 
+    // The fourth verb on that selector, and the one that reaches what the other three cannot.
+    // /gui and /props see what UnrealScript RETAINED; a screen that pipes its text into Flash
+    // and keeps none of it — the whole tactical HUD, the save rows, the squad cards — is
+    // invisible to both. Flash still has it, at a path composed from the panel's own MCPath, so
+    // this is how "does our readout match what the game actually displayed?" stops being a
+    // question only a sighted person could answer.
+    if (req.path == "/flash") {
+        const GuiDump::Selector sel = ParseSelector(req.query);
+        const std::string field = UrlDecode(QueryParam(req.query, "field"));
+        const std::string fn = UrlDecode(QueryParam(req.query, "fn"));
+        return OnGameThread([sel, field, fn] { return GuiDump::Flash(sel, field, fn); });
+    }
+
     status = 404;
     return "unknown endpoint\n"
            "  GET  /health              liveness + build stamp + game-thread pump age\n"
@@ -833,12 +846,18 @@ std::string Route(const Request& req, int& status)
            "                            &arg once per declared argument, in order — which is\n"
            "                            how the Flash bridge is reached (GetVariableString,\n"
            "                            ActionScriptInt/String on ?instance=UIMovie_2D)\n"
+           "  GET  /flash?field=X       read a Flash field of the SELECTED PANEL: composes\n"
+           "                            <its MCPath>.<field> and reads it. Omit &field= to\n"
+           "                            test the MCPath itself resolves; &fn= picks the getter\n"
+           "                            (GetVariableString default; Number/Bool, ActionScript\n"
+           "                            String/Int/Float/Void). This reaches the text a screen\n"
+           "                            pushed into Flash and retained nowhere\n"
            "  GET  /screenshot[?path=]  PNG of the monitor the game is on\n"
            "\n"
-           "  /gui, /props and /call select with ?screen=<Class> (the screen stack, topmost by\n"
-           "  default), ?instance=<Class> (newest instance anywhere, falling back to the\n"
-           "  class default object when there is none), ?cdo=<Class> (that default object\n"
-           "  explicitly — how to read the companion models) or ?ptr=0x<addr>\n";
+           "  /gui, /props, /call and /flash all select with ?screen=<Class> (the screen\n"
+           "  stack, topmost by default), ?instance=<Class> (newest instance anywhere, falling\n"
+           "  back to the class default object when there is none), ?cdo=<Class> (that default\n"
+           "  object explicitly — how to read the companion models) or ?ptr=0x<addr>\n";
 }
 
 // send() may accept fewer bytes than offered; a /status dump is small but /log is not bounded

@@ -177,6 +177,21 @@ dev-call fn select="":
 dev-flash fn arg select="instance=UIMovie_2D":
     @& "{{ curl }}" -s --max-time 30 -G --data-urlencode "arg={{ arg }}" "http://127.0.0.1:{{ devserver_port }}/call?fn={{ fn }}&{{ select }}"
 
+# The same read, PANEL-RELATIVE — the harness verb for "what did the game actually put on
+# screen?". It resolves the selected panel's own MCPath and reads <MCPath>.<field>, so a screen
+# that pipes its text into Flash and retains none of it (the tactical HUD, the save rows, the
+# squad cards — everything /gui prints as wordless) can still be checked against our readout:
+#   just dev-field "screen=UITacticalHUD"                     # does its MCPath resolve at all?
+#   just dev-field "ptr=0x000002..." "hitChanceText.text"     # a child field, one level down
+#   just dev-field "screen=UISaveGame" "someFlag" GetVariableBool
+# ⛔ Verification only. UIMCController.uc calls these getters "an immediate and blocking
+# operation … very expensive, use sparingly" and the shipped game uses one exactly twice; nothing
+# in the speech path may read this way.
+#
+# Read a Flash field of the selected panel: what the game actually put on screen.
+dev-field select="" field="" fn="":
+    @& "{{ curl }}" -s --max-time 30 -G --data-urlencode "field={{ field }}" "http://127.0.0.1:{{ devserver_port }}/flash?fn={{ fn }}&{{ select }}"
+
 # PNG of the monitor the game is on (Desktop Duplication). Defaults beside the .asi.
 dev-shot path="":
     @& "{{ curl }}" -s --max-time 60 "http://127.0.0.1:{{ devserver_port }}/screenshot?path={{ path }}"

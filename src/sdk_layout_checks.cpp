@@ -177,6 +177,15 @@ static_assert(offsetof(UGFxMoviePlayer_execGetVariableString_Params, ReturnValue
     "GetVariableString return");
 static_assert(offsetof(UGFxMoviePlayer_execActionScriptString_Params, Path) == 0x00,
     "ActionScript path argument");
+// The numeric returns the dev harness's /flash offers on top of those. GetVariableBool's return
+// is a BITFIELD, so offsetof is not available on it — the block size pins it instead: an FString
+// path is 0x10, so a 0x14 struct can only be the return dword sitting at 0x10.
+static_assert(offsetof(UGFxMoviePlayer_execGetVariableNumber_Params, ReturnValue) == 0x10,
+    "GetVariableNumber return");
+static_assert(offsetof(UGFxMoviePlayer_execActionScriptFloat_Params, ReturnValue) == 0x10,
+    "ActionScriptFloat return");
+static_assert(sizeof(UGFxMoviePlayer_execGetVariableBool_Params) == 0x14,
+    "GetVariableBool return dword follows the path FString");
 
 // ---- text input dialog (m_kData is a struct; its fields are offsets INTO it) ----
 static_assert(offsetof(AUIInputDialogue, m_kData) == 0x410, "input dialog data");
