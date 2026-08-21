@@ -410,17 +410,27 @@ private function string DescribeTarget(AvailableAction Action,
 
 	if (GetBreakdown(AbilityState, TargetRef, Breakdown))
 	{
-		// The info panel's OWN localized labels rather than English words of ours: these are the
-		// exact captions a sighted player reads beside the two percentages (AS_SetShotChance /
-		// AS_SetCriticalChance, UITacticalHUD_InfoPanel:176-177).
-		AppendComma(Result, class'UITacticalHUD_InfoPanel'.default.m_sShotChanceLabel
+		// The game's OWN localized captions rather than English words of ours — the exact words a
+		// sighted player reads beside the two percentages.
+		//
+		// ⛔ READ THEM OFF UITacticalHUD_ShotHUD, NOT UITacticalHUD_InfoPanel. Both classes
+		// declare m_sShotChanceLabel and m_sCritChanceLabel, and the two panels use them
+		// identically (InfoPanel:176-177, ShotHUD:290-291) — but XComGame.<loc> ships the values
+		// under [UITacticalHUD_ShotHUD] ONLY, so the InfoPanel's copies are EMPTY at runtime.
+		// Measured live 2026-08-21 with /props?cdo=: every localized string on
+		// UITacticalHUD_InfoPanel read "", while ShotHUD's read "ХИТ" / "КРИТ" / "УРОН:".
+		// Reading the empty pair cost more than a missing caption: with no label to tell them
+		// apart, a sniper shot whose hit and crit both sat at 60 spoke as
+		// "Сектоид,  60 percent,  60 percent" — the same number twice, meaning two different
+		// things, with the give-away double space where the caption should have been.
+		AppendComma(Result, class'UITacticalHUD_ShotHUD'.default.m_sShotChanceLabel
 			@ string(HitChanceOf(Breakdown)) $ " percent");
 		if (Breakdown.ResultTable[eHit_Crit] > 0)
 		{
 			// SpecialCritLabel renames the crit row for abilities where "crit" is the wrong word
 			// (a Reaper's Executioner, for one); the panel prefers it whenever it is set, so we do.
 			AppendComma(Result, (Breakdown.SpecialCritLabel != "" ? Breakdown.SpecialCritLabel
-				: class'UITacticalHUD_InfoPanel'.default.m_sCritChanceLabel)
+				: class'UITacticalHUD_ShotHUD'.default.m_sCritChanceLabel)
 				@ string(Breakdown.ResultTable[eHit_Crit]) $ " percent");
 		}
 	}

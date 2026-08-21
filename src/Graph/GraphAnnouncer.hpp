@@ -18,6 +18,15 @@ namespace X2Access::Graph
 /// the whole prefix and read just the control; ascends likewise; and descending from a group onto
 /// its own child re-announces nothing but the child — the group is on the child's chain AND is
 /// the from-node, so the prefix swallows it.
+/// Join one phrase onto a spoken line with the right separator, and the reason it is not just
+/// ``sb + ", "``: the GAME's own strings routinely end a sentence themselves. Joining blindly
+/// produced "5 дн..", "ТРЕБУЕТСЯ ИНЖЕНЕР!." and "Перезаписать эту сохраненную игру?," — 14 of
+/// them in one measured Avenger session — and a screen reader voices that stumble. A part that
+/// already ends in terminal or clause punctuation gets a plain space; everything else gets the
+/// comma. Shared so the announcer and the recipes that pre-join their own labels cannot drift
+/// apart about it.
+void AppendPhrase(std::string& sb, const std::string& part);
+
 class GraphAnnouncer
 {
 public:

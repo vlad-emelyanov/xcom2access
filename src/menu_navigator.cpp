@@ -2271,8 +2271,7 @@ std::unique_ptr<GraphRender> BuildRoomBuild()
             const std::string status = RecField(rec, "status");
             if (label.empty())
                 continue;
-            if (!status.empty())
-                label += ". " + status;
+            AppendPhrase(label, status);
 
             ControlId id = ControlId::Structural("roompick/" + std::to_string(index));
             gFocus[id.StructuralKey] = FocusTarget{index, nullptr, false, nullptr};
@@ -2308,14 +2307,8 @@ std::unique_ptr<GraphRender> BuildRoomBuild()
             // them in together, so splitting them into four stops would be worse than the game.
             b.BeginStop("status");
             std::string line;
-            for (const char* field : {"title", "time", "rewardLabel", "reward"}) {
-                const std::string part = RecField(rec, field);
-                if (part.empty())
-                    continue;
-                if (!line.empty())
-                    line += ". ";
-                line += part;
-            }
+            for (const char* field : {"title", "time", "rewardLabel", "reward"})
+                AppendPhrase(line, RecField(rec, field));
             if (!line.empty()) {
                 b.AddLabel(ControlId::Structural("room/status"), [line]() { return line; });
             }
@@ -2326,9 +2319,7 @@ std::unique_ptr<GraphRender> BuildRoomBuild()
             b.BeginStop("slot");
             const int index = atoi(RecField(rec, "index").c_str());
             std::string label = RecField(rec, "label");
-            const std::string bonus = RecField(rec, "bonus");
-            if (!bonus.empty())
-                label += ". " + bonus;
+            AppendPhrase(label, RecField(rec, "bonus"));
 
             ControlId id = ControlId::Structural("room/slot/" + std::to_string(index));
 
@@ -2395,13 +2386,23 @@ void* ProbeRoomBuild()
 std::string RoomBuildName()
 {
     GameUI::RoomBuildView view = GameUI::ReadRoomBuild(gScreen);
-    // Named by the room's own header, the same source the facility recipe uses — the ant farm's
-    // grid is still underneath and its FacilityHeader has not been retargeted.
-    std::string name = GameUI::ReadRoom(gScreen).room;
+
+    // ⛔ NOT UIAvengerHUD.FacilityHeader. UIRoom never writes that header — only
+    // UIFacility.RealizeFacility does — so it still holds the previous screen's title, and live
+    // 2026-08-21 entering a debris room announced "РЕЗУЛЬТАТЫ ЗАДАНИЯ" (MISSION RESULTS) left
+    // over from the post-mission screen. The companion names the room off the room STATE, using
+    // the grid overlay's own three branches, so both surfaces call it the same thing.
+    std::string name;
+    for (const WireRecord& rec : FetchRoomWords(view)) {
+        if (RecField(rec, "kind") == "status") {
+            name = RecField(rec, "room");
+            break;
+        }
+    }
     if (name.empty())
         name = Vocab::ScreenRoomFallback;
     if (view.dropDown)
-        name += ". " + std::string(Vocab::RoomPickStaff);
+        AppendPhrase(name, Vocab::RoomPickStaff);
     return name;
 }
 

@@ -1155,3 +1155,42 @@ enforced by deliberately breaking one). Notes worth keeping:
 - **`UIFacilityStaffContainer.InitStaffContainer` has dead code**: a
   `Navigator.HorizontalNavigation = true` after its `return`. Once a recipe owns
   the arrows it stops mattering, which is why it was not "fixed".
+
+### 13.7 ✅ FIRST LIVE RUN (2026-08-21) — the room was cleared by keyboard alone
+
+An engineer was assigned and a debris room set clearing, end to end, with no
+mouse. From the speech ring:
+
+```
+78  ТРЕБУЕТСЯ ИНЖЕНЕР!. НАЗНАЧЬТЕ ИНЖЕНЕРОВ ДЛЯ РАСЧИСТКИ. НАГРАДА:. Материалы x39
+80  РАСЧИСТИТЬ, button, unavailable, ТРЕБУЕТСЯ ИНЖЕНЕР!
+85  Rafiya Buthelezi. НЕ РАБОТАЕТ, button          <- the picker
+86  ВСЕ ГОТОВО ДЛЯ РАСЧИСТКИ. ОЖИДАЕМОЕ ВРЕМЯ ДО ЗАВЕРШЕНИЯ: 5 дн.. НАГРАДА:. …
+88  РАСЧИСТИТЬ, button                             <- now enabled
+92  Расчистка инопланетных обломков. row 1, column 2. 5 дн.
+```
+
+Both shapes worked, the status panel's state machine flipped correctly on
+assignment, and the grid came back naming the room as clearing. Build mode
+narrated too, so the `UIBuildFacilities` gate change was right.
+
+**Three defects, all found by auditing the ring rather than by the run failing.**
+
+1. **The room announced the wrong name** — *"РЕЗУЛЬТАТЫ ЗАДАНИЯ"* (MISSION
+   RESULTS), left over from the post-mission screen, because `UIRoom` never
+   writes `UIAvengerHUD.FacilityHeader`; only `UIFacility.RealizeFacility` does.
+   Now named off the room state via the grid overlay's own three branches.
+2. **Doubled punctuation, 14 occurrences** — `ТРЕБУЕТСЯ ИНЖЕНЕР!.`, `5 дн..`,
+   `расчистку.,`, and on other screens `СОХР.,` and `игру?,`. Fixed in the
+   KERNEL (`AppendPhrase`), so every recipe inherits it; four tests pin it.
+3. **The shot HUD spoke one number twice** — `Сектоид,  60 percent,  60 percent`
+   was hit AND crit with their captions missing. `/props?cdo=` showed **every**
+   localized string on `UITacticalHUD_InfoPanel` empty at runtime: the loc file
+   ships those keys under `[UITacticalHUD_ShotHUD]` only, and both classes
+   declare them. Now read from the class that has them. **The tell was a double
+   space**, since `label @ value` still inserts its separator when the label is
+   empty — worth adding to the post-run audit.
+
+Still open: the ant farm's `1 of 1 staff slots filled` is English inside a
+localized readout (the known staff-vocabulary gap), and a staffed FACILITY room
+has still never been exercised.

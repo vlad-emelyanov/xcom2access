@@ -90,6 +90,19 @@ private function AppendStatus(UIRoom Room)
 		return;
 
 	Rec = "kind=status";
+	// ⛔ The room's NAME has to come from here, not from UIAvengerHUD.FacilityHeader: UIRoom
+	// never sets that header — only UIFacility.RealizeFacility does — so it still holds whatever
+	// the previous screen put there. Live 2026-08-21 that made entering a debris room announce
+	// "РЕЗУЛЬТАТЫ ЗАДАНИЯ" (MISSION RESULTS), left over from the post-mission screen.
+	// These three branches are the grid overlay's own, so the room is called the same thing here
+	// as it is one screen up.
+	if (RoomState.UnderConstruction && RoomState.GetBuildFacilityProject() != none)
+		Rec $= FLD_SEP $ "room=" $ Room.m_strFacilityLabel;
+	else if (RoomState.ClearingRoom)
+		Rec $= FLD_SEP $ "room=" $ RoomState.GetClearingInProgressLabel();
+	else if (RoomState.HasSpecialFeature())
+		Rec $= FLD_SEP $ "room=" $ RoomState.GetSpecialFeatureLabel();
+
 	Rec $= FLD_SEP $ "header=" $ Room.m_strInfoLabel;
 	Rec $= FLD_SEP $ "title=" $ Room.GetExcavationStatusString();
 	Rec $= FLD_SEP $ "time=" $ Room.GetExcavationTimeEstimateString();

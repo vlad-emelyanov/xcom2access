@@ -235,3 +235,45 @@ TEST(ContextChangeAtSameDepthReadsNewLevel)
 
     CHECK_EQ("Level 2 spells, table, Haste", GraphAnnouncer::Compose(&from, &to));
 }
+
+// A phrase that punctuates itself must not also take a comma. Every one of these strings is a
+// real line measured on 2026-08-21 in a Russian install: the game ends plenty of its own strings
+// with '.', '!' or '?', and blind joining voiced "5 дн..", "ТРЕБУЕТСЯ ИНЖЕНЕР!." and
+// "Перезаписать эту сохраненную игру?," at the player — 14 in a single Avenger session.
+TEST(SelfPunctuatedPhraseTakesNoComma)
+{
+    std::string sb;
+    AppendPhrase(sb, "5 \xD0\xB4\xD0\xBD.");
+    AppendPhrase(sb, "\xD0\x9D\xD0\x90\xD0\x93\xD0\xA0\xD0\x90\xD0\x94\xD0\x90:");
+    AppendPhrase(sb, "x39");
+    CHECK_EQ("5 \xD0\xB4\xD0\xBD. \xD0\x9D\xD0\x90\xD0\x93\xD0\xA0\xD0\x90\xD0\x94\xD0\x90: x39",
+        sb);
+}
+
+TEST(OrdinaryPhrasesStillTakeCommas)
+{
+    std::string sb;
+    AppendPhrase(sb, "Fireball");
+    AppendPhrase(sb, "button");
+    AppendPhrase(sb, "selected");
+    CHECK_EQ("Fireball, button, selected", sb);
+}
+
+TEST(AppendPhraseSkipsEmptyAndDoesNotLeadWithSeparator)
+{
+    std::string sb;
+    AppendPhrase(sb, "");
+    AppendPhrase(sb, "only");
+    AppendPhrase(sb, "");
+    CHECK_EQ("only", sb);
+}
+
+// The exclamation and question forms, which is where a screen reader's stumble is most audible.
+TEST(TerminalPunctuationVariants)
+{
+    std::string sb;
+    AppendPhrase(sb, "\xD0\x98\xD0\x9D\xD0\x96\xD0\x95\xD0\x9D\xD0\x95\xD0\xA0!");
+    AppendPhrase(sb, "ok?");
+    AppendPhrase(sb, "end");
+    CHECK_EQ("\xD0\x98\xD0\x9D\xD0\x96\xD0\x95\xD0\x9D\xD0\x95\xD0\xA0! ok? end", sb);
+}

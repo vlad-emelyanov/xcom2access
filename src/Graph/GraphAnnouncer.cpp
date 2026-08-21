@@ -63,14 +63,27 @@ bool DuplicatesNext(const std::string& label, const std::string& next)
 
 void Append(std::string& sb, const std::string& text)
 {
-    if (text.empty())
-        return;
-    if (!sb.empty())
-        sb += ", ";
-    sb += text;
+    AppendPhrase(sb, text);
 }
 
 } // namespace
+
+void AppendPhrase(std::string& sb, const std::string& part)
+{
+    if (part.empty())
+        return;
+    if (!sb.empty())
+    {
+        // A phrase that already punctuated itself does not take a comma on top. The game supplies
+        // most of these strings and it ends plenty of them in '.', '!' or '?'; ':' and ';' are
+        // here for the label-then-value shape ("НАГРАДА:" followed by the reward).
+        const char tail = sb.back();
+        const bool selfPunctuated
+            = tail == '.' || tail == '!' || tail == '?' || tail == ':' || tail == ';';
+        sb += selfPunctuated ? " " : ", ";
+    }
+    sb += part;
+}
 
 std::string GraphAnnouncer::Compose(const GraphNode* from, const GraphNode* to,
     const std::string& transitionLabel)
@@ -121,12 +134,8 @@ std::string GraphAnnouncer::Compose(const GraphNode* from, const GraphNode* to,
     if (parts.empty())
         return {};
     std::string sb;
-    for (std::size_t p = 0; p < parts.size(); p++)
-    {
-        if (p > 0)
-            sb += ", ";
-        sb += parts[p];
-    }
+    for (const std::string& part : parts)
+        AppendPhrase(sb, part);
     return sb;
 }
 

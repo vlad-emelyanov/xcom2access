@@ -508,6 +508,53 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   Bar carry no shortcut category at all (`CurrentCategory` = -1), so the node names the way out.
   Probe insists the facility screen is TOPMOST, which is what keeps this recipe from attaching
   over the choose-research screen or the facility summary that the room's own verbs push.
+- **The debris room** (`FindRoomBuildScreen`/`ReadRoomBuild` + the `avenger debris room` recipe +
+  companion `X2AccessRoomReader.uc`, built AND **VERIFIED LIVE 2026-08-21** — an engineer was
+  assigned and a room set clearing, end to end, by keyboard alone; recon §13): `UIRoom`, not
+  `UIFacility`. An un-built room has no facility, so its staffing is over `Room.BuildSlots`.
+  ⛔ **Vanilla gives this screen NO KEYBOARD AT ALL**, which makes it the clearest case in the
+  project for a recipe rather than narration: `ExcavateButton` and `ExcavationPanel` both call
+  `DisableNavigation()`; the staff slots move only on `FXS_DPAD_LEFT/RIGHT` (the ARROW constants
+  are absent from that switch); `StartExcavation` is bound only to `FXS_BUTTON_X`; and
+  `UIRoom.OnAccept` — what Enter and Space reach — is an **empty function body**. Clicking was the
+  only way to clear a room.
+  TWO SHAPES, one recipe: while the personnel picker is open the graph becomes candidate-only,
+  because `UIStaffContainer.OnUnrealCommand` tests `m_kPersonnelDropDown.bIsVisible` before
+  anything else — mirroring the game's routing rather than offering stops behind a modal the
+  player is already inside. Activation is the game's own path throughout: the slot through its
+  `HandleClick` (which branches to the facility upgrade when LOCKED), the candidate and the
+  submenu through select-then-Enter on the LIST, and Excavate through the button's `Click`.
+  ⛔ Never `UIRoom.OnAccept` (empty), and never `StartClearRoom` on the room state —
+  `StartExcavation` also closes the screen, and a room left open over a started project is a state
+  the game never produces.
+  Words come from the companion because the screen retains almost none: `ExcavationPanel` is a
+  pure Flash pipe, `UIStaffSlot` keeps only `StaffSlotRef`, and the picker's rows call
+  `AS_UpdateData` DIRECTLY — bypassing `UIButton.SetText`, so even the retained `Text` is empty on
+  them. The status strings are the screen's OWN accessors (`GetExcavationStatusString`,
+  `GetExcavationTimeEstimateString`, `GetExcavationRewardString`), which already branch on
+  under-construction / clearing / staffed / no-engineers: this screen's whole state machine,
+  expressed once, by the game.
+  ⛔ **The room's NAME must NOT come from `UIAvengerHUD.FacilityHeader`.** `UIRoom` never writes
+  that header — only `UIFacility.RealizeFacility` does — so it still holds the previous screen's
+  title, and the first live run announced *"РЕЗУЛЬТАТЫ ЗАДАНИЯ"* (MISSION RESULTS) on entering a
+  debris room. The companion names it off the room STATE using the grid overlay's own three
+  branches (`GetSpecialFeatureLabel` / `GetClearingInProgressLabel` / the facility), so the room
+  is called the same thing here as it is one screen up.
+  **Getting there needs BUILD MODE**, and that is why `ReadAvengerGate` now tolerates exactly one
+  screen above the grid: `UIBuildFacilities` ends its `OnUnrealCommand` by forwarding every
+  unhandled key to the facility grid's own `Navigator.OnUnrealCommand`, so the arrows still drive
+  the ant farm there. Treating it as a blocker went silent exactly where a player is choosing a
+  room to excavate. That is the game's own delegation, read off its own source — not an exception
+  we invented.
+
+- ⛔ **Never join two spoken phrases with a bare `", "`** — the GAME ends plenty of its own
+  strings with `.`, `!`, `?` or `:`, and blind joining voiced *"5 дн.."*,
+  *"ТРЕБУЕТСЯ ИНЖЕНЕР!."* and *"Перезаписать эту сохраненную игру?,"* at the player — **14 of
+  them in one measured Avenger session**, across the room, the save screen and a dialog. The rule
+  lives in the kernel as `X2Access::Graph::AppendPhrase` (a self-punctuated part takes a plain
+  space, everything else takes the comma) and both of `GraphAnnouncer`'s join sites route through
+  it, so every recipe inherits the fix; recipes that pre-join their own labels must use it too,
+  rather than re-deriving the rule and drifting. Four kernel tests pin it.
 
 - **Save / load** (`src/game_ui.cpp` + the save/load recipe in
   `menu_navigator.cpp` + companion `X2AccessSaveReader.uc`, built AND VERIFIED
@@ -810,6 +857,21 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   from `execSetLocation`). Native calls would NOT appear in such a tap (a
   native's `Func` is its exec thunk), and script calls made through ProcessEvent
   would appear TWICE.
+- ⛔ **A `localized` var can be declared on TWO classes and populated on only ONE — and the
+  empty one fails silently.** `m_sShotChanceLabel` / `m_sCritChanceLabel` are declared by both
+  `UITacticalHUD_InfoPanel` (`:43`) and `UITacticalHUD_ShotHUD` (`:40`), which use them
+  identically; but `XComGame.<loc>` ships the values under **`[UITacticalHUD_ShotHUD]` only**, so
+  the InfoPanel's copies are `""` at runtime. Measured live 2026-08-21 with `/props?cdo=`: EVERY
+  localized string on `UITacticalHUD_InfoPanel` read empty (`m_sUnavailable`, `m_sNoTargetsHelp`,
+  `m_sFreeAimingTitle`, the lot) while its plain defaults (`HitMCPath`) held their values, and
+  `UITacticalHUD_ShotHUD`'s read `ХИТ` / `КРИТ` / `УРОН:`. Reading the empty pair cost more than a
+  missing caption: with nothing to tell them apart, a sniper shot whose hit and crit both sat at
+  60 spoke as *"Сектоид,  60 percent,  60 percent"* — the same number twice, meaning two
+  different things. **The tell is a DOUBLE SPACE**, because `label @ value` still inserts its
+  separator when the label is empty; that is what a `grep -P '  '` over the speech ring finds, and
+  it is now part of the post-run audit. When sourcing a word from a class, verify the CDO actually
+  holds it (`just dev-props "cdo=<Class>"`) rather than trusting that the `.uc` declares it and
+  the loc file contains the key somewhere.
 - Some screens are Flash-driven with no UIList (e.g. key bindings): neither
   layer can enumerate rows, and the same is true of anything a screen wrote into
   Flash and did not retain — a text field's caret and selection above all. The
