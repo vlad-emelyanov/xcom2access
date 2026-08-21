@@ -3024,6 +3024,9 @@ constexpr int32_t kShortcutsListOffset = 0x7F8;            // UIAvengerShortcuts
 constexpr int32_t kShortcutsCategoryLabelsOffset = 0x3F0;  // ::CategoryLabels[5], stride 0x10
 constexpr int32_t kShortcutsCurrentCategoryOffset = 0x83C; // ::CurrentCategory
 constexpr int32_t kFacilityStaffContainerOffset = 0x608;   // UIFacility::m_kStaffSlotContainer
+constexpr int32_t kFacilityRoomContainerOffset = 0x610;    // UIFacility::m_kRoomContainer
+constexpr int32_t kFacilityUpgradeButtonOffset = 0x648;    // UIFacility::UpgradeButton
+constexpr int32_t kRoomContainerFuncsOffset = 0x3DC;       // UIRoomContainer::RoomFuncs
 constexpr int32_t kStaffContainerTitleOffset = 0x3D8;      // UIStaffContainer::Title
 constexpr int32_t kStaffContainerSkillOffset = 0x408;      // UIStaffContainer::Skill
 constexpr int32_t kStaffContainerSlotsOffset = 0x418;      // UIStaffContainer::StaffSlots
@@ -3036,6 +3039,8 @@ constexpr uint32_t kListItemWarning = 0x8;
 
 constexpr int kShortcutCategoryCount = 5;
 constexpr int kMaxRoomActions = 16;
+// Every shipped facility adds exactly one; the headroom is for a mod that adds more.
+constexpr int kMaxRoomFuncs = 8;
 
 // Is `obj` an instance of `baseClass`, or of anything derived from it? The room screen is one of
 // 22 subclasses (UIFacility_Powercore, UIFacility_Armory, …), so an exact class-name compare
@@ -3135,6 +3140,34 @@ RoomView ReadRoom(void* screen)
         v.staffSlots = ReadPtrArrayRaw(staff, kStaffContainerSlotsOffset, slots, 16);
     }
 
+    // The room's OWN button bar. Spawned lazily by AddFacilityButton, so a room with no buttons
+    // has a null container rather than an empty one — which is the ordinary case, not a fault.
+    void* roomContainer = ReadPtrRaw(screen, kFacilityRoomContainerOffset);
+    if (roomContainer) {
+        void* funcs[kMaxRoomFuncs] = {};
+        int funcCount
+            = ReadPtrArrayRaw(roomContainer, kRoomContainerFuncsOffset, funcs, kMaxRoomFuncs);
+        for (int i = 0; i < funcCount; i++) {
+            if (!funcs[i])
+                continue;
+            RoomFunc f;
+            f.handle = funcs[i];
+            f.index = i;
+            v.funcs.push_back(f);
+        }
+    }
+
+    // Only while the game is SHOWING it: ShowUpgradeButton spawns the button once and then
+    // Hide()s it on every OnLoseFocus, so the pointer outlives the affordance. A child widget's
+    // bIsVisible is the documented exception to the never-gate-on-bIsVisible rule, and this is
+    // it — the game toggles this one deliberately.
+    void* upgrade = ReadPtrRaw(screen, kFacilityUpgradeButtonOffset);
+    if (upgrade && (ReadU32Raw(upgrade, kPanelFlagsOffset) & kPanelVisible)) {
+        v.upgrade = upgrade;
+        v.upgradeLabel = CleanText(ReadFStringField(upgrade, kButtonTextOffset));
+        v.upgradeDisabled = (ReadU32Raw(upgrade, kButtonFlagsOffset) & kButtonDisabled) != 0;
+    }
+
     if (v.list) {
         v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
         void* rows[kMaxRoomActions] = {};
@@ -3176,6 +3209,21 @@ bool ActivateRoomAction(const RoomView& view, const RoomAction& action)
     // whatever row the caller had in mind. A stale render would otherwise open the wrong screen.
     SetListIndex(view.list, action.index);
     return SendRowCommand(view.list, kCmdEnter);
+}
+
+bool ActivateRoomFunc(const RoomView& view, int index)
+{
+    for (const RoomFunc& f : view.funcs) {
+        if (f.index != index)
+            continue;
+        // ⛔ FXS_BUTTON_A, not Enter. UIFacility_RoomFunc.OnUnrealCommand tests that one
+        // constant and falls through to UIPanel's native handler for everything else, so the
+        // keyboard constants reach nothing here — which is exactly why these buttons are
+        // mouse-or-gamepad in vanilla. Sending the game its own controller command runs its own
+        // delegate, with every side effect (sound, screen push, camera) the game expects.
+        return SendRowCommand(f.handle, kCmdButtonA);
+    }
+    return false;
 }
 
 // ---- an un-excavated room (UIRoom) — assign the engineer, clear the debris ----
@@ -3457,6 +3505,105 @@ bool SwitchCommodityTab(const CommodityView& view, int tab)
         uint32_t bForce;
     } params{tab, 0};
     return CallNamedFunction(view.screen, "SwitchTab", &params);
+}
+
+// ---- the personnel roster (UIPersonnel and its ten subclasses) ----
+//
+// The crew list, wherever the game asks "which person?" — the Living Quarters' roster, the Bar's
+// obituaries, the Armory's soldiers, choosing a scientist for a project, staffing a facility, a
+// covert action's squad. The subclasses change which array is filled and which tabs exist; the
+// layout, the row widgets and the input path all belong to the base class, so ONE OFFSET covers
+// every door.
+//
+// ⛔ The rows retain only a UnitRef. UIPersonnel_ListItem extends UIButton, but UpdateData pushes
+// the name, status and location through MC.BeginFunctionOp — bypassing SetText, so the retained
+// Text is EMPTY on a row visibly showing a soldier. Words come from X2AccessPersonnelReader,
+// which re-derives them from that reference. What native reads is what native should: the list,
+// its selection, and the disabled bit the game refuses clicks on.
+//
+// Unlike the debris room this is not a rescue — UIPersonnel.OnUnrealCommand already walks the
+// list on Up/Down, switches tabs on Left/Right, accepts on Enter and backs out on Escape for a
+// mouse+keyboard player. It is a reader, plus the one verb vanilla leaves on the mouse: the sort
+// columns, whose keyboard branches are all controller constants.
+
+namespace {
+
+constexpr int32_t kPersonnelListOffset = 0x45C; // UIPersonnel::m_kList
+constexpr int kMaxPersonnelRows = 256;
+
+} // namespace
+
+void* FindPersonnelScreen()
+{
+    void* stack = gStackFinder.Find();
+    if (!stack)
+        return nullptr;
+
+    void* screens[kMaxStackScreens] = {};
+    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+
+    // Topmost non-null entry only, matching GetCurrentScreen — which is also what the companion
+    // resolves. A UIPersonnel further down is one something else has been pushed over (an armory
+    // screen, a confirmation), and its rows are not what the player is looking at.
+    for (int i = 0; i < count; i++) {
+        if (!screens[i])
+            continue;
+        if (!IsKindOfRaw(screens[i], "UIPersonnel"))
+            return nullptr;
+        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
+        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+            return nullptr;
+        return screens[i];
+    }
+    return nullptr;
+}
+
+PersonnelView ReadPersonnel(void* screen)
+{
+    PersonnelView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+
+    v.list = ReadPtrRaw(screen, kPersonnelListOffset);
+    if (!v.list)
+        return v;
+
+    v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
+
+    void* rows[kMaxPersonnelRows] = {};
+    int rowCount = ReadListItemsRaw(v.list, rows, kMaxPersonnelRows);
+    for (int i = 0; i < rowCount; i++) {
+        if (!rows[i])
+            continue;
+        PersonnelRow r;
+        r.handle = rows[i];
+        r.index = i;
+        // UIButton::IsDisabled, which is the exact bit every OnXSelected delegate tests before
+        // doing anything — so a disabled row here really is one the game will refuse. The armory
+        // sets it on soldiers away on covert actions; the tutorial sets it on everyone but the
+        // one soldier the script wants.
+        r.disabled = (ReadU32Raw(rows[i], kButtonFlagsOffset) & kButtonDisabled) != 0;
+        v.rows.push_back(r);
+    }
+    return v;
+}
+
+bool SetPersonnelSelection(const PersonnelView& view, int index)
+{
+    return SetListIndex(view.list, index);
+}
+
+bool ActivatePersonnelRow(const PersonnelView& view, int index)
+{
+    if (!view.screen || !view.list)
+        return false;
+    // ⛔ Enter goes to the SCREEN, and the selection has to land first. UIPersonnel.OnAccept
+    // calls OnButtonCallback, which reads m_kList.selectedIndex and ignores everything else —
+    // the same trap UISaveGame.OnAccept sets, so the same guard. Sending Enter to the ROW would
+    // reach UIButton's handler instead and never run the tab's selection delegate at all.
+    SetListIndex(view.list, index);
+    return SendRowCommand(view.screen, kCmdEnter);
 }
 
 // ---- tutorial mission (Tutorial_01) ----

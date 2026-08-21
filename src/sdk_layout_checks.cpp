@@ -338,6 +338,14 @@ static_assert(offsetof(AUISquadSelect_UtilityItem, SlotType) == 0x3F4, "utility 
 static_assert(offsetof(AUIFacility, m_kStaffSlotContainer) == 0x608, "facility staff container");
 static_assert(offsetof(AUIFacility, m_kRoomContainer) == 0x610, "facility room container");
 static_assert(offsetof(AUIFacility, UpgradeButton) == 0x648, "facility upgrade button");
+static_assert(offsetof(AUIRoomContainer, RoomFuncs) == 0x3DC, "room bottom-bar buttons");
+
+// ---- the personnel roster (UIPersonnel and its ten subclasses) ----
+//
+// One offset for the whole family. Everything else is either a companion read (the rows retain
+// only a UnitRef) or a function call — the screen's own SwitchTab, and the sort header's own
+// mouse handler.
+static_assert(offsetof(AUIPersonnel, m_kList) == 0x45C, "personnel roster list");
 
 static_assert(offsetof(AUIAvengerHUD, Shortcuts) == 0x43C, "avenger HUD shortcut bar");
 static_assert(offsetof(AUIAvengerHUD, FacilityHeader) == 0x454, "avenger HUD facility header");

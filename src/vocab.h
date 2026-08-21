@@ -78,12 +78,17 @@ inline constexpr const char* SaveLoadEmpty = "No saved games";
 inline constexpr const char* SaveLoadBusy = "Working, please wait";
 inline constexpr const char* KeyBackspace = "Backspace";
 
-// Inside a room on the Avenger. The room's menu is the game's own shortcut submenu, which sits
-// on the HUD screen BELOW the room — so "nothing here" is a real and legitimate state (Living
-// Quarters and the Bar are not in the shortcut bar at all), not a failure to find the list.
+// Inside a room on the Avenger. A room's verbs come from two places: its own bottom bar, and
+// the game's shortcut submenu on the HUD screen BELOW it. "Nothing here" is legitimate when a
+// room has neither — but it must never be said of a room that has one, which is what it WAS
+// said of the Bar and the Living Quarters (their shortcut category is -1, and both have a
+// bottom-bar button).
 inline constexpr const char* ScreenRoomFallback = "Room";
 inline constexpr const char* RoomNoActions = "Nothing to do here";
 inline constexpr const char* RoomLeaveHint = "Escape to leave the room";
+// A bottom-bar button no shipped facility class declares a label for — i.e. a second button
+// added by a mod. The widget retains no text of its own, so there is nothing else to say.
+inline constexpr const char* RoomFunctionFallback = "Room action";
 // The crew line the staff container carries even when it is hidden: "SCIENTISTS: 0". Both
 // halves come off the widget already localized; this is only the joint between them.
 inline constexpr const char* RoomCrewSeparator = ": ";
@@ -108,6 +113,20 @@ inline constexpr const char* CommodityEmpty = "Nothing to choose here";
 inline constexpr const char* CommodityLeaveHint = "Escape to go back";
 inline constexpr const char* CommodityUnaffordable = "cannot afford";
 inline constexpr const char* CommodityOwned = "owned";
+
+// The personnel roster. Almost every word there is the game's own — the rows are re-derived from
+// the unit, the tab names and the sort captions are localized strings off the screen, and even
+// the empty-list line is the one PopulateListInstantly pushes into Flash. These five are the
+// joints and the fallbacks.
+//
+// The sort words exist because the header draws its state as an ARROW: a little triangle beside
+// one column, pointing up or down. That is two facts (which column sorts, and in which
+// direction) carried entirely by a glyph, so speech has to supply the words for both.
+inline constexpr const char* ScreenPersonnelFallback = "Personnel";
+inline constexpr const char* PersonnelEmpty = "Nobody here";
+inline constexpr const char* PersonnelSortBy = "sort by";
+inline constexpr const char* SortAscending = "ascending";
+inline constexpr const char* SortDescending = "descending";
 
 // The text-entry dialog (naming a save). The field is a Flash TextField, so no screen reader
 // sees the keystrokes and this layer has to echo them itself — hence the boundary words and the

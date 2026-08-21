@@ -214,6 +214,11 @@ bool SetOptionsListIndex(void* screen, int index);
 inline constexpr int kCmdArrowRight = 501;
 inline constexpr int kCmdArrowLeft = 503;
 inline constexpr int kCmdEnter = 511;
+// The controller accept button. Normally not ours to send — but a few widgets handle ONLY it
+// and never the keyboard constants, so it is the only entry their own code offers. The room's
+// bottom-bar buttons are the case in point: UIFacility_RoomFunc.OnUnrealCommand tests
+// FXS_BUTTON_A and nothing else, which is why they are mouse-or-gamepad in vanilla.
+inline constexpr int kCmdButtonA = 300;
 
 /// Feed one input command to a row (UIMechaListItem.OnUnrealCommand with the release action —
 /// the phase the game's own handlers act on). Game thread only.
@@ -672,19 +677,32 @@ AvengerGate ReadAvengerGate();
 //
 // ⛔ The room SCREEN is not the room's content. All seven FIXED rooms declare ZERO staff slots —
 // CommandersQuarters, CIC, PowerCore (Research), Hangar (Armory), LivingQuarters, BarMemorial
-// and Storage (Engineering) — so their UIFacility screens hold nothing navigable at all, and a
-// reader built around the staff strip would be silent on every room a new player can reach.
-// (Measured live 2026-08-21: the Research lab is 3 panels, staff container hidden, and all
-// twelve buildable slots on that Avenger were still unexcavated.)
+// and Storage (Engineering) — so a reader built around the staff strip would be silent on every
+// room a new player can reach. (Measured live 2026-08-21: the Research lab is 3 panels, staff
+// container hidden, and all twelve buildable slots on that Avenger were still unexcavated.)
 //
-// The content is one screen DOWN, in UIAvengerHUD.Shortcuts — the submenu the game auto-opens
-// for the room you just entered, and where the Lab's "New Research / View Scientists" and the
-// Armory's "Soldiers / Recruit / Memorial" actually live. That is not a layering accident to
-// route around; it is where the game itself puts a room's verbs, and its own input path agrees
-// (UIFacility.OnUnrealCommand returns false, UIScreenStack.OnInput walks LIFO, the keys land on
-// the shortcut list). So this view spans both screens deliberately.
+// A room's verbs live in THREE places, and this view spans all of them because the game does:
 //
-// Every field is a RETAINED widget read — no XCOMHISTORY, no Flash, nothing to go stale.
+//  1. UIRoomContainer — the room's own bottom bar, one UIFacility_RoomFunc per button, added by
+//     the subclass's CreateFacilityButtons(). Only six facilities have one, and two of those are
+//     FIXED rooms a new player walks into on day one: the Bar's "Obituaries" and the Living
+//     Quarters' "Personnel". ⛔ Missing this bar is what made the Bar/Memorial announce "nothing
+//     to do here" at a screen that visibly had a button (reported live 2026-08-21) — the
+//     shortcut submenu below is genuinely empty there, so the only content was the one place
+//     this reader was not looking.
+//  2. UpgradeButton — a UILargeButton the facility spawns when it can be upgraded or has been.
+//     Navigable on mouse+keyboard (only the CONTROLLER branch calls DisableNavigation), so a
+//     sighted keyboard player can already Tab to it, which makes it parity rather than an aid.
+//  3. UIAvengerHUD.Shortcuts — the submenu the game auto-opens for the room just entered, where
+//     the Lab's "New Research / View Scientists" and the Armory's "Soldiers / Recruit /
+//     Memorial" live. It is on a screen UNDERNEATH this one, which is not a layering accident to
+//     route around: UIFacility.OnUnrealCommand returns false when the room itself handles
+//     nothing, UIScreenStack.OnInput walks LIFO, and the keys land there. The corollary matters
+//     for reading ORDER — a room WITH its own buttons consumes the arrows first, so the room's
+//     own bar is read before the submenu.
+//
+// Every field is a RETAINED widget read — no XCOMHISTORY, no Flash, nothing to go stale — with
+// one exception the companion covers: a RoomFunc's label (see the struct note).
 
 struct RoomAction {          // one row of the room's shortcut submenu
     void* handle = nullptr;  // UIListItemString
@@ -693,6 +711,17 @@ struct RoomAction {          // one row of the room's shortcut submenu
     bool disabled = false;   // bDisabled: the game draws it greyed and refuses the click
     bool urgent = false;     // bIsBad
     bool warning = false;    // bIsWarning
+};
+
+// One button on the room's OWN bottom bar (UIFacility_RoomFunc in UIRoomContainer::RoomFuncs) —
+// "Obituaries" in the Bar, "Personnel" in the Living Quarters, "Start project" in the Proving
+// Ground. ⛔ It retains NO TEXT: InitRoomFunc pushes the label straight into Flash with
+// MC.FunctionString("update", label) and keeps only the delegate, so the words have to come from
+// the companion. Reading the delegate's FName instead would hand a Russian player
+// "OnShowObituaries".
+struct RoomFunc {
+    void* handle = nullptr;
+    int index = 0; // position in RoomFuncs, which is also CreateFacilityButtons' call order
 };
 
 struct RoomView {
@@ -727,6 +756,12 @@ bool SetRoomActionSelection(const RoomView& view, int index);
 /// that delegate reads SelectedIndex and ignores the row the caller had in mind, the same trap
 /// UISaveGame.OnAccept sets. Refuses a disabled row, as the game does. Game thread only.
 bool ActivateRoomAction(const RoomView& view, const RoomAction& action);
+
+/// Press one of the room's own bottom-bar buttons, through the only handler the widget has:
+/// UIFacility_RoomFunc.OnUnrealCommand(FXS_BUTTON_A), which calls its onRoomFunctionDelegate.
+/// The mouse path (OnClickRoomFunc) reaches the same delegate; this one needs no fabricated
+/// control argument. Game thread only.
+bool ActivateRoomFunc(const RoomView& view, int index);
 
 // ---- an un-excavated room (UIRoom): assign an engineer, clear the debris ----
 //
@@ -847,6 +882,45 @@ bool ActivateCommodityRow(const CommodityView& view, const CommodityRow& row);
 /// Switch the Build Items category through the screen's own SwitchTab, which is exactly what its
 /// Left/Right handler calls. Refuses on any screen without the strip. Game thread only.
 bool SwitchCommodityTab(const CommodityView& view, int tab);
+
+// ---- the personnel roster (UIPersonnel and its ten subclasses) ----
+//
+// The crew list, wherever the game asks "which person?": the Living Quarters' roster, the Bar's
+// obituaries, the Armory's soldiers, choosing a scientist for a project, staffing a facility, a
+// covert action's squad, the training centre. The subclasses change which array is filled and
+// which tabs exist; the layout, the row widgets and the input path are all the base class's, so
+// ONE OFFSET covers every door.
+//
+// ⛔ A row retains only its UnitRef — UIPersonnel_ListItem extends UIButton but UpdateData
+// bypasses SetText, so the retained Text is EMPTY on a row that is visibly showing a name. Words
+// come from X2AccessPersonnelReader; native reads the list, the selection and the disabled bit.
+
+struct PersonnelRow {
+    void* handle = nullptr; // UIPersonnel_ListItem, or its Soldier/Deceased subclass
+    int index = 0;          // the list's own item index — what OnButtonCallback reads back
+    bool disabled = false;  // UIButton::IsDisabled, which every OnXSelected delegate tests
+};
+
+struct PersonnelView {
+    void* screen = nullptr;
+    void* list = nullptr; // UIPersonnel::m_kList
+    std::vector<PersonnelRow> rows;
+    int selected = -1; // UIList::SelectedIndex
+};
+
+/// The roster screen, when one is the CURRENT screen. Matches any UIPersonnel subclass by
+/// walking the instance's class chain. Game thread only.
+void* FindPersonnelScreen();
+
+PersonnelView ReadPersonnel(void* screen);
+
+/// P11 write-back: UIList::SetSelectedIndex on the roster. Game thread only.
+bool SetPersonnelSelection(const PersonnelView& view, int index);
+
+/// Choose the person on a row, by the game's own keyboard path: set the selection, then hand the
+/// SCREEN an Enter. ⛔ Selecting first is load-bearing — UIPersonnel.OnAccept → OnButtonCallback
+/// reads m_kList.selectedIndex and ignores anything else. Game thread only.
+bool ActivatePersonnelRow(const PersonnelView& view, int index);
 
 // ---- tutorial mission (Tutorial_01) — the text surfaces and the replay state ----
 //

@@ -2089,6 +2089,103 @@ std::string SaveLoadName()
 // UIAvengerHUD underneath. That is the game's own arrangement, not a layering problem to route
 // around — see the RoomView comment in game_ui.h.
 
+constexpr const char* kFacilityReaderClass = "X2AccessFacilityReader";
+
+// Cached on the button pointers, and this one is not merely an optimisation: the frame differ
+// rebuilds the graph on every poll, so an uncached fetch would make an outbound ProcessEvent ten
+// times a second for a set of labels that CANNOT change — AddFacilityButton runs once, in
+// InitScreen, and nothing ever relabels a UIFacility_RoomFunc. A changed pointer list means a
+// different room, which is the only thing that can change the answer.
+struct FacilityWords {
+    std::vector<WireRecord> records;
+    std::vector<void*> key;
+};
+
+FacilityWords gFacilityWords;
+
+const std::vector<WireRecord>& FetchFacilityWords(const GameUI::RoomView& view)
+{
+    std::vector<void*> key;
+    key.reserve(view.funcs.size() + 1);
+    for (const GameUI::RoomFunc& f : view.funcs)
+        key.push_back(f.handle);
+    key.push_back(view.facility);
+
+    if (key != gFacilityWords.key) {
+        gFacilityWords.records = FetchCompanionRecords(kFacilityReaderClass, "DescribeFacility");
+        gFacilityWords.key = std::move(key);
+    }
+    return gFacilityWords.records;
+}
+
+// The room's own bottom-bar buttons, and the upgrade button beside them. Split out of BuildRoom
+// because it is the half that needs the companion: a UIFacility_RoomFunc retains no text at all.
+void AddRoomFunctions(GraphBuilder& b, const GameUI::RoomView& view)
+{
+    if (view.funcs.empty() && !view.upgrade)
+        return;
+
+    b.BeginStop("room");
+
+    if (!view.funcs.empty()) {
+        const std::vector<WireRecord>& words = FetchFacilityWords(view);
+
+        for (const GameUI::RoomFunc& f : view.funcs) {
+            std::string label;
+            for (const WireRecord& rec : words) {
+                if (RecField(rec, "kind") == "func"
+                    && atoi(RecField(rec, "index").c_str()) == f.index) {
+                    label = RecField(rec, "label");
+                    break;
+                }
+            }
+            // Only a facility no shipped class covers reaches this — a mod's second button. Say
+            // something placeable rather than nothing: an unnamed node the player can still
+            // press beats a node that is not there.
+            if (label.empty())
+                label = Vocab::RoomFunctionFallback;
+
+            ControlId id = ControlId::Referenced(f.handle, "room/func/" + std::to_string(f.index));
+            const int index = f.index;
+            // Focus the button itself. The shortcut list underneath keeps its own selection —
+            // deliberately not cleared, because it belongs to a different screen and the game
+            // leaves it alone here too.
+            gFocus[id.StructuralKey] = FocusTarget{-1, f.handle, false, nullptr};
+
+            NodeVtable vt;
+            vt.Type = &ButtonType();
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+            vt.OnActivate = [index]() {
+                GameUI::ActivateRoomFunc(GameUI::ReadRoom(gScreen), index);
+            };
+            b.AddItem(std::move(id), std::move(vt));
+        }
+    }
+
+    if (view.upgrade) {
+        ControlId id = ControlId::Referenced(view.upgrade, "room/upgrade");
+        void* handle = view.upgrade;
+        gFocus[id.StructuralKey] = FocusTarget{-1, handle, false, nullptr};
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        // UIButton::Text is retained here — ShowUpgradeButton goes through SetText — so unlike
+        // the bar buttons this one needs no companion. It already reads "УЛУЧШИТЬ" or
+        // "ПРОСМОТРЕТЬ УЛУЧШЕНИЯ" depending on which of the three states the facility is in,
+        // which is the whole distinction a sighted player gets from it.
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(view.upgradeLabel));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (view.upgradeDisabled) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        } else {
+            vt.OnActivate = [handle]() { GameUI::ClickButton(handle); };
+        }
+        b.AddItem(std::move(id), std::move(vt));
+    }
+}
+
 std::unique_ptr<GraphRender> BuildRoom()
 {
     gFocus.clear();
@@ -2107,19 +2204,29 @@ std::unique_ptr<GraphRender> BuildRoom()
         b.AddLabel(ControlId::Structural("room/crew"), [crew]() { return crew; });
     }
 
-    b.BeginStop("actions");
+    // The room's OWN controls before the HUD's submenu, because that is the order the game
+    // itself reads them in: UIFacility.OnUnrealCommand offers the keys to the room screen first
+    // and only lets them fall through to UIAvengerShortcuts when the room handles nothing. A
+    // room with a bottom bar therefore consumes the arrows here, and a player arriving in the
+    // Bar should land on the button the Bar actually has.
+    AddRoomFunctions(b, view);
 
     if (view.actions.empty()) {
-        // Not a fault. Living Quarters and the Bar/Memorial carry no shortcut category at all
-        // (CurrentCategory reads -1), so the game shows no submenu either — and on a room that
-        // does have one, this is also the state while the list is still being rebuilt. Naming
-        // the way out matters more here than anywhere else: with no nodes to move between, a
-        // player has nothing to feel their way with.
-        b.AddLabel(ControlId::Structural("room/empty"), []() {
-            return std::string(Vocab::RoomNoActions) + ". " + Vocab::RoomLeaveHint;
-        });
+        if (view.funcs.empty() && !view.upgrade) {
+            // Now genuinely nothing, and still not a fault: this is also the state while the
+            // submenu is being rebuilt. ⛔ It used to be reached by the Bar and the Living
+            // Quarters as well, whose shortcut category really is -1 — but those rooms DO have a
+            // bottom-bar button, so "nothing to do here" was a lie about a screen with a visible
+            // control on it (reported live 2026-08-21). The empty case has to mean empty.
+            b.BeginStop("actions");
+            b.AddLabel(ControlId::Structural("room/empty"), []() {
+                return std::string(Vocab::RoomNoActions) + ". " + Vocab::RoomLeaveHint;
+            });
+        }
         return b.Build();
     }
+
+    b.BeginStop("actions");
 
     for (const GameUI::RoomAction& action : view.actions) {
         ControlId id
@@ -2745,6 +2852,369 @@ bool SetCommodityListIndex(void* screen, int index)
 const Recipe kCommodityRecipe{
     "commodity list", ProbeCommodity, BuildCommodity, CommodityName, SetCommodityListIndex};
 
+// ---- the personnel roster (UIPersonnel and its ten subclasses) ----
+//
+// One recipe for every door the game opens when it asks "which person?" — the Living Quarters'
+// roster, the Bar's obituaries, the Armory's soldiers, staffing a facility, choosing a scientist,
+// a covert action's squad. The subclasses swap which array is filled and which tabs exist; the
+// layout, the rows and the input path all belong to UIPersonnel.
+//
+// This screen is already OPERABLE from a keyboard — Up/Down walk the list, Left/Right switch
+// tabs, Enter chooses, Escape backs out — so, like save/load, the recipe is a READER first. What
+// it adds is the three things the keyboard cannot get to:
+//
+//   * The ROWS' words. UIPersonnel_ListItem extends UIButton and then bypasses SetText, so the
+//     retained Text is empty on a row visibly showing a soldier — the companion re-derives every
+//     column from the UnitRef the row DID keep.
+//   * The TAB STRIP's voice. Left/Right already switch tabs; CreateTabButton calls
+//     DisableNavigation() and SwitchTab announces the change only into Flash, so a blind player
+//     could switch all day and never learn which tab they were on.
+//   * SORTING, which on mouse+keyboard is CLICK-ONLY: the keyboard branches for it are
+//     FXS_BUTTON_X and FXS_DPAD_LEFT/RIGHT, all three controller constants. On a roster of twenty
+//     soldiers the sort column IS the reading order, which makes it the one verb here worth
+//     re-providing rather than merely narrating.
+//
+// STOPS in the screen's own top-to-bottom order — tabs, sort header, list — but focus STARTS on
+// the list, because that is where the game itself puts it (UpdateList ends with
+// Navigator.SetSelected(m_kList)). Reading order and landing spot are different questions, and
+// answering them separately is what keeps a player from Tabbing twice to reach the thing they
+// opened the screen for.
+
+constexpr const char* kPersonnelReaderClass = "X2AccessPersonnelReader";
+
+// Same self-invalidating cache as the commodity list, and for the same two reasons: the row
+// pointers change wholesale whenever the list is rebuilt (UpdateList calls ClearItems and
+// PopulateListInstantly respawns every item, which is what a tab switch and every sort do), and
+// the screen pointer keeps a second roster from inheriting the first one's words.
+//
+// ⛔ The SELECTION is deliberately NOT part of the key, unlike the commodity list's. Nothing on
+// this screen is the selection's shadow — there is no card — so re-asking on every arrow press
+// would walk the whole roster through XCOMHISTORY once per keystroke for no new words.
+struct PersonnelWords {
+    std::vector<WireRecord> records;
+    std::vector<void*> key;
+};
+
+PersonnelWords gPersonnelWords;
+
+const std::vector<WireRecord>& FetchPersonnelWords(const GameUI::PersonnelView& view)
+{
+    std::vector<void*> key;
+    key.reserve(view.rows.size() + 1);
+    for (const GameUI::PersonnelRow& row : view.rows)
+        key.push_back(row.handle);
+    key.push_back(view.screen);
+
+    if (key != gPersonnelWords.key) {
+        gPersonnelWords.records
+            = FetchCompanionRecords(kPersonnelReaderClass, "DescribePersonnel");
+        gPersonnelWords.key = std::move(key);
+    }
+    return gPersonnelWords.records;
+}
+
+// Drop the cache so the next read re-asks. Called after a tab switch or a sort, both of which
+// respawn the rows anyway — but the pointers can land on the same freed addresses, and a key
+// that happens to match would keep the previous tab's words on screen.
+void InvalidatePersonnelWords()
+{
+    gPersonnelWords.key.clear();
+}
+
+// One outbound call with a single int, for the two verbs the companion owns. Both resolve the
+// screen themselves from the stack, exactly as DescribePersonnel does, so there is nothing to
+// pass but the index.
+bool CallPersonnelVerb(const char* funcName, int value)
+{
+    void* cdo = GameUI::FindCompanionCDO(kPersonnelReaderClass);
+    if (!cdo)
+        return false;
+    struct {
+        int32_t Value;
+    } params{value};
+    if (!GameUI::CallScriptFunction(cdo, funcName, &params)) {
+        LOG_WARN("MenuNavigator: %s.%s failed", kPersonnelReaderClass, funcName);
+        return false;
+    }
+    InvalidatePersonnelWords();
+    return true;
+}
+
+void BuildPersonnelTabs(GraphBuilder& b, const std::vector<WireRecord>& records)
+{
+    bool any = false;
+    for (const WireRecord& rec : records) {
+        if (RecField(rec, "kind") != "tab")
+            continue;
+        const std::string label = RecField(rec, "label");
+        if (label.empty())
+            continue;
+        const int tab = atoi(RecField(rec, "tab").c_str());
+        const bool selected = RecField(rec, "selected") == "1";
+
+        if (!any) {
+            b.BeginStop("tabs");
+            b.StartRow("personnel/tabs");
+            any = true;
+        }
+
+        // Not in gFocus: every tab button called DisableNavigation(), so asking the navigator to
+        // hold one would be asking for something the game refuses to keep.
+        ControlId id = ControlId::Structural("personnel/tab/" + std::to_string(tab));
+        NodeVtable vt;
+        vt.Type = &TabType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.Announcements.emplace_back(NodeAnnouncement(
+            [selected]() { return selected ? std::string(Vocab::Selected) : std::string(); },
+            false, AnnouncementKinds::Selected));
+        vt.OnActivate = [tab]() { CallPersonnelVerb("SwitchPersonnelTab", tab); };
+        // Read LIVE, for the reason the commodity strip earned it: a flag captured at build time
+        // can only describe the state before the press.
+        vt.StateText = [tab]() {
+            const std::vector<WireRecord>& fresh
+                = FetchPersonnelWords(GameUI::ReadPersonnel(gScreen));
+            for (const WireRecord& rec : fresh) {
+                if (RecField(rec, "kind") != "tab" || atoi(RecField(rec, "tab").c_str()) != tab)
+                    continue;
+                std::string line = RecField(rec, "label");
+                if (RecField(rec, "selected") == "1")
+                    AppendPhrase(line, Vocab::Selected);
+                return line;
+            }
+            return std::string();
+        };
+        b.AddItem(std::move(id), std::move(vt));
+    }
+    if (any)
+        b.EndRow();
+}
+
+void BuildPersonnelSort(GraphBuilder& b, const std::vector<WireRecord>& records)
+{
+    bool any = false;
+    for (const WireRecord& rec : records) {
+        if (RecField(rec, "kind") != "sort")
+            continue;
+        const std::string label = RecField(rec, "label");
+        if (label.empty())
+            continue;
+        const int index = atoi(RecField(rec, "index").c_str());
+        const bool selected = RecField(rec, "selected") == "1";
+        const bool descending = RecField(rec, "desc") == "1";
+
+        if (!any) {
+            b.BeginStop("sort");
+            b.StartRow("personnel/sort");
+            any = true;
+        }
+
+        ControlId id = ControlId::Structural("personnel/sort/" + std::to_string(index));
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        std::string line = std::string(Vocab::PersonnelSortBy) + " " + label;
+        if (selected)
+            AppendPhrase(line, descending ? Vocab::SortDescending : Vocab::SortAscending);
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(line));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        // The game's own mouse handler, which flips the direction when the column is already the
+        // sort column and re-sorts the list either way. Re-read afterwards rather than closing
+        // over the flag: pressing this changes exactly the thing the node reports.
+        vt.OnActivate = [index]() { CallPersonnelVerb("ClickPersonnelSort", index); };
+        vt.StateText = [index]() {
+            const std::vector<WireRecord>& fresh
+                = FetchPersonnelWords(GameUI::ReadPersonnel(gScreen));
+            for (const WireRecord& rec : fresh) {
+                if (RecField(rec, "kind") != "sort"
+                    || atoi(RecField(rec, "index").c_str()) != index)
+                    continue;
+                std::string text
+                    = std::string(Vocab::PersonnelSortBy) + " " + RecField(rec, "label");
+                if (RecField(rec, "selected") == "1") {
+                    AppendPhrase(text,
+                        RecField(rec, "desc") == "1" ? Vocab::SortDescending
+                                                     : Vocab::SortAscending);
+                }
+                return text;
+            }
+            return std::string();
+        };
+        b.AddItem(std::move(id), std::move(vt));
+    }
+    if (any)
+        b.EndRow();
+}
+
+// One row's line, in reading order. ⛔ NOT the screen's column order: the row draws rank first
+// and the name second, and speech puts the NAME first because it is the identifier a player is
+// scanning for — the same call the save rows made about their leading timestamp. Everything
+// after it is the game's own column text, dropped when the game is not drawing it.
+std::string ComposePersonnelRow(const WireRecord& rec)
+{
+    struct Part {
+        const char* label; // an optional caption the game draws over the column
+        const char* value;
+    };
+    const Part parts[] = {
+        {nullptr, "name"},
+        {nullptr, "rank"},
+        {nullptr, "class"},
+        {nullptr, "status"},
+        {nullptr, "time"},
+        {nullptr, "mental"},
+        {nullptr, "loc"},
+        {"killsLabel", "kills"},
+        {"missionsLabel", "missions"},
+        {"opLabel", "op"},
+        {"dateLabel", "date"},
+    };
+
+    std::string line;
+    for (const Part& part : parts) {
+        const std::string value = RecField(rec, part.value);
+        if (value.empty())
+            continue;
+        if (part.label) {
+            // A bare number under a heading nobody reaches is not information: the memorial's
+            // kills, missions, operation and date all borrow the sort header's own localized
+            // caption. AppendPhrase does the join, so a caption already ending in a colon does
+            // not also collect a comma.
+            std::string pair = RecField(rec, part.label);
+            if (pair.empty()) {
+                AppendPhrase(line, value);
+                continue;
+            }
+            AppendPhrase(pair, value);
+            AppendPhrase(line, pair);
+            continue;
+        }
+        AppendPhrase(line, value);
+    }
+    return line;
+}
+
+std::unique_ptr<GraphRender> BuildPersonnel()
+{
+    gFocus.clear();
+
+    GameUI::PersonnelView view = GameUI::ReadPersonnel(gScreen);
+    const std::vector<WireRecord>& records = FetchPersonnelWords(view);
+
+    GraphBuilder b;
+
+    BuildPersonnelTabs(b, records);
+    BuildPersonnelSort(b, records);
+
+    b.BeginStop("list");
+    b.SetRegion("list");
+
+    if (view.rows.empty()) {
+        // The game's own empty line — "НЕТ ПОГИБШИХ СОЛДАТ" in the memorial, and one per tab
+        // elsewhere. It exists on screen (PopulateListInstantly pushes it into Flash, and the
+        // Bar spawns a UIText for its own), so this is parity, not a placeholder.
+        std::string text;
+        if (const WireRecord* empty = FindRecord(records, "empty"))
+            text = RecField(*empty, "text");
+        if (text.empty())
+            text = Vocab::PersonnelEmpty;
+        text += ". ";
+        text += Vocab::CommodityLeaveHint;
+        b.AddLabel(ControlId::Structural("personnel/empty"), [text]() { return text; });
+        return b.Build();
+    }
+
+    ControlId start;
+    bool haveStart = false;
+
+    for (const GameUI::PersonnelRow& row : view.rows) {
+        const WireRecord* rec = nullptr;
+        for (const WireRecord& candidate : records) {
+            if (RecField(candidate, "kind") == "row"
+                && atoi(RecField(candidate, "index").c_str()) == row.index) {
+                rec = &candidate;
+                break;
+            }
+        }
+        std::string label = rec ? ComposePersonnelRow(*rec) : std::string();
+        if (label.empty())
+            label = Vocab::SoldierFallback;
+
+        ControlId id
+            = ControlId::Referenced(row.handle, "personnel/" + std::to_string(row.index));
+        const int index = row.index;
+        gFocus[id.StructuralKey] = FocusTarget{index, nullptr, false, nullptr};
+
+        if (index == view.selected && !haveStart) {
+            start = id;
+            haveStart = true;
+        }
+        if (!haveStart && index == 0)
+            start = id; // the game selects row 0 when nothing else is selected
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+
+        if (row.disabled) {
+            // Real, and the game enforces it: every OnXSelected delegate opens by testing
+            // IsDisabled and doing nothing. The armory sets it on soldiers away on covert
+            // actions; the tutorial sets it on everyone but the one soldier the script wants.
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        } else {
+            // Re-read at activation: the handler runs from the input drain, a frame or more
+            // after this render, and any sort or tab change respawns every row. The index is
+            // the game's own, which is what makes matching on it safe.
+            vt.OnActivate = [index]() {
+                GameUI::ActivatePersonnelRow(GameUI::ReadPersonnel(gScreen), index);
+            };
+        }
+        b.AddItem(std::move(id), std::move(vt));
+    }
+
+    // Land where the game itself lands. UpdateList ends with Navigator.SetSelected(m_kList), so
+    // the roster — not the tab strip above it — is what a sighted player is already on.
+    b.SetStart(std::move(start));
+
+    return b.Build();
+}
+
+void* ProbePersonnel()
+{
+    void* screen = GameUI::FindPersonnelScreen();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+std::string PersonnelName()
+{
+    // UIPersonnel.Title is retained under a dirty check — but SetScreenHeader is called ONLY by
+    // RefreshTitle, and only when the screen needs a single tab. With a strip up there is no
+    // header at all, and the tab names are the heading a sighted player reads instead, so the
+    // selected tab's label stands in for it.
+    const std::vector<WireRecord>& records = FetchPersonnelWords(GameUI::ReadPersonnel(gScreen));
+    for (const WireRecord& rec : records) {
+        if (RecField(rec, "kind") == "tab" && RecField(rec, "selected") == "1")
+            return RecField(rec, "label");
+    }
+    if (const WireRecord* header = FindRecord(records, "header")) {
+        const std::string title = RecField(*header, "title");
+        if (!title.empty())
+            return title;
+    }
+    return Vocab::ScreenPersonnelFallback;
+}
+
+bool SetPersonnelListIndex(void* screen, int index)
+{
+    return GameUI::SetPersonnelSelection(GameUI::ReadPersonnel(screen), index);
+}
+
+// Above every screen it is opened from — the room, the armory, squad select, the debris room's
+// build slots — and below any dialog it raises.
+const Recipe kPersonnelRecipe{
+    "personnel roster", ProbePersonnel, BuildPersonnel, PersonnelName, SetPersonnelListIndex};
+
 // Above the pause menu and the shell it is opened from, below any dialog it raises.
 const Recipe kSaveLoadRecipe{"save/load", ProbeSaveLoad, BuildSaveLoad, SaveLoadName};
 
@@ -2752,8 +3222,8 @@ const Recipe kSaveLoadRecipe{"save/load", ProbeSaveLoad, BuildSaveLoad, SaveLoad
 // pause menu — has to resolve before it, or the layer would attach to the screen underneath.
 const Recipe* const kRecipes[] = {&kDialogRecipe, &kNarrativeRecipe, &kIronManRecipe,
     &kSoundtrackRecipe, &kOptionsRecipe, &kDifficultyRecipe, &kSaveLoadRecipe, &kPauseMenuRecipe,
-    &kArmoryLoadoutRecipe, &kSquadSelectRecipe, &kCommodityRecipe, &kRoomBuildRecipe,
-    &kRoomRecipe, &kMainMenuRecipe};
+    &kPersonnelRecipe, &kArmoryLoadoutRecipe, &kSquadSelectRecipe, &kCommodityRecipe,
+    &kRoomBuildRecipe, &kRoomRecipe, &kMainMenuRecipe};
 
 // ---- key handlers (game thread, via the arbiter's drain) ----
 

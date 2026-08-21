@@ -504,8 +504,34 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   `OnItemClicked(self, SelectedIndex)` and ignores the row the caller had in mind — the same trap
   `UISaveGame.OnAccept` sets, so the same guard. Rows are matched by the GAME's index (padding
   skipped but never renumbered) and re-read at activation, since `DoShowList` respawns every row
-  on a category change. An empty list is a legitimate state, not a fault: Living Quarters and the
-  Bar carry no shortcut category at all (`CurrentCategory` = -1), so the node names the way out.
+  on a category change.
+  ⛔ **A room's verbs live in THREE places, and the shortcut submenu is only one of them.** The
+  first build read the staff strip and the submenu and called anything else empty — so the Bar
+  announced *"Nothing to do here"* at a screen with a visible button on it (reported live
+  2026-08-21). The other two are on the room screen itself: `UIFacility`'s
+  **`m_kRoomContainer`**, a bottom bar of `UIFacility_RoomFunc`s added by the subclass's
+  `CreateFacilityButtons()`, and **`UpgradeButton`**. Only six facilities have a bottom bar, but
+  two are FIXED rooms a new commander walks into on day one — the Bar's *Obituaries* and the
+  Living Quarters' *Personnel* — and for those two it is the ONLY content, because their
+  shortcut category really is -1. The game's own input order settles the reading order:
+  `UIFacility.OnUnrealCommand` offers the keys to the room first and lets them fall through to
+  `UIAvengerShortcuts` only when the room handles nothing, so a room WITH a bar consumes the
+  arrows and its bar is read before the submenu. An empty list is still a legitimate state — but
+  it now means empty, not "empty in the one place I looked".
+  ⛔ **A `UIFacility_RoomFunc` retains NO TEXT** — `InitRoomFunc` takes the label as a PARAMETER,
+  pushes it through `MC.FunctionString("update", label)` and keeps only the delegate — so
+  `X2AccessFacilityReader` reads it back off the SCREEN's own `localized` property
+  (`m_strObituaries`, `m_strPersonnel`, `m_strViewUnlocks`, `m_strStartProject`,
+  `m_strTrainAbilities`, `m_strViewActions`, all six checked present in `XComGame.<loc>`). The
+  class switch only ROUTES; it never supplies a word of its own. Reading the delegate's FName
+  instead — the one other thing the widget keeps — would say *"OnShowObituaries"* to a Russian
+  player. The upgrade button needs none of that: `ShowUpgradeButton` goes through
+  `UIButton.SetText`, so its `Text` is retained and already says which of *Upgrade* /
+  *Review upgrade* / *Review upgrades* the facility is in.
+  Activation is `FXS_BUTTON_A`, **not Enter**: `UIFacility_RoomFunc.OnUnrealCommand` tests that
+  one constant and nothing else, which is exactly why the bar is mouse-or-gamepad in vanilla.
+  Its labels are cached on the button pointers because the frame differ rebuilds ten times a
+  second and `AddFacilityButton` runs once, in `InitScreen`.
   Probe insists the facility screen is TOPMOST, which is what keeps this recipe from attaching
   over the choose-research screen or the facility summary that the room's own verbs push.
 - **The debris room** (`FindRoomBuildScreen`/`ReadRoomBuild` + the `avenger debris room` recipe +
@@ -654,6 +680,100 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
 
   `OnDelete` ignore the control they are handed and act on
   `m_iCurrentSelection`, so a click sent while the two disagreed would overwrite
+- **The personnel roster** (`FindPersonnelScreen`/`ReadPersonnel` in `src/game_ui.cpp` + the
+  `personnel roster` recipe in `menu_navigator.cpp` + companion `X2AccessPersonnelReader.uc`,
+  built 2026-08-21, **not yet run live**): one recipe for every door the game opens when it asks
+  *which person?* — `UIPersonnel` and its ten subclasses: the Living Quarters' roster, the Bar's
+  obituaries, the Armory's soldiers, staffing a facility, choosing a scientist for a project, a
+  covert action's squad, the training centre, boosting a soldier. The subclasses swap which array
+  is filled and which tabs exist; the layout, the rows and the input path are all the base
+  class's, so **ONE OFFSET** (`AUIPersonnel::m_kList`, 0x45C) covers the family.
+  ⛔ **A row retains only its `UnitRef`.** `UIPersonnel_ListItem` extends `UIButton` and then
+  `UpdateData` pushes the name, status and location through `MC.BeginFunctionOp` — bypassing
+  `UIButton.SetText`, so the retained `Text` is EMPTY on a row that is visibly showing a
+  soldier's name (the debris-room picker's trap and the commodity rows' trap, a third time: it is
+  the house style for this game's list items). What it DOES keep is the reference it was built
+  from, so the companion re-derives every column the way the row did, one branch per row class —
+  `SoldierListItem` rank/name/class/status/time/location/mental state/promote,
+  `DeceasedListItem` name/kills/missions/last operation/date, the plain item name/status/location
+  for scientists and engineers. ⛔ **No `Caps()`**: every row caps the name before handing it to
+  Flash, and that is a visual style, not information — a reader that spells out all-caps words
+  would turn every soldier into an acronym. The memorial's four numeric columns borrow the SORT
+  HEADER's own localized caption (`m_strButtonLabels[]`), because a bare *"3"* under a heading no
+  keyboard reaches is not information.
+  **This is a READER, not a rescue** — `UIPersonnel.OnUnrealCommand` already walks the list on
+  Up/Down (through its `default:` branch into `m_kList.Navigator`), switches tabs on Left/Right,
+  accepts on Enter/Space and backs out on Escape, all on mouse+keyboard. Three stops, in the
+  screen's own top-to-bottom order, each for something the keyboard cannot get to: the TAB STRIP
+  (`CreateTabButton` calls `DisableNavigation()` and `SwitchTab` announces the change only into
+  Flash — Left/Right work and say nothing); the SORT header; and the list itself.
+  ⛔ **Focus STARTS on the list, not on the first stop.** `UpdateList` ends with
+  `Navigator.SetSelected(m_kList)`, so the roster is where the game itself puts a sighted player
+  — reading order and landing spot are different questions, and `GraphBuilder::SetStart` is what
+  answers the second one without inverting the first.
+  ⛔ **Sorting is the one verb here worth re-providing, and on mouse+keyboard it is CLICK-ONLY**:
+  the keyboard branches are `FXS_BUTTON_X` and `FXS_DPAD_LEFT`/`RIGHT`, all three controller
+  constants, so the only vanilla route is clicking a `UIFlipSortButton`. On a roster of twenty
+  soldiers the sort column IS the reading order. Unlike the rows, those headers RETAIN everything
+  — `Label`, `Value`, `bArrowVisible` ("this is the sort column") and `bArrowFlipped` (its
+  direction), all under dirty checks — so the reading needs no re-derivation; only the two WORDS
+  do, because the game draws both facts as a single triangle. Activation goes through the
+  header's own `OnMouseEvent(FXS_L_MOUSE_UP)` rather than through `SetSortType`, because that
+  handler owns three things a direct poke drops: deselecting every other header, FLIPPING the
+  direction when the column was already selected instead of resetting it, and calling
+  `RefreshData()`. Tab switching likewise goes through the screen's own `SwitchTab`, which
+  re-points `m_kList.OnItemClicked` at the right selection delegate — assigning `m_eCurrentTab`
+  directly would leave the PREVIOUS tab's delegate running against the new tab's list.
+  Enter goes to the **SCREEN** after the selection lands: `OnAccept` → `OnButtonCallback` reads
+  `m_kList.selectedIndex` and ignores everything else, the same trap `UISaveGame.OnAccept` sets.
+  A disabled row is refused rather than announced-and-tried, because every `OnXSelected` delegate
+  opens by testing `IsDisabled` — the Armory sets it on soldiers away on covert actions, the
+  tutorial on everyone but the one soldier the script wants. The empty-list line is the game's
+  own (`m_strEmptyListLabels[m_eCurrentTab]`, or the Bar's own `EmptyListMessage`, which it
+  spawns a `UIText` for). Words are cached on the row pointers — but ⛔ **NOT keyed on the
+  selection**, unlike the commodity list's: nothing here is the selection's shadow, so keying on
+  it would walk the whole roster through `XCOMHISTORY` once per arrow press for no new words.
+
+- ⛔ **Never join two spoken phrases with a bare `", "`** — the GAME ends plenty of its own
+  strings with `.`, `!`, `?` or `:`, and blind joining voiced *"5 дн.."*,
+  *"ТРЕБУЕТСЯ ИНЖЕНЕР!."* and *"Перезаписать эту сохраненную игру?,"* at the player — **14 of
+  them in one measured Avenger session**, across the room, the save screen and a dialog. The rule
+  lives in the kernel as `X2Access::Graph::AppendPhrase` (a self-punctuated part takes a plain
+  space, everything else takes the comma) and both of `GraphAnnouncer`'s join sites route through
+  it, so every recipe inherits the fix; recipes that pre-join their own labels must use it too,
+  rather than re-deriving the rule and drifting. Four kernel tests pin it.
+
+- **Save / load** (`src/game_ui.cpp` + the save/load recipe in
+  `menu_navigator.cpp` + companion `X2AccessSaveReader.uc`, built AND VERIFIED
+  LIVE 2026-08-21 — the load screen read its whole list on the first run and
+  Backspace deletions rebuilt and re-announced it each time; recon in
+  `docs/save-load-recon.md`): `UILoadGame` and
+  `UISaveGame` are one screen twice over — the same three fields at the same
+  offsets (`m_iCurrentSelection` 0x410, `m_arrListItems` 0x424) and the same row
+  widget — and they are the SHELL's first case of the tactical HUD's problem:
+  `UISaveLoadGameListItem.UpdateData` resolves the date, name and mission into
+  LOCALS, pushes them into Flash and retains only the `OnlineSaveGame` struct it
+  built them from. So native reads structure and the companion re-derives the
+  words from that struct, mirroring `UpdateData` line for line — with no
+  `XCOMHISTORY` and no `GetSaveGames` re-query, because the screen already asked.
+  The 12-hour clock conversion is a NATIVE function
+  (`FormatTimeStampFor12HourClock`), which is the whole reason the formatting is
+  not done in C++: reproducing it would say *14:22* to a player whose screen says
+  *2:22 PM*. Unlike the ant farm, nothing here is un-ungated —
+  `OnUnrealCommand` already walks the list with the arrows on mouse+keyboard and
+  `RawInputListener` already deletes on Delete/Backspace — so this is a reader,
+  not a rescue, and it is deliberately the thinnest recipe in the file.
+  **ONE NODE PER ROW**: the row shows two buttons, but a second column would
+  replace the one number a blind player cannot get any other way — *save 4 of
+  12* — with *1 of 2*, because `GraphBuilder` stamps positions WITHIN a row
+  holding more than one item. ⛔ The layer must NOT claim `Delete` here: every
+  other Delete claim in the project (tile cursor, shot HUD, hacking pad, ant
+  farm) stands down while this screen is up, so the key is free and it is the
+  screen's own delete verb — named once on attach in the row's own localized
+  word, since the game's nav help offers nothing but Back on mouse+keyboard.
+  Activation goes through the row's own `AcceptButton.Click()`, which dispatches
+  new-save-rename versus overwrite for free, **after** setting the selection —
+  and that order is load-bearing rather than tidy: `UISaveGame.OnAccept` and
   or delete the WRONG SAVE. Words are cached on the ROW POINTER VECTOR (the
   navigator re-renders ten times a second and the save screen's new-save row
   re-runs `FillInHeaderForSave`, which walks the history): a save list changes
@@ -1925,12 +2045,23 @@ Remaining:
     localized-var trap, whose tell is a double space in the ring); and that the
     post-mission loot screen still closes on Enter, which is §14.4's reasoned fix
     rather than a measured one.
-    After that, in value order: personnel lists
-    (`UIPersonnel` and the staff drop-down, rows retaining only `UnitRef`), the
-    room's Flash-only status panels via the companion, then the resource strip,
-    the to-do widget and the event queue — §2 of the recon, and note §2.5 was
-    CORRECTED: the event queue IS retained (`UIEventQueue_ListItem.Title` /
-    `DaysValue`, read live).
+    ✅ **The personnel roster is BUILT** (2026-08-21, the `personnel roster`
+    recipe — see **The personnel roster** above and recon §15), together with the
+    fix that makes it reachable at all: the Bar's *"Nothing to do here"* was the
+    room reader never looking at `UIFacility.m_kRoomContainer`, and the Bar's
+    button is the door to the memorial roster. Neither has run live. What the
+    first pass has to answer: that the bottom-bar button SPEAKS its localized
+    label and that `FXS_BUTTON_A` actually presses it (Enter reaches nothing
+    there); that the roster's rows read a soldier's rank, name, class and status
+    rather than falling back to *"Soldier"*; that focus LANDS on the list rather
+    than on the tab strip; that pressing a sort column re-sorts and the
+    re-announcement says the new direction; and that the memorial's four numeric
+    columns arrive with their captions instead of as bare numbers.
+    After that, in value order: the staff drop-down (`UIPersonnel_DropDown`,
+    which is a `UIPanel` and NOT part of this family), the room's Flash-only
+    status panels via the companion, then the resource strip, the to-do widget
+    and the event queue — §2 of the recon, and note §2.5 was CORRECTED: the event
+    queue IS retained (`UIEventQueue_ListItem.Title` / `DaysValue`, read live).
 
 When researching for this project, focus on engine/native/UE3 technicals.
 Do not survey the accessibility-mod landscape — the author knows it better
