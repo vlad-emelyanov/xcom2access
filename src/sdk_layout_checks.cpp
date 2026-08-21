@@ -374,4 +374,12 @@ static_assert(offsetof(AUIStaffContainer, m_kPersonnelDropDown) == 0x428, "staff
 static_assert(offsetof(AUIPersonnel_DropDown, m_kList) == 0x3E0, "staff picker list");
 static_assert(offsetof(AUIPersonnel_DropDown, m_staff) == 0x3F8, "staff picker candidates");
 
+// ---- the commodity list (UIInventory and its dozen subclasses) ----
+//
+// Exactly one offset for the whole family. Everything else that recipe needs is either a
+// function call (SwitchTab, SetSelectedIndex, the row's OnUnrealCommand) or a localized string
+// the companion reads by name — which is what makes this the cheapest screen in the layer to
+// keep working across a Highlander bump or a mod that rebuilds it.
+static_assert(offsetof(AUIInventory, List) == 0x498, "commodity list");
+
 } // namespace

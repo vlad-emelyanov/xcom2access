@@ -2417,6 +2417,318 @@ bool SetRoomBuildListIndex(void* screen, int index)
 const Recipe kRoomBuildRecipe{
     "avenger debris room", ProbeRoomBuild, BuildRoomBuild, RoomBuildName, SetRoomBuildListIndex};
 
+// ---- the commodity list (UIInventory and its dozen subclasses) ----
+//
+// The widest single recipe in the project: choose research, choose project, choose a psi
+// ability, view objectives, the three archives, build items, storage, implants, the XCOM
+// database, the black market's buy side, resistance goods and the officer school are all the
+// same screen — a UIList of UIInventory_ListItems with a UIItemCard beside it.
+//
+// Unlike the debris room this screen is already OPERABLE from the keyboard: the list navigates,
+// and Enter on a row buys or starts the thing. What it is not is READABLE, and it fails twice
+// over. UIInventory_ListItem.PopulateData bypasses UIListItemString.SetText, so the row is
+// showing a name it does not retain; and the CARD — cost, duration, requirements, the
+// description, everything that decides which tech to pick — retains nothing at all AND is in no
+// navigator, so no keyboard in the game has ever been able to reach it.
+//
+// THREE STOPS, in the screen's own top-to-bottom order: the category strip (Build Items only),
+// the list, then the card. The card is a separate stop rather than part of each row on purpose:
+// a research list is fifteen entries long and a card is a paragraph, so folding one into the
+// other would make every arrow press a paragraph. Within the card, one node per LINE — cost,
+// time, requirements, description — because speech is serial and "what does it cost" should not
+// require sitting through the write-up.
+
+constexpr const char* kCommodityReaderClass = "X2AccessCommodityReader";
+
+// Same self-invalidating cache as the save rows and the debris room, with one addition: the
+// SELECTION is part of the key. The card is the selection's shadow — UIInventory sets
+// List.OnSelectionChanged = SelectedItemChanged in BuildScreen, and that delegate repopulates
+// the card on every move — so a pointer-only key would describe the row the player just left.
+struct CommodityWords {
+    std::vector<WireRecord> records;
+    std::vector<void*> key;
+    int selected = -2;
+};
+
+CommodityWords gCommodityWords;
+
+const std::vector<WireRecord>& FetchCommodityWords(const GameUI::CommodityView& view)
+{
+    std::vector<void*> key;
+    key.reserve(view.rows.size() + 1);
+    for (const GameUI::CommodityRow& row : view.rows)
+        key.push_back(row.handle);
+    // Switching a Build Items tab is covered by the row pointers alone: SwitchTab calls
+    // PopulateData, which runs List.ClearItems() and spawns a fresh panel per item, so a
+    // category change replaces every pointer in this key. The screen pointer goes in too, so a
+    // second screen of the family can never inherit a warm cache from the one it replaced.
+    key.push_back(view.screen);
+
+    if (key != gCommodityWords.key || view.selected != gCommodityWords.selected) {
+        gCommodityWords.records
+            = FetchCompanionRecords(kCommodityReaderClass, "DescribeCommodity");
+        gCommodityWords.key = std::move(key);
+        gCommodityWords.selected = view.selected;
+    }
+    return gCommodityWords.records;
+}
+
+const WireRecord* FindRecord(const std::vector<WireRecord>& records, const char* kind)
+{
+    for (const WireRecord& rec : records) {
+        if (RecField(rec, "kind") == kind)
+            return &rec;
+    }
+    return nullptr;
+}
+
+// The category strip, and it is the clearest small case of "reachable but unspeakable" in the
+// strategy layer. Left/Right already switch these tabs for a sighted keyboard player
+// (UIInventory_BuildItems.OnUnrealCommand handles the arrow constants at screen level), but
+// CreateTabButton calls DisableNavigation() on every button so none can be focused, and the new
+// category's NAME goes into Flash through UIInventory.SetCategory, which retains nothing. So a
+// blind player could switch tabs all day and never learn which one they were on.
+void BuildCommodityTabs(GraphBuilder& b, const std::vector<WireRecord>& records)
+{
+    bool any = false;
+    for (const WireRecord& rec : records) {
+        if (RecField(rec, "kind") != "tab")
+            continue;
+        const std::string label = RecField(rec, "label");
+        if (label.empty())
+            continue;
+        if (!any) {
+            b.BeginStop("tabs");
+            b.StartRow();
+            any = true;
+        }
+        const int index = atoi(RecField(rec, "index").c_str());
+        const bool selected = RecField(rec, "selected") == "1";
+        const bool disabled = RecField(rec, "disabled") == "1";
+
+        ControlId id = ControlId::Structural("commodity/tab/" + std::to_string(index));
+        // Deliberately NOT in gFocus. The game's own focus lives on the list and the card is
+        // fed from it; pushing focus at a tab button that called DisableNavigation() would ask
+        // the navigator for something it refuses to keep.
+        NodeVtable vt;
+        vt.Type = &TabType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.Announcements.emplace_back(NodeAnnouncement(
+            [selected]() { return selected ? std::string(Vocab::Selected) : std::string(); },
+            false, AnnouncementKinds::Selected));
+        if (disabled) {
+            // An empty category. The game greys the button and SwitchTab still switches to it,
+            // showing an empty list — so this is a Reason, not a refusal.
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        }
+        vt.OnActivate = [index]() {
+            GameUI::SwitchCommodityTab(GameUI::ReadCommodity(gScreen), index);
+        };
+        vt.StateText = [selected]() {
+            return selected ? std::string(Vocab::Selected) : std::string();
+        };
+        b.AddItem(std::move(id), std::move(vt));
+    }
+    if (any)
+        b.EndRow();
+}
+
+// One line of the card: the game's own caption joined to its value. AppendPhrase does the join,
+// so a caption the game already ends in a colon — "СТОИМОСТЬ:" is that shape — does not also
+// collect a comma.
+std::string ComposeCardLine(const WireRecord& card, const char* labelKey, const char* valueKey)
+{
+    const std::string value = RecField(card, valueKey);
+    if (value.empty() || !labelKey)
+        return value;
+    std::string line = RecField(card, labelKey);
+    if (line.empty())
+        return value;
+    AppendPhrase(line, value);
+    return line;
+}
+
+// The card, one node per line the card itself draws.
+void BuildCommodityCard(GraphBuilder& b, const WireRecord& card)
+{
+    struct Line {
+        const char* label;
+        const char* value;
+    };
+    // Order is the card's own: the title heads it, the cost block sits under the image, and the
+    // description is last because it is the longest and the least decisive.
+    const Line lines[] = {
+        {nullptr, "title"},
+        {"costLabel", "cost"},
+        {"timeLabel", "time"},
+        {nullptr, "req"},
+        {nullptr, "desc"},
+    };
+
+    bool any = false;
+    for (const Line& line : lines) {
+        if (RecField(card, line.value).empty())
+            continue; // the card is not drawing this line at all
+        if (!any) {
+            b.BeginStop("details");
+            any = true;
+        }
+
+        // Read at ANNOUNCE time, not at build time. The card is repopulated by the game the
+        // instant our write-back moves the list selection, whereas this graph is up to one poll
+        // old — so a Tab pressed hard on the heels of an arrow would otherwise describe the row
+        // the player just left. The build-time text stays as the fallback, because a node that
+        // has already earned a stop must never go silent.
+        std::string fallback = ComposeCardLine(card, line.label, line.value);
+        b.AddLabel(ControlId::Structural(std::string("commodity/card/") + line.value),
+            [labelKey = std::string(line.label ? line.label : ""),
+                valueKey = std::string(line.value), fallback]() {
+                const std::vector<WireRecord>& fresh
+                    = FetchCommodityWords(GameUI::ReadCommodity(gScreen));
+                const WireRecord* live = FindRecord(fresh, "card");
+                if (!live)
+                    return fallback;
+                std::string text = ComposeCardLine(
+                    *live, labelKey.empty() ? nullptr : labelKey.c_str(), valueKey.c_str());
+                return text.empty() ? fallback : text;
+            });
+    }
+}
+
+std::unique_ptr<GraphRender> BuildCommodity()
+{
+    gFocus.clear();
+
+    GameUI::CommodityView view = GameUI::ReadCommodity(gScreen);
+    const std::vector<WireRecord>& records = FetchCommodityWords(view);
+
+    GraphBuilder b;
+
+    BuildCommodityTabs(b, records);
+
+    b.BeginStop("items");
+    int shown = 0;
+    for (const WireRecord& rec : records) {
+        if (RecField(rec, "kind") != "row")
+            continue;
+        const int index = atoi(RecField(rec, "index").c_str());
+        std::string label = RecField(rec, "name");
+        if (label.empty())
+            continue;
+
+        // The right-hand quantity column, spoken only where the row draws one.
+        const std::string qty = RecField(rec, "qty");
+        if (!qty.empty())
+            label += ", " + qty + " " + Vocab::CommodityOwned;
+
+        // Native's flags and the companion's words are matched on the GAME's list index, which
+        // both halves stamp independently — so a row either half skipped cannot silently shift
+        // every entry after it.
+        const GameUI::CommodityRow* state = nullptr;
+        for (const GameUI::CommodityRow& r : view.rows) {
+            if (r.index == index) {
+                state = &r;
+                break;
+            }
+        }
+
+        ControlId id = ControlId::Structural("commodity/row/" + std::to_string(index));
+        gFocus[id.StructuralKey] = FocusTarget{index, nullptr, false};
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(std::move(label)));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+
+        if (state) {
+            // The row's colour, which is the whole affordability story and is lost to speech by
+            // default. bDisabled is "requirements unmet, or already bought"; bIsBad is "you
+            // cannot afford it" — and the two are independent, so an unaffordable AND
+            // unavailable row says both, exactly as it is drawn.
+            if (state->disabled) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+                vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+            }
+            if (state->bad) {
+                vt.Announcements.emplace_back(
+                    NodeAnnouncement::Static(Vocab::CommodityUnaffordable));
+                vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+            }
+            if (state->warning) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::RoomWarning));
+                vt.Announcements.back().Kind = kKindAttention;
+            }
+        }
+
+        // Activation is offered even on a disabled row, unlike the room menu's. These screens
+        // disagree about what disabled means — UIInventory_Implants greys an implant it will
+        // still let you look at — so the refusal stays the game's, where it can be right.
+        vt.OnActivate = [index]() {
+            GameUI::CommodityView live = GameUI::ReadCommodity(gScreen);
+            for (const GameUI::CommodityRow& r : live.rows) {
+                if (r.index == index) {
+                    GameUI::ActivateCommodityRow(live, r);
+                    return;
+                }
+            }
+        };
+        b.AddItem(std::move(id), std::move(vt));
+        shown++;
+    }
+
+    if (shown == 0) {
+        // A legitimate state, not a fault: an archive with nothing in it yet, a build list with
+        // no unlocked items, an empty category. The screen says so in its own subtitle (
+        // PopulateData swaps m_strEmptyListTitle in), which the recipe's name already spoke —
+        // so this node's job is only to give the player something to stand on and the way out.
+        b.AddLabel(ControlId::Structural("commodity/empty"), []() {
+            return std::string(Vocab::CommodityEmpty) + ". " + Vocab::CommodityLeaveHint;
+        });
+    }
+
+    if (const WireRecord* card = FindRecord(records, "card"))
+        BuildCommodityCard(b, *card);
+
+    return b.Build();
+}
+
+void* ProbeCommodity()
+{
+    void* screen = GameUI::FindCommodityScreen();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+std::string CommodityName()
+{
+    // The header the screen itself is drawing. UIX2PanelHeader retains both strings under a
+    // dirty check right before the Flash op, so this is what is on screen — including the
+    // EMPTY-LIST subtitle, which PopulateData swaps in when the list came back with nothing.
+    const std::vector<WireRecord>& records = FetchCommodityWords(GameUI::ReadCommodity(gScreen));
+    std::string name;
+    if (const WireRecord* header = FindRecord(records, "header")) {
+        name = RecField(*header, "title");
+        AppendPhrase(name, RecField(*header, "subtitle"));
+    }
+    if (name.empty())
+        name = Vocab::ScreenCommodityFallback;
+    return name;
+}
+
+// P11 write-back. Only the row nodes carry a listIndex — the tab strip and the card
+// deliberately stay out of gFocus, so this is never called for them.
+bool SetCommodityListIndex(void* screen, int index)
+{
+    return GameUI::SetCommoditySelection(GameUI::ReadCommodity(screen), index);
+}
+
+// Below anything its own rows push (the build-item confirmation, the black market's dialog) and
+// below the pause menu, but above the room screen it is opened from — the Research lab's
+// UIFacility is still on the stack underneath and probes ready.
+const Recipe kCommodityRecipe{
+    "commodity list", ProbeCommodity, BuildCommodity, CommodityName, SetCommodityListIndex};
+
 // Above the pause menu and the shell it is opened from, below any dialog it raises.
 const Recipe kSaveLoadRecipe{"save/load", ProbeSaveLoad, BuildSaveLoad, SaveLoadName};
 
@@ -2424,8 +2736,8 @@ const Recipe kSaveLoadRecipe{"save/load", ProbeSaveLoad, BuildSaveLoad, SaveLoad
 // pause menu — has to resolve before it, or the layer would attach to the screen underneath.
 const Recipe* const kRecipes[] = {&kDialogRecipe, &kNarrativeRecipe, &kIronManRecipe,
     &kSoundtrackRecipe, &kOptionsRecipe, &kDifficultyRecipe, &kSaveLoadRecipe, &kPauseMenuRecipe,
-    &kArmoryLoadoutRecipe, &kSquadSelectRecipe, &kRoomBuildRecipe, &kRoomRecipe,
-    &kMainMenuRecipe};
+    &kArmoryLoadoutRecipe, &kSquadSelectRecipe, &kCommodityRecipe, &kRoomBuildRecipe,
+    &kRoomRecipe, &kMainMenuRecipe};
 
 // ---- key handlers (game thread, via the arbiter's drain) ----
 

@@ -782,6 +782,72 @@ bool ChooseStaffCandidate(const RoomBuildView& view, int index);
 /// state the game never produces). Game thread only.
 bool StartRoomExcavation(const RoomBuildView& view);
 
+// ---- the commodity list (UIInventory and everything derived from it) ----
+//
+// ONE view over about a dozen screens, because Firaxis built them as one: choose research,
+// choose project, choose a psi ability, view objectives, the three archives, build items,
+// storage, implants, the XCOM database, the black market's buy side, resistance goods and the
+// officer school are all a UIList of UIInventory_ListItems on the left and a UIItemCard on the
+// right. Research is the one that matters most — a tech's cost, its duration and what it
+// unlocks are the whole decision — and it is the case with nothing readable at all.
+//
+// ⛔ BOTH halves of this screen are Flash-only, which is why native reads STRUCTURE and STATE
+// here and X2AccessCommodityReader supplies every word:
+//   * UIItemCard retains NOTHING. PopulateData and PopulateCostData resolve the title, the
+//     description, the cost, the time and the requirements into locals and push them through
+//     MC.BeginFunctionOp; the class's only retained vars are a Texture2D and two flags. It is
+//     also in no navigator, so no keyboard in the game can focus it either.
+//   * UIInventory_ListItem.PopulateData writes the row's name through
+//     MC.BeginFunctionOp("populateData"), BYPASSING UIListItemString.SetText — so the retained
+//     Text is EMPTY on a row that is visibly showing a name. Same trap the debris room's
+//     personnel picker sets.
+//
+// What IS readable natively is the part native should own anyway: which rows exist, which one
+// is selected, and the four colour bits the game tinted each row with. Those bits are the whole
+// affordability channel — RealizeBadState sets bIsBad from CanAffordItem and bDisabled from
+// MeetsItemReqs/IsItemPurchased — and speech loses a colour for free unless we say it.
+
+struct CommodityRow {
+    void* handle = nullptr; // UIInventory_ListItem
+    int index = 0;          // the game's own list index
+    bool disabled = false;  // bDisabled: requirements unmet, or already bought
+    bool bad = false;       // bIsBad: cannot afford it
+    bool good = false;      // bIsGood
+    bool warning = false;   // bIsWarning: a priority build item
+};
+
+struct CommodityView {
+    void* screen = nullptr;
+    void* list = nullptr; // UIInventory::List
+    std::vector<CommodityRow> rows;
+    int selected = -1; // UIList::SelectedIndex
+    bool tabbed = false; // a UIInventory_BuildItems, i.e. it carries the three-category strip
+};
+
+/// The commodity screen, when one is the CURRENT screen (topmost non-null stack entry, matching
+/// GetCurrentScreen — the same definition the companion uses, so the two halves cannot read
+/// different screens). Matches any UIInventory subclass by walking the instance's class chain.
+/// Game thread only.
+void* FindCommodityScreen();
+
+CommodityView ReadCommodity(void* screen);
+
+/// P11 write-back: UIList::SetSelectedIndex. Load-bearing beyond keeping the highlight in step
+/// — the list's OnSelectionChanged is what REPOPULATES THE CARD, so without it our card stop
+/// would describe whatever row the game happened to be on. Game thread only.
+bool SetCommoditySelection(const CommodityView& view, int index);
+
+/// Activate a row through the top of the game's own routing: select it, then hand the SCREEN an
+/// Enter. ⛔ NOT the row directly — the screen's OnUnrealCommand runs first and two screens use
+/// that window (UIInventory_LootRecovered closes on Enter; UISimpleCommodityScreen re-syncs
+/// iSelectedItem there). Everything else falls through to the navigator and reaches the selected
+/// row anyway, which is why selecting first is the argument. Game thread only.
+bool ActivateCommodityRow(const CommodityView& view, const CommodityRow& row);
+
+/// Switch the Build Items category through the screen's own SwitchTab, which is exactly what its
+/// Left/Right handler calls. Refuses on any screen without the strip. Game thread only.
+bool SwitchCommodityTab(const CommodityView& view, int tab);
+
 // ---- tutorial mission (Tutorial_01) — the text surfaces and the replay state ----
 //
 // The tutorial is a REPLAY: XComTutorialMgr extends XComReplayMgr, plays a recorded session back

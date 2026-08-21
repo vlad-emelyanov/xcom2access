@@ -587,6 +587,59 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   Activation goes through the row's own `AcceptButton.Click()`, which dispatches
   new-save-rename versus overwrite for free, **after** setting the selection —
   and that order is load-bearing rather than tidy: `UISaveGame.OnAccept` and
+- **The commodity list** (`FindCommodityScreen`/`ReadCommodity` in `src/game_ui.cpp` + the
+  `commodity list` recipe in `menu_navigator.cpp` + companion `X2AccessCommodityReader.uc`,
+  built 2026-08-21, **not yet run live**; recon `docs/avenger-view-recon.md` §14): the widest
+  single recipe in the project — `UIInventory` and everything derived from it is THIRTEEN
+  screens with one layout, a `UIList` of `UIInventory_ListItem`s beside a `UIItemCard`: choose
+  research and the archives, choose project, psi ability, view objectives, choose class, the
+  officer school, both resistance screens, the black market's buy side, build items, storage,
+  implants, the XCOM database and post-mission loot. (`UIBlackMarket_Sell` is NOT in the family
+  despite the name — it `extends UIScreen` and has its own card call.)
+  ⛔ **BOTH halves are Flash-only, and the second is the one that matters.** `UIItemCard` retains
+  NOTHING — `PopulateData`/`PopulateCostData`/`PopulateResearchCostData`/
+  `PopulateSimpleCommodityCostData` resolve the title, description, cost, duration and
+  requirements into LOCALS and push them through `MC.BeginFunctionOp`; its only retained vars are
+  a `Texture2D` and two flags — AND it is in **no navigator**, so for a tech every fact that
+  decides whether to research it is unreachable twice over. Meanwhile
+  `UIInventory_ListItem.PopulateData` bypasses `UIListItemString.SetText`, so the retained `Text`
+  is EMPTY on a row that is visibly showing a name (the debris-room picker's trap again). What
+  the rows DO retain is the data they were built from — `ItemComodity` (the whole `Commodity`
+  struct), `ItemTemplate`, `ItemRef`, `Quantity`, `XComDatabaseEntry` — so the companion
+  re-derives every string from that, mirroring `UIInventory.SelectedItemChanged`'s branch and
+  then the populator it reaches, populator for populator. Three details only the source gives up:
+  `OrderHours == 0` means *instant* on the research card and *no time row at all* on the simple
+  commodity card; a finished non-repeatable tech shows **no time**, so a researched tech must not
+  keep advertising a duration; and `bTech` picks a DIFFERENT requirement formatter, not a
+  different wording — `GetTechReqString` folds the cost's own science and engineering scores into
+  the sentence and `GetStrategyReqString` never sees them.
+  **ONE OFFSET for thirteen screens** (`AUIInventory::List`, 0x498): the tab labels are localized
+  strings the companion reads by name, and every activation is a function call rather than a poke.
+  What native DOES read is the part it should — the row colour bits at 0x414, which are the whole
+  affordability channel (`RealizeBadState` sets `bIsBad` from `CanAffordItem`, `RealizeDisabledState`
+  sets `bDisabled` from `MeetsItemReqs`/`IsItemPurchased`, both refreshed on every `PopulateData`).
+  ⛔ The list holds things that are NOT rows: `UIInventory_LootRecovered` interleaves
+  `UIInventory_HeaderListItem` dividers, plain `UIPanel`s with no such bitfield — skipped by
+  CLASS while keeping `i` as the index, so every remaining number still equals the game's own.
+  ⛔ **Enter goes to the SCREEN, not to the row**, and the counter-example is what proves it:
+  `UIInventory_LootRecovered` overrides `OnUnrealCommand` to CLOSE on Enter and its rows buy
+  nothing, so a row-targeted Enter would strand a blind player on the post-mission loot screen
+  with no continue key; `UISimpleCommodityScreen` uses the same window to re-sync `iSelectedItem`,
+  the number its own purchase branch reads. Everything else falls through
+  `UIScreen.OnUnrealCommand` → `Navigator` → `ListContainer` → `List`, and `UIList` answers Enter
+  by calling the SELECTED row's `OnUnrealCommand` first (`:515`) — so the row still gets it, by
+  the game's own path, which is why selecting first is the argument rather than a courtesy.
+  **Three stops**, in the screen's own order: the category strip (Build Items only — the clearest
+  small case of *reachable but unspeakable*, since Left/Right already switch those tabs while
+  `CreateTabButton` calls `DisableNavigation()` on every button and `SetCategory` puts the new
+  name only into Flash); the list; and the CARD as its own stop with **one node per LINE**. The
+  card is separate because a research list is fifteen entries long and a card is a paragraph —
+  folding one into the other would make every arrow press a paragraph — and split by line because
+  speech is serial and *what does it cost* should not require sitting through the write-up. Its
+  nodes read at ANNOUNCE time with the build-time text as fallback: the card is repopulated the
+  instant our write-back moves the selection (`List.OnSelectionChanged`), while the graph is up to
+  one poll old, so a Tab hard on the heels of an arrow would otherwise describe the row just left.
+
   `OnDelete` ignore the control they are handed and act on
   `m_iCurrentSelection`, so a click sent while the two disagreed would overwrite
   or delete the WRONG SAVE. Words are cached on the ROW POINTER VECTOR (the
@@ -1829,19 +1882,16 @@ Remaining:
     ones (the buildable core's `row R, column C` is already exact, straight from
     the graph) — and to check, for the first time, that `FacilityOverlays` really
     is sorted into MapIndex order, which the whole index scheme assumes.
-    Then the rest of the layer, in value order. **The commodity list is the big
-    one**: `UIChooseResearch` — a tech's name, cost, days and description — is
-    the Research lab's actual UI, and it shares `UISimpleCommodityScreen` /
-    `UIInventory` with about TEN screens (choose project, psi ability, view
-    objectives, all three archives, build items, storage, implants, the XCOM
-    database), so ONE recipe covers the lot. Each row retains the whole
-    `Commodity` struct (`Title`/`Desc`/`Cost`/`Requirements`/`OrderHours`) plus
-    `ItemRef`, and the card's words are statics over it
-    (`GetStrategyCostString`, `GetTimeRemainingString`, `GetTechReqString`) — no
-    history query. Two stops there exist for no sighted keyboard at all:
-    `UIItemCard`, never added to a navigator, and `UIInventory_BuildItems`' three
-    tabs, which call `DisableNavigation()` while Left/Right still switch them and
-    `SetCategory` prints the new name into Flash. After that: personnel lists
+    ✅ **The commodity list — the big one — is BUILT** (2026-08-21, see **The
+    commodity list** above and recon §14): `UIChooseResearch` and the twelve
+    other `UIInventory` screens, the card included. NOT yet run live, and §14.7
+    lists what the first pass has to answer — chiefly that Tab reaches a card
+    carrying cost, days and the write-up; that the card is never one row stale;
+    that `UIItemCard`'s two cost captions are not EMPTY at runtime (the §13.7
+    localized-var trap, whose tell is a double space in the ring); and that the
+    post-mission loot screen still closes on Enter, which is §14.4's reasoned fix
+    rather than a measured one.
+    After that, in value order: personnel lists
     (`UIPersonnel` and the staff drop-down, rows retaining only `UnitRef`), the
     room's Flash-only status panels via the companion, then the resource strip,
     the to-do widget and the event queue — §2 of the recon, and note §2.5 was

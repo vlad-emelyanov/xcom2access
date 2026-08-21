@@ -3031,6 +3031,7 @@ constexpr int32_t kListItemStringTextOffset = 0x3F4;       // UIListItemString::
 constexpr int32_t kListItemStringFlagsOffset = 0x414;      // bDisabled/bIsBad/bIsGood/bIsWarning
 constexpr uint32_t kListItemDisabled = 0x1;
 constexpr uint32_t kListItemBad = 0x2;
+constexpr uint32_t kListItemGood = 0x4;
 constexpr uint32_t kListItemWarning = 0x8;
 
 constexpr int kShortcutCategoryCount = 5;
@@ -3307,6 +3308,155 @@ bool StartRoomExcavation(const RoomBuildView& view)
     // StartClearRoom on the room state directly either — StartExcavation also closes the screen,
     // and a room left open over a started project is a state the game never produces.
     return ClickButton(view.excavate);
+}
+
+// ---- the commodity list (UIInventory and its dozen subclasses) ----
+//
+// The most reused screen shape in the strategy layer, and the one where the widget tree is
+// least help: UIItemCard retains not one of its strings and UIInventory_ListItem.PopulateData
+// bypasses SetText, so the row a player is looking at reads as empty text. Words come from
+// X2AccessCommodityReader; this reads the three things native should own anyway — which rows
+// exist, which one is selected, and how the game tinted each one.
+//
+// ONE OFFSET. UIInventory::List is the only field transcribed here: the tab strip's labels and
+// its selected index are localized strings and an int the companion can read directly, the card
+// is asked about through the companion too, and every activation goes through a function call
+// rather than a poke. That is deliberate — this screen family is the one most likely to be
+// rebuilt by a mod, and a recipe that hangs on a single pinned offset survives that.
+
+namespace {
+
+constexpr int32_t kInventoryListOffset = 0x498; // UIInventory::List (UIList*)
+
+// Engineering's build list and the encyclopedia are the long ones. Bounded like every other
+// array walk here, and a truncation is LOGGED rather than silently presented as the whole list
+// — a cap that quietly drops the tail reads to the player as "the game has nothing more".
+constexpr int kMaxCommodityRows = 256;
+
+} // namespace
+
+void* FindCommodityScreen()
+{
+    void* stack = gStackFinder.Find();
+    if (!stack)
+        return nullptr;
+
+    void* screens[kMaxStackScreens] = {};
+    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+
+    // Topmost non-null entry only, matching GetCurrentScreen — which is what the companion
+    // resolves too. A UIInventory further down is one the player has pushed past (the black
+    // market's confirmation and the build-item dialog both land on top of it), and reading that
+    // would describe a screen nobody is on.
+    for (int i = 0; i < count; i++) {
+        if (!screens[i])
+            continue;
+        if (!IsKindOfRaw(screens[i], "UIInventory"))
+            return nullptr;
+        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
+        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+            return nullptr;
+        return screens[i];
+    }
+    return nullptr;
+}
+
+CommodityView ReadCommodity(void* screen)
+{
+    CommodityView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+    v.tabbed = IsKindOfRaw(screen, "UIInventory_BuildItems");
+    v.list = ReadPtrRaw(screen, kInventoryListOffset);
+    if (!v.list)
+        return v;
+
+    v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
+
+    void* rows[kMaxCommodityRows] = {};
+    int rowCount = ReadListItemsRaw(v.list, rows, kMaxCommodityRows);
+    // Once, not once per render: this runs on every graph rebuild, ten times a second.
+    static bool warnedCap = false;
+    if (rowCount == kMaxCommodityRows && !warnedCap) {
+        warnedCap = true;
+        LOG_WARN("Commodity: row list hit the %d cap — the tail is not being read",
+            kMaxCommodityRows);
+    }
+
+    for (int i = 0; i < rowCount; i++) {
+        if (!rows[i])
+            continue;
+        // ⛔ The list holds things that are not rows. UIInventory_LootRecovered interleaves
+        // UIInventory_HeaderListItem section dividers ("ARTIFACTS RECOVERED"), and those are
+        // plain UIPanels — they have no bDisabled/bIsBad bitfield at all, so reading one would
+        // report a colour the game never drew. Skipping them by CLASS while keeping i as the
+        // index is what keeps every remaining number equal to the game's own, which is what
+        // SetSelectedIndex is expressed in and what the companion stamps independently.
+        if (!IsKindOfRaw(rows[i], "UIInventory_ListItem"))
+            continue;
+        CommodityRow r;
+        r.handle = rows[i];
+        r.index = i;
+        // The colour channel, and it is the whole affordability story: RealizeBadState sets
+        // bIsBad from CanAffordItem and RealizeDisabledState sets bDisabled from
+        // MeetsItemReqs/IsItemPurchased, both refreshed on every PopulateData. Reading the bits
+        // the game DREW is what keeps this from becoming a second opinion about the same facts.
+        uint32_t flags = ReadU32Raw(rows[i], kListItemStringFlagsOffset);
+        r.disabled = (flags & kListItemDisabled) != 0;
+        r.bad = (flags & kListItemBad) != 0;
+        r.good = (flags & kListItemGood) != 0;
+        r.warning = (flags & kListItemWarning) != 0;
+        v.rows.push_back(r);
+    }
+    return v;
+}
+
+bool SetCommoditySelection(const CommodityView& view, int index)
+{
+    // More than a highlight: UIInventory sets List.OnSelectionChanged = SelectedItemChanged in
+    // BuildScreen, and that delegate is what REPOPULATES THE CARD. Without this the card stop
+    // would describe whichever row the game was left on.
+    return SetListIndex(view.list, index);
+}
+
+bool ActivateCommodityRow(const CommodityView& view, const CommodityRow& row)
+{
+    if (!view.screen || !view.list)
+        return false;
+
+    // Select first, then hand the Enter to the SCREEN — the top of the game's own routing, not
+    // the bottom of it. ⛔ Handing it straight to the ROW looks equivalent and is not: the
+    // SCREEN's OnUnrealCommand runs before the navigator gets a say, and two things live in
+    // that gap. UIInventory_LootRecovered overrides it to CLOSE on Enter — its rows buy
+    // nothing, so a row-targeted Enter would leave a blind player stuck on the post-mission
+    // loot screen with no continue key. And UISimpleCommodityScreen uses the same window to
+    // re-sync iSelectedItem off the list, which is the number its own purchase branch and its
+    // nav help read. Everything else falls through UIScreen.OnUnrealCommand → Navigator →
+    // ListContainer → List, and UIList answers Enter by calling the SELECTED row's
+    // OnUnrealCommand first (:515) — so the row still gets it, by the game's own path.
+    //
+    // Selecting first is therefore load-bearing again, the same as on the save rows: from here
+    // down, the index is the argument.
+    //
+    // A disabled row is passed through deliberately rather than refused — these screens
+    // disagree about what disabled MEANS (UIInventory_Implants greys an implant it will still
+    // let you inspect), so the refusal stays theirs, where it can be right.
+    SetListIndex(view.list, row.index);
+    return SendRowCommand(view.screen, kCmdEnter);
+}
+
+bool SwitchCommodityTab(const CommodityView& view, int tab)
+{
+    if (!view.screen || !view.tabbed)
+        return false;
+    // The screen's own SwitchTab, which is exactly what its FXS_ARROW_LEFT/RIGHT handler calls.
+    // bForce stays false so switching to the tab already showing is the no-op the game makes it.
+    struct {
+        int32_t Tab;
+        uint32_t bForce;
+    } params{tab, 0};
+    return CallNamedFunction(view.screen, "SwitchTab", &params);
 }
 
 // ---- tutorial mission (Tutorial_01) ----

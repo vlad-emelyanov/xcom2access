@@ -98,6 +98,17 @@ inline constexpr const char* RoomWarning = "attention";
 inline constexpr const char* RoomNoStaff = "no one available";
 inline constexpr const char* RoomPickStaff = "choose who to assign";
 
+// The commodity list (research, build items, the archives, the market). Almost every word on
+// that screen is the game's own — the row names, the card, both cost labels — so this is a short
+// table on purpose. "Cannot afford" is the row's bIsBad tint, which the game shows in colour and
+// speech would otherwise drop; the two empty-list lines are for a state the screen names in its
+// own subtitle but leaves with nothing to stand on.
+inline constexpr const char* ScreenCommodityFallback = "Item list";
+inline constexpr const char* CommodityEmpty = "Nothing to choose here";
+inline constexpr const char* CommodityLeaveHint = "Escape to go back";
+inline constexpr const char* CommodityUnaffordable = "cannot afford";
+inline constexpr const char* CommodityOwned = "owned";
+
 // The text-entry dialog (naming a save). The field is a Flash TextField, so no screen reader
 // sees the keystrokes and this layer has to echo them itself — hence the boundary words and the
 // punctuation table below.

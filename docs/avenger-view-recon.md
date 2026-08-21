@@ -1194,3 +1194,182 @@ narrated too, so the `UIBuildFacilities` gate change was right.
 Still open: the ant farm's `1 of 1 staff slots filled` is English inside a
 localized readout (the known staff-vocabulary gap), and a staffed FACILITY room
 has still never been exercised.
+
+---
+
+## 14. The commodity list — measured, and phase 3 as built (2026-08-21)
+
+**Status: BUILT, not yet run live.** `FindCommodityScreen` / `ReadCommodity` in
+`src/game_ui.cpp`, the `commodity list` recipe in `src/menu_navigator.cpp`,
+companion `X2AccessCommodityReader.uc`.
+
+This is the screen the architectural correction of this session named directly:
+*"main research lab UI is a research list with research's name, cost, and the
+description."* It is also the widest single recipe in the project.
+
+## 14.1 One screen, thirteen faces
+
+`UIInventory extends UIScreen` is the base, and everything below it is the same
+layout — a `UIList` of `UIInventory_ListItem`s on the left, a `UIItemCard` on
+the right:
+
+| Screen | Parent | What the player is doing |
+|---|---|---|
+| `UIChooseResearch` | `UISimpleCommodityScreen` | **picking a tech** |
+| `UIResearchArchives` | `UIChooseResearch` | reading finished tech |
+| `UIChooseProject` | `UISimpleCommodityScreen` | Shadow Chamber projects |
+| `UIChoosePsiAbility` | `UISimpleCommodityScreen` | psi training |
+| `UIViewObjectives` | `UISimpleCommodityScreen` | the objective list |
+| `UIChooseClass` | `UISimpleCommodityScreen` | training a rookie |
+| `UIOfficerTrainingSchool` | `UISimpleCommodityScreen` | GTS perks |
+| `UIResistanceGoods` / `UIResistanceOps` | `UISimpleCommodityScreen` | the resistance ring |
+| `UIBlackMarket_Buy` | `UISimpleCommodityScreen` | buying |
+| `UIInventory_BuildItems` | `UIInventory` | engineering, **three tabs** |
+| `UIInventory_Storage` | `UIInventory` | what you own |
+| `UIInventory_Implants` | `UIInventory` | PCS chips |
+| `UIInventory_XComDatabase` | `UIInventory` | the encyclopedia |
+| `UIInventory_LootRecovered` | `UIInventory` | post-mission loot |
+
+`UIBlackMarket_Sell` is **not** in the family (`extends UIScreen`) despite the
+name; it has its own list and its own card call.
+
+## 14.2 Both halves are Flash-only
+
+This screen fails a blind player twice, and the second failure is the one that
+matters:
+
+* **`UIItemCard` retains NOTHING.** `PopulateData`, `PopulateCostData`,
+  `PopulateResearchCostData` and `PopulateSimpleCommodityCostData` all resolve
+  the title, description, cost, duration and requirements into LOCALS and push
+  them through `MC.BeginFunctionOp`. The class's only retained vars are a
+  `Texture2D` and two flags. It is also **in no navigator** — never added to
+  one — so no keyboard in the game has ever been able to focus it. For a tech,
+  every fact that decides whether to research it is unreachable twice over.
+* **`UIInventory_ListItem.PopulateData` bypasses `UIListItemString.SetText`**,
+  writing the name straight through `MC.BeginFunctionOp("populateData")`. So the
+  retained `Text` is EMPTY on a row that is visibly showing a name — the same
+  trap the debris room's personnel picker sets.
+
+What the rows DO retain is the data they were built from: `ItemComodity` (the
+whole `Commodity` struct, 0x144 bytes), `ItemTemplate`, `ItemRef`, `Quantity`,
+`XComDatabaseEntry`. So the companion re-derives every string from that,
+mirroring `UIItemCard` populator for populator.
+
+## 14.3 What native owns: one offset
+
+`AUIInventory::List` at **0x498**, and nothing else. The tab strip's labels are
+localized strings the companion reads by name, the card is asked about through
+the companion, and every activation is a function call rather than a poke
+(`SwitchTab`, `SetSelectedIndex`, the screen's `OnUnrealCommand`). That makes
+this the cheapest screen in the layer to keep working across a Highlander bump.
+
+What native DOES read is the part it should: the row **colour bits** at 0x414
+(`bDisabled` / `bIsBad` / `bIsGood` / `bIsWarning`), which are the whole
+affordability channel — `RealizeBadState` sets `bIsBad` from `CanAffordItem` and
+`RealizeDisabledState` sets `bDisabled` from `MeetsItemReqs`/`IsItemPurchased`,
+both refreshed on every `PopulateData`. Speech loses a colour for free.
+
+The list holds things that are not rows: `UIInventory_LootRecovered` interleaves
+`UIInventory_HeaderListItem` section dividers, which are plain `UIPanel`s with no
+such bitfield. Native skips them **by class** while keeping `i` as the index, so
+every remaining number still equals the game's own.
+
+## 14.4 Enter goes to the SCREEN, not to the row
+
+The obvious activation — hand the row an Enter, since
+`UIInventory_ListItem.OnUnrealCommand` answers `FXS_KEY_ENTER` with
+`OnClickedConfirmButton` — is wrong, and the counter-example is
+`UIInventory_LootRecovered`: it overrides `OnUnrealCommand` to **close** on
+Enter, and its rows buy nothing. A row-targeted Enter would leave a blind player
+stuck on the post-mission loot screen with no continue key.
+
+`UISimpleCommodityScreen` uses the same window to re-sync `iSelectedItem` off
+the list — the number its own purchase branch and its nav help read.
+
+Every other screen falls through `UIScreen.OnUnrealCommand` -> `Navigator` ->
+`ListContainer` -> `List`, and `UIList.OnUnrealCommand` answers Enter by calling
+the **selected** row's `OnUnrealCommand` first (`UIList.uc:515`) before its own
+`OnItemDoubleClicked`/`OnItemClicked` fallbacks. So the row still gets it, by the
+game's own path — which is why selecting first is the argument, not a courtesy.
+
+## 14.5 Three stops
+
+In the screen's own top-to-bottom order:
+
+1. **The category strip** (`UIInventory_BuildItems` only). The clearest small
+   case of *reachable but unspeakable* in the strategy layer: Left/Right already
+   switch these tabs for a sighted keyboard player (the screen handles
+   `FXS_ARROW_LEFT`/`_RIGHT` itself), but `CreateTabButton` calls
+   `DisableNavigation()` on every button so none can be focused, and the new
+   category's NAME goes into Flash through `SetCategory`, which retains nothing.
+   A blind player could switch tabs all day and never learn which one they were
+   on. Activation calls the screen's own `SwitchTab`.
+2. **The list.** One node per row: name, the quantity column where the row draws
+   one, and the colour bits as *unavailable* / *cannot afford* / *attention*.
+3. **The card**, as its own stop with **one node per LINE** — title, cost, time,
+   requirements, description. A separate stop because a research list is fifteen
+   entries long and a card is a paragraph: folding one into the other would make
+   every arrow press a paragraph. One node per line because speech is serial and
+   *what does it cost* should not require sitting through the write-up.
+
+The card's nodes read at **announce** time, not build time, falling back to the
+build-time text. The card is repopulated by the game the instant our write-back
+moves the list selection (`List.OnSelectionChanged = SelectedItemChanged`),
+whereas the graph is up to one poll old — so a Tab pressed hard on the heels of
+an arrow would otherwise describe the row the player just left.
+
+## 14.6 Card branches, mirrored
+
+`UIInventory.SelectedItemChanged` picks the populator and the companion follows
+it exactly:
+
+| Row holds | Card | Cost block |
+|---|---|---|
+| `XComDatabaseEntry` | `PopulateXComDatabaseCard` | none |
+| `ItemTemplate` | `PopulateItemCard` | `PopulateCostData`, **BuildItems only** |
+| `ItemComodity`, `bUseSimpleCard` | `PopulateSimpleCommodityCard` | `PopulateSimpleCommodityCostData` |
+| `ItemComodity`, otherwise | `PopulateResearchCard` | `PopulateResearchCostData`, **except in `UIResearchArchives`** |
+
+Three details that only the source gives up:
+
+* `OrderHours == 0` means **"instant"** on the research card and **"no time row
+  at all"** on the simple commodity card. The same field, read two ways.
+* A finished, non-repeatable tech shows **no time at all** — the card blanks both
+  the label and the value — so a researched tech must not keep advertising a
+  duration.
+* `bTech` picks a *different* requirement formatter, not a different wording:
+  `GetTechReqString` folds the cost's own science and engineering scores into the
+  sentence, which `GetStrategyReqString` never sees.
+
+## 14.7 What the first live run must answer
+
+1. **The Research lab, end to end.** Does each tech read name + *cannot afford*
+   where the game greys it, and does Tab reach a card with cost, days and the
+   write-up? Does Enter start the research?
+2. **The card's staleness guard.** Arrow to a tech and Tab immediately — the
+   card must describe the tech just selected, never the previous one.
+3. **`m_strCostLabel` and `m_strTimeToBuildLabel` must not be empty.** They are
+   read off the LIVE `UIItemCard`, but the localized-var trap of §13.7 says to
+   check: `just dev-props "cdo=UIItemCard"`, and audit the speech ring for the
+   **double space** that an empty caption leaves behind.
+4. **Build Items' tab strip** — three names, the selected one marked, an empty
+   category marked unavailable, and Enter switching.
+5. **The post-mission loot screen still closes on Enter.** §14.4 is a reasoned
+   fix, not a measured one.
+6. Shape-count the ring afterwards
+   (`grep -oP 'TTS!?: "\K[^"]*' X2Access.log | sed 's/[0-9]\+/N/g' | sort |
+   uniq -c | sort -rn`): a healthy run has one line per arrow press and a
+   *cannot afford* clause that actually appears.
+
+## 14.8 Known gaps
+
+* `UIInventory_LootRecovered`'s section dividers ("ARTIFACTS RECOVERED") are
+  `UIInventory_HeaderListItem`, a pure Flash pipe retaining nothing. The
+  companion could rebuild them from the screen's own localized strings, but the
+  section boundaries would have to be re-derived; not built.
+* `UIInventory.SetCategory`/`SetBuiltLabel` are Flash-only on the non-tabbed
+  screens too — the "ITEMS" / total-built captions are unread. Low value beside
+  the header, which IS retained (`UIX2PanelHeader.title`/`.label`, kept under a
+  dirty check right before the Flash op).
+* `CommodityOwned` ("owned") is an English word inside a localized readout, the
+  same class of gap as the ant farm's `1 of 1 staff slots filled`.
