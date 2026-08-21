@@ -1819,7 +1819,73 @@ a doubled full stop. The ant farm is narrate-only, so it joins its own phrases
 and never inherited the kernel's `AppendPhrase` rule. Any surface composing
 speech outside a graph recipe owes the same check.
 
-## 16.5 Known gaps (Avenger layer)
+## 17. Staffing a room UNDER CONSTRUCTION — ✅ verified live (2026-08-22)
+
+How a sighted player speeds up a facility being built, traced end to end, and
+the answer is that it needs no new recipe at all.
+
+`UIFacilityGrid_FacilityOverlay.OnConfirm`, outside build mode, sends a room
+that is `ClearingRoom || UnderConstruction` through
+`UIUtilities_Strategy.SelectRoom` → **`UIRoom`** — the same screen as a debris
+room. So the `avenger debris room` recipe already covers it.
+
+## 17.1 What differs, and who handles it
+
+All three status accessors branch on `UnderConstruction` themselves, so the
+whole column below came out right with no branch of ours:
+
+| | Debris room | Under construction |
+|---|---|---|
+| `GetExcavationStatusString` | *ВЕДЕТСЯ РАСЧИСТКА* | *ИДЕТ СТРОИТЕЛЬСТВО* / *СТРОИТЕЛЬСТВО ПРИОСТАНОВЛЕНО* |
+| `GetExcavationTimeEstimateString` | estimate to clear | remaining, or projected when paused |
+| `GetExcavationRewardString` | the loot string | the facility's `DisplayName` |
+| reward heading (`UpdateData`) | `m_strExcavationReward` | `m_strFacilityLabel` |
+| staff slots | all of them | ⛔ **exactly one** (`if (Room.UnderConstruction) break;` in `UIRoomStaffContainer.Refresh`) |
+| excavate button | shown | hidden — `RealizeNavHelp` calls `HideExcavateButton` for a room with no special feature left |
+
+That last row needed nothing either: native already gates the excavate node on
+the button's `bIsVisible`.
+
+This is the payoff of the ask-the-screen's-own-functions rule stated in §13. A
+reimplementation would have had to grow a construction branch in six places.
+
+## 17.2 The one thing that WAS wrong
+
+The room's NAME took `Room.m_strFacilityLabel` — which is not a name. It is the
+string `"ОТСЕК"`, the column heading printed over the facility line. So a
+construction site announced itself as the word **ROOM**, while the heading
+appeared twice and the facility name once, in the wrong place.
+
+Fixed to read the facility being built, the same way the grid overlay does one
+screen up (`UpdateConstructionFacility`) and the same way this screen's own
+`GetExcavationRewardString` does — one read, three surfaces that agree.
+
+⛔ **A label is not a name**, and in this codebase both live in `m_str*`
+variables next to each other. That is exactly why the mistake is easy.
+
+## 17.3 The live run
+
+    Партизанская школа. row 1, column 2. ИДЕТ СТРОИТЕЛЬСТВО. 13 дн. 1 engineer slot free
+    Партизанская школа
+    ИДЕТ СТРОИТЕЛЬСТВО, ОСТАЛОСЬ ВРЕМЕНИ: 13 ДН. ОТСЕК, ПАРТИЗАНСКАЯ ШКОЛА
+    ВАКАНСИЯ: ТРЕБУЕТСЯ ИНЖЕНЕР, Уменьшает время строительства. button
+    Rafiya Buthelezi, НЕ РАБОТАЕТ, button
+    ...
+    Rafiya Buthelezi, ВРЕМЯ СТРОИТЕЛЬСТВА: -50%, button
+    ИДЕТ СТРОИТЕЛЬСТВО, ОСТАЛОСЬ ВРЕМЕНИ: 7 ДН. ОТСЕК, ПАРТИЗАНСКАЯ ШКОЛА
+    Партизанская школа. row 1, column 2. ИДЕТ СТРОИТЕЛЬСТВО. 7 дн. 1 of 1 staff slots filled
+
+Thirteen days to seven, by keyboard, on a screen vanilla gives no keyboard at
+all.
+
+The same ring gave up one redundancy: the ant-farm line read *"0 of 1 staff
+slots filled. 1 engineer slot free"* — the same fact twice, and the second half
+also names the kind. A room under construction has exactly one slot, so it hit
+every time. The ratio is now spoken only when something IS staffed, which leaves
+the two cases where it earns its place: fully staffed (no empties clause) and
+partly staffed (where the split is the point).
+
+## 17.4 Known gaps (Avenger layer)
 
 - `UIFacility_Infirmary` spawns its own `PatientList` (`UIList`) — the only
   facility subclass that adds navigable content of its own. Unread.

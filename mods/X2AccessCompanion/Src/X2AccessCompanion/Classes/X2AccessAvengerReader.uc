@@ -324,7 +324,13 @@ private function string DescribeStaffIcons(UIFacilityGrid_FacilityOverlay Overla
 		}
 	}
 
-	if (Total > 0)
+	// ⛔ The ratio is worth saying only when it adds something the empties clause does not. With
+	// nothing staffed, "0 of 1 staff slots filled" and "1 engineer slot free" are the SAME fact,
+	// and the second one also names the kind — so the first is pure length. Measured live
+	// 2026-08-21 on a facility under construction, which has exactly one slot and so hit it
+	// every time. Filled > 0 leaves the two cases where the ratio earns its place: fully staffed
+	// (no empties clause at all) and partly staffed (where the split is the point).
+	if (Filled > 0)
 		Result = string(Filled) $ " of " $ string(Total) $ " staff slots filled";
 
 	AppendComma(Empties, CountedSlots(FreeScience, "scientist"));
