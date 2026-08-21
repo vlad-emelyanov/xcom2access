@@ -2,6 +2,7 @@
 #include "game_ui.h"
 #include "input_arbiter.h"
 #include "tts.h"
+#include "ue3_reflection.h"
 #include "vocab.h"
 #include "log.h"
 
@@ -12,10 +13,14 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
+#include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace MenuNavigator {
 
@@ -141,6 +146,10 @@ struct FocusTarget {
     int listIndex = -1;      // >= 0: drive UIList.SetSelectedIndex to this row
     void* button = nullptr;  // drive UIPanel.SetSelectedNavigation onto this control
     bool clearList = false;  // deselect the row list first (leaving it for buttons/tabs)
+    // Screens whose focus is more than "a row in a list": squad select has to place a CARD and
+    // then a control within it, through the two calls the game's own controller path makes.
+    // When set, it is the whole write-back and the fields above are ignored.
+    std::function<void()> custom;
 };
 
 bool gAttached = false;
@@ -187,6 +196,10 @@ void WriteBackFocus(const GraphNode* node)
     if (it == gFocus.end())
         return;
     const FocusTarget& target = it->second;
+    if (target.custom) {
+        target.custom();
+        return;
+    }
     if (target.listIndex >= 0) {
         if (gActive->SetListIndex)
             gActive->SetListIndex(gScreen, target.listIndex);
@@ -1105,8 +1118,609 @@ const Recipe kPauseMenuRecipe{
 const Recipe kMainMenuRecipe{"main menu", ProbeMainMenu, BuildMainMenu, MainMenuName};
 
 // The dialog leads: it never takes stack focus, so the screen it covers still probes ready.
+// ---- squad select recipe (UISquadSelect) ----
+//
+// The last gate before every mission. Unlike the shell screens this one already HAS working
+// keyboard navigation (UIList_SquadEditor handles the arrows, Tab and Enter with no controller
+// gate — measured live), so a recipe has to earn its place. It does, twice over: the controls a
+// sighted player uses most — launch, and the strip/build/boost verbs — are not on vanilla's
+// focus path AT ALL (UINavigationHelp dispatches them from OnMouseEvent alone, and LaunchButton
+// is bIsNavigable false), and the mission header no focus ever visits. As graph nodes they cost
+// nothing; as a narrate-only reader they would have cost one claimed hotkey each.
+//
+// Attaching also takes vanilla's unbounded ShiftButtonFocus skip loop out of the picture, and
+// lets DISABLED controls be announced rather than skipped — a sighted player still sees the
+// greyed ИЗМЕНИТЬ. See docs/squad-select-recon.md §4 and §7.
+
+constexpr const char* kSquadReaderClass = "X2AccessSquadReader";
+constexpr const char* kSquadRecordSep = "~|~";
+constexpr const char* kSquadFieldSep = "~:~";
+
+// One record of the companion's wire format, as ordered key/value pairs — ordered because
+// `util` repeats, once per slot, and the order is the row order.
+using SquadRecord = std::vector<std::pair<std::string, std::string>>;
+
+std::string RecField(const SquadRecord& rec, const char* key)
+{
+    for (const auto& kv : rec) {
+        if (kv.first == key)
+            return kv.second;
+    }
+    return std::string();
+}
+
+std::vector<std::string> RecFieldAll(const SquadRecord& rec, const char* key)
+{
+    std::vector<std::string> out;
+    for (const auto& kv : rec) {
+        if (kv.first == key)
+            out.push_back(kv.second);
+    }
+    return out;
+}
+
+std::vector<std::string> SplitOn(const std::string& text, const char* sep)
+{
+    std::vector<std::string> parts;
+    const size_t sepLen = strlen(sep);
+    size_t start = 0;
+    for (;;) {
+        const size_t hit = text.find(sep, start);
+        if (hit == std::string::npos) {
+            parts.push_back(text.substr(start));
+            return parts;
+        }
+        parts.push_back(text.substr(start, hit - start));
+        start = hit + sepLen;
+    }
+}
+
+// ONE outbound call per render, which is one per keypress — the same budget the tile cursor
+// spends. The words cannot come from the widget tree (every string on this screen is written
+// into Flash and retained nowhere), so this is the screen's content provider.
+std::vector<SquadRecord> FetchSquadWords()
+{
+    std::vector<SquadRecord> records;
+    void* cdo = GameUI::FindCompanionCDO(kSquadReaderClass);
+    if (!cdo)
+        return records; // FindCompanionCDO logs the miss (companion mod not loaded)
+
+    int64_t zeros[2] = {};
+    if (!GameUI::CallScriptFunction(cdo, "DescribeSquad", zeros)) {
+        LOG_WARN("MenuNavigator: squad select — DescribeSquad failed");
+        return records;
+    }
+    const std::string raw
+        = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
+    if (raw.empty())
+        return records;
+
+    for (const std::string& recText : SplitOn(raw, kSquadRecordSep)) {
+        SquadRecord rec;
+        for (const std::string& field : SplitOn(recText, kSquadFieldSep)) {
+            const size_t eq = field.find('=');
+            if (eq == std::string::npos || eq == 0)
+                continue;
+            // CleanText here rather than in script: one implementation of "strip the markup the
+            // game colours its text with", shared with every other screen.
+            rec.emplace_back(field.substr(0, eq), GameUI::CleanText(field.substr(eq + 1)));
+        }
+        if (!rec.empty())
+            records.push_back(std::move(rec));
+    }
+    return records;
+}
+
+// A card's spoken context line — what the announcer reads when focus ENTERS the card, and stays
+// quiet about while moving within it.
+std::string SquadCardContext(const SquadRecord& card, int visualIndex)
+{
+    const std::string locked = RecField(card, "locked");
+    if (!locked.empty())
+        return locked;
+    if (!RecField(card, "empty").empty())
+        return RecField(card, "selectunit");
+
+    std::string line = RecField(card, "who");
+    const char* const extras[] = {"hp", "will", "bond"};
+    for (const char* key : extras) {
+        const std::string part = RecField(card, key);
+        if (!part.empty())
+            line += (line.empty() ? "" : ", ") + part;
+    }
+    if (line.empty())
+        line = Vocab::SoldierFallback + (" " + std::to_string(visualIndex + 1));
+    return line;
+}
+
+// The spoken label for one card control. The words are the companion's; which controls EXIST is
+// native's read plus the companion's flags, and the two are joined here.
+std::string SquadControlLabel(const SquadRecord& card, const GameUI::SquadControl& control,
+    int utilityCount)
+{
+    switch (control.button) {
+    case GameUI::SquadButton::Promote:
+        return RecField(card, "promotelabel");
+    case GameUI::SquadButton::Edit:
+        return RecField(card, "edit");
+    case GameUI::SquadButton::Dismiss:
+        return RecField(card, "dismiss");
+    case GameUI::SquadButton::WeaponPrime: {
+        const std::string label = RecField(card, "weaponlabel");
+        const std::string name = RecField(card, "weapon");
+        if (name.empty())
+            return label;
+        return label.empty() ? name : label + ", " + name;
+    }
+    case GameUI::SquadButton::WeaponHeavy: {
+        const std::string label = RecField(card, "heavylabel");
+        const std::string name = RecField(card, "heavy");
+        return label.empty() ? name : label + ", " + name;
+    }
+    case GameUI::SquadButton::Utility: {
+        const std::vector<std::string> slots = RecFieldAll(card, "util");
+        const int index = control.utilityIndex;
+        if (index >= 0 && index < static_cast<int>(slots.size()))
+            return slots[static_cast<size_t>(index)];
+        (void)utilityCount;
+        return Vocab::UtilitySlotFallback;
+    }
+    default:
+        return std::string();
+    }
+}
+
+std::unique_ptr<GraphRender> BuildSquadSelect()
+{
+    gFocus.clear();
+
+    GameUI::SquadSelectView view = GameUI::ReadSquadSelect(gScreen);
+    // ⛔ Before the walk-up matinee fires PreM_LineupUI the screen is hidden AND deaf —
+    // OnUnrealCommand returns early on !bReceivedWalkupEvent — and the cards are still being
+    // filled. Refusing to build here is what keeps the layer from narrating a screen the player
+    // cannot see yet (recon §5).
+    if (!view.walkupDone || view.slots.empty())
+        return nullptr;
+
+    const std::vector<SquadRecord> words = FetchSquadWords();
+    const SquadRecord* mission = nullptr;
+    std::vector<const SquadRecord*> cards;
+    for (const SquadRecord& rec : words) {
+        const std::string kind = RecField(rec, "kind");
+        if (kind == "mission" && !mission)
+            mission = &rec;
+        else if (kind == "card")
+            cards.push_back(&rec);
+    }
+    static const SquadRecord kEmptyRecord;
+
+    GraphBuilder b(&gState.Expanded);
+
+    // ---- the mission header: read by nobody today, because no focus goes there ----
+    if (mission) {
+        b.BeginStop("mission");
+        b.SetRegion("mission");
+        struct HeaderField {
+            const char* key;
+            const char* prefix;
+        };
+        static constexpr HeaderField kHeader[] = {
+            {"op", ""},
+            {"objective", "objective"},
+            {"difficulty", "difficulty"},
+            {"rewards", "rewards"},
+            {"sitrep", "sitrep"},
+        };
+        for (const HeaderField& h : kHeader) {
+            const std::string value = RecField(*mission, h.key);
+            if (value.empty())
+                continue;
+            const std::string text
+                = *h.prefix ? std::string(h.prefix) + ", " + value : value;
+            b.AddLabel(ControlId::Structural(std::string("squad/mission/") + h.key),
+                [text]() { return text; });
+        }
+    }
+
+    // ---- the cards, in the screen's own visual order ----
+    b.BeginStop("squad");
+    b.SetRegion("squad");
+    for (size_t i = 0; i < view.slots.size(); i++) {
+        const GameUI::SquadSlot& slot = view.slots[i];
+        const SquadRecord& card
+            = i < cards.size() ? *cards[i] : kEmptyRecord;
+        const int visual = static_cast<int>(i);
+
+        // A pure-structure parent: never navigable, announced when focus enters the card from
+        // outside and silent while moving within it. This is where the soldier is named, so the
+        // controls under it can be as short as "primary weapon, Shotgun".
+        b.PushContext(SquadCardContext(card, visual));
+
+        // An empty or locked card holds no controls a sighted player can use either; its one
+        // node IS the card, and activating it opens the soldier picker.
+        if (slot.controls.empty()) {
+            ControlId id = ControlId::Referenced(slot.handle, "squad/card/" + std::to_string(i));
+            gFocus[id.StructuralKey] = FocusTarget{-1, nullptr, false, [visual]() {
+                GameUI::SquadControl none;
+                GameUI::SetSquadSelectFocus(gScreen, visual, none);
+            }};
+            NodeVtable vt;
+            vt.Type = &ButtonType();
+            const std::string label = SquadCardContext(card, visual);
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+            if (!slot.locked) {
+                vt.OnActivate = [visual]() {
+                    GameUI::SquadSelectView v = GameUI::ReadSquadSelect(gScreen);
+                    if (visual < static_cast<int>(v.slots.size())) {
+                        GameUI::SquadControl pick;
+                        pick.button = GameUI::SquadButton::Edit; // the empty card's own click
+                        GameUI::ActivateSquadControl(gScreen, v.slots[visual], pick);
+                    }
+                };
+            }
+            b.AddItem(std::move(id), std::move(vt));
+            b.PopContext();
+            continue;
+        }
+
+        const int utilityCount = static_cast<int>(RecFieldAll(card, "util").size());
+        // Promote and the heavy weapon are emitted HERE rather than by native: their widgets are
+        // hidden when the soldier has neither, and only the unit state knows which — so the
+        // companion's flags decide, and the order stays the card's own top-to-bottom order
+        // (ESquadSelectButton's declaration order).
+        std::vector<GameUI::SquadControl> controls;
+        if (!RecField(card, "promote").empty()) {
+            GameUI::SquadControl promote;
+            promote.handle = slot.handle;
+            promote.button = GameUI::SquadButton::Promote;
+            controls.push_back(promote);
+        }
+        for (const GameUI::SquadControl& c : slot.controls) {
+            controls.push_back(c);
+            // The heavy weapon sits between the primary and the utility row on the card.
+            if (c.button == GameUI::SquadButton::WeaponPrime && !RecField(card, "heavy").empty()) {
+                GameUI::SquadControl heavy;
+                heavy.handle = slot.handle;
+                heavy.button = GameUI::SquadButton::WeaponHeavy;
+                controls.push_back(heavy);
+            }
+        }
+
+        for (size_t c = 0; c < controls.size(); c++) {
+            const GameUI::SquadControl& control = controls[c];
+            const std::string label = SquadControlLabel(card, control, utilityCount);
+            if (label.empty())
+                continue;
+
+            ControlId id = ControlId::Structural(
+                "squad/card/" + std::to_string(i) + "/"
+                + std::to_string(static_cast<int>(control.button)) + "/"
+                + std::to_string(control.utilityIndex));
+            gFocus[id.StructuralKey] = FocusTarget{-1, nullptr, false, [visual, control]() {
+                GameUI::SetSquadSelectFocus(gScreen, visual, control);
+            }};
+
+            NodeVtable vt;
+            vt.Type = &ButtonType();
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+            if (control.disabled) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+                vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+            }
+            if (!control.disabled) {
+                // Re-read the screen at activation: the handler runs from the input drain, a
+                // frame or more after this render, and the cards are rebuilt on every change.
+                vt.OnActivate = [visual, control]() {
+                    GameUI::SquadSelectView v = GameUI::ReadSquadSelect(gScreen);
+                    if (visual < static_cast<int>(v.slots.size()))
+                        GameUI::ActivateSquadControl(gScreen, v.slots[visual], control);
+                };
+            }
+            b.AddItem(std::move(id), std::move(vt));
+        }
+        b.PopContext();
+    }
+
+    // ---- the actions a mouse player clicks and a keyboard player cannot reach ----
+    b.BeginStop("actions");
+    b.SetRegion("actions");
+    if (view.launch) {
+        ControlId id = ControlId::Referenced(view.launch, "squad/launch");
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(view.launchTitle));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (view.launchDisabled) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+            // The game's own refusal text — "not enough soldiers", or whatever the mission's
+            // CanLaunchMission complains about — read from the tooltip a mouse player hovers.
+            const std::string reason = GameUI::ReadPanelTooltip(view.launch);
+            if (!reason.empty()) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(reason));
+                vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+            }
+        } else {
+            // Through the button's own Click(), so OnLaunchMission runs with every side effect
+            // the game expects (hidden soldiers added, psi training paused, bLaunched set, the
+            // departure cinematic started).
+            vt.OnActivate = []() {
+                GameUI::SquadSelectView v = GameUI::ReadSquadSelect(gScreen);
+                if (v.launch)
+                    GameUI::ClickButton(v.launch);
+            };
+        }
+        b.AddItem(std::move(id), std::move(vt));
+    }
+    for (const GameUI::SquadVerb& verb : view.verbs) {
+        ControlId id = ControlId::Structural(std::string("squad/verb/") + verb.handler);
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(verb.label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        const char* handler = verb.handler;
+        vt.OnActivate = [handler]() { GameUI::InvokeSquadSelectVerb(gScreen, handler); };
+        b.AddItem(std::move(id), std::move(vt));
+    }
+
+    return b.Build();
+}
+
+void* ProbeSquadSelect()
+{
+    void* screen = GameUI::FindSquadSelect();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+std::string SquadSelectName()
+{
+    // The operation's own name is what a sighted player reads at the top left; the fallback is
+    // only for the window between attach and the companion answering.
+    for (const SquadRecord& rec : FetchSquadWords()) {
+        if (RecField(rec, "kind") != "mission")
+            continue;
+        const std::string op = RecField(rec, "op");
+        if (!op.empty())
+            return op;
+        break;
+    }
+    return Vocab::ScreenSquadSelectFallback;
+}
+
+const Recipe kSquadSelectRecipe{
+    "squad select", ProbeSquadSelect, BuildSquadSelect, SquadSelectName};
+
+// ---- save / load recipe (UILoadGame, UISaveGame) ----
+//
+// The shell's first screen whose rows hold no words: UISaveLoadGameListItem.UpdateData pushes
+// the date, the name and the mission into Flash and retains only the struct it built them from.
+// So this is the squad-select split again — native reads which rows exist and which is selected,
+// X2AccessSaveReader re-derives the text — and the recipe itself is deliberately the thinnest
+// one in the file, because unlike the ant farm nothing here is un-ungated: the game's own
+// OnUnrealCommand already walks the list with the arrows on mouse+keyboard, and its
+// RawInputListener already deletes on Delete/Backspace. See docs/save-load-recon.md §2.
+//
+// ONE NODE PER ROW, and that is a decision rather than a shortcut. The row shows two buttons,
+// but a second column would replace the one number a blind player cannot get any other way —
+// "save 4 of 12" — with "1 of 2", because the builder stamps positions WITHIN a row that holds
+// more than one item. The delete verb stays on the game's own key (which this layer must NOT
+// claim: every other Delete claim in the project stands down while this screen is up) and is
+// named once on attach, in the row's own localized word.
+
+constexpr const char* kSaveReaderClass = "X2AccessSaveReader";
+
+// One row's words, as the companion re-derived them from the row's own save header.
+// Read out NAME FIRST and the wall-clock timestamp LAST. The row draws them the other way round
+// (UpdateData puts the timestamp at the head of its first line), and that is right for a glance
+// but wrong for speech: a list of autosaves differs in the description, not in the minute it was
+// written, so the timestamp is the part you sit through before reaching the part you wanted.
+struct SaveWords {
+    std::string desc;    // the player/auto save description — "АВТОСОХРАНЕНИЕ: Кампания 6, ..."
+    std::string name;    // the game-type line
+    std::string mission; // its detail
+    std::string time;    // the formatted wall-clock timestamp
+    bool isNew = false;  // the save screen's row 0
+};
+
+// Keyed by the row's OWN Index field, which is what the screen's SetSelection talks in — never
+// by array position, so a null row in the middle of the list cannot shift the words along.
+using SaveWordMap = std::unordered_map<int, SaveWords>;
+
+// The companion call, cached on the ROW POINTERS. The navigator re-renders about ten times a
+// second and this walk is not free (the save screen's new-save row re-runs FillInHeaderForSave,
+// which iterates the history), but a save list changes ONLY through BuildMenu(), which respawns
+// every row panel — so an unchanged pointer vector is an exact, self-invalidating cache key.
+const SaveWordMap& FetchSaveWords(const std::vector<GameUI::SaveSlot>& slots)
+{
+    static std::vector<void*> sKey;
+    static SaveWordMap sWords;
+
+    std::vector<void*> key;
+    key.reserve(slots.size() + 1);
+    key.push_back(gScreen);
+    for (const GameUI::SaveSlot& slot : slots)
+        key.push_back(slot.handle);
+    if (key == sKey)
+        return sWords;
+    sKey = key;
+    sWords.clear();
+
+    void* cdo = GameUI::FindCompanionCDO(kSaveReaderClass);
+    if (!cdo)
+        return sWords; // FindCompanionCDO logs the miss (companion mod not loaded)
+
+    int64_t zeros[2] = {};
+    if (!GameUI::CallScriptFunction(cdo, "DescribeSaves", zeros)) {
+        LOG_WARN("MenuNavigator: save/load — DescribeSaves failed");
+        return sWords;
+    }
+    const std::string raw
+        = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
+    if (raw.empty())
+        return sWords;
+
+    for (const std::string& recText : SplitOn(raw, kSquadRecordSep)) {
+        int index = -1;
+        SaveWords words;
+        for (const std::string& field : SplitOn(recText, kSquadFieldSep)) {
+            const size_t eq = field.find('=');
+            if (eq == std::string::npos || eq == 0)
+                continue;
+            const std::string key2 = field.substr(0, eq);
+            // CleanText here rather than in script: one implementation of "strip the markup the
+            // game colours its text with", shared with every other screen.
+            const std::string value = GameUI::CleanText(field.substr(eq + 1));
+            if (key2 == "index")
+                index = atoi(value.c_str());
+            else if (key2 == "desc")
+                words.desc = value;
+            else if (key2 == "name")
+                words.name = value;
+            else if (key2 == "mission")
+                words.mission = value;
+            else if (key2 == "time")
+                words.time = value;
+            else if (key2 == "new")
+                words.isNew = true;
+        }
+        if (index >= 0)
+            sWords[index] = std::move(words);
+    }
+    LOG_DEBUG("MenuNavigator: save/load — described %zu of %zu rows", sWords.size(), slots.size());
+    return sWords;
+}
+
+// What the row reads out as. The button's own verb leads ONLY on the new-save row, where it is
+// the thing that makes that row different from every other one ("НОВОЕ СОХРАНЕНИЕ"); on the
+// rest it is the same word twelve times over and the save's own description is the content.
+std::string SaveSlotLabel(const GameUI::SaveSlot& slot, const SaveWords* words)
+{
+    std::string line;
+    auto append = [&line](const std::string& part) {
+        if (part.empty())
+            return;
+        if (!line.empty())
+            line += ", ";
+        line += part;
+    };
+
+    if (!words) {
+        // No record for this row: the companion is missing, or the row carries no header at
+        // all. The widget's own label is still a true statement about what is there.
+        return slot.acceptLabel;
+    }
+    if (words->isNew)
+        append(slot.acceptLabel);
+    append(words->desc);
+    append(words->name);
+    append(words->mission);
+    append(words->time);
+    return line.empty() ? slot.acceptLabel : line;
+}
+
+std::unique_ptr<GraphRender> BuildSaveLoad()
+{
+    gFocus.clear();
+
+    GameUI::SaveLoadView view = GameUI::ReadSaveLoad(gScreen);
+
+    GraphBuilder b;
+    b.BeginStop("saves");
+
+    // While a save or load is in flight the screen drops every key, and on a slow load the
+    // silence is the thing players report. One node saying so is the honest readout — and the
+    // differ speaks it, because the focused identity has changed.
+    if (view.busy) {
+        b.AddLabel(ControlId::Structural("saveload/busy"),
+            []() { return std::string(Vocab::SaveLoadBusy); });
+        return b.Build();
+    }
+
+    if (view.slots.empty()) {
+        // A list that is genuinely empty (no saves yet) is what a sighted player sees too.
+        b.AddLabel(ControlId::Structural("saveload/empty"),
+            []() { return std::string(Vocab::SaveLoadEmpty); });
+        return b.Build();
+    }
+
+    const SaveWordMap& words = FetchSaveWords(view.slots);
+
+    for (const GameUI::SaveSlot& slot : view.slots) {
+        if (!slot.handle)
+            continue;
+        auto found = words.find(slot.index);
+        const std::string label
+            = SaveSlotLabel(slot, found == words.end() ? nullptr : &found->second);
+        if (label.empty())
+            continue;
+
+        ControlId id = ControlId::Referenced(slot.handle, "saveload/" + std::to_string(slot.index));
+        const int index = slot.index;
+        gFocus[id.StructuralKey] = FocusTarget{-1, nullptr, false,
+            [index]() { GameUI::SetSaveLoadSelection(gScreen, index); }};
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (slot.acceptDisabled || !slot.accept) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        } else {
+            // Re-read the screen at activation: the handler runs from the input drain, a frame
+            // or more after this render, and a delete rebuilds every row. Matching on the row's
+            // own Index is what makes that safe — an array position would have shifted.
+            vt.OnActivate = [index]() {
+                GameUI::SaveLoadView live = GameUI::ReadSaveLoad(gScreen);
+                for (const GameUI::SaveSlot& s : live.slots) {
+                    if (s.index == index) {
+                        GameUI::ActivateSaveSlot(gScreen, s);
+                        return;
+                    }
+                }
+            };
+        }
+        b.AddItem(std::move(id), std::move(vt));
+    }
+    return b.Build();
+}
+
+void* ProbeSaveLoad()
+{
+    void* screen = GameUI::FindSaveLoadScreen();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+std::string SaveLoadName()
+{
+    GameUI::SaveLoadView view = GameUI::ReadSaveLoad(gScreen);
+    std::string name = view.title;
+    if (name.empty())
+        name = view.saving ? Vocab::ScreenSaveFallback : Vocab::ScreenLoadFallback;
+
+    // The delete verb, named ONCE per screen entry, in the row's own localized word. A sighted
+    // player reads it off the highlighted row's second button; this layer does not put that
+    // button in the graph (see the section note), so this is where the affordance lives. The
+    // game's own nav help offers nothing but Back on mouse+keyboard.
+    for (const GameUI::SaveSlot& slot : view.slots) {
+        if (slot.remove && !slot.deleteLabel.empty()) {
+            name += ". " + slot.deleteLabel + ": " + Vocab::KeyBackspace;
+            break;
+        }
+    }
+    return name;
+}
+
+// Above the pause menu and the shell it is opened from, below any dialog it raises.
+const Recipe kSaveLoadRecipe{"save/load", ProbeSaveLoad, BuildSaveLoad, SaveLoadName};
+
+// Probe order is topmost-screen-first: anything that can overlay squad select — a dialog, the
+// pause menu — has to resolve before it, or the layer would attach to the screen underneath.
 const Recipe* const kRecipes[] = {&kDialogRecipe, &kNarrativeRecipe, &kIronManRecipe,
-    &kSoundtrackRecipe, &kOptionsRecipe, &kDifficultyRecipe, &kPauseMenuRecipe, &kMainMenuRecipe};
+    &kSoundtrackRecipe, &kOptionsRecipe, &kDifficultyRecipe, &kSaveLoadRecipe, &kPauseMenuRecipe,
+    &kSquadSelectRecipe, &kMainMenuRecipe};
 
 // ---- key handlers (game thread, via the arbiter's drain) ----
 

@@ -158,6 +158,25 @@ dev-gui depth="8" select="":
 dev-props select="" filter="":
     @& "{{ curl }}" -s --max-time 30 "http://127.0.0.1:{{ devserver_port }}/props?{{ select }}&filter={{ filter }}"
 
+# Invoke a script function on a live object — the third verb on the dev-gui selector. Built for
+# the controller-gated function: code the game already has and only calls from a branch a
+# mouse+keyboard player never takes, e.g.
+# `just dev-call InitializeNavigationGrid "screen=UIFacilityGrid"` to ungate the ant farm's
+# room adjacency graph. Refuses object/struct/array arguments (the only value it could pass is a
+# zero, i.e. a null deref inside script) and prints the signature it refused, so a wrong guess
+# costs a line instead of the session.
+dev-call fn select="":
+    @& "{{ curl }}" -s --max-time 30 "http://127.0.0.1:{{ devserver_port }}/call?fn={{ fn }}&{{ select }}"
+
+# The same verb WITH arguments, url-encoded — which is how the Scaleform side is read, since
+# everything about a live movie goes through GFxMoviePlayer's path-string API:
+#   just dev-flash GetVariableString "theInputDialogueScreen.inputField.text"
+#   just dev-flash ActionScriptInt "_global.Selection.getCaretIndex"
+# The movie is the default selector because UIMovie_2D is where the 2D screens live; override it
+# to reach another one.
+dev-flash fn arg select="instance=UIMovie_2D":
+    @& "{{ curl }}" -s --max-time 30 -G --data-urlencode "arg={{ arg }}" "http://127.0.0.1:{{ devserver_port }}/call?fn={{ fn }}&{{ select }}"
+
 # PNG of the monitor the game is on (Desktop Duplication). Defaults beside the .asi.
 dev-shot path="":
     @& "{{ curl }}" -s --max-time 60 "http://127.0.0.1:{{ devserver_port }}/screenshot?path={{ path }}"

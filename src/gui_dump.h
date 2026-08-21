@@ -16,6 +16,7 @@
 #ifdef X2ACCESS_DEVSERVER
 
 #include <string>
+#include <vector>
 
 namespace GuiDump {
 
@@ -37,6 +38,36 @@ std::string Tree(const Selector& sel, int maxDepth);
 /// value — grouped by declaring class. `filter` (optional, case-insensitive) keeps only
 /// properties whose name contains it. Game thread only.
 std::string Props(const Selector& sel, const std::string& filter);
+
+/// Invoke a named script function on the selected object, and report what was found either way.
+///
+/// This exists because a recurring shape of accessibility bug in this game is not a missing
+/// feature but an unreachable one: the game already has the function, and only calls it from a
+/// branch a mouse+keyboard player never takes — `UIFacilityGrid.InitializeNavigationGrid` (the
+/// whole ant-farm adjacency graph) sits behind `ISCONTROLLERACTIVE`, and the to-do widget's
+/// list and notification screen behind mouse handlers. Being able to call one from outside
+/// turns "would ungating this work?" into a measurement instead of a build-deploy-relaunch.
+///
+/// `args` supplies the function's arguments, in declaration order, as text — one per declared
+/// argument or none at all. Supplying them is what makes the Flash bridge reachable from here:
+/// `GFxMoviePlayer.GetVariableString(path)` and `ActionScriptInt(path)` are how anything about a
+/// Scaleform movie gets read, and both take a path string. Passing one is SAFE for the reason
+/// CLAUDE.md's ProcessEvent notes give: parameters are shallow-memcpy'd into the engine's frame
+/// and the destroy pass skips every property below `ParmsSize`, so a buffer we own and keep
+/// alive across the call is all that is required.
+///
+/// ⛔ Only value arguments a caller can actually write are accepted — string, int, float, bool,
+/// byte. An OBJECT, struct, array, name or delegate argument is refused, because the only thing
+/// this endpoint could put there is a zero, and a zeroed object pointer is a null dereference
+/// inside script: a RedScreen or a crash in the very session the endpoint exists to observe.
+///
+/// A declared RETURN value is not an argument and never disqualifies a call: the engine writes
+/// it into our parameter block and reads nothing from it, so the value is reported back.
+/// Resolves only class-scope functions; a state-scoped one needs GameUI::FindStateFunction.
+/// Game thread only, which is the same rule every outbound ProcessEvent call in this project
+/// obeys.
+std::string Call(const Selector& sel, const std::string& funcName,
+    const std::vector<std::string>& args);
 
 } // namespace GuiDump
 

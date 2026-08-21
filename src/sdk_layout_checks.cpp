@@ -149,6 +149,42 @@ static_assert(offsetof(AUIPauseMenu, m_iCurrentSelection) == 0x410, "pause menu 
 static_assert(offsetof(AUIPauseMenu, List) == 0x41C, "pause menu list");
 static_assert(offsetof(AUIPauseMenu, m_sPauseMenu) == 0x42C, "pause menu title");
 
+// ---- save / load (docs/save-load-recon.md §4) ----
+// The two screens declare the same three fields first, which is why one set of offsets reads
+// both; the asserts pin that coincidence so a future divergence is a build error.
+static_assert(offsetof(AUILoadGame, m_iCurrentSelection) == 0x410, "load screen selection");
+static_assert(offsetof(AUILoadGame, m_arrListItems) == 0x424, "load screen rows");
+static_assert(offsetof(AUISaveGame, m_iCurrentSelection) == 0x410, "save screen selection");
+static_assert(offsetof(AUISaveGame, m_arrListItems) == 0x424, "save screen rows");
+static_assert(offsetof(AUILoadGame, m_sLoadTitle) == 0x448, "load screen title");
+// m_bLoadInProgress is a bit in the dword at 0x434; List is its nearest plain neighbour.
+static_assert(offsetof(AUILoadGame, List) == 0x438, "UILoadGame flags precede List at 0x434");
+static_assert(offsetof(AUISaveGame, m_SaveStage) == 0x504, "save stage");
+static_assert(offsetof(AUISaveGame, m_sSaveTitle) == 0x508, "save screen title");
+static_assert(offsetof(AUISaveLoadGameListItem, AcceptButton) == 0x3D8, "save row accept button");
+static_assert(offsetof(AUISaveLoadGameListItem, DeleteButton) == 0x3E0, "save row delete button");
+static_assert(offsetof(AUISaveLoadGameListItem, Index) == 0x4B0, "save row index");
+static_assert(offsetof(AUISaveLoadGameListItem, Id) == 0x4B4, "save row id");
+
+// ---- the Scaleform bridge (game_ui.cpp's FlashCallRaw: one FString in, the answer at 0x10) ----
+// One block shape serves every GFxMoviePlayer path function, which is what makes the whole
+// ActionScript surface reachable through a single helper. Pinned against all four.
+static_assert(offsetof(UGFxMoviePlayer_execActionScriptString_Params, ReturnValue) == 0x10,
+    "ActionScriptString return");
+static_assert(offsetof(UGFxMoviePlayer_execActionScriptInt_Params, ReturnValue) == 0x10,
+    "ActionScriptInt return");
+static_assert(offsetof(UGFxMoviePlayer_execGetVariableString_Params, ReturnValue) == 0x10,
+    "GetVariableString return");
+static_assert(offsetof(UGFxMoviePlayer_execActionScriptString_Params, Path) == 0x00,
+    "ActionScript path argument");
+
+// ---- text input dialog (m_kData is a struct; its fields are offsets INTO it) ----
+static_assert(offsetof(AUIInputDialogue, m_kData) == 0x410, "input dialog data");
+static_assert(offsetof(FTInputDialogData, strTitle) == 0x00, "input dialog prompt");
+static_assert(offsetof(FTInputDialogData, strInputBoxText) == 0x10, "input dialog prefill");
+static_assert(offsetof(FTInputDialogData, iMaxChars) == 0x20, "input dialog max chars");
+static_assert(offsetof(FTInputDialogData, DialogType) == 0x24, "input dialog type");
+
 // ---- UIListItemString (flags at 0x414 are bitfields; ConfirmText pins them) ----
 static_assert(offsetof(AUIListItemString, Text) == 0x3F4, "UIListItemString::Text");
 static_assert(offsetof(AUIListItemString, ConfirmText) == 0x418,
@@ -217,5 +253,36 @@ static_assert(offsetof(AXComTutorialMgr, NextPlayerAbilityContext) == 0x338,
 // member right after it pins the layout) ----
 static_assert(offsetof(AUITacticalHUD, CachedVisibility) == 0x414,
     "UITacticalHUD::CachedVisibility (m_isMenuRaised dword precedes it at 0x410)");
+
+// ---- squad select (docs/squad-select-recon.md §3) ----
+// The screen's own bitfield sits at 0x478 (bLaunched / bReceivedWalkupEvent / bNoCancel /
+// bDisableLoadout); SquadMinimums is the plain member before it and SoldierSlotCount the one
+// before that, so the pair pins the dword from both sides.
+static_assert(offsetof(AUISquadSelect, m_iSelectedSlot) == 0x410, "squad select slot");
+static_assert(offsetof(AUISquadSelect, m_kSlotList) == 0x420, "squad select card list");
+static_assert(offsetof(AUISquadSelect, LaunchButton) == 0x428, "squad select launch button");
+static_assert(offsetof(AUISquadSelect, SoldierSlotCount) == 0x460, "squad select slot count");
+static_assert(offsetof(AUISquadSelect, SquadMinimums) == 0x468,
+    "UISquadSelect flag dword follows SquadMinimums at 0x478");
+static_assert(offsetof(AUISquadSelect, m_strLaunch) == 0x480, "squad select launch label");
+static_assert(offsetof(AUISquadSelect, m_strMission) == 0x490, "squad select mission label");
+static_assert(offsetof(AUISquadSelect, m_strStripGear) == 0x4C0, "squad select strip gear");
+static_assert(offsetof(AUISquadSelect, m_strStripWeapons) == 0x4F0, "squad select strip weapons");
+static_assert(offsetof(AUISquadSelect, m_strStripItems) == 0x520, "squad select strip items");
+static_assert(offsetof(AUISquadSelect, m_strBuildItems) == 0x550, "squad select build items");
+static_assert(offsetof(AUISquadSelect, m_strBoostSoldier) == 0x570, "squad select boost soldier");
+
+// The card's bitfield is at 0x3DC (bDisabled / bDisabledLoadout / bDisabledEdit /
+// bDisabledDismiss); SlotIndex before it and CannotEditSlots after it pin the dword.
+static_assert(offsetof(AUISquadSelect_ListItem, SlotIndex) == 0x3D8, "squad card slot index");
+static_assert(offsetof(AUISquadSelect_ListItem, CannotEditSlots) == 0x3E0,
+    "UISquadSelect_ListItem flag dword precedes CannotEditSlots at 0x3DC");
+static_assert(offsetof(AUISquadSelect_ListItem, UtilitySlots) == 0x408, "squad card utility list");
+static_assert(offsetof(AUISquadSelect_ListItem, m_eActiveButton) == 0x4E0,
+    "squad card active button");
+
+static_assert(offsetof(AUISquadSelect_UtilityItem, Button) == 0x3E0, "utility slot button");
+static_assert(offsetof(AUISquadSelect_UtilityItem, SlotIndex) == 0x3F0, "utility slot index");
+static_assert(offsetof(AUISquadSelect_UtilityItem, SlotType) == 0x3F4, "utility slot type");
 
 } // namespace

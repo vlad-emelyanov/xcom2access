@@ -13,6 +13,7 @@ namespace InputArbiter {
 namespace {
 
 std::vector<Claim> sClaims; // append-only; queue entries carry indices into it
+std::vector<Observer> sObservers; // append-only; passive, never consume (see input_arbiter.h)
 
 HWND sHwnd = nullptr;
 WNDPROC sOriginalProc = nullptr;
@@ -67,6 +68,53 @@ uint8_t CurrentMods()
     return mods;
 }
 
+// Passive fan-out, called from the window procedure. A throwing observer must not take the
+// message path down with it, and must not be able to change what the game receives either —
+// hence the swallow-all catch and the void return.
+void NotifyKey(const KeyEvent& e)
+{
+    for (const Observer& o : sObservers) {
+        if (!o.onKey)
+            continue;
+        try {
+            o.onKey(e);
+        } catch (...) {
+        }
+    }
+}
+
+void NotifyChar(wchar_t ch)
+{
+    for (const Observer& o : sObservers) {
+        if (!o.onChar)
+            continue;
+        try {
+            o.onChar(ch);
+        } catch (...) {
+        }
+    }
+}
+
+// WM_KEYDOWN reports the GENERIC VK for a modifier (VK_SHIFT, never VK_LSHIFT) — the side lives
+// in lParam's scan code and extended bit. Claims name a side, because the two are not
+// interchangeable to the game: only LeftShift carries a binding in [XComGame.XComTacticalInput].
+uint8_t ResolveModifierSide(uint8_t vk, LPARAM lParam)
+{
+    UINT scan = static_cast<UINT>((lParam >> 16) & 0xFF);
+    bool extended = ((lParam >> 24) & 0x01) != 0;
+    switch (vk) {
+    case VK_SHIFT: {
+        // MAPVK_VSC_TO_VK_EX is the only reliable left/right split for Shift; Shift is not an
+        // extended key, so the extended bit says nothing about it.
+        UINT side = MapVirtualKeyW(scan, MAPVK_VSC_TO_VK_EX);
+        return side ? static_cast<uint8_t>(side) : vk;
+    }
+    case VK_CONTROL: return extended ? VK_RCONTROL : VK_LCONTROL;
+    case VK_MENU:    return extended ? VK_RMENU : VK_LMENU;
+    default:         return vk;
+    }
+}
+
 bool IsModifierKey(uint8_t vk)
 {
     switch (vk) {
@@ -76,6 +124,20 @@ bool IsModifierKey(uint8_t vk)
         return true;
     default:
         return false;
+    }
+}
+
+// The modifier bit a modifier KEY contributes to CurrentMods(). Used to strip a modifier's own
+// bit before matching a claim on that key: GetKeyState already reports Shift down while the
+// window procedure is handling Shift's own WM_KEYDOWN, so an unstripped match would need the
+// claim to name ModShift — a chord of the key with itself.
+uint8_t OwnModifierBit(uint8_t vk)
+{
+    switch (vk) {
+    case VK_SHIFT: case VK_LSHIFT: case VK_RSHIFT:     return ModShift;
+    case VK_CONTROL: case VK_LCONTROL: case VK_RCONTROL: return ModCtrl;
+    case VK_MENU: case VK_LMENU: case VK_RMENU:        return ModAlt;
+    default:                                            return 0;
     }
 }
 
@@ -108,12 +170,37 @@ LRESULT CALLBACK ArbiterProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_KEYDOWN:
     case WM_SYSKEYDOWN: {
         uint8_t vk = static_cast<uint8_t>(wParam & 0xFF);
-        if (IsModifierKey(vk))
-            break; // bare modifiers are never claimed; claims use the mask
+        if (IsModifierKey(vk)) {
+            // Almost always: a modifier is not a chord, it only decorates one. The exception is
+            // an explicit side-named claim (see Claim's doc comment) — that swallows the key so
+            // the engine never counts it as pressed at all. Observers stay unnotified either
+            // way, and sSwallowChars is left alone: a modifier produces no WM_CHAR.
+            uint8_t side = ResolveModifierSide(vk, lParam);
+            bool repeatMod = (lParam & 0x40000000) != 0;
+            uint8_t bare = static_cast<uint8_t>(CurrentMods() & ~OwnModifierBit(side));
+            int modClaim = repeatMod ? sDownClaim[side] : FindClaim(side, bare);
+            if (modClaim < 0) {
+                if (!repeatMod)
+                    sDownClaim[side] = -1;
+                break;
+            }
+            sDownClaim[side] = modClaim;
+            sSwallowed++;
+            if (!repeatMod)
+                LOG_DEBUG("InputArbiter: swallowed modifier vk 0x%02X -> claim \"%s\"", side,
+                          sClaims[modClaim].description);
+            // A handler-less claim is a PURE SWALLOW and needs no dispatch — and must not get
+            // one: a modifier held down auto-repeats, and queueing tens of no-op events per
+            // second would evict real presses from the bounded ring during a frame hitch.
+            if (sClaims[modClaim].onKey)
+                Enqueue(KeyEvent{side, bare, /*down*/ true, repeatMod}, modClaim);
+            return 0;
+        }
         sSwallowChars = false;
 
         bool repeat = (lParam & 0x40000000) != 0;
         uint8_t mods = CurrentMods();
+        NotifyKey(KeyEvent{vk, mods, /*down*/ true, repeat});
 
         // Claims are decided at the PRESS; repeats follow the down's fate in BOTH directions. A
         // claim going active mid-hold must not start eating repeats of a down the game saw — the
@@ -143,8 +230,22 @@ LRESULT CALLBACK ArbiterProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_KEYUP:
     case WM_SYSKEYUP: {
         uint8_t vk = static_cast<uint8_t>(wParam & 0xFF);
-        if (IsModifierKey(vk))
-            break;
+        if (IsModifierKey(vk)) {
+            // Same latch rule as every other key: a swallowed down owns its up, whatever the
+            // claim set says by now. Releasing a modifier the game never saw pressed would be
+            // an unpaired key-up — the one thing the arbiter must never emit.
+            uint8_t side = ResolveModifierSide(vk, lParam);
+            int modClaim = sDownClaim[side];
+            if (modClaim < 0)
+                break;
+            sDownClaim[side] = -1;
+            if (sClaims[modClaim].onKey)
+                Enqueue(KeyEvent{side,
+                            static_cast<uint8_t>(CurrentMods() & ~OwnModifierBit(side)),
+                            /*down*/ false, false},
+                    modClaim);
+            return 0;
+        }
         sSwallowChars = false;
         int claim = sDownClaim[vk];
         if (claim < 0)
@@ -158,6 +259,7 @@ LRESULT CALLBACK ArbiterProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_SYSCHAR:
         if (sSwallowChars)
             return 0;
+        NotifyChar(static_cast<wchar_t>(wParam));
         break;
 
     case WM_KILLFOCUS:
@@ -222,6 +324,13 @@ void RegisterClaim(Claim claim)
     LOG_INFO("InputArbiter: claim registered — vk 0x%02X mods 0x%X (%s)",
              claim.vk, claim.mods, claim.description ? claim.description : "");
     sClaims.push_back(std::move(claim));
+}
+
+void RegisterObserver(Observer observer)
+{
+    LOG_INFO("InputArbiter: observer registered (%s)",
+             observer.description ? observer.description : "");
+    sObservers.push_back(std::move(observer));
 }
 
 bool IsClaimed(uint8_t vk, uint8_t mods)

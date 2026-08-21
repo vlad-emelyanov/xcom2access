@@ -7,6 +7,8 @@
 #include "object_scanner.h"
 #include "free_aim.h"
 #include "tile_reader.h"
+#include "avenger.h"
+#include "text_input.h"
 #include "tactical_hud.h"
 #include "hacking_screen.h"
 #include "tutorial_reader.h"
@@ -78,10 +80,18 @@ static void InitThread() {
     // 10. Tutorial message reader (claims — same)
     TutorialReader::Init();
 
-    // 11. Game hooks
+    // 11. Avenger ant farm (claims — same; one re-announce key, no arrows: the game's own
+    // navigation graph does the moving once the companion installs it)
+    Avenger::Init();
+
+    // 12. Text-entry dialog (naming a save). Registers an OBSERVER, not a claim: the keys must
+    // reach the Flash text field AND be spoken, because no screen reader can see that field.
+    TextInput::Init();
+
+    // 13. Game hooks
     Hooks::Init();
 
-    // 12. Dev harness (dev builds + marker file only; no-op otherwise). Last, so it can report
+    // 14. Dev harness (dev builds + marker file only; no-op otherwise). Last, so it can report
     // on everything above, and so a failure here can never keep the mod itself from loading.
     DevServer::Start(dir);
 

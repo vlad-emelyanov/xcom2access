@@ -203,10 +203,67 @@ constexpr int32_t kPauseSelectionOffset = 0x410;    // m_iCurrentSelection (int)
 constexpr int32_t kPauseListOffset = 0x41C;         // List (UIList*)
 constexpr int32_t kPauseTitleOffset = 0x42C;        // m_sPauseMenu (FString)
 
+// ---- save / load: UILoadGame + UISaveGame + their shared row (docs/save-load-recon.md §4) ----
+//
+// The two screens declare the same three fields first, so selection and rows sit at IDENTICAL
+// offsets on both and one read covers them; only the title and the in-flight flag differ.
+constexpr int32_t kSaveSelectionOffset = 0x410;     // m_iCurrentSelection (int) — BOTH screens
+constexpr int32_t kSaveListItemsOffset = 0x424;     // m_arrListItems (TArray<row*>) — BOTH
+constexpr int32_t kLoadTitleOffset = 0x448;         // UILoadGame::m_sLoadTitle (FString)
+constexpr int32_t kLoadFlagsOffset = 0x434;         // UILoadGame flag dword
+constexpr uint32_t kLoadInProgress = 0x0002;        // m_bLoadInProgress
+constexpr int32_t kSaveTitleOffset = 0x508;         // UISaveGame::m_sSaveTitle (FString)
+constexpr int32_t kSaveStageOffset = 0x504;         // UISaveGame::m_SaveStage (byte, ESaveStage)
+
+// UISaveLoadGameListItem — one row, shared by both screens.
+constexpr int32_t kSaveRowAcceptOffset = 0x3D8;     // AcceptButton (load / save / new save)
+constexpr int32_t kSaveRowDeleteOffset = 0x3E0;     // DeleteButton — Hide()n on the new-save row
+constexpr int32_t kSaveRowIndexOffset = 0x4B0;      // Index — the screen's SetSelection target
+constexpr int32_t kSaveRowIdOffset = 0x4B4;         // ID — -1 on the save screen's new-save row
+
+// ---- text input dialog: UIInputDialogue (m_kData, a TInputDialogData, starts at 0x410) ----
+constexpr int32_t kInputTitleOffset = 0x410;        // m_kData.strTitle (FString)
+constexpr int32_t kInputTextOffset = 0x420;         // m_kData.strInputBoxText — the PREFILL
+constexpr int32_t kInputMaxCharsOffset = 0x430;     // m_kData.iMaxChars (int)
+constexpr int32_t kInputTypeOffset = 0x434;         // m_kData.DialogType (byte, InputDialogType)
+
 // ---- UIListItemString (the pause menu's rows — a plain text row, not a UIMechaListItem) ----
 constexpr int32_t kStringItemTextOffset = 0x3F4;    // Text (FString)
 constexpr int32_t kStringItemFlagsOffset = 0x414;   // bDisabled bit 0 (bIsBad/bIsGood/... follow)
 constexpr uint32_t kStringItemDisabled = 0x0001;
+
+// ---- squad select: UISquadSelect + its cards (docs/squad-select-recon.md §3) ----
+constexpr int32_t kSquadSelectedSlotOffset = 0x410; // m_iSelectedSlot — LAGS, never the authority
+constexpr int32_t kSquadSlotListOffset = 0x420;     // m_kSlotList (UIList_SquadEditor*)
+constexpr int32_t kSquadLaunchButtonOffset = 0x428; // LaunchButton (UILargeButton*)
+constexpr int32_t kSquadSoldierSlotsOffset = 0x460; // SoldierSlotCount (int)
+constexpr int32_t kSquadFlagsOffset = 0x478;        // UISquadSelect flag dword
+constexpr uint32_t kSquadLaunched = 0x0001;         // bLaunched
+constexpr uint32_t kSquadWalkupDone = 0x0002;       // bReceivedWalkupEvent — input gate
+constexpr uint32_t kSquadNoCancel = 0x0020;         // bNoCancel
+constexpr uint32_t kSquadDisableLoadout = 0x0100;   // bDisableLoadout
+constexpr int32_t kSquadLaunchLabelOffset = 0x480;  // m_strLaunch (FString)
+constexpr int32_t kSquadMissionLabelOffset = 0x490; // m_strMission (FString)
+constexpr int32_t kSquadStripGearOffset = 0x4C0;    // m_strStripGear (FString)
+constexpr int32_t kSquadStripWeaponsOffset = 0x4F0; // m_strStripWeapons (FString)
+constexpr int32_t kSquadStripItemsOffset = 0x520;   // m_strStripItems (FString)
+constexpr int32_t kSquadBuildItemsOffset = 0x550;   // m_strBuildItems (FString)
+constexpr int32_t kSquadBoostSoldierOffset = 0x570; // m_strBoostSoldier (FString)
+
+// UISquadSelect_ListItem — one soldier card.
+constexpr int32_t kCardSlotIndexOffset = 0x3D8;   // SlotIndex — into XComHQ.Squad, NOT visual
+constexpr int32_t kCardFlagsOffset = 0x3DC;       // UISquadSelect_ListItem flag dword
+constexpr uint32_t kCardDisabled = 0x0001;        // bDisabled — the greyed locked card
+constexpr uint32_t kCardDisabledLoadout = 0x0002; // bDisabledLoadout
+constexpr uint32_t kCardDisabledEdit = 0x0004;    // bDisabledEdit
+constexpr uint32_t kCardDisabledDismiss = 0x0008; // bDisabledDismiss
+constexpr int32_t kCardUtilitySlotsOffset = 0x408; // UtilitySlots (UIList*)
+constexpr int32_t kCardActiveButtonOffset = 0x4E0; // m_eActiveButton (byte, ESquadSelectButton)
+
+// UISquadSelect_UtilityItem — one small inventory slot on a card.
+constexpr int32_t kUtilButtonOffset = 0x3E0;    // Button (UIButton*) — carries the disabled bit
+constexpr int32_t kUtilSlotIndexOffset = 0x3F0; // SlotIndex (int)
+constexpr int32_t kUtilSlotTypeOffset = 0x3F4;  // SlotType (byte, EInventorySlot)
 
 // ---- UIScreenStack: the game's own list of what is on screen ----
 constexpr int32_t kStackFlagsOffset = 0x60;    // UIScreenStack flag dword
@@ -1675,6 +1732,10 @@ enum TrackedScreen {
     kScrLoadScreen,
     kScrTacticalHUD,
     kScrTutorialBox,
+    kScrSquadSelect,
+    kScrLoadGame,
+    kScrSaveGame,
+    kScrTextInput,
     kTrackedScreenCount,
 };
 
@@ -1688,6 +1749,10 @@ const char* const kTrackedClassNames[kTrackedScreenCount] = {
     "UILoadScreenAnimation",
     "UITacticalHUD",
     "UITutorialBox",
+    "UISquadSelect",
+    "UILoadGame",
+    "UISaveGame",
+    "UIInputDialogue",
 };
 
 // The top entry of a dialog box's queue — m_arrData.Length - 1, which is where OnAccept /
@@ -1730,10 +1795,26 @@ bool IsShownRaw(void* screen)
     return (flags & kPanelInited) && (flags & kPanelVisible) && !(flags & kPanelRemoved);
 }
 
-bool (*const kTrackedUsable[kTrackedScreenCount])(void*) = {
-    IsFocusedRaw, IsFocusedRaw, IsFocusedRaw, IsFocusedRaw, DialogIsShowingRaw, IsFocusedRaw,
-    IsShownRaw, IsFocusedRaw, IsFocusedRaw,
+// Positional and one entry per tracked screen: a short initializer leaves a NULL in the table,
+// and FindTrackedScreen calls this through the pointer without a guard, so the static_assert
+// below is what keeps "added a screen, forgot its predicate" from being a crash on first scan.
+constexpr bool (*kTrackedUsable[kTrackedScreenCount])(void*) = {
+    /*Difficulty*/ IsFocusedRaw,
+    /*IronMan*/ IsFocusedRaw,
+    /*Narrative*/ IsFocusedRaw,
+    /*Soundtrack*/ IsFocusedRaw,
+    /*Dialog*/ DialogIsShowingRaw,
+    /*PauseMenu*/ IsFocusedRaw,
+    /*LoadScreen*/ IsShownRaw,
+    /*TacticalHUD*/ IsFocusedRaw,
+    /*TutorialBox*/ IsFocusedRaw,
+    /*SquadSelect*/ IsFocusedRaw,
+    /*LoadGame*/ IsFocusedRaw,
+    /*SaveGame*/ IsFocusedRaw,
+    /*TextInput*/ IsFocusedRaw,
 };
+static_assert(kTrackedUsable[kTrackedScreenCount - 1] != nullptr,
+    "kTrackedUsable must have one predicate per TrackedScreen");
 
 // Every transient screen behind ONE rate-limited GObjects pass. Independent ScreenFinders would
 // each scan once a second whenever their screen is absent — which is almost always, since these
@@ -2158,6 +2239,417 @@ bool DialogCancel(void* screen)
     return ResolveDialog(screen, "OnCancel");
 }
 
+// ---- save / load (UILoadGame, UISaveGame) ----
+
+void* FindSaveLoadScreen()
+{
+    // Never both: the save screen is reachable only from the pause menu and the load screen
+    // pops it. Asking for the save screen first is arbitrary and safe either way — each finder
+    // answers only for a screen that is inited, focused and not removed.
+    if (void* saving = FindScreen(kScrSaveGame))
+        return saving;
+    return FindScreen(kScrLoadGame);
+}
+
+bool SaveScreenIsSaving(void* screen)
+{
+    return screen && ObjectClassNamedRaw(screen, "UISaveGame");
+}
+
+SaveLoadView ReadSaveLoad(void* screen)
+{
+    SaveLoadView v;
+    if (!screen)
+        return v;
+    v.saving = SaveScreenIsSaving(screen);
+    v.title = CleanText(ReadFStringField(screen, v.saving ? kSaveTitleOffset : kLoadTitleOffset));
+    v.selected = ReadI32Raw(screen, kSaveSelectionOffset);
+    // Both screens refuse ALL input while a save or load is in flight, so the layer must not
+    // offer one either — and the player deserves to be told why the keys went dead.
+    v.busy = v.saving ? ReadU8Raw(screen, kSaveStageOffset) != 0
+                      : (ReadU32Raw(screen, kLoadFlagsOffset) & kLoadInProgress) != 0;
+
+    void* rows[128] = {};
+    int count = ReadPtrArrayRaw(screen, kSaveListItemsOffset, rows, 128);
+    for (int i = 0; i < count; i++) {
+        if (!rows[i])
+            continue;
+        SaveSlot slot;
+        slot.handle = rows[i];
+        // The row's OWN index, not our loop counter: it is what InitSaveLoadItem stamped and
+        // what the screen's SetSelection / OnAccept path talks in.
+        slot.index = ReadI32Raw(rows[i], kSaveRowIndexOffset);
+        slot.id = ReadI32Raw(rows[i], kSaveRowIdOffset);
+
+        // UIButton.Click() refuses an invisible button, so a hidden one is not a verb the row
+        // is offering. That is the documented bIsVisible exception: on a child BUTTON the bit is
+        // toggled deliberately (the save screen hides Delete on its new-save row).
+        MenuItem accept = ReadButtonField(rows[i], kSaveRowAcceptOffset);
+        slot.accept = accept.handle;
+        slot.acceptLabel = std::move(accept.label);
+        slot.acceptDisabled = accept.disabled;
+
+        MenuItem remove = ReadButtonField(rows[i], kSaveRowDeleteOffset);
+        slot.remove = remove.handle;
+        slot.deleteLabel = std::move(remove.label);
+
+        v.slots.push_back(std::move(slot));
+    }
+    return v;
+}
+
+bool SetSaveLoadSelection(void* screen, int index)
+{
+    if (!screen)
+        return false;
+    // The screen's own SetSelection: it moves the Flash highlight AND sets m_iCurrentSelection,
+    // which is what the game's own Delete key acts on. Poking the UIList instead would leave
+    // the two disagreeing about which save is selected.
+    struct {
+        int32_t currentSelection;
+        int32_t pad;
+    } params{index, 0};
+    return CallNamedFunction(screen, "SetSelection", &params);
+}
+
+namespace {
+
+// Select, then click — the order the game's own mouse path uses (the row's OnMouseIn fires
+// SetSelection before the button's click delegate runs).
+//
+// ⛔ The selection step is NOT redundant, and on the save screen it is load-bearing:
+// UISaveGame.OnAccept and OnDelete ignore the control they are handed and act on
+// m_iCurrentSelection, so a click that arrived while the two disagreed would OVERWRITE OR
+// DELETE THE WRONG SAVE. Focus write-back already keeps them in step; this makes it impossible
+// for a stale render to matter. (UILoadGame.OnAccept re-selects from the control itself and
+// would be safe either way.)
+bool PressSaveRowButton(void* screen, const SaveSlot& slot, void* button)
+{
+    if (!screen || !button)
+        return false;
+    SetSaveLoadSelection(screen, slot.index);
+    return ClickButton(button);
+}
+
+} // namespace
+
+bool ActivateSaveSlot(void* screen, const SaveSlot& slot)
+{
+    // Through the row's own AcceptButton, exactly as a mouse click does. That button was spawned
+    // with the rename delegate on the new-save row and the accept delegate everywhere else, so
+    // clicking it dispatches "name a new save" versus "overwrite / load" for free.
+    return PressSaveRowButton(screen, slot, slot.accept);
+}
+
+bool DeleteSaveSlot(void* screen, const SaveSlot& slot)
+{
+    return PressSaveRowButton(screen, slot, slot.remove);
+}
+
+// ---- text input dialog (UIInputDialogue) ----
+
+void* FindTextInputScreen()
+{
+    return FindScreen(kScrTextInput);
+}
+
+TextInputView ReadTextInput(void* screen)
+{
+    TextInputView v;
+    if (!screen)
+        return v;
+    v.prompt = CleanText(ReadFStringField(screen, kInputTitleOffset));
+    v.prefill = CleanText(ReadFStringField(screen, kInputTextOffset));
+    v.maxChars = ReadI32Raw(screen, kInputMaxCharsOffset);
+    v.multiLine = ReadU8Raw(screen, kInputTypeOffset) != 0; // eDialogType_SingleLine == 0
+    return v;
+}
+
+namespace {
+
+// The parameter block EVERY GFxMoviePlayer path function takes: an FString in at 0x00, the
+// answer at 0x10 (pinned in sdk_layout_checks.cpp against the generated param structs). One
+// shape covers ActionScriptString / ActionScriptInt / GetVariableString / GetVariableNumber,
+// which is what makes the whole Scaleform surface reachable through one helper.
+//
+// The path buffer is OURS and must outlive the call — and only the call: parameters are
+// shallow-memcpy'd into the engine's frame and its destroy pass skips everything below
+// ParmsSize, so the engine never frees it and never keeps it.
+constexpr int32_t kFlashRetOffset = 0x10;
+
+bool FlashCallRaw(void* movie, const char* funcName, const std::string& path, uint8_t* block,
+    size_t blockSize)
+{
+    if (!movie || blockSize < 32)
+        return false;
+    memset(block, 0, blockSize);
+    static std::wstring sPath; // one live buffer at a time; the call is synchronous
+    sPath = Utf8ToWide(path);
+    const int32_t num = static_cast<int32_t>(sPath.size()) + 1; // FString Num counts the null
+    *reinterpret_cast<const wchar_t**>(block) = sPath.c_str();
+    *reinterpret_cast<int32_t*>(block + 8) = num;
+    *reinterpret_cast<int32_t*>(block + 12) = num;
+    return CallNamedFunction(movie, funcName, block);
+}
+
+// Invoke or read a path that answers with a string. Empty on any failure — including AS2's own
+// "null", which is what Selection.getFocus() says when no field has focus.
+std::wstring FlashString(void* movie, const char* funcName, const std::string& path)
+{
+    uint8_t block[64] = {};
+    if (!FlashCallRaw(movie, funcName, path, block, sizeof(block)))
+        return std::wstring();
+    // Read back through the SEH-guarded FString primitive rather than dereferencing by hand; the
+    // buffer is engine-allocated and deliberately leaked (freeing it would need appFree).
+    wchar_t buf[512];
+    int len = CopyFStringRaw(block + kFlashRetOffset, buf, 512);
+    return len > 0 ? std::wstring(buf, static_cast<size_t>(len)) : std::wstring();
+}
+
+// ... and one that answers with an int. `fallback` is returned on a failed call; note that a
+// path that does not resolve answers 0, while AS2's Selection accessors answer -1 when nothing
+// is focused — which is how the two were told apart when this was first probed.
+int FlashInt(void* movie, const char* funcName, const std::string& path, int fallback)
+{
+    uint8_t block[64] = {};
+    if (!FlashCallRaw(movie, funcName, path, block, sizeof(block)))
+        return fallback;
+    return *reinterpret_cast<const int32_t*>(block + kFlashRetOffset);
+}
+
+} // namespace
+
+TextFieldState ReadFocusedTextField(void* screen)
+{
+    TextFieldState s;
+    void* movie = screen ? ReadPtrRaw(screen, kPanelMovieOffset) : nullptr;
+    if (!movie)
+        return s;
+
+    // Which field has keyboard focus, as a full AS path. This is the anchor for everything
+    // else, and it is also the answer for a dialog with TWO fields (the crash reporter's title
+    // and body), where "the text" alone would be ambiguous.
+    const std::wstring focus = FlashString(movie, "ActionScriptString", "Selection.getFocus");
+    if (focus.empty() || focus == L"null")
+        return s;
+    s.focusPath = WcharToUtf8(focus.c_str(), static_cast<int>(focus.size()));
+
+    // RAW: no CleanText. The player typed this, and a save called "<untitled>" must come back
+    // the way they typed it.
+    s.text = FlashString(movie, "GetVariableString", s.focusPath + ".text");
+    s.caret = FlashInt(movie, "ActionScriptInt", "Selection.getCaretIndex", -1);
+    s.selBegin = FlashInt(movie, "ActionScriptInt", "Selection.getBeginIndex", -1);
+    s.selEnd = FlashInt(movie, "ActionScriptInt", "Selection.getEndIndex", -1);
+    s.valid = true;
+    return s;
+}
+
+// ---- squad select (UISquadSelect) ----
+
+void* FindSquadSelect()
+{
+    return FindScreen(kScrSquadSelect);
+}
+
+namespace {
+
+// A card's utility row, expanded into one control per slot. Each is separately focusable (the
+// game's own Left/Right walks them) and separately locked, and the Highlander rebuilds this list
+// through CHUIItemSlotEnumerator — so it is READ, never derived from the unit's pockets, which is
+// what keeps a slot-adding mod from shifting every index under us (recon §3).
+void AppendUtilityControls(void* card, std::vector<SquadControl>& out)
+{
+    void* list = ReadPtrRaw(card, kCardUtilitySlotsOffset);
+    void* items[16] = {};
+    const int count = ReadListItemsRaw(list, items, 16);
+    for (int i = 0; i < count; i++) {
+        SquadControl c;
+        c.handle = items[i];
+        c.button = SquadButton::Utility;
+        // The LIST position, which is what SetSelectedIndex and the game's own
+        // ShiftHorizontalFocus count in; the item's own SlotIndex is its index WITHIN an
+        // inventory slot type and repeats across types, so it is not a cursor.
+        c.utilityIndex = i;
+        c.utilitySlotType = static_cast<int>(ReadU8Raw(items[i], kUtilSlotTypeOffset));
+        // The lock lives on the item's own Button (SetLocked disables it), not on the panel.
+        void* button = ReadPtrRaw(items[i], kUtilButtonOffset);
+        c.disabled = !button || (ReadU32Raw(button, kButtonFlagsOffset) & kButtonDisabled) != 0;
+        out.push_back(c);
+    }
+}
+
+} // namespace
+
+SquadSelectView ReadSquadSelect(void* screen)
+{
+    SquadSelectView v;
+    if (!screen)
+        return v;
+
+    const uint32_t flags = ReadU32Raw(screen, kSquadFlagsOffset);
+    v.walkupDone = (flags & kSquadWalkupDone) != 0;
+    v.loadoutDisabled = (flags & kSquadDisableLoadout) != 0;
+    v.canCancel = (flags & kSquadNoCancel) == 0;
+    v.soldierSlots = ReadI32Raw(screen, kSquadSoldierSlotsOffset);
+
+    v.launch = ReadPtrRaw(screen, kSquadLaunchButtonOffset);
+    if (v.launch)
+        v.launchDisabled = (ReadU32Raw(v.launch, kButtonFlagsOffset) & kButtonDisabled) != 0;
+    // The button prints its two words on two lines; spoken they are one label.
+    v.launchTitle = CleanText(ReadFStringField(screen, kSquadLaunchLabelOffset));
+    const std::string mission = CleanText(ReadFStringField(screen, kSquadMissionLabelOffset));
+    if (!mission.empty())
+        v.launchTitle += (v.launchTitle.empty() ? "" : " ") + mission;
+
+    void* list = ReadPtrRaw(screen, kSquadSlotListOffset);
+    void* cards[16] = {};
+    const int count = ReadListItemsRaw(list, cards, 16);
+    for (int i = 0; i < count; i++) {
+        SquadSlot slot;
+        slot.handle = cards[i];
+        slot.slotIndex = ReadI32Raw(cards[i], kCardSlotIndexOffset);
+
+        const uint32_t cardFlags = ReadU32Raw(cards[i], kCardFlagsOffset);
+        slot.locked = (cardFlags & kCardDisabled) != 0;
+        // bIsFocused, not m_iSelectedSlot: the screen's copy is written from OnReceiveFocus,
+        // which RefreshFocus defers behind a 0.25 s timer, and it was caught live disagreeing.
+        // This is the same bit the game's own GetActiveListItem() looks at (recon §5).
+        slot.focused = (ReadU32Raw(cards[i], kPanelFlagsOffset) & kPanelFocused) != 0;
+        slot.activeButton = static_cast<int>(ReadU8Raw(cards[i], kCardActiveButtonOffset));
+
+        if (!slot.locked) {
+            // Declaration order IS the card's top-to-bottom order. Edit and Dismiss are emitted
+            // even when disabled — the game greys them and a sighted player still sees them, so
+            // skipping (which is what vanilla's keyboard does) would lose parity. Promote, the
+            // heavy weapon and the bond icon are NOT emitted here: those widgets are HIDDEN when
+            // the soldier has none, and only the unit state knows which — the companion prunes
+            // them, since it is already reading the unit for the words.
+            SquadControl edit;
+            edit.handle = cards[i];
+            edit.button = SquadButton::Edit;
+            edit.disabled = (cardFlags & kCardDisabledEdit) != 0;
+            slot.controls.push_back(edit);
+
+            SquadControl dismiss;
+            dismiss.handle = cards[i];
+            dismiss.button = SquadButton::Dismiss;
+            dismiss.disabled = (cardFlags & kCardDisabledDismiss) != 0;
+            slot.controls.push_back(dismiss);
+
+            SquadControl primary;
+            primary.handle = cards[i];
+            primary.button = SquadButton::WeaponPrime;
+            primary.disabled = (cardFlags & kCardDisabledLoadout) != 0;
+            slot.controls.push_back(primary);
+
+            AppendUtilityControls(cards[i], slot.controls);
+        }
+        v.slots.push_back(std::move(slot));
+    }
+
+    // Mouse-only on PC, every one of them (recon §4). Labels come from the screen's own localized
+    // properties rather than from the nav help, which retains nothing but a delegate array.
+    struct VerbDef {
+        int32_t offset;
+        const char* handler;
+    };
+    static constexpr VerbDef kVerbs[] = {
+        {kSquadStripItemsOffset, "OnStripItems"},
+        {kSquadStripWeaponsOffset, "OnStripWeapons"},
+        {kSquadStripGearOffset, "OnStripGear"},
+        {kSquadBuildItemsOffset, "OnBuildItems"},
+        {kSquadBoostSoldierOffset, "OnBoostSoldier"},
+    };
+    for (const VerbDef& def : kVerbs) {
+        SquadVerb verb;
+        verb.label = CleanText(ReadFStringField(screen, def.offset));
+        if (verb.label.empty())
+            continue;
+        verb.handler = def.handler;
+        v.verbs.push_back(std::move(verb));
+    }
+    return v;
+}
+
+bool SetSquadSelectFocus(void* screen, int visualIndex, const SquadControl& control)
+{
+    void* list = ReadPtrRaw(screen, kSquadSlotListOffset);
+    void* cards[16] = {};
+    const int count = ReadListItemsRaw(list, cards, 16);
+    if (visualIndex < 0 || visualIndex >= count)
+        return false;
+
+    // The order the game's own ShiftFocus uses: drop the old card's focus, take the new one's,
+    // then place the button. Doing it the other way round leaves two cards lit in Flash.
+    for (int i = 0; i < count; i++) {
+        if (i == visualIndex)
+            continue;
+        if (ReadU32Raw(cards[i], kPanelFlagsOffset) & kPanelFocused) {
+            uint8_t none[16] = {};
+            CallNamedFunction(cards[i], "OnLoseFocus", none);
+        }
+    }
+
+    SetListIndex(list, visualIndex);
+    uint8_t noParams[16] = {};
+    CallNamedFunction(cards[visualIndex], "OnReceiveFocus", noParams);
+
+    if (control.button == SquadButton::Utility) {
+        // The utility row is a list of its own; the card's HandleUtilityItemFocus reads its
+        // SelectedIndex back, so the row selection has to land before the button does.
+        SetListIndex(ReadPtrRaw(cards[visualIndex], kCardUtilitySlotsOffset), control.utilityIndex);
+    }
+
+    struct {
+        int32_t ButtonEnumAsInt;
+        uint32_t bReverseFocusIfUtility;
+    } params{static_cast<int32_t>(control.button), 0};
+    return CallNamedFunction(cards[visualIndex], "SetSquadSelectButtonFocus", &params);
+}
+
+bool ActivateSquadControl(void* screen, const SquadSlot& slot, const SquadControl& control)
+{
+    (void)screen;
+    if (!slot.handle)
+        return false;
+
+    // Deliberately NOT HandleButtonSelect(): it switches on the card's own m_eActiveButton, i.e.
+    // on the GAME's idea of which control is focused rather than on ours, so a single frame of
+    // disagreement fires the wrong verb — dismiss where the player asked for edit. Every leaf has
+    // a direct entry point that takes no arguments (recon §7).
+    if (control.button == SquadButton::Utility) {
+        return ClickButton(ReadPtrRaw(control.handle, kUtilButtonOffset));
+    }
+
+    uint8_t noParams[16] = {};
+    switch (control.button) {
+    case SquadButton::Promote:
+        return CallNamedFunction(slot.handle, "OnClickedPromote", noParams);
+    case SquadButton::Edit:
+        return CallNamedFunction(slot.handle, "OnClickedEditUnitButton", noParams);
+    case SquadButton::Dismiss:
+        return CallNamedFunction(slot.handle, "OnClickedDismissButton", noParams);
+    case SquadButton::WeaponPrime:
+        return CallNamedFunction(slot.handle, "OnClickedPrimaryWeapon", noParams);
+    case SquadButton::WeaponHeavy:
+        return CallNamedFunction(slot.handle, "OnClickedHeavyWeapon", noParams);
+    case SquadButton::Bond:
+        // Its own handler takes the icon it was clicked on, and ignores it — but a parameter we
+        // cannot fill is a parameter we do not pass, so this one goes through the icon instead.
+        return false;
+    default:
+        return false;
+    }
+}
+
+bool InvokeSquadSelectVerb(void* screen, const char* funcName)
+{
+    if (!screen || !funcName)
+        return false;
+    uint8_t noParams[16] = {};
+    return CallNamedFunction(screen, funcName, noParams);
+}
+
 // ---- tactical HUD (UITacticalHUD) — tile reader support ----
 
 void* FindTacticalHUD()
@@ -2299,6 +2791,47 @@ TacticalGate ReadTacticalGate()
         }
     }
     return gate; // no tactical HUD on the stack: not in tactical
+}
+
+AvengerGate ReadAvengerGate()
+{
+    AvengerGate gate;
+    void* stack = gStackFinder.Find();
+    if (!stack)
+        return gate;
+
+    void* screens[kMaxStackScreens] = {};
+    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+
+    // GetCurrentScreen is the FIRST non-none entry — it applies no inited/removed filter of its
+    // own, so neither do we. Filtering here would let us call the grid "current" on a frame the
+    // game's own OnUnrealCommand would refuse, which is the one disagreement that matters.
+    bool sawTop = false;
+    for (int i = 0; i < count; i++) {
+        if (!screens[i])
+            continue;
+        char name[64];
+        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
+            continue;
+        if (strcmp(name, "UIFacilityGrid") == 0) {
+            gate.gridOnStack = true;
+            gate.current = !sawTop;
+            if (sawTop)
+                break;
+            // Still refuse a grid that is on the stack but torn down: the game reaches it
+            // through GetCurrentScreen either way, but a removed screen's navigator is not
+            // something to narrate.
+            uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
+            if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+                gate.current = false;
+            break;
+        }
+        if (!sawTop) {
+            sawTop = true;
+            strncpy_s(gate.blocker, name, _TRUNCATE);
+        }
+    }
+    return gate;
 }
 
 // ---- tutorial mission (Tutorial_01) ----

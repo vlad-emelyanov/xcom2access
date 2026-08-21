@@ -51,6 +51,81 @@ inline constexpr const char* ScreenDialog = "Dialog";
 // The in-game Escape menu. It carries its own localized title and only falls back to this.
 inline constexpr const char* ScreenPauseMenuFallback = "Pause menu";
 
+// Squad select. The screen is named by its own operation name ("Операция ...") and reaches these
+// only in the window between attaching and the companion answering — or, for the two below, when
+// a card is present that the companion could not describe at all.
+inline constexpr const char* ScreenSquadSelectFallback = "Squad select";
+inline constexpr const char* SoldierFallback = "Soldier";
+inline constexpr const char* UtilitySlotFallback = "Utility slot";
+
+// Save / load. Both screens carry their own localized title and reach these only if it reads
+// empty. The other three are the layer's own words for states the screen shows without text:
+// an empty list, a save or load in flight, and the key that reaches the row's delete verb —
+// the one affordance the graph does not carry as a node (docs/save-load-recon.md §2).
+//
+// BACKSPACE, not Delete, even though the screen's RawInputHandler takes either: everywhere
+// else in this mod Delete means RE-ANNOUNCE (tile cursor, shot HUD, hacking pad, ant farm), so
+// naming it here would teach the one exception to a rule the player has learned everywhere
+// else — and get a save deleted by someone reaching for a re-read.
+inline constexpr const char* ScreenSaveFallback = "Save game";
+inline constexpr const char* ScreenLoadFallback = "Load game";
+inline constexpr const char* SaveLoadEmpty = "No saved games";
+inline constexpr const char* SaveLoadBusy = "Working, please wait";
+inline constexpr const char* KeyBackspace = "Backspace";
+
+// The text-entry dialog (naming a save). The field is a Flash TextField, so no screen reader
+// sees the keystrokes and this layer has to echo them itself — hence the boundary words and the
+// punctuation table below.
+inline constexpr const char* TextInputRole = "edit box";
+inline constexpr const char* TextInputEmpty = "empty";
+inline constexpr const char* TextInputStart = "start";
+inline constexpr const char* TextInputEnd = "end";
+inline constexpr const char* TextInputDeleted = "deleted";
+
+// Character echo. A LETTER or a digit is spoken as itself and the reader pronounces it; a lone
+// punctuation mark is not — most screen readers drop it entirely at their default punctuation
+// level, so an echo that just forwarded the character would go silent on exactly the keys a
+// player is least sure they pressed. Null means "speak the character itself".
+inline const char* PunctuationName(wchar_t ch)
+{
+    switch (ch) {
+    case L' ': return "space";
+    case L'!': return "exclamation";
+    case L'"': return "quote";
+    case L'#': return "hash";
+    case L'$': return "dollar";
+    case L'%': return "percent";
+    case L'&': return "ampersand";
+    case L'\'': return "apostrophe";
+    case L'(': return "left paren";
+    case L')': return "right paren";
+    case L'*': return "star";
+    case L'+': return "plus";
+    case L',': return "comma";
+    case L'-': return "dash";
+    case L'.': return "dot";
+    case L'/': return "slash";
+    case L':': return "colon";
+    case L';': return "semicolon";
+    case L'<': return "less than";
+    case L'=': return "equals";
+    case L'>': return "greater than";
+    case L'?': return "question";
+    case L'@': return "at";
+    case L'[': return "left bracket";
+    case L'\\': return "backslash";
+    case L']': return "right bracket";
+    case L'^': return "caret";
+    case L'_': return "underscore";
+    case L'`': return "backtick";
+    case L'{': return "left brace";
+    case L'|': return "bar";
+    case L'}': return "right brace";
+    case L'~': return "tilde";
+    default: return nullptr;
+    }
+}
+
 // Spoken while the game shows its loading overlay and the layer has nothing to read. A world
 // change can take ten seconds or more, and unbroken silence there reads as a crash.
 inline constexpr const char* Loading = "Loading";

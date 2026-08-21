@@ -36,6 +36,15 @@ struct KeyEvent {
 /// registration order; exact modifier-mask match (spec P4: claims are per-(key, modifier-mask)).
 /// Register claims BEFORE the game hooks go live (during init), or from the game thread — the
 /// registry is not locked against the window procedure, which reads it on the game thread.
+///
+/// A MODIFIER KEY may be claimed too — vk = VK_LSHIFT and so on — which swallows the modifier
+/// itself, press and release, so the engine never sees it. That is a heavy hammer (the game
+/// stops counting the key as held for its own bindings) and exists for exactly one reason: an
+/// engine binding whose RELEASE does something we cannot allow while our chords use that
+/// modifier. See ObjectScanner's LeftShift claim. Matching strips the key's OWN modifier bit
+/// before comparing, so the natural registration is {VK_LSHIFT, ModNone} — GetKeyState already
+/// reports Shift down while delivering Shift's own key-down, and demanding ModShift there would
+/// read as a chord with itself. Observers are NOT notified for modifier keys, claimed or not.
 struct Claim {
     uint8_t vk = 0;
     uint8_t mods = ModNone;
@@ -53,6 +62,31 @@ struct Claim {
 };
 
 void RegisterClaim(Claim claim);
+
+/// Passive observation of the keyboard traffic the chokepoint sees — claimed or not — which
+/// NEVER changes what the game receives. This exists for the one job a claim cannot do: echoing
+/// what the player types into a Flash text field, where the keys must reach the field AND be
+/// spoken. Claiming them would stop the typing; not seeing them would leave the player deaf to
+/// their own input.
+///
+/// ⛔ Observers run INSIDE the window procedure. An observer may do nothing but RECORD — no
+/// engine memory, no speech, no outbound calls — exactly the rule a claim's activeWhen follows.
+/// Act on what was recorded from the game tick.
+struct Observer {
+    /// Every non-modifier key-DOWN, repeats included (a held Backspace really does delete
+    /// repeatedly). Fires whether or not a claim swallowed the key.
+    std::function<void(const KeyEvent&)> onKey;
+
+    /// Every character the game is about to receive, in UTF-16 code units. Not called for
+    /// characters belonging to a swallowed chord — those never reach the game either, so
+    /// echoing them would describe an edit that is not happening.
+    std::function<void(wchar_t)> onChar;
+
+    const char* description = "";
+};
+
+/// Register BEFORE the game hooks go live, or from the game thread — same contract as claims.
+void RegisterObserver(Observer observer);
 
 /// The pure claim predicate the chokepoint evaluates. True when some registered claim with an
 /// exact (vk, mods) match is currently active.

@@ -5,6 +5,8 @@
 #include "input_arbiter.h"
 #include "menu_navigator.h"
 #include "tile_reader.h"
+#include "avenger.h"
+#include "text_input.h"
 #include "tactical_hud.h"
 #include "hacking_screen.h"
 #include "tutorial_reader.h"
@@ -95,6 +97,13 @@ static void RegisterEventHandlers() {
             // on-rails rejections. Only the tutorial mission has an XComTutorialMgr, so every
             // other mission pays one cached pointer check here.
             TutorialReader::OnTick();
+            // The Avenger's ant farm. Its gate is a plain "is UIFacilityGrid the current
+            // screen", so outside the strategy layer this is one stack walk and no more.
+            Avenger::OnTick();
+            // The text-entry dialog (naming a save). Narrate-only and claims one key, so it
+            // never contends with the navigator — which has no recipe for this screen precisely
+            // because a recipe's claims would eat the keys the player is typing with.
+            TextInput::OnTick();
             // Last: drain the companion's queued combat narration and flush the speech queue.
             // After every producer above, so a line queued this frame goes out this frame rather
             // than waiting a tick behind the event that caused it.

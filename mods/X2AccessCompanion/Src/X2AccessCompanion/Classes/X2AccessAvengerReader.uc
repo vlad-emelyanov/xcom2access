@@ -1,0 +1,398 @@
+// X2AccessAvengerReader
+// The Avenger's ant farm (UIFacilityGrid) — phase 1 of the strategy layer. Same contract as
+// X2AccessTacticalReader: the C++ layer owns the gate, the keys and the speech, calls these
+// functions on this class's default object via ProcessEvent (game thread, from the frame pump)
+// and reads NativeResult back through reflection right after the call returns. Nothing here
+// runs on its own — no listeners, no timers, no polling.
+//
+// WHY THIS LAYER CLAIMS NO ARROW KEYS. Every other navigable surface in this project needed a
+// Graph recipe or a cursor because the game had no keyboard path at all. The ant farm is the
+// opposite case: the game ships a complete eight-way spatial navigation graph for it and simply
+// never installs it on mouse+keyboard. UIFacilityGrid.InitScreen calls InitializeNavigationGrid()
+// inside `if( `ISCONTROLLERACTIVE)`, and `ISCONTROLLERACTIVE is not a hardware check — it is the
+// 2D movie's mouse-active flag (Core/Globals.uci:207). So calling that one function ourselves
+// gives a keyboard player the game's own room-to-room navigation, camera swoop and focus
+// handling, with nothing displaced and no key taken. This class is then narrate-only: install
+// the graph, watch Navigator.SelectedIndex, say what the selection landed on.
+//
+// See docs/avenger-view-recon.md §6.1 for the four source facts that make one call sufficient,
+// and for the live confirmation that arrows then walk the hardcoded graph exactly.
+//
+// WHERE THE WORDS COME FROM: the overlay itself, not the game state. UIFacilityGrid_FacilityOverlay
+// retains Label / Status / Queue / bLocked / bUnderConstruction / m_bClearing / IconTypes /
+// BGColor — each written by a setter under a dirty check immediately before the matching Flash
+// op, so the retained value is exactly what Flash was last told. That is the CLAUDE.md hard rule
+// ("when a fact is on a screen, read it FROM that screen") in its easiest form, and here it buys
+// parity for free: the room NAME is set under `if( bIsFocused )`, so it appears when the game
+// decides to show it and is empty when the game decides not to. There is not one XCOMHISTORY
+// access in this class.
+//
+// SIGHTED PARITY, per surface:
+//   room name          -> kData.strTitle, drawn only for the focused/hovered room
+//   countdown, PAUSED  -> kData.strLabel on a room under construction or being cleared
+//   queue message      -> kData.strQueue, focused only
+//   locked             -> eUIState_Disabled border + iAlpha 0, i.e. the room is visibly dimmed
+//   needs attention    -> eUIState_Warning border, drawn whether or not the room is focused
+//   staff slots        -> the staff icon strip, always drawn
+//   which room is selected -> the highlight box, which follows the keyboard once ungated
+//
+// ⛔ A room the game gives no title is announced by POSITION only. During the tutorial the whole
+// ship is bTutorialLocked and UpdateTutorialLocked() is the one update branch that sets no title
+// in any case, focused or not — a sighted player selecting a room there is told nothing either
+// (screenshot-verified 2026-08-20). Speaking a name we looked up ourselves would hand a blind
+// player information the game is deliberately withholding from everyone.
+//
+// GC rule: this object is a CDO — value-typed state only, NEVER object references.
+
+// dependson(UIStaffIcon): EUIStaffIconType is declared inside that class, not in the native
+// UI_Definitions, so the staff-icon switch below needs it in scope from another package.
+class X2AccessAvengerReader extends Object
+	dependson(UIStaffIcon);
+
+// Written by every entry point; read by native immediately after the ProcessEvent returns.
+var string NativeResult;
+
+// Change detection for the automatic poll. Value types only (CDO rule).
+// INDEX_UNSET means "nothing announced yet", which is also the reset state.
+var int LastAnnouncedIndex;
+var bool bWasOnGrid;
+
+// One warning per visit when the ship does not have the 19 rooms the game's own function
+// hardcodes. Without it the line would repeat at the poll rate for as long as the grid is up.
+var bool bWarnedOverlayCount;
+
+const INDEX_UNSET = -2;
+
+// The ant farm's 19 slots are a fixed, hardcoded layout: InitializeNavigationGrid names seven
+// core rooms by index and wires a 3-wide by 4-tall buildable core between them. The buildable
+// slots are indices 3..14 in row-major order, which is what makes "row R, column C" exact.
+const CORE_FIRST = 3;
+const CORE_LAST = 14;
+const CORE_COLUMNS = 3;
+
+// ---------------------------------------------------------------------------
+// Entry points (called from native)
+// ---------------------------------------------------------------------------
+
+// The automatic narrator, called on the C++ tick while UIFacilityGrid is the current screen.
+// Two jobs: keep the navigation graph installed, and announce the selection when it moves.
+//
+// Deliberately silent whenever the selection has not changed — this runs several times a second.
+// AnnounceRoom below is the one that always answers.
+function PollGrid()
+{
+	local UIFacilityGrid Grid;
+	local int Index;
+
+	NativeResult = "";
+
+	Grid = GetGrid();
+	if (Grid == none)
+	{
+		// Left the ant farm: forget what was announced so coming back reads in full.
+		if (bWasOnGrid)
+		{
+			bWasOnGrid = false;
+			bWarnedOverlayCount = false;
+			LastAnnouncedIndex = INDEX_UNSET;
+		}
+		return;
+	}
+
+	EnsureNavigationGrid(Grid);
+
+	Index = Grid.Navigator.SelectedIndex;
+
+	// First sighting of this visit announces where the keyboard cursor already is. The game
+	// leaves a room selected (OnInit does Navigator.SetSelected(FacilityOverlays[15])) but hides
+	// the highlight until the first input — so strictly a sighted player sees no box yet. We
+	// speak it anyway: arriving on a screen and hearing nothing at all is indistinguishable from
+	// the layer being broken, and the very next arrow reveals the same box for everyone.
+	if (!bWasOnGrid)
+		bWasOnGrid = true;
+	else if (Index == LastAnnouncedIndex)
+		return;
+
+	LastAnnouncedIndex = Index;
+	NativeResult = DescribeSelection(Grid, Index);
+}
+
+// Re-announce the selected room on demand (Delete), mirroring the tile cursor's re-announce key.
+// Unlike the poll this ALWAYS says something — a pressed key must never be silent.
+function AnnounceRoom()
+{
+	local UIFacilityGrid Grid;
+
+	Grid = GetGrid();
+	if (Grid == none)
+	{
+		NativeResult = "Not on the Avenger grid";
+		return;
+	}
+
+	EnsureNavigationGrid(Grid);
+
+	LastAnnouncedIndex = Grid.Navigator.SelectedIndex;
+	NativeResult = DescribeSelection(Grid, LastAnnouncedIndex);
+	if (NativeResult == "")
+		NativeResult = "No room selected";
+}
+
+// ---------------------------------------------------------------------------
+// The ungate
+// ---------------------------------------------------------------------------
+
+// Install the game's own navigation graph if it is not installed already.
+//
+// Idempotent by construction — InitializeNavigationGrid starts by clearing every overlay's
+// targets — but the emptiness test is what makes this cheap enough to run on every poll AND
+// self-healing: a grid re-created by a map transition comes back with no targets and is
+// re-armed on the next tick without us tracking screen identity (which a CDO must not do
+// anyway, since holding the reference would block shell-world GC).
+//
+// The test reads the FIRST overlay's own navigator rather than the screen's, because that is
+// where the graph actually lives: UINavigator.OnUnrealCommand tries SendToNavigationTargets
+// first and that delegates to GetSelected().Navigator, so the targets hang off the overlays.
+private function EnsureNavigationGrid(UIFacilityGrid Grid)
+{
+	// InitializeNavigationGrid hardcodes `i < 19` and indexes FacilityOverlays[0..18]. A mod
+	// that changed the room count would break the game's own function, not ours — so refuse
+	// rather than call it into an out-of-range read.
+	if (Grid.FacilityOverlays.Length != 19)
+	{
+		if (bWarnedOverlayCount)
+			return;
+		bWarnedOverlayCount = true;
+		`log("X2Access: Avenger grid has" @ string(Grid.FacilityOverlays.Length)
+			@ "overlays, not 19 - leaving navigation alone", , 'X2Access');
+		return;
+	}
+
+	if (Grid.FacilityOverlays[0] == none || Grid.FacilityOverlays[0].Navigator == none)
+		return; // the overlays are still being built; the next tick will find them
+
+	if (Grid.FacilityOverlays[0].Navigator.NavigationTargets.Length > 0)
+		return; // already installed — by us on an earlier tick, or by the controller branch
+
+	Grid.InitializeNavigationGrid();
+
+	// The controller branch of InitScreen sets this on the SCREEN's navigator too. The graph
+	// works without it (see above), but it suppresses UINavigator's linear Prev/Next fallback
+	// at graph edges — without it, an arrow with no target in that direction jumps to an
+	// unrelated room in map order instead of doing nothing.
+	Grid.Navigator.OnlyUsesNavTargets = true;
+
+	// A grid with nothing selected would swallow the first arrow. OnInit normally leaves
+	// FacilityOverlays[15] selected, so this is a guard rather than the usual path — and it is
+	// only ever taken when arrows would otherwise be dead, which is why moving the camera
+	// unbidden is acceptable here and nowhere else.
+	if (Grid.Navigator.SelectedIndex < 0)
+		Grid.Navigator.SetSelected(Grid.FacilityOverlays[15]);
+
+	`log("X2Access: Avenger navigation grid installed;"
+		@ "overlay 0 targets=" $ string(Grid.FacilityOverlays[0].Navigator.NavigationTargets.Length)
+		@ "selected=" $ string(Grid.Navigator.SelectedIndex), , 'X2Access');
+}
+
+// ---------------------------------------------------------------------------
+// Describing a room
+// ---------------------------------------------------------------------------
+
+// Navigator.SelectedIndex indexes NavigableControls, and the two arrays are in the same order —
+// confirmed live 2026-08-20 by six arrow steps whose indices matched the hardcoded graph exactly
+// (docs/avenger-view-recon.md §6.1). So a selection index IS a FacilityOverlays index, which is
+// what makes the fixed layout usable at runtime.
+private function string DescribeSelection(UIFacilityGrid Grid, int Index)
+{
+	local UIFacilityGrid_FacilityOverlay Overlay;
+	local string Result;
+
+	if (Index < 0 || Index >= Grid.FacilityOverlays.Length)
+		return "";
+
+	Overlay = Grid.FacilityOverlays[Index];
+	if (Overlay == none)
+		return "";
+
+	// The name first when the game is showing one, then always the position: the highlight box
+	// is what a sighted player reads the selection off, and its place in the ship is the part
+	// of that they can see even when no title is drawn.
+	Result = Overlay.Label;
+	AppendPart(Result, PositionWords(Index));
+	AppendPart(Result, DescribeCondition(Overlay));
+	AppendPart(Result, Overlay.Status);
+	AppendPart(Result, Overlay.Queue);
+	AppendPart(Result, DescribeStaffIcons(Overlay));
+
+	return Result;
+}
+
+// The room's state, from the retained booleans the overlay's own setters wrote.
+//
+// "Locked" is the one word here that closes a real parity gap rather than mirroring text.
+// UIFacilityGrid_FacilityOverlay.OnConfirm opens with a bare `if( bLocked ) return;` — no sound,
+// no popup, nothing. A sighted player is not told either, but they can SEE the room is dimmed
+// (eUIState_Disabled border, iAlpha 0) and so never presses it twice; a blind player gets pure
+// silence and no way to tell "locked" from "the mod is broken". Same reasoning as the object
+// scanner's tower category naming its own gate instead of claiming the map is empty.
+private function string DescribeCondition(UIFacilityGrid_FacilityOverlay Overlay)
+{
+	if (Overlay.bLocked)
+		return "locked";
+	if (Overlay.bUnderConstruction)
+		return "under construction";
+	if (Overlay.m_bClearing)
+		return "being cleared";
+
+	// The orange border. On a built or core facility eUIState_Warning means exactly
+	// Facility.NeedsAttention() (UpdateFacility / UpdateCoreFacility), and unlike the room's
+	// name it is drawn whether or not the room is focused — so it is part of the at-a-glance
+	// read a sighted player gets from the ant farm without hovering anything.
+	if (Overlay.BGColor == class'UIUtilities_Colors'.static.GetHexColorFromState(eUIState_Warning))
+		return "needs attention";
+
+	return "";
+}
+
+// The staff icon strip, which is always drawn and is the signal that answers "where can I put
+// this engineer". IconTypes is the retained array RefreshStatusIcons was last handed, so the
+// count and the kinds are exactly what is on screen.
+//
+// The empties are counted PER KIND rather than listed one per icon: an empty engineer slot and
+// an empty scientist slot are different jobs, but two empty engineer slots are one job twice,
+// and "engineer slot, engineer slot free" would be noise where "2 engineer slots free" is the
+// fact. Five counters rather than an array indexed by the enum, because the five that exist are
+// the whole set and naming them keeps the wording next to the count.
+private function string DescribeStaffIcons(UIFacilityGrid_FacilityOverlay Overlay)
+{
+	local int i, Filled, Total, Upgrades;
+	local int FreeGeneric, FreeScience, FreeEngineer, FreeSoldier, FreePsi;
+	local string Result, Empties;
+
+	for (i = 0; i < Overlay.IconTypes.Length; i++)
+	{
+		// eUIFG_Upgrade is the one entry that is not a staff slot at all — it marks a facility
+		// that can be upgraded — so it is counted apart and never folded into the ratio.
+		if (Overlay.IconTypes[i] == eUIFG_Upgrade)
+		{
+			Upgrades++;
+			continue;
+		}
+		Total++;
+
+		switch (Overlay.IconTypes[i])
+		{
+		case eUIFG_GenericStaff:
+		case eUIFG_Science:
+		case eUIFG_Engineer:
+		case eUIFG_Soldier:
+		case eUIFG_PsiSoldier:         Filled++;      break;
+
+		case eUIFG_ScienceEmpty:       FreeScience++;  break;
+		case eUIFG_EngineerEmpty:      FreeEngineer++; break;
+		case eUIFG_SoldierEmpty:       FreeSoldier++;  break;
+		case eUIFG_PsiSoldierEmpty:    FreePsi++;      break;
+		default:                       FreeGeneric++;  break;
+		}
+	}
+
+	if (Total > 0)
+		Result = string(Filled) $ " of " $ string(Total) $ " staff slots filled";
+
+	AppendComma(Empties, CountedSlots(FreeScience, "scientist"));
+	AppendComma(Empties, CountedSlots(FreeEngineer, "engineer"));
+	AppendComma(Empties, CountedSlots(FreeSoldier, "soldier"));
+	AppendComma(Empties, CountedSlots(FreePsi, "psi soldier"));
+	AppendComma(Empties, CountedSlots(FreeGeneric, "staff"));
+	if (Empties != "")
+		AppendPart(Result, Empties $ " free");
+
+	if (Upgrades > 0)
+		AppendPart(Result, string(Upgrades) $ " upgrade slot" $ (Upgrades == 1 ? "" : "s"));
+
+	return Result;
+}
+
+private function string CountedSlots(int Count, string Kind)
+{
+	if (Count <= 0)
+		return "";
+	return string(Count) @ Kind @ "slot" $ (Count == 1 ? "" : "s");
+}
+
+// Where the highlight box is, in words.
+//
+// Derived from the CARDINAL half of InitializeNavigationGrid's own adjacency graph (the 51
+// diagonal links are FXS_VIRTUAL_LSTICK_DIAG_* only and have no keyboard chord at all), so this
+// is the game's own layout precomputed, not a sketch of one: the buildable core is 3 wide and 4
+// tall at indices 3..14 row-major, the Power Core sits to the left of the whole core, two rooms
+// sit above it and three down its right side.
+//
+// ⚠ These are POSITIONS, never facility names. The seven fixed rooms have names the game shows
+// only on focus, and the overlay's own Label is the only place this class takes them from.
+private function string PositionWords(int Index)
+{
+	local int Row, Column;
+
+	if (Index >= CORE_FIRST && Index <= CORE_LAST)
+	{
+		Row = (Index - CORE_FIRST) / CORE_COLUMNS + 1;
+		Column = (Index - CORE_FIRST) % CORE_COLUMNS + 1;
+		return "row " $ string(Row) $ ", column " $ string(Column);
+	}
+
+	switch (Index)
+	{
+	case 0:  return "top left";
+	case 15: return "top right";
+	case 16: return "upper left";
+	case 1:  return "far left";
+	case 2:  return "right side, upper";
+	case 18: return "right side, middle";
+	case 17: return "right side, lower";
+	}
+	return "";
+}
+
+// ---------------------------------------------------------------------------
+// Shared plumbing (mirrors X2AccessTacticalReader's)
+// ---------------------------------------------------------------------------
+
+// The ant farm, or none. The C++ gate has already decided UIFacilityGrid is the CURRENT screen
+// before calling in — this lookup is the script-side half of the same question, and it also
+// honours the grid's own visibility test, which its OnUnrealCommand consults before handling
+// anything. (That is the documented exception to "never gate readiness on bIsVisible": here the
+// game itself gates on it, so mirroring it is what keeps us agreeing with where arrows go.)
+private function UIFacilityGrid GetGrid()
+{
+	local UIScreenStack Stack;
+	local UIFacilityGrid Grid;
+
+	Stack = `SCREENSTACK;
+	if (Stack == none)
+		return none;
+
+	Grid = UIFacilityGrid(Stack.GetCurrentScreen());
+	if (Grid == none || !Grid.bIsVisible || Grid.Navigator == none)
+		return none;
+
+	return Grid;
+}
+
+private function AppendPart(out string Result, string Part)
+{
+	if (Part == "")
+		return;
+	if (Result != "")
+		Result $= ". ";
+	Result $= Part;
+}
+
+private function AppendComma(out string Result, string Part)
+{
+	if (Part == "")
+		return;
+	if (Result != "")
+		Result $= ", ";
+	Result $= Part;
+}

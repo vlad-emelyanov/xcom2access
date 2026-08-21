@@ -18,8 +18,10 @@
 
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <cwchar>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -211,6 +213,117 @@ int32_t FindPropOffsetRaw(void* obj, const char* propName)
         }
     }
     return -1;
+}
+
+// ---- /call: finding a function and reading its signature ------------------------------------
+//
+// GameUI::CallScriptFunction resolves a function the same way, but it does not hand the
+// UFunction back, and /call has to INSPECT one before it dares invoke it. Both walks are the
+// same Children walk ReadOwnPropsRaw does — a class's Children holds its functions, states,
+// enums and structs alongside its properties — so this adds no offset of its own either.
+
+constexpr uint64_t kCpfParm = 0x80;        // UProperty::PropertyFlags — this is a parameter
+constexpr uint64_t kCpfReturnParm = 0x400; // ... and specifically the return value
+constexpr uint32_t kFuncNative = 0x400;    // UFunction::FunctionFlags — dispatches to a thunk
+
+// A parameter carries everything a PROPERTY does — /call needs the offset and size to place the
+// return value inside the block it hands ProcessEvent, and reusing RawProp means the return
+// prints through the same FormatValue path /props uses rather than growing a second formatter.
+struct RawParm {
+    RawProp prop;
+    bool isReturn;
+};
+
+// The UFunction of that name on the object's class chain, or null. `outOwner` receives the
+// class that actually declares it, which is the interesting half of the answer when a call
+// resolves somewhere other than where the caller expected.
+void* FindFunctionOnChainRaw(void* obj, const char* funcName, char* outOwner, int ownerLen)
+{
+    void* chain[kMaxClassChain] = {};
+    char names[kMaxClassChain][64] = {};
+    const int depth = ReadClassChainRaw(obj, chain, names, kMaxClassChain);
+    for (int c = 0; c < depth; c++) {
+        void* found = nullptr;
+        __try {
+            auto* st = reinterpret_cast<UStruct*>(chain[c]);
+            for (UField* field = st->Children; field; field = field->Next) {
+                char name[64] = "";
+                char cls[64] = "";
+                if (!FNameTextRaw(&field->Name, name, sizeof(name)))
+                    continue;
+                if (strcmp(name, funcName) != 0)
+                    continue;
+                // Children mixes kinds; only a UFunction is callable. A state of the same name
+                // would otherwise be handed to ProcessEvent as if it were one.
+                if (!ObjClassNameRaw(field, cls, sizeof(cls)) || strcmp(cls, "Function") != 0)
+                    continue;
+                found = field;
+                break;
+            }
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+        }
+        if (found) {
+            strncpy_s(outOwner, ownerLen, names[c], _TRUNCATE);
+            return found;
+        }
+    }
+    // Deliberately NOT searching states: a state-scoped function needs the UState's own chain
+    // (GameUI::FindStateFunction), and calling one through ProcessEvent outside its state is a
+    // different question than this endpoint is asking.
+    outOwner[0] = '\0';
+    return nullptr;
+}
+
+// A function's declared PARAMETERS, in order. A UFunction is itself a UStruct, so its Children
+// are its parameters followed by its locals; CPF_Parm separates them, and the return value is a
+// parameter that also carries CPF_ReturnParm. Reading this reflectively is what lets /call
+// refuse a call it cannot make safely — ParmsSize would answer the same question, but the
+// generated header buries it inside UFunction's padding, so it could not be `static_assert`ed
+// and would be exactly the hand-transcribed offset this file exists to avoid.
+//
+// ⚠ CPF_ReturnParm is what separates "takes arguments" from "answers something". A function that
+// declares only a return value takes NO arguments and is safe to call — see the guard in Call().
+int ReadFunctionParmsRaw(void* fn, RawParm* out, int maxOut)
+{
+    int n = 0;
+    __try {
+        auto* st = reinterpret_cast<UStruct*>(fn);
+        for (UField* field = st->Children; field && n < maxOut; field = field->Next) {
+            RawProp& p = out[n].prop;
+            p.name[0] = '\0';
+            p.type[0] = '\0';
+            if (!FNameTextRaw(&field->Name, p.name, sizeof(p.name)))
+                continue;
+            if (!ObjClassNameRaw(field, p.type, sizeof(p.type)))
+                continue;
+            const size_t len = strlen(p.type);
+            if (len < 8 || strcmp(p.type + len - 8, "Property") != 0)
+                continue;
+            auto* prop = reinterpret_cast<UProperty*>(field);
+            if (!(prop->PropertyFlags & kCpfParm))
+                continue; // a local, not a parameter
+            p.prop = field;
+            p.offset = prop->Offset;
+            p.arrayDim = prop->ArrayDim;
+            p.elementSize = prop->ElementSize;
+            out[n].isReturn = (prop->PropertyFlags & kCpfReturnParm) != 0;
+            n++;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return n;
+}
+
+uint32_t ReadFunctionFlagsRaw(void* fn)
+{
+    __try {
+        // The generated header declares FunctionFlags as uint64 (CLAUDE.md), so read the low
+        // dword the engine actually stores. offsetof is still valid — that field alone is.
+        return *reinterpret_cast<uint32_t*>(
+            reinterpret_cast<char*>(fn) + offsetof(UFunction, FunctionFlags));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
 }
 
 // A STRUCT's own chain, starting at the struct itself — unlike ReadClassChainRaw, which starts
@@ -950,6 +1063,207 @@ std::string Props(const Selector& sel, const std::string& filter)
     if (shown == 0)
         out += "\n(no properties matched)\n";
     return out;
+}
+
+// A bool property's bitmask, or 0 if it could not be read. Its own function because __try may
+// not share a scope with objects that need destruction, and WriteArg returns a std::string.
+uint32_t BoolBitMaskRaw(void* prop)
+{
+    __try {
+        return reinterpret_cast<UBoolProperty*>(prop)->BitMask;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+std::wstring Utf8ToWideLocal(const std::string& text)
+{
+    if (text.empty())
+        return {};
+    int needed = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
+        nullptr, 0);
+    if (needed <= 0)
+        return {};
+    std::wstring out(static_cast<size_t>(needed), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), &out[0], needed);
+    return out;
+}
+
+// Write one text argument into the parameter block, by the declared property's kind. Returns an
+// empty string on success, or why it refused.
+//
+// `owned` holds the wide buffers behind any FString arguments: ProcessEvent shallow-memcpy's the
+// block, and the engine's destroy pass runs only on properties at or above ParmsSize — i.e. on
+// locals, never on parameters — so a buffer WE own and keep alive for the duration of the call is
+// exactly right, and freeing anything afterwards would be wrong.
+std::string WriteArg(unsigned char* block, size_t blockSize, const RawProp& p,
+    const std::string& text, std::vector<std::unique_ptr<std::wstring>>& owned)
+{
+    const Kind kind = KindOf(p.type);
+    const size_t end = static_cast<size_t>(p.offset) + static_cast<size_t>(p.elementSize);
+    if (p.offset < 0 || end > blockSize || p.arrayDim != 1)
+        return std::string("argument \"") + p.name + "\" does not fit our parameter block";
+
+    unsigned char* addr = block + p.offset;
+    switch (kind) {
+    case Kind::Int:
+        *reinterpret_cast<int32_t*>(addr) = static_cast<int32_t>(strtol(text.c_str(), nullptr, 0));
+        return {};
+    case Kind::QWord:
+        *reinterpret_cast<int64_t*>(addr) = _strtoi64(text.c_str(), nullptr, 0);
+        return {};
+    case Kind::Float:
+        *reinterpret_cast<float*>(addr) = static_cast<float>(atof(text.c_str()));
+        return {};
+    case Kind::Byte:
+        *addr = static_cast<unsigned char>(strtoul(text.c_str(), nullptr, 0));
+        return {};
+    case Kind::Bool: {
+        const bool on = text == "1" || text == "true" || text == "TRUE" || text == "True";
+        const uint32_t mask = BoolBitMaskRaw(p.prop);
+        if (!mask)
+            return std::string("could not read the bitmask of bool \"") + p.name + "\"";
+        uint32_t& word = *reinterpret_cast<uint32_t*>(addr);
+        word = on ? (word | mask) : (word & ~mask);
+        return {};
+    }
+    case Kind::Str: {
+        // TArray<wchar_t>: data pointer, Num, Max — and Num COUNTS THE TERMINATOR, which is what
+        // CopyFStringRaw's `count - 1` on the way out is the mirror of.
+        owned.push_back(std::make_unique<std::wstring>(Utf8ToWideLocal(text)));
+        std::wstring& buf = *owned.back();
+        const int32_t num = static_cast<int32_t>(buf.size()) + 1;
+        *reinterpret_cast<const wchar_t**>(addr) = buf.c_str();
+        *reinterpret_cast<int32_t*>(addr + 8) = num;
+        *reinterpret_cast<int32_t*>(addr + 12) = num;
+        return {};
+    }
+    default:
+        break;
+    }
+    // Everything left is a pointer or a container, and the only value this endpoint could put
+    // there is zero — which inside script is a null dereference, in the very session this exists
+    // to observe.
+    return std::string("argument \"") + p.name + "\" is a " + p.type
+        + ", which /call will not synthesize";
+}
+
+std::string Call(const Selector& sel, const std::string& funcName,
+    const std::vector<std::string>& args)
+{
+    if (funcName.empty())
+        return "[call] no function named — /call takes &fn=<FunctionName>\n";
+
+    std::string err;
+    std::string note;
+    void* obj = Resolve(sel, err, note);
+    if (!obj)
+        return "[call] " + err;
+
+    char owner[64] = "";
+    void* fn = FindFunctionOnChainRaw(obj, funcName.c_str(), owner, sizeof(owner));
+    if (!fn) {
+        return note + "[call] " + DescribeObject(obj) + "\n"
+            + "no function \"" + funcName + "\" on its class chain.\n"
+            + "/props lists the object's fields; a function declared inside a STATE is not "
+              "reachable here (its home is the UState's own chain).\n";
+    }
+
+    const uint32_t flags = ReadFunctionFlagsRaw(fn);
+
+    RawParm parms[32] = {};
+    const int parmCount = ReadFunctionParmsRaw(fn, parms, 32);
+
+    std::string head = note;
+    head += "object:   " + DescribeObject(obj) + "\n";
+    char line[256];
+    snprintf(line, sizeof(line), "function: %s.%s at 0x%p (FunctionFlags 0x%08X%s)\n", owner,
+        funcName.c_str(), fn, flags, (flags & kFuncNative) ? ", native" : "");
+    head += line;
+
+    // ARGUMENT-free only, on purpose — which is not the same as parameter-free. ProcessEvent
+    // shallow-memcpy's ParmsSize bytes out of the block we hand it, so a function with real
+    // arguments would read whatever we passed, and a zeroed object pointer is a null deref inside
+    // script: a RedScreen or a crash in the very session this endpoint exists to observe. A
+    // RETURN value is the opposite case — the engine WRITES it into our block at
+    // `Parms + ReturnValueOffset` and reads nothing — so refusing those refused exactly the
+    // ungates this endpoint exists for: `UIButton.Click()` answers a bool, and turning it down
+    // meant the launch button on `UISquadSelect` (mouse-only in vanilla) could not be pressed
+    // from here at all.
+    const RawParm* ret = nullptr;
+    int argCount = 0;
+    for (int i = 0; i < parmCount; i++) {
+        if (parms[i].isReturn)
+            ret = &parms[i];
+        else
+            argCount++;
+    }
+
+    if (argCount != static_cast<int>(args.size())) {
+        char count[160];
+        snprintf(count, sizeof(count),
+            "NOT CALLED — it declares %d argument(s) and %zu were supplied. Signature:\n",
+            argCount, args.size());
+        head += count;
+        for (int i = 0; i < parmCount; i++) {
+            head += std::string("  ") + parms[i].prop.type + " " + parms[i].prop.name
+                + (parms[i].isReturn ? "   (return value)" : "") + "\n";
+        }
+        head += "supply them with &arg=<value>, once per argument, in declaration order.\n";
+        return head;
+    }
+
+    // A valid, zeroed block rather than nullptr: with ParmsSize 0 the engine copies nothing, so
+    // this is belt-and-braces against a signature that reads differently than we just measured —
+    // and with a return value it is where that value lands.
+    unsigned char params[256] = {};
+    std::vector<std::unique_ptr<std::wstring>> owned; // must outlive the call; see WriteArg
+    {
+        size_t next = 0;
+        for (int i = 0; i < parmCount && next < args.size(); i++) {
+            if (parms[i].isReturn)
+                continue;
+            const std::string why
+                = WriteArg(params, sizeof(params), parms[i].prop, args[next++], owned);
+            if (!why.empty()) {
+                head += "NOT CALLED — " + why + ".\n";
+                return head;
+            }
+        }
+    }
+    if (ret) {
+        const size_t end = static_cast<size_t>(ret->prop.offset)
+            + static_cast<size_t>(ret->prop.elementSize) * static_cast<size_t>(ret->prop.arrayDim);
+        if (ret->prop.offset < 0 || end > sizeof(params)) {
+            snprintf(line, sizeof(line),
+                "NOT CALLED — its %s return wants bytes [%d, %zu) and our parameter block is "
+                "%zu.\n",
+                ret->prop.type, ret->prop.offset, end, sizeof(params));
+            head += line;
+            return head;
+        }
+    }
+
+    const bool ok = GameUI::CallScriptFunction(obj, funcName.c_str(), params);
+    LOG_INFO("DevServer: /call %s.%s (%zu args) on 0x%p — %s", owner, funcName.c_str(),
+        args.size(), obj, ok ? "returned" : "FAULTED");
+
+    if (!ok) {
+        head += "CALL FAULTED — the SEH guard caught it. The object may have been mid-GC, or the\n"
+                "function may depend on state this screen does not have right now.\n";
+        return head;
+    }
+
+    head += "called; it returned normally. /gui, /props and /status show what it changed.\n";
+    if (ret) {
+        RawValue v{};
+        ReadValueRaw(params, ret->prop, 0, v);
+        head += "returned: " + FormatValue(params, ret->prop, 0, v, 0) + "\n";
+        // The buffer behind a returned FString is engine-allocated and deliberately LEAKED, the
+        // same call the dev server's /exec makes: freeing it needs appFree, and a few dozen bytes
+        // per dev-only call beats calling the wrong deallocator.
+    }
+    return head;
 }
 
 } // namespace GuiDump

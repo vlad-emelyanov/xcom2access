@@ -23,6 +23,14 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   swallows claimed key chords before the engine sees them. Handlers are queued
   and drained on the game tick. All new hotkeys and navigation input go through
   the arbiter — not GetAsyncKeyState polling, not Highlander input hooks.
+  Since 2026-08-21 it also takes passive **observers** (`RegisterObserver`):
+  every key-down and every `WM_CHAR` it handles, claimed or not, fanned out to
+  callbacks that change NOTHING about what the game receives. That exists for
+  the one job a claim cannot do — echoing what the player types into a Flash
+  text field, where the keys must reach the field AND be spoken (see
+  **Text-entry dialog**). ⛔ An observer runs INSIDE the window procedure and
+  may do nothing but RECORD: no engine memory, no speech, no outbound calls —
+  the same rule a claim's `activeWhen` follows. Act on the game tick.
 - **Speech**: `src/tts.cpp` wraps **Prism** (was SRAL until 2026-08-20 — same
   library and same pin as CyberAccess, so a speech bug reproduces across both
   mods). All speech in the project goes through it. Speak the focused item only;
@@ -56,9 +64,12 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
 - **Tactical tile cursor** (`src/tile_reader.cpp` + companion
   `X2AccessTileReader.uc`): the RT TileExplorer port, deliberately OUTSIDE the
   Graph kernel (the map is not a widget tree). C++ owns the keys and speech —
-  arbiter claims for camera-relative arrows, Shift+comma/period floors, C
+  arbiter claims for camera-relative arrows, Ctrl+comma/period floors, C
   recenter, Delete re-announce, Backspace two-press move-to; unshifted
-  comma/period and PageUp/Dn are RESERVED for the future object scanner. Each
+  comma/period and PageUp/Dn belong to the object scanner, and SHIFT+them is now
+  its reverse cycle — which is why the floor keys are on Ctrl and not, as they
+  shipped for two months, on Shift (see the tactical input section: that pair
+  fired `PrevUnit()` on every release). Each
   press makes one outbound call to the companion CDO
   (`GameUI::FindCompanionCDO` + `CallScriptFunction`) and speaks the
   `NativeResult` string reflected back. The script side drives the game's OWN
@@ -70,6 +81,18 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   cursor tile, so a move can never land anywhere other than the tile just
   spoken. Readout is fog-parity gated (`GetTileFOWValue`: NeverSeen →
   "unexplored"; HaveSeen → static layout only; Seen → full).
+  **A LEDGE outranks "Impassable"** (2026-08-21, ported from WrathAccess's
+  `grid.edge_drop`): a tile with no floor of its own but ground below it is the
+  railing a sighted player is looking at, and calling it "Impassable" described it
+  identically to a wall — the one distinction a blind player most needs. Both
+  halves of the test are the engine's: `IsFloorTile` false is the very reason the
+  cursor was left hanging there (`ResolveFloor` searches only one tile down, so
+  stepping off a roof keeps its height instead of falling — deliberately, so the
+  edge can be FELT), and `GetFloorTileZ(tile, bUnlimitedSearch=true)` answers how
+  deep, documenting its own miss by returning the source Z. A wall at ground level
+  is not caught and must not be: buildings sit on the ground grid, so a tile inside
+  a wall still HAS a floor and never reaches the test. That is what keeps the word
+  honest — a ledge is open air, not merely something you cannot walk into.
   ⛔ **Per-edge cover: `COVER_<dir>` is PRESENCE, `COVER_<dir>Low` is a HEIGHT
   MODIFIER on it — never an alternative.** A low-cover edge carries BOTH bits, so
   the `if (dir) … else if (dirLow)` that shipped reported every covered edge as
@@ -112,15 +135,30 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   AND `units.enemies` both VERIFIED LIVE 2026-08-20, `Tutorial_01`; `units.squad`, `ground.loot`,
   `ground.reinforcements`, six more categories and the category ring built 2026-08-20 and **not yet
   run live**): the RT `Scanner.cs` port, a PULL surface next to the
-  tile cursor's push. Categories are the ring's dimension, ELEVEN of them: `markers` (the tutorial's
+  tile cursor's push. Categories are the ring's dimension, TWELVE of them: `markers` (the tutorial's
   required-action marker and objective-carrying objects — one group, because a tutorial waypoint
   and an objective glint are the same thing to a player working out where to go), `units.enemies`,
   `units.squad`, `ground.loot`, `ground.reinforcements`, `ground.evac`, `units.civilians`,
-  `hazards`, `objects.interact`, `units.lost` and `objects.towers`. Each keeps its OWN
+  `hazards`, `objects.interact`, `units.lost`, `objects.towers` and `world.connectors`. Each keeps its OWN
   remembered position, so checking an enemy and then a marker loses your place in neither; the
   `CAT_*` ids are the one thing the two halves share as a NUMBER rather than a name.
   Six of the eleven needed **no native change at all** — the ring is what makes a category cost one
-  `case` label instead of a key. Four rules the later ones earned:
+  `case` label instead of a key. `world.connectors` (2026-08-21) is the twelfth and the only one
+  that is **SWEPT rather than enumerated**, because the engine offers exactly two handles on
+  getting between Z levels and only one of them is a list: `CollectLadderLandingTiles` is global
+  (the same list `XGAIPlayer_Civilian` routes panicking civilians along, and both landings of one
+  ladder are separate entries — "1 up" and "2 down" at one bearing IS the shape of a ladder),
+  while ramps have only the per-tile `IsRampTile` predicate, so they come out of a bounded box
+  (±12 tiles, ±1 Z) instead. The bound is the right SCOPE and not just a budget: a ramp 40 tiles
+  off is not the one you would take, which is why this category's empty text names the SCOPE
+  ("No ramps or ladders nearby") where every other one names the map. Clustering happens LAST,
+  over the already-distance-sorted candidates, so the tile that survives is always the nearest end
+  of the staircase rather than whichever the sweep reached first. Keys are stable per TILE (a
+  linear index, not packed decimal, which would collide on a wide grid). Why it exists at all:
+  every other readout ends in "2 up" on a multi-storey map, and a blind player cannot act on that
+  without knowing where the stairs are. WrathAccess needs a whole watershed segmentation of the
+  navmesh to make each staircase its own room; XCOM keeps the fact in the tile grid. Four rules
+  the earlier ones earned:
   **hazards group by TYPE, not by state object** (fire SPREADS, and every spread step writes another
   `XComGameState_WorldEffectTileData`, so per-object entries would grow a new "Fire" every turn for
   one fire), and each stored tile is re-checked against `TileContainsFire/Smoke/Poison/Acid` because
@@ -139,13 +177,17 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   `UITacticalHUD_Enemies` builds — decide between "via squadsight", "spotted by the squad" and
   silence, so the first unshootable target does not read as a bug in us. Keys, all
   gated on `TileReader::IsActive()` (shared, not recomputed — the two surfaces must stand down at
-  the same instants) and unchanged since the ring landed: `B` next marker, `.` next enemy,
-  `,` next squad member,
+  the same instants): `B` next marker, `.` next enemy, `,` next squad member, **`Shift`+any of
+  those three for the PREVIOUS one**,
   `PageDown`/`PageUp` next/previous within the current category, `Ctrl+PageDown`/`Ctrl+PageUp`
   next/previous NON-EMPTY category (announcing its name), `O` re-announce whatever was last said,
   `/` plant the tile cursor on it. Only three categories get a dedicated key — the ones pressed
   every turn — because the ring is what stops each further category costing a key tactical does not
-  have, and it leaves `;` and `'` free for the vantage read and the inspect verb. The ring cursor
+  have, and it leaves `;` and `'` free for the vantage read and the inspect verb. Shift-reverses
+  landed 2026-08-21 with the Shift swallow that made them safe (see the tactical input section);
+  before them the only way back was `PageUp`, which walks the RING's category and therefore could
+  not step one enemy back while the ring sat on markers. `Shift+Tab` is claimed by the same module
+  — not a scanner verb at all, but the vanilla prev-soldier the swallow would otherwise have cost. The ring cursor
   lives on the CDO, NOT in native: stepping it means knowing which categories are EMPTY, and only
   the model can answer that. `/` acting on the LAST ANNOUNCED entry rather than on a "current
   category" is deliberate — it acts on what you just heard.
@@ -303,7 +345,7 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   throw. Claiming the arrows therefore displaces nothing (ability cycling stays on `1`-`9`), and
   this is where the old "targeting mode: we claim nothing that steers" rule is narrowed rather
   than broken — see the tactical input section. Aim keys are the tile cursor's, deliberately:
-  arrows step, `Shift+,`/`Shift+.` change floor, `Delete` re-announces (ONE claim, branching in
+  arrows step, `Ctrl+,`/`Ctrl+.` change floor, `Delete` re-announces (ONE claim, branching in
   script, never two racing for the chord), and the scanner's `/` retargets the AIM point instead
   of planting the walk cursor. `Enter`/`Space`/`Escape` stay unclaimed — the game's own confirm
   and cancel already work. Detection and every word live in the companion, which reports the mode
@@ -334,6 +376,133 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   arc, still pointing back at the shooter. A divergence now has to survive two consecutive polls
   before it is spoken: a stale frame cannot, a real obstruction always does.
 
+- **Avenger ant farm** (`src/avenger.cpp` + companion `X2AccessAvengerReader.uc`, phase 1 built
+  2026-08-21 and **not yet run live**; recon in `docs/avenger-view-recon.md`, §11 is what was
+  built): the first surface where the game already HAS the keyboard navigation and merely never
+  turns it on. `UIFacilityGrid.InitScreen` builds its whole eight-way room adjacency graph inside
+  `` `if( `ISCONTROLLERACTIVE) `` — and that macro is **not a hardware check**, it is the 2D
+  movie's mouse-active flag (`Core/Globals.uci:207`). ⛔ Do NOT flip the flag: mouse-inactive mode
+  changes which HUD the game builds (the same reason the tile cursor uses a swallow instead of
+  `DeactivateMouse`), and here it would make the keyboard WORSE — `UIAvengerShortcuts` routes
+  `2`-`6` through a highlight-then-confirm path in the controller branch instead of jumping
+  straight to the room. The surgical fix is to call the gated function ourselves, from script,
+  once per grid instance. So this layer is **narrate-only and claims no arrows**: the game's own
+  `UINavigator` does the moving and brings the camera swoop, the focus delivery and the highlight
+  box with it. CONFIRMED LIVE 2026-08-20 before any of it was built (via the dev harness's
+  `/call`): six injected arrows walked the hardcoded graph exactly, `Left`/`Right` moving at all
+  being the proof — the un-ungated fallback is `UINavigator`'s linear Prev/Next with
+  `HorizontalNavigation` false, so before the call they did nothing. The 51 DIAGONAL links are
+  `FXS_VIRTUAL_LSTICK_DIAG_*` only and have no keyboard chord; parsing all 152 `AddNavTarget*`
+  calls shows the cardinal-only graph is fully strongly connected across all 19 rooms, so losing
+  them costs reachability of nothing. Re-arming keys off the GRAPH'S OWN EMPTINESS
+  (`FacilityOverlays[0].Navigator.NavigationTargets.Length == 0`) rather than off screen
+  identity: idempotent (the game's function clears every overlay first), self-healing across a
+  map transition, a no-op on a controller, and it needs no `UIScreen` reference on the CDO.
+  Every word comes off the OVERLAY, never the game state — `Label`/`Status`/`Queue`/`bLocked`/
+  `bUnderConstruction`/`m_bClearing`/`IconTypes`/`BGColor` are each written by a setter under a
+  dirty check immediately before the matching Flash op, so the retained value IS what Flash was
+  last told, and the class holds not one `XCOMHISTORY` access. That is what buys parity for free:
+  the room NAME is set under `if( bIsFocused )`, so it appears exactly when the game shows it.
+  Two parity rulings from the live pass, and they go OPPOSITE ways. ⛔ A tutorial-locked room's
+  name must NOT be spoken — `UpdateTutorialLocked()` is the one update branch that sets no title
+  in any case, focused or not, and a screenshot confirmed a sighted player selecting that room is
+  told nothing either; speaking a name we looked up ourselves would hand a blind player what the
+  game withholds from everyone. ✅ A locked room's REFUSAL must be spoken — `OnConfirm` opens with
+  a bare `if( bLocked ) return;`, no sound and no popup, but a sighted player SEES the room dimmed
+  (`eUIState_Disabled`, `iAlpha` 0) and never presses it twice; saying *locked* on arrival is
+  parity with the dimming, and it needs no `Enter` claim (`FXS_KEY_ENTER`/`FXS_KEY_SPACEBAR` are
+  handled unconditionally by the overlay already). POSITION is spoken always, because the
+  highlight box's place in the ship is visible even when no title is drawn and, in the tutorial,
+  is the only thing distinguishing one arrow press from the next — core slots as
+  `row R, column C` (indices 3-14, row-major, 3 wide x 4 tall), the seven fixed rooms as a
+  spatial phrase, and ⚠ POSITIONS ONLY, never facility names. The gate is the game's OWN test:
+  `GameUI::ReadAvengerGate` asks whether `UIFacilityGrid` is the FIRST stack entry, matching
+  `GetCurrentScreen()`'s definition (first non-none, no state-bit filter), because that is what
+  `UIFacilityGrid.OnUnrealCommand` checks before handling anything on mouse+keyboard. The
+  companion additionally honours the grid's own `bIsVisible` — the documented exception to "never
+  gate readiness on `bIsVisible`", since here the GAME gates on it. One claim: `Delete`
+  re-announces (never contends with the tile cursor's or the shot HUD's `Delete` — those gate on
+  tactical), displacing only `[Engine.PlayerInput]`'s `Toggledebugcamera`, which stays reachable
+  at `Ctrl+Delete` for free.
+
+- **Save / load** (`src/game_ui.cpp` + the save/load recipe in
+  `menu_navigator.cpp` + companion `X2AccessSaveReader.uc`, built AND VERIFIED
+  LIVE 2026-08-21 — the load screen read its whole list on the first run and
+  Backspace deletions rebuilt and re-announced it each time; recon in
+  `docs/save-load-recon.md`): `UILoadGame` and
+  `UISaveGame` are one screen twice over — the same three fields at the same
+  offsets (`m_iCurrentSelection` 0x410, `m_arrListItems` 0x424) and the same row
+  widget — and they are the SHELL's first case of the tactical HUD's problem:
+  `UISaveLoadGameListItem.UpdateData` resolves the date, name and mission into
+  LOCALS, pushes them into Flash and retains only the `OnlineSaveGame` struct it
+  built them from. So native reads structure and the companion re-derives the
+  words from that struct, mirroring `UpdateData` line for line — with no
+  `XCOMHISTORY` and no `GetSaveGames` re-query, because the screen already asked.
+  The 12-hour clock conversion is a NATIVE function
+  (`FormatTimeStampFor12HourClock`), which is the whole reason the formatting is
+  not done in C++: reproducing it would say *14:22* to a player whose screen says
+  *2:22 PM*. Unlike the ant farm, nothing here is un-ungated —
+  `OnUnrealCommand` already walks the list with the arrows on mouse+keyboard and
+  `RawInputListener` already deletes on Delete/Backspace — so this is a reader,
+  not a rescue, and it is deliberately the thinnest recipe in the file.
+  **ONE NODE PER ROW**: the row shows two buttons, but a second column would
+  replace the one number a blind player cannot get any other way — *save 4 of
+  12* — with *1 of 2*, because `GraphBuilder` stamps positions WITHIN a row
+  holding more than one item. ⛔ The layer must NOT claim `Delete` here: every
+  other Delete claim in the project (tile cursor, shot HUD, hacking pad, ant
+  farm) stands down while this screen is up, so the key is free and it is the
+  screen's own delete verb — named once on attach in the row's own localized
+  word, since the game's nav help offers nothing but Back on mouse+keyboard.
+  Activation goes through the row's own `AcceptButton.Click()`, which dispatches
+  new-save-rename versus overwrite for free, **after** setting the selection —
+  and that order is load-bearing rather than tidy: `UISaveGame.OnAccept` and
+  `OnDelete` ignore the control they are handed and act on
+  `m_iCurrentSelection`, so a click sent while the two disagreed would overwrite
+  or delete the WRONG SAVE. Words are cached on the ROW POINTER VECTOR (the
+  navigator re-renders ten times a second and the save screen's new-save row
+  re-runs `FillInHeaderForSave`, which walks the history): a save list changes
+  only through `BuildMenu()`, which respawns every row panel, so a changed
+  pointer list is an exact, self-invalidating cache key. **Reading ORDER is not
+  the row's order**: the row draws the wall-clock timestamp at the head of its
+  first line, and speech puts it LAST, after the save description, the game type
+  and the mission. That is a speech decision rather than a parity one — a
+  sighted player takes the row in at a glance, while speech is serial, and a
+  list of autosaves differs in its description, not in the minute it was
+  written, so a leading timestamp is the part you sit through before reaching
+  the part you wanted. The companion emits `time` and `desc` as separate fields
+  for exactly this; `UpdateData` concatenates them.
+- **Text-entry dialog** (`src/text_input.cpp`, built AND VERIFIED LIVE
+  2026-08-21 on the save-name box): `UIInputDialogue` — naming a new save, and
+  the error reporter. The player types into a **Flash TextField**, which no
+  screen reader can see, so nothing echoes their own keystrokes back. ⛔ It is
+  NOT a graph recipe and it claims NOTHING: a recipe attaching turns on the
+  navigator's arrows, Enter, Space, Tab, Home and End, every one of which the
+  player is using to type or to answer — and there is no spare chord for a
+  read-back key either (`F1`-`F4`, `?` and Ctrl+Shift+S are claimed globally in
+  `src/input.cpp`; everything else is a text-editing key). It **observes and
+  reads**: `InputArbiter::RegisterObserver` (a passive fan-out added for this)
+  records that a key happened, and the field itself answers what it did.
+  **The Flash side is READABLE — measured live** (see
+  `docs/save-load-recon.md` §7.1 for the table): AS2's global `Selection` class
+  resolves through `ActionScriptInt` **with or without the `_global.` prefix**,
+  so `Selection.getCaretIndex()` / `getBeginIndex()` / `getEndIndex()` give an
+  EXACT caret and selection, `Selection.getFocus()` names the focused field as a
+  full AS path, and `GetVariableString("<path>.text")` reads the contents. ⚠ The
+  probe's own trick is worth keeping: a path that does not resolve answers **0**
+  while the real accessors answer **-1** when nothing is focused, which is how
+  "it worked" was told from "it silently did nothing".
+  `GameUI::ReadFocusedTextField` is all four in one call. It costs two leaked
+  `FString`s per read — the `ConsoleCommand` bargain — so it runs behind a
+  keystroke and on a 500 ms heartbeat (which catches a mouse click placing the
+  caret), never free-running. Spoken: the prompt plus the starting text on
+  arrival, and *selected* with it when the whole prefill is selected — which it
+  IS (`begin 0, end 12, caret 12` live), meaning the next keystroke replaces the
+  name and no caret model could ever have known. Then per keystroke: the
+  inserted run, or what Backspace removed, or the newly selected text, or the
+  character the caret landed on. A key the field REFUSED changes nothing and
+  stays silent. `getFocus` earns its place beyond the caret — it says WHICH
+  field, which the crash-report dialog (a title box and a body box with Tab
+  between them) needs and "the text" alone cannot answer.
 - **Outbound script calls**: C++ may invoke any UnrealScript function via
   ProcessEvent. Always resolve the UFunction BY NAME at runtime and hand-roll
   the param struct (`GameUI::CallNamedFunction`; `CallStaticNative` for
@@ -354,7 +523,14 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   functions invoked on the CDO with simple params, result written to its
   `NativeResult` string property, reflected out by C++ right after the
   synchronous ProcessEvent returns. CDO rule: value-typed state only, never
-  object references (GC).
+  object references (GC). `X2AccessSaveReader.uc` is the smallest instance of
+  the same pattern and the clearest statement of the rule behind it: it re-runs
+  `UISaveLoadGameListItem.UpdateData`'s own formatting over the struct that row
+  RETAINED, and touches neither the history nor `ONLINEEVENTMGR.GetSaveGames` —
+  the screen already asked, and asking again could answer differently.
+  ⛔ It also uses `Chr(10)` rather than `"\n"` for the separator the engine
+  wrote into `Header.Description`, for the same reason `X2AccessNarrator`'s
+  separators are printable.
 - **Tactical combat narration** (`X2AccessTacticalEvents.uc`, built 2026-08-20,
   **VERIFIED LIVE 2026-08-21 on Gatecrasher** — the normal mission the tutorial
   could never be): one `CHEventListenerTemplate`, tactical only, nine events. The
@@ -550,8 +726,21 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   native's `Func` is its exec thunk), and script calls made through ProcessEvent
   would appear TWICE.
 - Some screens are Flash-driven with no UIList (e.g. key bindings): neither
-  layer can enumerate rows. Future option: call
-  `GFxMoviePlayer.GetVariableString` outbound to read Flash state directly.
+  layer can enumerate rows, and the same is true of anything a screen wrote into
+  Flash and did not retain — a text field's caret and selection above all. The
+  route in is `GFxMoviePlayer`'s own path-string API, ALL of which is script-
+  callable and therefore reachable by outbound ProcessEvent:
+  `GetVariableString` / `GetVariableNumber` / `GetVariableBool` / `Invoke`, plus
+  the `ActionScriptInt` / `ActionScriptString` / `ActionScriptObject` wrappers
+  that INVOKE a method at a path (which is how `UIInputDialogue.AS_GetInputText`
+  itself works — `Movie.ActionScriptString(MCPath $ ".GetInputText")`). Since
+  2026-08-21 `/call` takes arguments, so probing a path costs one HTTP call
+  (`just dev-flash`). ✅ **PROVEN LIVE 2026-08-21**: GFx's path resolution DOES
+  reach AS2's global `Selection` accessors, prefix optional, and TextField
+  properties (`.text`, `.length`, `.maxChars`, `.caretIndex`) read straight
+  through `GetVariableString`. `docs/save-load-recon.md` §7.1 has the measured
+  table. A path that does not resolve answers 0 or an empty string, so a probe
+  needs a value it can tell apart from silence.
 - ⛔ **No gameplay event fires in the TUTORIAL — it replays history, it never
   submits it** (proven live 2026-08-20: a full tutorial run produced zero lines
   from `X2AccessTacticalEvents`, with the listener provably registered).
@@ -878,20 +1067,53 @@ Endpoints:
   with its class, address, state bits and the text it carries.
 - `/props[?filter=<substring>]` — every property the object's class chain
   declares: **offset, type, name and live value**, grouped by declaring class.
+- `/call?fn=<Function>` — invoke a **zero-parameter** script function on the
+  selected object. Built for the recurring shape of accessibility bug in this
+  game: not a missing feature but an UNREACHABLE one — the game already has the
+  function and only calls it from a branch a mouse+keyboard player never takes.
+  `UIFacilityGrid.InitializeNavigationGrid` (the ant farm's whole eight-way room
+  adjacency graph) sits behind `ISCONTROLLERACTIVE`; `UIToDoWidget`'s list and
+  notification screen sit behind mouse handlers. This turns "would ungating that
+  work?" into one HTTP call instead of a build-deploy-relaunch per hypothesis.
+  Arguments go in as `&arg=<value>`, repeated once per declared argument in
+  declaration order, and a count mismatch is refused with the signature printed.
+  Passing them is safe for the reason ProcessEvent's parameter semantics give
+  below: parameters are shallow-`memcpy`'d and the destroy pass skips everything
+  under `ParmsSize`, so a buffer the harness owns and keeps alive across the
+  call is all that is required. ⛔ Only values it can actually WRITE are
+  accepted — string, int, float, bool, byte. An object, struct, array, name or
+  delegate argument is refused, because the only thing the endpoint could put
+  there is a zero, and a zeroed object pointer is a null deref inside script in
+  the very session it exists to observe. A declared RETURN value was never a
+  disqualifier: the engine writes it into our block and reads nothing from it.
+  **Arguments are what make the Scaleform side reachable**, and that is the
+  point of them: everything about a live movie is read through
+  `GFxMoviePlayer.GetVariableString` / `GetVariableNumber` / `ActionScriptInt` /
+  `ActionScriptString`, all of which take a path string — so
+  `just dev-flash ActionScriptString "_global.Selection.getFocus"` is now a
+  question one can ask. That is the only route to the half of the UI that is
+  Flash-only: a text field's caret, the key-bindings rows, anything a screen
+  wrote out and did not retain. Parameters are counted REFLECTIVELY
+  (`UFunction`'s own `Children`, filtered on `CPF_Parm`) rather than from
+  `ParmsSize`, which the generated header buries inside `UFunction`'s padding
+  where it could not be `static_assert`ed. Class-scope functions only — a
+  state-scoped one needs `GameUI::FindStateFunction`.
 
-  Both take the same selector — `?screen=<Class>` (the screen stack, topmost
-  when unnamed), `?instance=<Class>` (newest instance anywhere in GObjects, so
-  it reaches objects the stack never holds — `XCom3DCursor`, a cheat manager,
-  a tooltip manager), or `?ptr=0x<addr>` copied out of an earlier dump and
-  re-validated against GObjects before it is walked. So the loop is: `/gui` to
-  see the tree, `?ptr=` from a line of it, `/props` to read that widget out.
+  All three take the same selector — `?screen=<Class>` (the screen stack,
+  topmost when unnamed), `?instance=<Class>` (newest instance anywhere in
+  GObjects, so it reaches objects the stack never holds — `XCom3DCursor`, a
+  cheat manager, a tooltip manager), or `?ptr=0x<addr>` copied out of an earlier
+  dump and re-validated against GObjects before it is walked. So the loop is:
+  `/gui` to see the tree, `?ptr=` from a line of it, `/props` to read that
+  widget out, `/call` to make it do something.
 
 An unknown path returns the endpoint list. `/speech` and `/log` are
 cursor-paged: poll with the returned `cursor:` value for exactly-once delivery.
 
 Driving it: `just arm`, then `just dev-health` / `dev-status` / `dev-speech` /
 `dev-log` / `dev-exec "<cmd>"` / `dev-input <keys> [kernel]` / `dev-shot` /
-`dev-gui [depth] [select]` / `dev-props [select] [filter]`, or
+`dev-gui [depth] [select]` / `dev-props [select] [filter]` /
+`dev-call <fn> [select]` / `dev-flash <fn> <arg> [select]`, or
 `just dev '<endpoint>?<query>'` for anything else.
 ⛔ Scripts must call curl as `$env:SystemRoot/System32/curl.exe` — bare `curl`
 on PATH resolves to MSYS2's cygwin build, whose path translation mangles URL
@@ -1162,13 +1384,40 @@ config" rule intact instead of superseding it. ⛔ Still do NOT poke
 `PlayerInput.Bindings` at runtime: `UIKeybindingsPCScreen.ReadBindings()` reads
 the live array, so a runtime edit shows up in the Controls screen and is baked
 into the player's profile permanently the moment they press Save and Exit there.
-⚠ The one thing leniency does NOT hand us is a free `Shift`. `LeftShift` is bound
-in `[XComGame.XComTacticalInput]` and its RELEASE calls `PrevUnit()`
-(`XComTacticalInput.uc:2147`, active-unit state), so every `Shift+` chord cycles
-the soldier when the player lets go — including the tile reader's already-shipped
-`Shift+,`/`Shift+.` floor keys. `Ctrl` is the safe modifier: `Key_Left_Control`
-merely toggles the pathing pawn's waypoint mode on press and untoggles it on
-release. See `docs/object-scanner-recon.md` §4.6.
+⚠ The one thing leniency does NOT hand us is a free `Shift` — **so we take it,
+2026-08-21**. `LeftShift` is bound in `[XComGame.XComTacticalInput]` and
+`Key_Left_Shift`'s RELEASE calls `PrevUnit()` UNCONDITIONALLY
+(`XComTacticalInput.uc:2147`, state `ActiveUnit_Moving`), so every `Shift+` chord
+cycled the soldier when the player let go — including the tile reader's
+already-shipped `Shift+,`/`Shift+.` floor keys, for the whole time they shipped.
+It never showed up in testing because the tutorial runs `InReplayPlayback`, whose
+copy of the same function (`:587`) is a bare `return false` — the one place being
+a replay HID a bug instead of causing one.
+**The fix is a SWALLOW of the modifier itself**, not of the function: the arbiter
+now accepts a claim on a modifier key (`{VK_LSHIFT, ModNone}`, side-resolved from
+lParam's scan code because WM_KEYDOWN reports the generic `VK_SHIFT`), so while
+our tactical layer owns input the engine never sees LeftShift go down or up and
+the bound command never runs. **Our own chord matching is untouched**, and that is
+the linchpin: `GetKeyState` reflects the state the OS updated when the message
+was pulled off the queue, not what the window procedure then did with it. `Shift`
+is therefore the reverse-cycle modifier the scanner keymap always wanted, matching
+every sibling scanner in this lineage.
+⛔ **`docs/object-scanner-recon.md` §4.6's Option B is WRONG and must not be
+tried**: the mouse-gate trick does not apply verbatim to `Key_Left_Shift`, which
+takes an `int ActionMask` and returns a bool. `MouseGate`'s thunk consumes a lone
+`EX_EndFunctionParms`; here it would meet a parameter expression instead, leave
+the VM's `Code` pointer mid-expression, and hand the caller an unwritten return
+value. Doing it properly needs `UStruct::Script`, an offset this project has never
+measured — and the swallow needs no engine offset at all.
+Two consequences to keep straight. `RightShift` is deliberately NOT claimed (it
+carries no binding in the tactical section, so it was never the problem). And the
+swallow costs `PressedKeys` its `LeftShift` entry, which is what `Key_Tab`'s
+prev-soldier branch reads — so `Shift+Tab` is claimed and re-provided by
+`X2AccessObjectScanner.PrevSoldier`, reproducing
+`XComTacticalInput.IsManualUnitSwitchAllowed`'s guard rule for rule. `Ctrl`
+remains the safe modifier for anything that does NOT want to displace a vanilla
+key: `Key_Left_Control` merely toggles the pathing pawn's waypoint mode on press
+and untoggles it on release.
 
 **Exactly two letter keys are free: H and I.** Measured across every input
 section of `DefaultInput.ini` 2026-08-20 — and it must be measured across ALL of
@@ -1217,8 +1466,14 @@ Remaining:
    `game_ui.cpp` already hand-rolls this per call site — and now exports the
    first pieces (`FindCompanionCDO`, `CallScriptFunction`); the module is the
    generalization, not a prerequisite.
-2. Continue migrating screens to native recipes (save/load, the strategy
-   layer, tactical HUD).
+2. Continue migrating screens to native recipes. Save/load is DONE and verified
+   (2026-08-21, see **Save / load** above); the strategy layer and the tactical
+   HUD remain. What the save/load run did NOT cover, and the next session
+   should: the SAVE screen itself (only the LOAD screen was exercised — its
+   new-save row, the overwrite confirmation, and a save actually completing),
+   and the text-entry reader end to end (the probe proved every read it makes,
+   but the module's own announcements have not been heard yet — `just dev-log`
+   should carry `TextInput: dialog up (... caret N, selection A..B)`).
 3. Tile cursor: VERIFIED LIVE 2026-08-19 (autonomously: `tools/send-game-keys.ps1`
    scancode injection + dev-server speech ring + screenshots): compass steps
    (world-absolute, engine north = +Y, east = -X, calibrated against two crate
@@ -1296,17 +1551,19 @@ Remaining:
    mode, gate reasons and the last narration lines, is not built. `just
    dev-speech` covers most of it already, since it marks interrupting lines
    with `!`.
-   Three wording defects the same run exposed, none of them fixed yet and all
-   visible by shape-counting the speech ring (`grep -oP 'TTS!?: "\K[^"]*' |
-   sed 's/[0-9]\+/N/g' | sort | uniq -c` — the cheapest audit this project has):
-   the no-target readout says *"Выстрел, 1 of 5. Нет доступных целей.. No
-   target"* — a doubled full stop and the same fact in two languages, because the
-   localized string already ends in a period and carries the meaning (12×); an
-   impassable tile still reports reachability, *"Impassable. Out of range. 3
-   south, 1 west"*, which is meaningless about a tile nobody can stand on (~99×,
-   the single noisiest line in the run); and recentering says the unit's name
-   three times, *"Shreya Bose. Ally: Shreya Bose. High cover south. Your tile. At
-   Shreya Bose"*.
+   Three wording defects the same run exposed, all visible by shape-counting the
+   speech ring (`grep -oP 'TTS!?: "\K[^"]*' | sed 's/[0-9]\+/N/g' | sort |
+   uniq -c` — the cheapest audit this project has). ✅ The noisiest is FIXED: an
+   impassable tile reported reachability too, *"Impassable. Out of range. 3 south,
+   1 west"*, meaningless about a tile nobody can stand on (~99×, against 23 actual
+   moves); the reachability clause is now gated on the tile being enterable, and
+   2026-08-21 the word itself got better — an open-air tile reads *"Ledge, 3 down"*
+   rather than describing a railing exactly like a wall (see the tile-cursor
+   section). Still open: the no-target readout says *"Выстрел, 1 of 5. Нет
+   доступных целей.. No target"* — a doubled full stop and the same fact in two
+   languages, because the localized string already ends in a period and carries
+   the meaning (12×); and recentering says the unit's name three times, *"Shreya
+   Bose. Ally: Shreya Bose. High cover south. Your tile. At Shreya Bose"*.
 5. Events NOT yet narrated, in rough value order: reinforcement drops, the
    Chosen arriving, objective completion, will/panic thresholds, loot. Each is
    one more `AddCHEvent` line; the cost is judgement about spam, not code.
@@ -1363,6 +1620,27 @@ Remaining:
    `XComGameState_Ability.GetUISummary_HackingBreakdown`, the spoken form of the
    mouse-hover-only `UITacticalHUD_HackingTooltip`, so a player can judge a hack
    before spending the action point.
+10. The Avenger's ant farm is BUILT (2026-08-21, see **Avenger ant farm** above;
+    recon and the phase-1 write-up in `docs/avenger-view-recon.md`, §11) and
+    awaits its first live run — the ungate itself was already confirmed live
+    2026-08-20 through `/call`, so what is unproven is the narration around it.
+    Four things the first run has to check: that the announcement fires at all
+    (`just dev-log` should carry `Avenger: ant farm active` and
+    `Avenger navigation grid installed`); that a RESTING MOUSE does not steal the
+    selection back (nothing re-pushes per frame the way `Mouse_CheckForPathing`
+    does in tactical, but a pointer sitting over a room while we navigate is the
+    case to try); that leaving and re-entering the grid re-announces (the C++
+    falling-edge poll is what lets the companion see the screen go); and — the
+    one thing only a screenshot settles — whether the seven fixed rooms' POSITION
+    phrases match where those rooms actually are. The buildable core's
+    `row R, column C` is exact (indices 3-14, row-major, from the graph itself);
+    the outer ring's wording is the graph's relations put into words and is the
+    part to improve. Post-tutorial, re-measure whether `Label` populates on
+    keyboard focus as predicted — that is what makes rooms speak their names, and
+    it cannot be observed while the whole ship is `bTutorialLocked`. Then the
+    rest of the layer: inside a room (`UIFacility` + 22 subclasses, staff slots),
+    the resource strip, the to-do widget and the event queue — §2 and §4 of the
+    recon, all of which are retained-widget reads rather than new offsets.
 
 When researching for this project, focus on engine/native/UE3 technicals.
 Do not survey the accessibility-mod landscape — the author knows it better

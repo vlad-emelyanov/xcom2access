@@ -340,6 +340,195 @@ DialogView ReadDialog(void* screen);
 bool DialogAccept(void* screen);
 bool DialogCancel(void* screen);
 
+// ---- save / load (UILoadGame, UISaveGame) ----
+//
+// Two screens built from one row widget (UISaveLoadGameListItem), and the shell's first case of
+// the tactical HUD's problem: the row resolves date, name and mission into LOCALS, pushes them
+// into Flash and retains none of them. What it does retain is the OnlineSaveGame struct it was
+// built from — the data Flash was told — so native reads the row's STRUCTURE (which rows, which
+// is selected, which buttons the row is offering) and X2AccessSaveReader supplies the words.
+// See docs/save-load-recon.md §3.
+
+/// One row. `index` is the row's OWN Index field, which is what the screen's SetSelection and
+/// OnAccept path talk in — on the save screen it is offset by one from the save list, because
+/// row 0 is the "new save" slot.
+struct SaveSlot {
+    void* handle = nullptr;  // UISaveLoadGameListItem
+    void* accept = nullptr;  // AcceptButton: load / save / name-a-new-save, per the row
+    void* remove = nullptr;  // DeleteButton — null-handled by visibility, see below
+    int index = 0;
+    int id = -1;             // save ID; -1 marks the save screen's new-save row
+    bool acceptDisabled = false;
+    std::string acceptLabel; // the row's own localized verb, read off the widget
+    std::string deleteLabel; // empty when the game is not offering the delete verb here
+};
+
+struct SaveLoadView {
+    bool saving = false;         // UISaveGame rather than UILoadGame
+    std::string title;           // m_sSaveTitle / m_sLoadTitle, P10-cleaned
+    std::vector<SaveSlot> slots; // list order (newest first; new-save row leads when saving)
+    int selected = -1;           // m_iCurrentSelection
+    bool busy = false;           // a save or load is in flight — the screen drops all input
+};
+
+/// The focused UISaveGame or UILoadGame, or null. Game thread only.
+void* FindSaveLoadScreen();
+
+/// Which of the two it is. The screens' shared fields sit at identical offsets, so this is what
+/// picks the title and the in-flight flag apart.
+bool SaveScreenIsSaving(void* screen);
+
+SaveLoadView ReadSaveLoad(void* screen);
+
+/// P11 write-back through the screen's own SetSelection: it moves the Flash highlight AND sets
+/// m_iCurrentSelection, which is what the game's own Delete key acts on. Game thread only.
+bool SetSaveLoadSelection(void* screen, int index);
+
+/// Activate a row through its own AcceptButton — the mouse path. The button carries the rename
+/// delegate on the new-save row and the accept delegate everywhere else, so this dispatches
+/// "name a new save" versus "load / overwrite" without the caller deciding.
+///
+/// Selects the row first, which on the SAVE screen is load-bearing rather than tidy:
+/// UISaveGame.OnAccept ignores the control it is handed and acts on m_iCurrentSelection, so a
+/// click sent while the two disagreed would overwrite the wrong save. Game thread only.
+bool ActivateSaveSlot(void* screen, const SaveSlot& slot);
+
+/// The row's own DeleteButton, with the same select-then-click guard. Not bound to a key by
+/// this layer — the game's own Delete and Backspace already reach OnDelete — but the recipe
+/// names the verb, and a later phase may want to offer it. Game thread only.
+bool DeleteSaveSlot(void* screen, const SaveSlot& slot);
+
+// ---- text input dialog (UIInputDialogue) ----
+//
+// Raised to name a new save (and by the error reporter, and MP). The typed text lives in Flash;
+// only the prompt and the prefill are retained. ⛔ This is deliberately NOT a graph recipe: a
+// recipe attaching turns on the navigator's claims — arrows, Enter, Space, Tab — every one of
+// which the player is using to type or to answer. See docs/save-load-recon.md §7.
+
+struct TextInputView {
+    std::string prompt;   // m_kData.strTitle
+    std::string prefill;  // m_kData.strInputBoxText — what the box starts with
+    int maxChars = 0;
+    bool multiLine = false; // eDialogType_MultiLine / _Report: Enter inserts a line break
+};
+
+/// The focused UIInputDialogue, or null. Game thread only.
+void* FindTextInputScreen();
+
+TextInputView ReadTextInput(void* screen);
+
+/// Everything about the Scaleform TextField that currently has keyboard focus — read from the
+/// MOVIE, not modelled. VERIFIED LIVE 2026-08-21 on the save-name dialog.
+///
+/// This is the answer to "the widget tree holds no words" taken one level further: the words are
+/// not in UnrealScript either, they are in Flash, and GFxMoviePlayer's path API reaches them.
+/// AS2's global `Selection` class resolves through `ActionScriptInt` / `ActionScriptString` with
+/// or without the `_global.` prefix, which is what makes the caret and the selection EXACT
+/// rather than inferred.
+struct TextFieldState {
+    bool valid = false;    // false when nothing has AS focus (getFocus answers "null")
+    std::string focusPath; // "_level0.theInterfaceMgr.UIInputDialogue_0....textInputBox" — also
+                           // says WHICH field, which the crash-report dialog needs (title + body)
+    std::wstring text;     // RAW and WIDE: the player typed it, and the caret indexes characters
+    int caret = -1;        // Selection.getCaretIndex()
+    int selBegin = -1;     // Selection.getBeginIndex() — equal to selEnd when nothing is selected
+    int selEnd = -1;
+
+    bool HasSelection() const { return selBegin >= 0 && selEnd > selBegin; }
+};
+
+/// `screen` is any UIPanel-derived object on the movie to ask (its `Movie` is what gets called).
+///
+/// Costs four outbound calls, two of which answer with an engine-allocated FString that is read
+/// and deliberately leaked — the same bargain ConsoleCommand makes. Affordable behind a
+/// keystroke, NOT on a free-running poll. Game thread only.
+TextFieldState ReadFocusedTextField(void* screen);
+
+// ---- squad select (UISquadSelect) ----
+//
+// The last gate before every mission, and structurally the tactical HUD's pattern rather than
+// the shell's: the widget tree carries the SELECTION MODEL and not one word about the soldiers.
+// So these reads answer "which card, which control, is it disabled" and the companion
+// (X2AccessSquadReader) answers "who is that and what are they holding" — see
+// docs/squad-select-recon.md §3.
+
+/// ESquadSelectButton, the game's own per-card control enum (UISquadSelect_ListItem.uc:41). Its
+/// declaration order IS the card's top-to-bottom order, which is why the recipe emits controls
+/// in it.
+enum class SquadButton {
+    Promote = 0,
+    Edit = 1,
+    Dismiss = 2,
+    WeaponPrime = 3,
+    WeaponHeavy = 4,
+    Utility = 5,
+    Bond = 6,
+};
+
+/// One sub-control of a soldier card. A utility ROW expands into one entry per slot, because
+/// each is separately focusable (the game's own Left/Right walks them) and separately locked.
+struct SquadControl {
+    void* handle = nullptr;   // the UISquadSelect_UtilityItem for a utility slot; else the card
+    SquadButton button = SquadButton::WeaponPrime;
+    int utilityIndex = -1;    // >= 0 only for Utility: index within UtilitySlots
+    int utilitySlotType = -1; // that slot's EInventorySlot, or -1
+    bool disabled = false;    // greyed: announce it, do not skip it (recon §7)
+};
+
+/// One card. `slotIndex` is the index into XComHQ.Squad and is NOT the visual position — the
+/// cards are laid out through SlotListOrder = [4,1,0,2,3,5] for the pre-mission cinematic, so
+/// with four soldiers the strip reads left to right as squad 1, 0, 2, 3 (recon §5).
+struct SquadSlot {
+    void* handle = nullptr; // UISquadSelect_ListItem
+    int slotIndex = -1;
+    bool locked = false;  // bDisabled — the greyed "increase squad size" card, holds stale data
+    bool focused = false; // bIsFocused: the authority, matching the game's GetActiveListItem
+    int activeButton = -1;
+    std::vector<SquadControl> controls;
+};
+
+/// One of the screen-wide verbs the game offers only as a NAV-HELP button, i.e. only to a mouse
+/// (UINavigationHelp dispatches them from OnMouseEvent alone; the controller shortcuts are not
+/// registered on PC). Each is an argument-free handler on the screen, so the recipe can carry it
+/// as an ordinary node instead of spending a hotkey per verb — recon §4.
+struct SquadVerb {
+    std::string label;              // the screen's own localized label
+    const char* handler = nullptr;  // its argument-free UnrealScript handler
+    bool disabled = false;
+};
+
+struct SquadSelectView {
+    std::vector<SquadSlot> slots; // VISUAL order (the list's own order)
+    void* launch = nullptr;       // LaunchButton — bIsNavigable false, unreachable in vanilla
+    bool launchDisabled = true;
+    std::string launchTitle;      // m_strLaunch + m_strMission ("НАЧАТЬ" "ЗАДАНИЕ")
+    bool walkupDone = false;      // bReceivedWalkupEvent — before it, the screen drops all input
+    bool canCancel = false;       // the game's own Escape condition
+    bool loadoutDisabled = false; // bDisableLoadout (tutorial gating)
+    int soldierSlots = 0;
+    std::vector<SquadVerb> verbs;
+};
+
+/// The focused UISquadSelect instance, or null. Game thread only.
+void* FindSquadSelect();
+
+SquadSelectView ReadSquadSelect(void* screen);
+
+/// Focus write-back: put the game's own focus on a card and one of its controls, exactly as its
+/// controller path does (ListItem.OnReceiveFocus + SetSquadSelectButtonFocus). Keeps the Flash
+/// highlight and the card's edit/dismiss pop-up in step with ours. Game thread only.
+bool SetSquadSelectFocus(void* screen, int visualIndex, const SquadControl& control);
+
+/// Activate one card control through the widget's OWN handler — never through
+/// HandleButtonSelect(), which dispatches on the game's m_eActiveButton rather than on ours and
+/// would fire the wrong verb after a one-frame disagreement. Game thread only.
+bool ActivateSquadControl(void* screen, const SquadSlot& slot, const SquadControl& control);
+
+/// Invoke one of the screen's own argument-free handlers by name (OnLaunchMission's button is
+/// clicked instead; this is OnStripItems / OnStripGear / OnStripWeapons / OnBuildItems /
+/// OnBoostSoldier). Game thread only.
+bool InvokeSquadSelectVerb(void* screen, const char* funcName);
+
 // ---- tactical HUD (UITacticalHUD) — tile reader support ----
 
 /// The tactical HUD screen instance, or null — same stack-first caching/validation contract as
@@ -369,6 +558,28 @@ struct TacticalGate {
 
 /// Game thread only.
 TacticalGate ReadTacticalGate();
+
+// ---- the Avenger's ant farm (UIFacilityGrid) ----
+
+/// The Avenger reader's activation gate.
+///
+/// Unlike tactical — where UIReplay permanently owns the top of the stack and the gate has to
+/// walk a whitelist of passive overlays — the ant farm's rule is simply that it is the CURRENT
+/// screen. UIFacilityGrid.OnUnrealCommand's mouse+keyboard branch opens with
+/// `if( Movie.Stack.GetCurrentScreen() != self ) return false;`, so anything above the grid has
+/// already taken the arrow keys before the grid gets a say. Mirroring the game's own test — and
+/// GetCurrentScreen's own definition, the first non-none entry, with no state-bit filter — is
+/// what keeps our gate from ever disagreeing with which screen the arrows actually reach.
+struct AvengerGate {
+    bool gridOnStack = false; // UIFacilityGrid is somewhere on the stack
+    bool current = false;     // ...and it is the first entry, i.e. GetCurrentScreen() == it
+    char blocker[64] = {};    // what sits on top instead, when it is not; for the log
+
+    bool Active() const { return current; }
+};
+
+/// Game thread only.
+AvengerGate ReadAvengerGate();
 
 // ---- tutorial mission (Tutorial_01) — the text surfaces and the replay state ----
 //

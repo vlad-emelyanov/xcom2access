@@ -569,6 +569,28 @@ std::string QueryParam(const std::string& query, const char* name)
     return {};
 }
 
+std::string UrlDecode(const std::string& in);
+
+// Every occurrence of `name=`, in query order. /call takes one per declared argument, and the
+// order is the signature's order — so this must preserve it rather than collapse duplicates the
+// way QueryParam's first-match does.
+std::vector<std::string> QueryParamAll(const std::string& query, const char* name)
+{
+    std::vector<std::string> values;
+    const std::string needle = std::string(name) + "=";
+    size_t pos = 0;
+    while (pos < query.size()) {
+        const size_t amp = query.find('&', pos);
+        const size_t end = (amp == std::string::npos) ? query.size() : amp;
+        if (query.compare(pos, needle.size(), needle) == 0)
+            values.push_back(UrlDecode(query.substr(pos + needle.size(), end - pos - needle.size())));
+        if (amp == std::string::npos)
+            break;
+        pos = amp + 1;
+    }
+    return values;
+}
+
 std::string UrlDecode(const std::string& in)
 {
     std::string out;
@@ -778,6 +800,24 @@ std::string Route(const Request& req, int& status)
         return OnGameThread([sel, filter] { return GuiDump::Props(sel, filter); });
     }
 
+    // The third verb on that selector: /gui sees the tree, /props reads an object out, /call
+    // makes it DO something. Its reason for existing is the controller-gated function — the
+    // game's own code, correct and complete, that a mouse+keyboard player's branch never
+    // reaches. Measuring an ungate this way is the difference between one HTTP call and a full
+    // build-deploy-relaunch cycle per hypothesis.
+    if (req.path == "/call") {
+        const GuiDump::Selector sel = ParseSelector(req.query);
+        const std::string fn = UrlDecode(QueryParam(req.query, "fn"));
+        // &arg=, repeated once per declared argument, in declaration order. This is what makes
+        // the Scaleform bridge reachable: everything about a live movie is read through
+        // GFxMoviePlayer.GetVariableString / ActionScriptInt / ActionScriptString, and all of
+        // them take a path string. That is the only way to see the half of the UI that is
+        // Flash-only — a text field's caret, the key-bindings rows, anything a screen wrote out
+        // and did not retain.
+        const std::vector<std::string> args = QueryParamAll(req.query, "arg");
+        return OnGameThread([sel, fn, args] { return GuiDump::Call(sel, fn, args); });
+    }
+
     status = 404;
     return "unknown endpoint\n"
            "  GET  /health              liveness + build stamp + game-thread pump age\n"
@@ -789,9 +829,13 @@ std::string Route(const Request& req, int& status)
            "  POST /exec  <command>     run a console command, return what it printed\n"
            "  GET  /gui[?depth=N]       widget tree of a screen: class, state, text\n"
            "  GET  /props[?filter=]     one object's properties: offset, type, live value\n"
+           "  GET  /call?fn=<F>&arg=X   invoke a script function; prints its return. Repeat\n"
+           "                            &arg once per declared argument, in order — which is\n"
+           "                            how the Flash bridge is reached (GetVariableString,\n"
+           "                            ActionScriptInt/String on ?instance=UIMovie_2D)\n"
            "  GET  /screenshot[?path=]  PNG of the monitor the game is on\n"
            "\n"
-           "  /gui and /props select with ?screen=<Class> (the screen stack, topmost by\n"
+           "  /gui, /props and /call select with ?screen=<Class> (the screen stack, topmost by\n"
            "  default), ?instance=<Class> (newest instance anywhere, falling back to the\n"
            "  class default object when there is none), ?cdo=<Class> (that default object\n"
            "  explicitly — how to read the companion models) or ?ptr=0x<addr>\n";
