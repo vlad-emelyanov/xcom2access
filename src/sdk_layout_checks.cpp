@@ -347,6 +347,13 @@ static_assert(offsetof(AUIRoomContainer, RoomFuncs) == 0x3DC, "room bottom-bar b
 // mouse handler.
 static_assert(offsetof(AUIPersonnel, m_kList) == 0x45C, "personnel roster list");
 
+// ---- choosing what to build in a room (UIChooseFacility) ----
+//
+// One offset again. The rows are ordinary UIListItemStrings (pinned above), and every word of the
+// detail panel comes from the companion, because UpdateSelection retains none of it.
+static_assert(offsetof(AUIChooseFacility, m_List) == 0x418, "choose-facility list");
+static_assert(offsetof(AUIListItemString, AttentionIcon) == 0x440, "list item attention icon");
+
 static_assert(offsetof(AUIAvengerHUD, Shortcuts) == 0x43C, "avenger HUD shortcut bar");
 static_assert(offsetof(AUIAvengerHUD, FacilityHeader) == 0x454, "avenger HUD facility header");
 

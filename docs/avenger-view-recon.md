@@ -1706,15 +1706,74 @@ death and wrong here) and none at all for mental state, so both fold into the
 STATUS cell — which is also where the row draws them, stacked. A column with a
 blank heading is worse than no column.
 
-## 15.11 Known gaps
+## 16. UIChooseFacility — the screen that put a facility on the ship (2026-08-21)
 
-- ⛔ **`UIChooseFacility` has no recipe and is SILENT** — the list of facilities
-  you can build in an excavated room, reached from build mode. It looks like a
-  `UIInventory` (a `UIList` beside a detail panel with cost, power, upkeep, time
-  and requirements) but it `extends UIScreen`, so the commodity recipe does not
-  see it. Measured live 2026-08-21: with `UIBuildFacilities` topmost the ant farm
-  narrates the grid correctly, but the screen its Enter opens says nothing. This
-  is the next recipe in this layer.
+Reported live: *"I selected empty room, and then mod became silent."* That is
+`UIChooseFacility`, the list of facilities you can build in an excavated room —
+the only route by which a facility ever gets onto the Avenger, and it said
+nothing at all.
+
+It LOOKS like a commodity screen: a `UIList` beside a panel of cost, power,
+upkeep, build time, requirements and a description. It is not one. It
+`extends UIScreen`, not `UIInventory`, so `FindCommodityScreen`'s class-chain
+test never matched it and the thirteen-screen recipe never saw it.
+
+## 16.1 The two halves fail in OPPOSITE directions
+
+| Half | What it does | Who reads it |
+|---|---|---|
+| the list | `PopulateList` calls `UIListItemString.SetText`, `SetDisabled(!CanBuildFacility)`, `NeedsAttention(bPriority)` | **native** — names and both state bits are retained |
+| the panel | `UpdateSelection` resolves everything into LOCALS and pushes them through `AS_SetDescription` / `AS_SetResources` | **companion** — nothing at all is retained |
+
+That is the `UIItemCard` problem again, on the screen where it costs the most:
+every number that decides whether to spend a month's supplies on this room is a
+local on its way into Flash.
+
+⛔ The rows being the GOOD case is worth noting for its own sake — it is the
+first list in this layer whose text native can just read. `PopulateList` going
+through `SetText` rather than around it is the exception, not the rule.
+
+## 16.2 The panel, re-derived through the screen's own functions
+
+Not reimplemented — asked again:
+
+    GetStrategyCostString(Cost, FacilityBuildCostScalars, GetPendingFacilityDiscountPercent(...))
+    GetPowerRequirement(Facility)      // knows a shielded coil doubles a generator, zeroes the rest
+    GetStrategyReqString(Requirements)
+    GetBuildTime(Facility)             // XComHQ.GetFacilityBuildEstimateString
+    CanBuildFacility / HasEnoughPower  // the warning branch, in the game's own order
+
+⛔ It reads `m_selectedFacility` rather than re-indexing `m_arrFacilities`: that
+field IS what `UpdateSelection` set and what `OnAccept` will build. Re-deriving
+the index would introduce a second opinion about which row is current.
+
+⚠ POWER is drawn as an icon plus a bare number, with the SIGN carrying the
+meaning — positive is produced, negative is consumed, and the panel shows the
+absolute value either way. Speech has to supply the word the icon stood in for.
+
+## 16.3 Vanilla's keyboard, and what the recipe adds
+
+| Key | Effect |
+|---|---|
+| Up / Down | `default:` → `super` → Navigator → `m_List` ✅ |
+| Enter / Space | `OnAccept` ✅ |
+| Escape | `OnCancel` ✅ |
+| Left / Right | deliberately swallowed (`bHandled = true`, no body) |
+
+So the keyboard was never the problem — the silence was. Two stops: the list,
+then the panel with one node per LINE, split for the same reason the commodity
+card is (the description is a paragraph; *what does it cost* should not require
+sitting through it).
+
+⛔ Enter goes to the SCREEN after the selection lands. `OnAccept` reads the
+SCREEN's own `SelectedIndex`, a field only `UpdateSelection` writes and only
+`UIList::SetSelectedIndex` triggers — so committing without selecting first
+would build a different facility from the one just spoken. A disabled row is
+passed through rather than refused: `OnAccept` re-tests and plays its own
+refusal, which keeps the refusal where the game can be right about why.
+
+## 16.4 Known gaps (Avenger layer)
+
 - `UIFacility_Infirmary` spawns its own `PatientList` (`UIList`) — the only
   facility subclass that adds navigable content of its own. Unread.
 - ⚠ Entering the Avenger from the geoscape, the first one or two grid

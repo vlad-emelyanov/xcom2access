@@ -933,6 +933,54 @@ bool SetPersonnelSelection(const PersonnelView& view, int index);
 /// reads m_kList.selectedIndex and ignores anything else. Game thread only.
 bool ActivatePersonnelRow(const PersonnelView& view, int index);
 
+// ---- choosing what to build in a room (UIChooseFacility) ----
+//
+// ⛔ It LOOKS like a commodity screen — a UIList beside a panel carrying cost, power, upkeep,
+// build time, requirements and a description — but it `extends UIScreen`, not UIInventory, so the
+// thirteen-screen recipe never sees it. Reported live 2026-08-21 as "I selected an empty room and
+// the mod went silent": it is the screen build mode's Enter opens, and the only way a player ever
+// puts a facility on the Avenger.
+//
+// Its two halves fail in OPPOSITE directions, which is why this needs both a native read and a
+// companion. The ROWS are the good case: PopulateList calls UIListItemString.SetText, so the
+// names really are retained, along with bDisabled (CanBuildFacility) and the AttentionIcon the
+// game spawns for a bPriority facility. The PANEL is the bad case: UpdateSelection resolves every
+// number into LOCALS and pushes them through AS_SetDescription / AS_SetResources, retaining
+// nothing — the UIItemCard problem again, on the screen that decides how you spend your supplies.
+//
+// Vanilla's keyboard here is fine: Up/Down walk the list through the default branch, Enter and
+// Space reach OnAccept, Escape cancels. Left/Right are deliberately swallowed and do nothing.
+
+struct FacilityChoice {
+    void* handle = nullptr; // UIListItemString
+    int index = 0;          // the list's own index, which is also m_arrFacilities'
+    std::string label;      // Text — retained, already localized
+    bool disabled = false;  // bDisabled: CanBuildFacility said no (cost, power or staffing)
+    bool priority = false;  // the game spawned an attention icon (X2FacilityTemplate.bPriority)
+};
+
+struct ChooseFacilityView {
+    void* screen = nullptr;
+    void* list = nullptr; // UIChooseFacility::m_List
+    std::vector<FacilityChoice> choices;
+    int selected = -1; // UIList::SelectedIndex
+};
+
+/// The choose-facility screen, when it is the CURRENT screen. Game thread only.
+void* FindChooseFacilityScreen();
+
+ChooseFacilityView ReadChooseFacility(void* screen);
+
+/// P11 write-back. Driving UIList::SetSelectedIndex also fires OnSelectionChanged =
+/// UpdateSelection, which is what repopulates the detail panel — so our focus and the panel the
+/// companion reads can never describe different facilities. Game thread only.
+bool SetChooseFacilitySelection(const ChooseFacilityView& view, int index);
+
+/// Commit the build, by the game's own keyboard path: select, then hand the SCREEN an Enter.
+/// ⛔ Selecting first is load-bearing — OnAccept reads the screen's own SelectedIndex, which only
+/// UpdateSelection ever writes. Game thread only.
+bool ActivateChooseFacility(const ChooseFacilityView& view, int index);
+
 // ---- tutorial mission (Tutorial_01) — the text surfaces and the replay state ----
 //
 // The tutorial is a REPLAY: XComTutorialMgr extends XComReplayMgr, plays a recorded session back

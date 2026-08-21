@@ -771,6 +771,35 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   selection**, unlike the commodity list's: nothing here is the selection's shadow, so keying on
   it would walk the whole roster through `XCOMHISTORY` once per arrow press for no new words.
 
+- **Choosing what to build in a room** (`FindChooseFacilityScreen`/`ReadChooseFacility` in
+  `src/game_ui.cpp` + the `choose facility` recipe in `menu_navigator.cpp` + companion
+  `X2AccessBuildFacilityReader.uc`, built 2026-08-21, **not yet run live**; recon
+  `docs/avenger-view-recon.md` §16): `UIChooseFacility`, the screen build mode's Enter opens and
+  the only route by which a facility ever gets onto the Avenger. ⛔ **It LOOKS like a commodity
+  screen and is not one**: a `UIList` beside a panel of cost, power, upkeep, time, requirements
+  and a description — but it `extends UIScreen` rather than `UIInventory`, so
+  `FindCommodityScreen`'s class-chain test never matched it and it was SILENT (reported live
+  2026-08-21: *"I selected empty room, and then mod became silent"*).
+  ⛔ **Its two halves fail in OPPOSITE directions, which is why it needs both readers.** The list
+  is the good case and the first in this layer whose text native can simply read: `PopulateList`
+  goes through `UIListItemString.SetText`, so names, `bDisabled` (`CanBuildFacility`) and the
+  attention icon (`bPriority`) are all retained. The PANEL is the bad case — `UpdateSelection`
+  resolves every number into LOCALS and pushes them through `AS_SetDescription`/`AS_SetResources`,
+  retaining nothing. Every value is re-derived by asking the SCREEN's own functions again
+  (`GetStrategyCostString` with its own pending discount, `GetPowerRequirement`, which is what
+  knows a shielded power coil doubles a generator and zeroes everything else, `GetStrategyReqString`,
+  `GetBuildTime`, and the `CanBuildFacility`/`HasEnoughPower` warning branch in the game's own
+  order) — never reimplemented. ⛔ It reads `m_selectedFacility`, not a re-index of
+  `m_arrFacilities`: that field IS what `UpdateSelection` set and what `OnAccept` will build.
+  ⚠ POWER is drawn as an icon plus a bare number with the SIGN carrying the meaning — positive is
+  produced, negative consumed, absolute value shown either way — so speech supplies the word the
+  icon stood in for. Vanilla's keyboard was never the problem here (Up/Down walk the list,
+  Enter/Space accept, Escape cancels; Left/Right are deliberately swallowed) — the silence was.
+  Enter goes to the **SCREEN** after the selection lands, because `OnAccept` reads the screen's
+  own `SelectedIndex`, which only `UpdateSelection` writes and only `UIList::SetSelectedIndex`
+  triggers. A disabled row is passed through rather than refused: `OnAccept` re-tests and plays
+  its own refusal, which keeps the refusal where the game can be right about why.
+
 - ⛔ **Never join two spoken phrases with a bare `", "`** — the GAME ends plenty of its own
   strings with `.`, `!`, `?` or `:`, and blind joining voiced *"5 дн.."*,
   *"ТРЕБУЕТСЯ ИНЖЕНЕР!."* and *"Перезаписать эту сохраненную игру?,"* at the player — **14 of

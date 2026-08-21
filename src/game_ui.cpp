@@ -3613,6 +3613,80 @@ bool ActivatePersonnelRow(const PersonnelView& view, int index)
     return SendRowCommand(view.screen, kCmdEnter);
 }
 
+// ---- choosing what to build in a room (UIChooseFacility) ----
+//
+// See the header for why this is not part of the commodity family despite looking exactly like
+// one. Native reads the half that IS retained — the row names and their two state bits — and the
+// companion re-derives the panel, which retains nothing at all.
+
+namespace {
+
+constexpr int32_t kChooseFacilityListOffset = 0x418; // UIChooseFacility::m_List
+constexpr int32_t kListItemAttentionOffset = 0x440;  // UIListItemString::AttentionIcon
+constexpr int kMaxFacilityChoices = 64;
+
+} // namespace
+
+void* FindChooseFacilityScreen()
+{
+    static ScreenFinder sFinder{"UIChooseFacility"};
+    return sFinder.Find();
+}
+
+ChooseFacilityView ReadChooseFacility(void* screen)
+{
+    ChooseFacilityView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+
+    v.list = ReadPtrRaw(screen, kChooseFacilityListOffset);
+    if (!v.list)
+        return v;
+
+    v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
+
+    void* rows[kMaxFacilityChoices] = {};
+    int rowCount = ReadListItemsRaw(v.list, rows, kMaxFacilityChoices);
+    for (int i = 0; i < rowCount; i++) {
+        if (!rows[i])
+            continue;
+        FacilityChoice c;
+        c.handle = rows[i];
+        c.index = i;
+        // Unlike the commodity rows, PopulateList goes through UIListItemString.SetText — so the
+        // name really is here and needs no companion.
+        c.label = CleanText(ReadFStringField(rows[i], kListItemStringTextOffset));
+        c.disabled = (ReadU32Raw(rows[i], kListItemStringFlagsOffset) & kListItemDisabled) != 0;
+        // NeedsAttention spawns the icon lazily and then toggles its visibility, so the icon
+        // EXISTING is not the same as it being shown — a facility that lost priority keeps a
+        // hidden one. Both halves are the game's own.
+        void* icon = ReadPtrRaw(rows[i], kListItemAttentionOffset);
+        c.priority = icon && (ReadU32Raw(icon, kPanelFlagsOffset) & kPanelVisible) != 0;
+        v.choices.push_back(std::move(c));
+    }
+    return v;
+}
+
+bool SetChooseFacilitySelection(const ChooseFacilityView& view, int index)
+{
+    return SetListIndex(view.list, index);
+}
+
+bool ActivateChooseFacility(const ChooseFacilityView& view, int index)
+{
+    if (!view.screen || !view.list)
+        return false;
+    // ⛔ Enter goes to the SCREEN after the selection lands. OnAccept reads the SCREEN's own
+    // SelectedIndex — a field only UpdateSelection writes, and only UIList::SetSelectedIndex
+    // calls that — so committing without selecting first would build a different facility from
+    // the one just spoken. A disabled row is passed through: OnAccept re-tests CanBuildFacility
+    // and plays its own refusal sound, which keeps the refusal where the game can be right about
+    // why (supplies, power, or staffing).
+    SetListIndex(view.list, index);
+    return SendRowCommand(view.screen, kCmdEnter);
+}
+
 // ---- tutorial mission (Tutorial_01) ----
 
 namespace {

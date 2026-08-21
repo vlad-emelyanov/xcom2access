@@ -3237,6 +3237,185 @@ bool SetPersonnelListIndex(void* screen, int index)
 const Recipe kPersonnelRecipe{
     "personnel roster", ProbePersonnel, BuildPersonnel, PersonnelName, SetPersonnelListIndex};
 
+// ---- choosing what to build in a room (UIChooseFacility) ----
+//
+// The screen build mode's Enter opens, and the only way a facility ever gets onto the Avenger. It
+// LOOKS like a commodity screen — a list beside a panel of cost, power, time and description —
+// but it `extends UIScreen` rather than UIInventory, so the thirteen-screen recipe never saw it
+// and it was SILENT (reported live 2026-08-21: "I selected an empty room and the mod went
+// silent").
+//
+// Two stops, in the screen's own left-to-right order: the list, then the panel with one node per
+// LINE. Split for the same reason the commodity card is: the description is a paragraph and
+// "what does it cost" should not require sitting through it.
+//
+// ⛔ Native reads the ROWS and the companion reads the PANEL, because the two halves fail in
+// opposite directions — PopulateList goes through UIListItemString.SetText (names retained,
+// bDisabled retained, attention icon spawned) while UpdateSelection pushes every number into
+// Flash and keeps none.
+
+constexpr const char* kBuildFacilityReaderClass = "X2AccessBuildFacilityReader";
+
+// Keyed on the rows AND the selection, like the commodity list's and for the same reason: the
+// panel is the selection's shadow (UIList::OnSelectionChanged = UpdateSelection repopulates it on
+// every move), so a pointer-only key would describe the facility the player just left.
+struct BuildFacilityWords {
+    std::vector<WireRecord> records;
+    std::vector<void*> key;
+    int selected = -2;
+};
+
+BuildFacilityWords gBuildFacilityWords;
+
+const std::vector<WireRecord>& FetchBuildFacilityWords(const GameUI::ChooseFacilityView& view)
+{
+    std::vector<void*> key;
+    key.reserve(view.choices.size() + 1);
+    for (const GameUI::FacilityChoice& choice : view.choices)
+        key.push_back(choice.handle);
+    key.push_back(view.screen);
+
+    if (key != gBuildFacilityWords.key || view.selected != gBuildFacilityWords.selected) {
+        gBuildFacilityWords.records
+            = FetchCompanionRecords(kBuildFacilityReaderClass, "DescribeFacilityChoice");
+        gBuildFacilityWords.key = std::move(key);
+        gBuildFacilityWords.selected = view.selected;
+    }
+    return gBuildFacilityWords.records;
+}
+
+void BuildFacilityCard(GraphBuilder& b, const WireRecord& card)
+{
+    struct Line {
+        const char* label;
+        const char* value;
+    };
+    // The panel's own order: what it is, what it costs, what it draws, what else it needs, how
+    // long, what it costs every month, why you cannot have it, and finally what it does.
+    const Line lines[] = {
+        {nullptr, "title"},
+        {nullptr, "cost"},
+        {nullptr, "power"},
+        {nullptr, "reqs"},
+        {"timeLabel", "time"},
+        {nullptr, "upkeep"},
+        {nullptr, "warning"},
+        {nullptr, "desc"},
+    };
+
+    bool any = false;
+    for (const Line& line : lines) {
+        if (RecField(card, line.value).empty())
+            continue; // the panel is not drawing this line
+        if (!any) {
+            b.BeginStop("details");
+            any = true;
+        }
+
+        // Read at ANNOUNCE time with the build-time text as fallback: UpdateSelection repopulates
+        // the panel the instant our write-back moves the selection, while this graph is up to one
+        // poll old — so a Tab pressed hard on the heels of an arrow would describe the facility
+        // just left. Same guard the commodity card earned.
+        std::string fallback = ComposeCardLine(card, line.label, line.value);
+        b.AddLabel(ControlId::Structural(std::string("buildfacility/card/") + line.value),
+            [labelKey = std::string(line.label ? line.label : ""),
+                valueKey = std::string(line.value), fallback]() {
+                const std::vector<WireRecord>& fresh
+                    = FetchBuildFacilityWords(GameUI::ReadChooseFacility(gScreen));
+                const WireRecord* live = FindRecord(fresh, "card");
+                if (!live)
+                    return fallback;
+                std::string text = ComposeCardLine(
+                    *live, labelKey.empty() ? nullptr : labelKey.c_str(), valueKey.c_str());
+                return text.empty() ? fallback : text;
+            });
+    }
+}
+
+std::unique_ptr<GraphRender> BuildChooseFacility()
+{
+    gFocus.clear();
+
+    GameUI::ChooseFacilityView view = GameUI::ReadChooseFacility(gScreen);
+    const std::vector<WireRecord>& records = FetchBuildFacilityWords(view);
+
+    GraphBuilder b;
+    b.BeginStop("list");
+    b.SetRegion("list");
+
+    if (view.choices.empty()) {
+        b.AddLabel(ControlId::Structural("buildfacility/empty"), []() {
+            return std::string(Vocab::CommodityEmpty) + ". " + Vocab::CommodityLeaveHint;
+        });
+        return b.Build();
+    }
+
+    for (const GameUI::FacilityChoice& choice : view.choices) {
+        ControlId id = ControlId::Referenced(
+            choice.handle, "buildfacility/" + std::to_string(choice.index));
+        const int index = choice.index;
+        gFocus[id.StructuralKey] = FocusTarget{index, nullptr, false, nullptr};
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(choice.label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+
+        if (choice.priority) {
+            // The game spawns an attention icon for a bPriority facility and sorts it to the
+            // front — a nudge carried entirely by a glyph and a position.
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Attention));
+            vt.Announcements.back().Kind = kKindAttention;
+        }
+        if (choice.disabled) {
+            // CanBuildFacility said no. The REASON is on the card (insufficient power, or the
+            // cost line the player cannot meet), which is why this is a flag and not a sentence.
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        }
+        // Passed through even when disabled: OnAccept re-tests and plays its own refusal, which
+        // keeps the refusal where the game can be right about why.
+        vt.OnActivate = [index]() {
+            GameUI::ActivateChooseFacility(GameUI::ReadChooseFacility(gScreen), index);
+        };
+        b.AddItem(std::move(id), std::move(vt));
+    }
+
+    if (const WireRecord* card = FindRecord(records, "card"))
+        BuildFacilityCard(b, *card);
+
+    return b.Build();
+}
+
+void* ProbeChooseFacility()
+{
+    void* screen = GameUI::FindChooseFacilityScreen();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+std::string ChooseFacilityName()
+{
+    const std::vector<WireRecord>& records
+        = FetchBuildFacilityWords(GameUI::ReadChooseFacility(gScreen));
+    std::string name;
+    if (const WireRecord* header = FindRecord(records, "header")) {
+        name = RecField(*header, "title");
+        AppendPhrase(name, RecField(*header, "subtitle"));
+    }
+    if (name.empty())
+        name = Vocab::ScreenChooseFacilityFallback;
+    return name;
+}
+
+bool SetChooseFacilityListIndex(void* screen, int index)
+{
+    return GameUI::SetChooseFacilitySelection(GameUI::ReadChooseFacility(screen), index);
+}
+
+// Above the facility grid and UIBuildFacilities it is opened from, below any dialog it raises.
+const Recipe kChooseFacilityRecipe{"choose facility", ProbeChooseFacility, BuildChooseFacility,
+    ChooseFacilityName, SetChooseFacilityListIndex};
+
 // Above the pause menu and the shell it is opened from, below any dialog it raises.
 const Recipe kSaveLoadRecipe{"save/load", ProbeSaveLoad, BuildSaveLoad, SaveLoadName};
 
@@ -3244,8 +3423,8 @@ const Recipe kSaveLoadRecipe{"save/load", ProbeSaveLoad, BuildSaveLoad, SaveLoad
 // pause menu — has to resolve before it, or the layer would attach to the screen underneath.
 const Recipe* const kRecipes[] = {&kDialogRecipe, &kNarrativeRecipe, &kIronManRecipe,
     &kSoundtrackRecipe, &kOptionsRecipe, &kDifficultyRecipe, &kSaveLoadRecipe, &kPauseMenuRecipe,
-    &kPersonnelRecipe, &kArmoryLoadoutRecipe, &kSquadSelectRecipe, &kCommodityRecipe,
-    &kRoomBuildRecipe, &kRoomRecipe, &kMainMenuRecipe};
+    &kPersonnelRecipe, &kChooseFacilityRecipe, &kArmoryLoadoutRecipe, &kSquadSelectRecipe,
+    &kCommodityRecipe, &kRoomBuildRecipe, &kRoomRecipe, &kMainMenuRecipe};
 
 // ---- key handlers (game thread, via the arbiter's drain) ----
 

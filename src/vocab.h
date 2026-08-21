@@ -120,6 +120,10 @@ inline constexpr const char* CommodityLeaveHint = "Escape to go back";
 inline constexpr const char* CommodityUnaffordable = "cannot afford";
 inline constexpr const char* CommodityOwned = "owned";
 
+// Choosing what to build in a room (UIChooseFacility). It carries its own localized title and
+// list heading and reaches this only in the window between attaching and the companion answering.
+inline constexpr const char* ScreenChooseFacilityFallback = "Build facility";
+
 // The personnel roster. Almost every word there is the game's own — the rows are re-derived from
 // the unit, the tab names and the sort captions are localized strings off the screen, and even
 // the empty-list line is the one PopulateListInstantly pushes into Flash. These five are the
