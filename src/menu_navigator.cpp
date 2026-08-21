@@ -2526,8 +2526,24 @@ void BuildCommodityTabs(GraphBuilder& b, const std::vector<WireRecord>& records)
         vt.OnActivate = [index]() {
             GameUI::SwitchCommodityTab(GameUI::ReadCommodity(gScreen), index);
         };
-        vt.StateText = [selected]() {
-            return selected ? std::string(Vocab::Selected) : std::string();
+        // Post-activation feedback, read LIVE rather than from this render's closure. A captured
+        // flag can only ever describe the state before the press — which spoke a bare "selected"
+        // when the player pressed the tab they were already on, and nothing at all when they
+        // actually switched. SwitchTab respawns every row, so the cache key has already changed
+        // by the time this runs and the re-ask is the fresh answer.
+        vt.StateText = [index]() {
+            const std::vector<WireRecord>& fresh
+                = FetchCommodityWords(GameUI::ReadCommodity(gScreen));
+            for (const WireRecord& rec : fresh) {
+                if (RecField(rec, "kind") != "tab"
+                    || atoi(RecField(rec, "index").c_str()) != index)
+                    continue;
+                std::string line = RecField(rec, "label");
+                if (RecField(rec, "selected") == "1")
+                    AppendPhrase(line, Vocab::Selected);
+                return line;
+            }
+            return std::string();
         };
         b.AddItem(std::move(id), std::move(vt));
     }

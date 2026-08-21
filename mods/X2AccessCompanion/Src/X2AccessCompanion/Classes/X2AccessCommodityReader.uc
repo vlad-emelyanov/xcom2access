@@ -112,11 +112,16 @@ private function AppendTabs(UIInventory Screen)
 	if (Build == none)
 		return;
 
-	// eUIItemType_Weapon / _Armor / _Misc, in the order CreateTabButton spawns them. The
-	// disabled test is the game's own: an empty category's button is created disabled.
-	AppendTab(0, Build.m_strWeaponTab, Build.SelectedTab, Build.WeaponItems.Length == 0);
-	AppendTab(1, Build.m_strArmorTab, Build.SelectedTab, Build.ArmorItems.Length == 0);
-	AppendTab(2, Build.m_strMiscTab, Build.SelectedTab, Build.MiscItems.Length == 0);
+	// ⛔ EUIItemType IS NOT THE ORDER THE CODE READS AS. UIInventory_BuildItems.uc:13 declares
+	// it Misc=0, Weapon=1, Armor=2 — while BuildScreen CALLS CreateTabButton in weapon, armor,
+	// misc order, indexing TabButtons by the enum. So Flash slot 0 is Utility, and the strip
+	// draws ПРЕДМЕТЫ, ОРУЖИЕ, БРОНЯ left to right (screenshot-verified live 2026-08-21).
+	// Pairing index 0 with the weapon label shifted every caption AND every disabled flag by
+	// one, and made Enter switch to a different category from the one just spoken. The index is
+	// what SwitchTab and SetTabHighlight are expressed in, so it is the index that must lead.
+	AppendTab(0, Build.m_strMiscTab, Build.SelectedTab, Build.MiscItems.Length == 0);
+	AppendTab(1, Build.m_strWeaponTab, Build.SelectedTab, Build.WeaponItems.Length == 0);
+	AppendTab(2, Build.m_strArmorTab, Build.SelectedTab, Build.ArmorItems.Length == 0);
 }
 
 private function AppendTab(int Index, string Label, int Selected, bool bDisabled)

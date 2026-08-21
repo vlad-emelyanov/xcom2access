@@ -1373,3 +1373,78 @@ Three details that only the source gives up:
   dirty check right before the Flash op).
 * `CommodityOwned` ("owned") is an English word inside a localized readout, the
   same class of gap as the ant farm's `1 of 1 staff slots filled`.
+
+---
+
+## 14.9 ✅ FIRST LIVE RUN (2026-08-21) — and the bug that was not in this layer
+
+The Research lab read. Engineering's **storage** read end to end and is the
+clearest evidence the design works: eleven items, each `name, N owned, button`,
+and Tab reaching a two-node card — *"Ядро элерия, 1 of 2"* then the full
+description as *"2 of 2"*. Build Items read its rows, its quantities and its
+card. Three defects, and the first one was not a commodity-list bug at all.
+
+### The 2048-character cap — a silent truncation in the bridge
+
+**Symptom:** the XCOM Archives read all 39 journal entries and Tab found no card
+stop, so the entry TEXT — the whole point of that screen — was unreachable.
+
+Everything `AppendCard` guards on was measured live on Build Items (the same
+symptom, same cause) and all three passed: `ItemCard != none`,
+`ItemCard.bIsVisible = true`, `List.SelectedIndex = 0`, `ItemCount = 1`. The
+game's own `Launch.log` carried no `Accessed None` and no script warning. So the
+companion was emitting the record and native was not seeing it.
+
+**`UE3Reflect::ReadStringProperty` read every companion payload into a fixed
+`wchar_t[2048]`** and clipped anything longer without a word. Reconstructing the
+archives payload from the 39 titles the speech ring had already captured gives
+**2051 characters** against the 2047 that fit. Four characters over — and the
+card record is emitted LAST, so it was the part that fell off.
+
+Three things make this worth writing down rather than just fixing:
+
+* **It is one choke point for the entire project.** Every `NativeResult` read
+  goes through that function — the tile cursor, the shot HUD, the object
+  scanner, the hacking pad, every recipe's wire records, and
+  `X2AccessNarrator`'s 24-line combat drain, which in a busy turn would have
+  been dropping the tail of the narration for months.
+* **The failure mode is invisible by construction.** Truncating the tail of a
+  screen reads to a blind player as *the screen has nothing more*, which is
+  indistinguishable from the truth and so never gets reported as a bug. It
+  surfaced here only because the archives happened to be four characters over.
+* **Our own layer looked like the culprit.** The bug presented as "the recipe
+  never built that stop", and the whole first round of hypotheses — `bIsVisible`,
+  `SelectedIndex`, a script error in the companion — was about this file. Each
+  was cleared by `/props` against the live screen, which is what left the bridge
+  as the only remaining candidate. The dev harness is what made that possible;
+  without it this would have been a guess-and-rebuild loop.
+
+Fixed by reading the length first (`FStringLengthRaw`), sizing the buffer to it,
+and refusing an implausible count with a LOG line rather than a silent trim.
+
+### The tab strip read one category off
+
+`EUIItemType` declares **`Misc=0, Weapon=1, Armor=2`** while `BuildScreen`
+*calls* `CreateTabButton` in weapon, armor, misc order and *indexes* `TabButtons`
+by the enum. So Flash slot 0 is Utility, and the strip draws
+*ПРЕДМЕТЫ · ОРУЖИЕ · БРОНЯ* left to right — confirmed by screenshot. §14.5 was
+built on the call order and got every caption and every greyed-flag one out.
+
+The speech ring shows exactly what that cost:
+`ОРУЖИЕ, tab, unavailable, selected, 1 of 3` was announced while slot 0 was the
+Utility tab with three items in it, and Enter switched to a different category
+from the one just spoken. The INDEX leads; the label follows it.
+
+### A bare "selected"
+
+The tab's post-activation line captured its state at build time, so it said a
+contextless *"selected"* when the player pressed the tab they were already on
+and nothing at all when they actually switched. It now re-asks and names the
+category landed in. `SwitchTab` respawns every row, so the cache key has already
+changed by the time it runs and the re-ask is genuinely fresh.
+
+### Still unexercised
+
+The card's staleness guard (arrow then Tab within one poll), the post-mission
+loot screen's Enter-still-closes behaviour, and every `UISimpleCommodityScreen`
+that is not the Research lab.

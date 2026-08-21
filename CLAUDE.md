@@ -589,7 +589,9 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   and that order is load-bearing rather than tidy: `UISaveGame.OnAccept` and
 - **The commodity list** (`FindCommodityScreen`/`ReadCommodity` in `src/game_ui.cpp` + the
   `commodity list` recipe in `menu_navigator.cpp` + companion `X2AccessCommodityReader.uc`,
-  built 2026-08-21, **not yet run live**; recon `docs/avenger-view-recon.md` §14): the widest
+  built AND **VERIFIED LIVE 2026-08-21** — the Research lab read, and Engineering's storage read
+  every item with its card, cost and description; recon `docs/avenger-view-recon.md` §14, and
+  §14.9 is the run): the widest
   single recipe in the project — `UIInventory` and everything derived from it is THIRTEEN
   screens with one layout, a `UIList` of `UIInventory_ListItem`s beside a `UIItemCard`: choose
   research and the archives, choose project, psi ability, view objectives, choose class, the
@@ -632,7 +634,17 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   **Three stops**, in the screen's own order: the category strip (Build Items only — the clearest
   small case of *reachable but unspeakable*, since Left/Right already switch those tabs while
   `CreateTabButton` calls `DisableNavigation()` on every button and `SetCategory` puts the new
-  name only into Flash); the list; and the CARD as its own stop with **one node per LINE**. The
+  name only into Flash); the list; and the CARD as its own stop with **one node per LINE**.
+  ⛔ **`EUIItemType` IS NOT THE ORDER THE CODE READS AS**: it declares `Misc=0, Weapon=1,
+  Armor=2`, while `BuildScreen` CALLS `CreateTabButton` in weapon, armor, misc order and INDEXES
+  `TabButtons` by the enum — so Flash slot 0 is Utility, and the strip draws
+  *ПРЕДМЕТЫ · ОРУЖИЕ · БРОНЯ* (screenshot-verified live). Pairing index 0 with the weapon label
+  shifted every caption AND every greyed-flag by one and made Enter switch to a different
+  category from the one just spoken. The index is what `SwitchTab` and `SetTabHighlight` are
+  expressed in, so the INDEX leads and the label follows it — never the call order.
+  A tab's post-activation line is read LIVE rather than from the render's closure: a captured
+  flag can only describe the state before the press, which spoke a bare *"selected"* when the
+  player pressed the tab they were already on and nothing at all when they actually switched. The
   card is separate because a research list is fifteen entries long and a card is a paragraph —
   folding one into the other would make every arrow press a paragraph — and split by line because
   speech is serial and *what does it cost* should not require sitting through the write-up. Its
@@ -1179,6 +1191,28 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
 ## Build & deploy
 
 - ⛔ The MSVC runtime is pinned **`MultiThreaded` (/MT), cache-`FORCE`d**, before
+- ⛔ **Size the buffer from the data, never the data to the buffer — and a cap
+  that drops the tail must be LOUD.** `UE3Reflect::ReadStringProperty` is the
+  single choke point every companion payload passes through — the tile cursor,
+  the shot HUD, the object scanner, the hacking pad, every graph recipe's wire
+  records, and `X2AccessNarrator`'s 24-line combat drain — and it read all of
+  them into a fixed `wchar_t[2048]`, clipping anything longer and saying
+  nothing. Measured live 2026-08-21: the XCOM archives' 39 entry titles came to
+  **2051 characters** against the 2047 that fit, and those four characters over
+  the line took the LAST record with them, which was the item card. The rows all
+  read perfectly and Tab found no card stop, so the bug presented as *the recipe
+  never built that stop* — a whole session's worth of wrong hypotheses about
+  `bIsVisible`, `SelectedIndex` and script errors, every one of them cleared by
+  `/props` before the buffer was even suspected. Note the failure MODE, which is
+  the reason this is a hard rule: truncating the tail of a screen reads to a
+  blind player as *the screen has nothing more*, which is indistinguishable from
+  the truth and therefore never gets reported as a bug. The length is now read
+  first (`FStringLengthRaw`), the buffer sized to it, and an implausible count
+  refused with a log line rather than silently trimmed. **Any fixed-size read of
+  something whose length the GAME decides is this bug waiting to happen** — the
+  remaining `wchar_t[256]`/`[512]` buffers in `game_ui.cpp` are per-WIDGET
+  fields (a row label, a button caption) and are bounded by what fits on screen;
+  the payload paths are not, and must never go back to a fixed buffer.
   `add_subdirectory(deps/prism)`. Not optional and not cosmetic: Prism sets
   `CMAKE_MSVC_RUNTIME_LIBRARY` itself off `CMAKE_BUILD_TYPE`, which is EMPTY
   under the Visual Studio multi-config generator we configure with, so an
