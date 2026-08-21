@@ -69,6 +69,7 @@ add_library(X2Access SHARED
     src/free_aim.cpp
     src/object_scanner.cpp
     src/tactical_hud.cpp
+    src/unit_info.cpp
     src/avenger.cpp
     src/text_input.cpp
     src/hacking_screen.cpp

@@ -2925,20 +2925,27 @@ TacticalGate ReadTacticalGate()
         if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
             continue;
         if (strcmp(name, "UITacticalHUD") == 0) {
-            gate.hudOnStack = true;
-            gate.menuRaised
-                = (ReadU32Raw(screens[i], kTacHudFlagsOffset) & kTacHudMenuRaised) != 0;
+            // Reached the HUD. If nothing above it claimed the surface, this is also the live
+            // gate; if something did, we came here only to answer "is a mission running".
+            gate.missionActive = true;
+            if (!gate.blocked) {
+                gate.hudOnStack = true;
+                gate.menuRaised
+                    = (ReadU32Raw(screens[i], kTacHudFlagsOffset) & kTacHudMenuRaised) != 0;
+            }
             return gate;
         }
-        if (!IsTacticalPassive(name)) {
+        if (!gate.blocked && !IsTacticalPassive(name)) {
             // Whatever this is owns the surface — the cursor stands down under it whether or
-            // not a HUD sits further below.
+            // not a HUD sits further below. Keep walking rather than returning: whether a
+            // MISSION is running underneath is a different question from whether we may act,
+            // and only the entries below this one can answer it. The extra work is a few class
+            // name reads on a stack that is a handful of entries deep.
             gate.blocked = true;
             strncpy_s(gate.blocker, name, _TRUNCATE);
-            return gate;
         }
     }
-    return gate; // no tactical HUD on the stack: not in tactical
+    return gate; // no tactical HUD anywhere on the stack: not in a mission
 }
 
 AvengerGate ReadAvengerGate()

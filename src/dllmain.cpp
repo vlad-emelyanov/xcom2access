@@ -10,6 +10,7 @@
 #include "avenger.h"
 #include "text_input.h"
 #include "tactical_hud.h"
+#include "unit_info.h"
 #include "hacking_screen.h"
 #include "tutorial_reader.h"
 #include "hooks.h"
@@ -74,24 +75,28 @@ static void InitThread() {
     // 8. Shot HUD narration (claims — same; also publishes the free-aim gate from its poll)
     TacticalHUD::Init();
 
-    // 9. Hacking overlay (claims — same; arrows and Delete, live only while the pad is up)
+    // 9. Selected-unit readout (claims — same; one key, and the gate is TacticalHUD's, so it
+    // must come after it)
+    UnitInfo::Init();
+
+    // 10. Hacking overlay (claims — same; arrows and Delete, live only while the pad is up)
     HackingScreen::Init();
 
-    // 10. Tutorial message reader (claims — same)
+    // 11. Tutorial message reader (claims — same)
     TutorialReader::Init();
 
-    // 11. Avenger ant farm (claims — same; one re-announce key, no arrows: the game's own
+    // 12. Avenger ant farm (claims — same; one re-announce key, no arrows: the game's own
     // navigation graph does the moving once the companion installs it)
     Avenger::Init();
 
-    // 12. Text-entry dialog (naming a save). Registers an OBSERVER, not a claim: the keys must
+    // 13. Text-entry dialog (naming a save). Registers an OBSERVER, not a claim: the keys must
     // reach the Flash text field AND be spoken, because no screen reader can see that field.
     TextInput::Init();
 
-    // 13. Game hooks
+    // 14. Game hooks
     Hooks::Init();
 
-    // 14. Dev harness (dev builds + marker file only; no-op otherwise). Last, so it can report
+    // 15. Dev harness (dev builds + marker file only; no-op otherwise). Last, so it can report
     // on everything above, and so a failure here can never keep the mod itself from loading.
     DevServer::Start(dir);
 

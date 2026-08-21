@@ -26,4 +26,16 @@ void Init();
 /// safe to call many times per frame. Game thread only (it makes outbound ProcessEvent calls).
 void OnTick();
 
+/// Is the tactical HUD usable at all — mission running, nothing modal over it, no recipe
+/// attached — whether or not the shot HUD is currently raised? Wider than the targeting gate the
+/// claims above use, and shared rather than recomputed for the reason TileReader::IsActive() is:
+/// two surfaces that answer this question separately will eventually answer it differently.
+/// Reflects the last OnTick, so call it after this module's tick within a frame.
+bool IsUsable();
+
+/// Is a mission running at all — i.e. is UITacticalHUD on the screen stack? Unlike IsUsable()
+/// this stays true under a pause menu, a dialogue box or an attached recipe, which is what makes
+/// it the right edge for per-mission state: it rises once when the mission starts.
+bool IsMissionActive();
+
 } // namespace TacticalHUD

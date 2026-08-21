@@ -8,6 +8,7 @@
 #include "avenger.h"
 #include "text_input.h"
 #include "tactical_hud.h"
+#include "unit_info.h"
 #include "hacking_screen.h"
 #include "tutorial_reader.h"
 #include "narrator.h"
@@ -89,6 +90,10 @@ static void RegisterEventHandlers() {
             // The shot HUD's targeting poll. After the tile reader, whose gate it mirrors:
             // exactly one of the two is claiming keys at any moment.
             TacticalHUD::OnTick();
+            // The selected unit's change poll — who Tab just moved you to. Immediately after
+            // TacticalHUD, whose two gates it reads: this must see THIS frame's answer, not
+            // last frame's, or the first poll of a mission runs against a stale mission flag.
+            UnitInfo::OnTick();
             // The hacking overlay's announce-once poll. Same family, same gate: while the pad
             // is up the tile cursor's gate reports it as the blocker, so this is the one
             // surface claiming keys.

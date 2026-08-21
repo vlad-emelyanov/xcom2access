@@ -639,10 +639,17 @@ bool TacticalHUDMenuRaised(void* screen);
 /// screen above the HUD blocks, and its class name is reported so the whitelist can grow from
 /// facts.
 struct TacticalGate {
-    bool hudOnStack = false; // UITacticalHUD present, inited, not removed
+    bool hudOnStack = false; // UITacticalHUD present, inited, not removed, and NOTHING over it
     bool menuRaised = false; // shot HUD up — targeting owns the arrows
     bool blocked = false;    // a non-passive screen sits above the HUD
     char blocker[64] = {};   // its class name, for the log
+
+    /// Is a mission running AT ALL — a UITacticalHUD anywhere on the stack, however deep? Unlike
+    /// hudOnStack this stays true under a pause menu, a dialogue box, or a cinematic reveal, so
+    /// it rises once when the mission starts and falls once when it ends. That is what makes it
+    /// the right edge for per-mission state; hudOnStack is the right edge for "may we act now",
+    /// and the two must not be confused — the frequent transitions all belong to the latter.
+    bool missionActive = false;
 
     bool Active() const { return hudOnStack && !menuRaised && !blocked; }
 };
@@ -735,8 +742,12 @@ struct RoomView {
     std::string staffSkill;    // UIStaffContainer::Skill — the ship-wide crew count for the kind
     bool staffVisible = false; // the container's own bIsVisible, which the GAME sets meaningfully
     int staffSlots = 0;        // StaffSlots.Length — zero on every fixed room
+    std::vector<RoomFunc> funcs;   // the room's own bottom-bar buttons; empty on most rooms
     std::vector<RoomAction> actions;
-    int selected = -1;         // List::SelectedIndex
+    int selected = -1;             // List::SelectedIndex
+    void* upgrade = nullptr;       // UIFacility::UpgradeButton, only while the game is showing it
+    std::string upgradeLabel;      // UIButton::Text — retained and already localized
+    bool upgradeDisabled = false;
 };
 
 /// The room screen, when one is the CURRENT screen (topmost non-null stack entry, matching

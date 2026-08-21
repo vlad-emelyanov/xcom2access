@@ -29,15 +29,25 @@ constexpr uint64_t kPollIntervalMs = 150;
 // belongs on the tick, the same discipline as the tile reader and the menu navigator.
 bool gTargeting = false;
 
+// The two gates this module publishes for the rest of the tactical layer (see tactical_hud.h).
+// Both are written by OnTick and read from the window procedure, so they stay plain flag reads.
+bool gUsable = false;
+bool gMissionActive = false;
+
 // Is the tactical HUD usable at all (mission running, no modal over it, no recipe attached)?
 // Wider than gTargeting: the poll runs here so it can see the shot HUD go up and come down,
 // while the keys are claimed only while it is actually up.
-bool ComputeUsable(bool* menuRaised)
+//
+// missionActive comes back separately and is deliberately NOT part of the answer: it stays true
+// under everything that makes this function say no, which is exactly what a per-mission edge
+// needs and exactly what a may-we-act-now gate must not have.
+bool ComputeUsable(bool* menuRaised, bool* missionActive)
 {
     *menuRaised = false;
+    GameUI::TacticalGate gate = GameUI::ReadTacticalGate();
+    *missionActive = gate.missionActive;
     if (MenuNavigator::IsAttached())
         return false;
-    GameUI::TacticalGate gate = GameUI::ReadTacticalGate();
     if (!gate.hudOnStack || gate.blocked)
         return false;
     GameUI::StackState stack = GameUI::ReadStackState();
@@ -133,6 +143,16 @@ void Init()
     LOG_INFO("TacticalHUD: claims registered");
 }
 
+bool IsUsable()
+{
+    return gUsable;
+}
+
+bool IsMissionActive()
+{
+    return gMissionActive;
+}
+
 void OnTick()
 {
     static uint64_t sLastMs = 0;
@@ -142,7 +162,10 @@ void OnTick()
     sLastMs = now;
 
     bool menuRaised = false;
-    bool usable = ComputeUsable(&menuRaised);
+    bool missionActive = false;
+    bool usable = ComputeUsable(&menuRaised, &missionActive);
+    gUsable = usable;
+    gMissionActive = missionActive;
 
     bool targeting = usable && menuRaised;
     if (targeting != gTargeting) {

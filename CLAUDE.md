@@ -197,7 +197,8 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   next/previous NON-EMPTY category (announcing its name), `O` re-announce whatever was last said,
   `/` plant the tile cursor on it. Only three categories get a dedicated key — the ones pressed
   every turn — because the ring is what stops each further category costing a key tactical does not
-  have, and it leaves `;` and `'` free for the vantage read and the inspect verb. Shift-reverses
+  have, and it left `;` and `'` free — `;` has since gone to the selected-unit readout and `'` is
+  still earmarked for the vantage read. Shift-reverses
   landed 2026-08-21 with the Shift swallow that made them safe (see the tactical input section);
   before them the only way back was `PageUp`, which walks the RING's category and therefore could
   not step one enemy back while the ring sat on markers. `Shift+Tab` is claimed by the same module
@@ -390,6 +391,45 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   arc, still pointing back at the shooter. A divergence now has to survive two consecutive polls
   before it is spoken: a stale frame cannot, a real obstruction always does.
 
+- **Selected unit** (`src/unit_info.cpp` + companion `X2AccessUnitReader.uc`, built 2026-08-21,
+  **not yet run live**): who you are controlling, and in what shape. Two surfaces over one
+  subject, divided the way every other pair in the project is — an automatic line when the
+  selection CHANGES, and `;` (semicolon) for the whole block on demand. The switch line is
+  name + health/shield/armour + action points; the key adds the soldier's CLASS, concealment and
+  the named buffs and debuffs. ⛔ **Tab is NOT claimed and must not be** — it stays the player's
+  own binding. The switch is found by POLLING `XComTacticalController` instead, which is not a
+  workaround but the better instrument: selecting a soldier submits no game state and triggers no
+  event (it is a VISUALIZER change), so there is nothing for `X2AccessTacticalEvents` to hear and
+  nothing in the replay's frames for `X2AccessReplayNarration` to walk — and a poll catches every
+  OTHER way the selection moves, which a Tab claim never could: a mouse click on a soldier, the
+  start of your turn, and the game re-selecting for you when the unit you were on goes down.
+  It resolves through `X2AccessTileReader.ActiveUnitState()` rather than a resolver of its own, so
+  the readout and the tile cursor can never name different units. Every value is parity: name and
+  class are `UITacticalHUD_SoldierInfo.SetStats`, health/shield/armour is `UIUnitFlag.RealizeStats`
+  read through `X2AccessTacticalReader.DescribeTargetHealth` (the SAME oracle the shot HUD and the
+  object scanner use, so a soldier of yours and an enemy in the reticle are worded alike), action
+  points are `RealizeMoves`' move pips via `NumAllActionPoints()`, overwatch is the flag's own
+  `ReserveActionPoints.Find('Overwatch')`, and the effect names are the unit's own
+  `GetUISummary_UnitEffectsByCategory` — which is what gets panic, disorientation, burning and
+  stun spoken with no hand-written English word for any of them.
+  ⛔ **ACTION POINTS ARE A FRIENDLY-ONLY READOUT.** `UIUnitFlag.RealizeMoves` draws the pips
+  inside `if( m_bIsFriendly.GetValue() )` — *"Only show moves for friendly units"* is Firaxis' own
+  comment on that branch — so how many actions an ALIEN has left is a fact the game shows nobody.
+  That is why this reader is scoped to the SELECTED unit rather than to whatever the object
+  scanner or the tile cursor is pointing at: the selection is always one of yours, so the parity
+  question never arises. Do not generalize the companion's functions to an arbitrary unit without
+  splitting that clause off first. Two more rules the design earned. The team test comes BEFORE
+  the change check and deliberately does NOT record the id: `ControllingUnitVisualizer` can follow
+  a unit the player does not command, and recording those would make every transient follow look
+  like a change back to your own soldier and re-announce them turn after turn. And the
+  forget-what-was-selected edge is the **MISSION**, not usability — which is what
+  `GameUI::TacticalGate` grew `missionActive` for (a `UITacticalHUD` anywhere on the stack, however
+  deep, where `hudOnStack` means "and nothing over it"). `IsUsable()` drops on every pause menu,
+  every confirmation dialogue and every cinematic pod reveal, so resetting there would re-announce
+  the same soldier each time one closed; but never resetting is wrong too, because object IDs live
+  in the campaign history and a soldier keeps hers across missions, so the first selection of the
+  next mission can match the last of the previous one and go unspoken.
+
 - **Avenger ant farm** (`src/avenger.cpp` + companion `X2AccessAvengerReader.uc`, phase 1 built
   AND VERIFIED LIVE 2026-08-21 — 82 arrow presses walked the hardcoded graph, every room read its
   name, no crash and no script warning; recon in `docs/avenger-view-recon.md`, §11 is what was
@@ -534,6 +574,8 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   second and `AddFacilityButton` runs once, in `InitScreen`.
   Probe insists the facility screen is TOPMOST, which is what keeps this recipe from attaching
   over the choose-research screen or the facility summary that the room's own verbs push.
+  ⚠ Known gap: `UIFacility_Infirmary` spawns its own `PatientList` (`UIList`), the only facility
+  subclass that adds navigable content of its own; it is unread.
 - **The debris room** (`FindRoomBuildScreen`/`ReadRoomBuild` + the `avenger debris room` recipe +
   companion `X2AccessRoomReader.uc`, built AND **VERIFIED LIVE 2026-08-21** — an engineer was
   assigned and a room set clearing, end to end, by keyboard alone; recon §13): `UIRoom`, not
@@ -573,46 +615,6 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   room to excavate. That is the game's own delegation, read off its own source — not an exception
   we invented.
 
-- ⛔ **Never join two spoken phrases with a bare `", "`** — the GAME ends plenty of its own
-  strings with `.`, `!`, `?` or `:`, and blind joining voiced *"5 дн.."*,
-  *"ТРЕБУЕТСЯ ИНЖЕНЕР!."* and *"Перезаписать эту сохраненную игру?,"* at the player — **14 of
-  them in one measured Avenger session**, across the room, the save screen and a dialog. The rule
-  lives in the kernel as `X2Access::Graph::AppendPhrase` (a self-punctuated part takes a plain
-  space, everything else takes the comma) and both of `GraphAnnouncer`'s join sites route through
-  it, so every recipe inherits the fix; recipes that pre-join their own labels must use it too,
-  rather than re-deriving the rule and drifting. Four kernel tests pin it.
-
-- **Save / load** (`src/game_ui.cpp` + the save/load recipe in
-  `menu_navigator.cpp` + companion `X2AccessSaveReader.uc`, built AND VERIFIED
-  LIVE 2026-08-21 — the load screen read its whole list on the first run and
-  Backspace deletions rebuilt and re-announced it each time; recon in
-  `docs/save-load-recon.md`): `UILoadGame` and
-  `UISaveGame` are one screen twice over — the same three fields at the same
-  offsets (`m_iCurrentSelection` 0x410, `m_arrListItems` 0x424) and the same row
-  widget — and they are the SHELL's first case of the tactical HUD's problem:
-  `UISaveLoadGameListItem.UpdateData` resolves the date, name and mission into
-  LOCALS, pushes them into Flash and retains only the `OnlineSaveGame` struct it
-  built them from. So native reads structure and the companion re-derives the
-  words from that struct, mirroring `UpdateData` line for line — with no
-  `XCOMHISTORY` and no `GetSaveGames` re-query, because the screen already asked.
-  The 12-hour clock conversion is a NATIVE function
-  (`FormatTimeStampFor12HourClock`), which is the whole reason the formatting is
-  not done in C++: reproducing it would say *14:22* to a player whose screen says
-  *2:22 PM*. Unlike the ant farm, nothing here is un-ungated —
-  `OnUnrealCommand` already walks the list with the arrows on mouse+keyboard and
-  `RawInputListener` already deletes on Delete/Backspace — so this is a reader,
-  not a rescue, and it is deliberately the thinnest recipe in the file.
-  **ONE NODE PER ROW**: the row shows two buttons, but a second column would
-  replace the one number a blind player cannot get any other way — *save 4 of
-  12* — with *1 of 2*, because `GraphBuilder` stamps positions WITHIN a row
-  holding more than one item. ⛔ The layer must NOT claim `Delete` here: every
-  other Delete claim in the project (tile cursor, shot HUD, hacking pad, ant
-  farm) stands down while this screen is up, so the key is free and it is the
-  screen's own delete verb — named once on attach in the row's own localized
-  word, since the game's nav help offers nothing but Back on mouse+keyboard.
-  Activation goes through the row's own `AcceptButton.Click()`, which dispatches
-  new-save-rename versus overwrite for free, **after** setting the selection —
-  and that order is load-bearing rather than tidy: `UISaveGame.OnAccept` and
 - **The commodity list** (`FindCommodityScreen`/`ReadCommodity` in `src/game_ui.cpp` + the
   `commodity list` recipe in `menu_navigator.cpp` + companion `X2AccessCommodityReader.uc`,
   built AND **VERIFIED LIVE 2026-08-21** — the Research lab read, and Engineering's storage read
@@ -678,8 +680,6 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   instant our write-back moves the selection (`List.OnSelectionChanged`), while the graph is up to
   one poll old, so a Tab hard on the heels of an arrow would otherwise describe the row just left.
 
-  `OnDelete` ignore the control they are handed and act on
-  `m_iCurrentSelection`, so a click sent while the two disagreed would overwrite
 - **The personnel roster** (`FindPersonnelScreen`/`ReadPersonnel` in `src/game_ui.cpp` + the
   `personnel roster` recipe in `menu_navigator.cpp` + companion `X2AccessPersonnelReader.uc`,
   built 2026-08-21, **not yet run live**): one recipe for every door the game opens when it asks
@@ -774,6 +774,8 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   Activation goes through the row's own `AcceptButton.Click()`, which dispatches
   new-save-rename versus overwrite for free, **after** setting the selection —
   and that order is load-bearing rather than tidy: `UISaveGame.OnAccept` and
+  `OnDelete` ignore the control they are handed and act on
+  `m_iCurrentSelection`, so a click sent while the two disagreed would overwrite
   or delete the WRONG SAVE. Words are cached on the ROW POINTER VECTOR (the
   navigator re-renders ten times a second and the save screen's new-save row
   re-runs `FillInHeaderForSave`, which walks the history): a save list changes
@@ -1271,6 +1273,28 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   `DescribeTargetCover` said "in half cover" in that very run while the tile
   cursor said "High cover"; the two disagreeing was the whole diagnosis, and it
   is the reason `X2AccessHelper` exists as a shared oracle.
+- ⛔ **Size the buffer from the data, never the data to the buffer — and a cap
+  that drops the tail must be LOUD.** `UE3Reflect::ReadStringProperty` is the
+  single choke point every companion payload passes through — the tile cursor,
+  the shot HUD, the object scanner, the hacking pad, every graph recipe's wire
+  records, and `X2AccessNarrator`'s 24-line combat drain — and it read all of
+  them into a fixed `wchar_t[2048]`, clipping anything longer and saying
+  nothing. Measured live 2026-08-21: the XCOM archives' 39 entry titles came to
+  **2051 characters** against the 2047 that fit, and those four characters over
+  the line took the LAST record with them, which was the item card. The rows all
+  read perfectly and Tab found no card stop, so the bug presented as *the recipe
+  never built that stop* — a whole session's worth of wrong hypotheses about
+  `bIsVisible`, `SelectedIndex` and script errors, every one of them cleared by
+  `/props` before the buffer was even suspected. Note the failure MODE, which is
+  the reason this is a hard rule: truncating the tail of a screen reads to a
+  blind player as *the screen has nothing more*, which is indistinguishable from
+  the truth and therefore never gets reported as a bug. The length is now read
+  first (`FStringLengthRaw`), the buffer sized to it, and an implausible count
+  refused with a log line rather than silently trimmed. **Any fixed-size read of
+  something whose length the GAME decides is this bug waiting to happen** — the
+  remaining `wchar_t[256]`/`[512]` buffers in `game_ui.cpp` are per-WIDGET
+  fields (a row label, a button caption) and are bounded by what fits on screen;
+  the payload paths are not, and must never go back to a fixed buffer.
 - **When a control seems not to respond, prove which HALF is broken before
   fixing either.** The above cost a full debugging cycle spent on the write
   path — reading the game's source for `OnSecondWaveOptionClicked`, ruling out
@@ -1311,28 +1335,6 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
 ## Build & deploy
 
 - ⛔ The MSVC runtime is pinned **`MultiThreaded` (/MT), cache-`FORCE`d**, before
-- ⛔ **Size the buffer from the data, never the data to the buffer — and a cap
-  that drops the tail must be LOUD.** `UE3Reflect::ReadStringProperty` is the
-  single choke point every companion payload passes through — the tile cursor,
-  the shot HUD, the object scanner, the hacking pad, every graph recipe's wire
-  records, and `X2AccessNarrator`'s 24-line combat drain — and it read all of
-  them into a fixed `wchar_t[2048]`, clipping anything longer and saying
-  nothing. Measured live 2026-08-21: the XCOM archives' 39 entry titles came to
-  **2051 characters** against the 2047 that fit, and those four characters over
-  the line took the LAST record with them, which was the item card. The rows all
-  read perfectly and Tab found no card stop, so the bug presented as *the recipe
-  never built that stop* — a whole session's worth of wrong hypotheses about
-  `bIsVisible`, `SelectedIndex` and script errors, every one of them cleared by
-  `/props` before the buffer was even suspected. Note the failure MODE, which is
-  the reason this is a hard rule: truncating the tail of a screen reads to a
-  blind player as *the screen has nothing more*, which is indistinguishable from
-  the truth and therefore never gets reported as a bug. The length is now read
-  first (`FStringLengthRaw`), the buffer sized to it, and an implausible count
-  refused with a log line rather than silently trimmed. **Any fixed-size read of
-  something whose length the GAME decides is this bug waiting to happen** — the
-  remaining `wchar_t[256]`/`[512]` buffers in `game_ui.cpp` are per-WIDGET
-  fields (a row label, a button caption) and are bounded by what fits on screen;
-  the payload paths are not, and must never go back to a fixed buffer.
   `add_subdirectory(deps/prism)`. Not optional and not cosmetic: Prism sets
   `CMAKE_MSVC_RUNTIME_LIBRARY` itself off `CMAKE_BUILD_TYPE`, which is EMPTY
   under the Visual Studio multi-config generator we configure with, so an
@@ -1828,6 +1830,24 @@ supply of bare letters; anything further needs a modifier — and the vanilla
 action it displaces stays reachable at Ctrl+letter for free, no config required
 (see the leniency paragraph above).
 
+**Punctuation is where the budget actually is**, and it costs even less than a
+bare letter: `;` and `'` carry NO `Bindings=` entry in any input section, so they
+displace nothing at all and need no leniency argument (the only two lines in
+`DefaultInput.ini` mentioning `Semicolon` are `WidgetInputAliases` character
+lists for the editor's edit boxes, which bind no command). `;` is now the
+selected-unit readout (see **Selected unit** above); `'` remains free and is
+earmarked for the vantage read.
+
+**⛔ Tab stays the game's, in both of its meanings.** `eTBC_NextUnit` in world
+mode and `NextTarget` while the shot HUD is raised are the player's own bindings
+and the layer does not take them: switching soldiers is narrated by POLLING the
+controller instead, which leaves the binding untouched AND catches the mouse
+click, the turn start and the death-driven re-select that a key claim never
+could. The one exception is `Shift+Tab`, which the object scanner claims and
+re-provides only because the Shift SWALLOW costs `Key_Tab`'s prev-soldier branch
+the `PressedKeys` entry it reads — a debt the swallow created, not a verb the
+layer wanted.
+
 **Targeting mode is covered** (`src/tactical_hud.cpp` + companion
 `X2AccessTacticalReader.uc`, built AND VERIFIED LIVE 2026-08-20 — a live shot read
 `Выстрел, 1 of 5. Офицер "Адвента", hit 49 percent, damage 3 to 5, in half cover, 6 of 6 health`,
@@ -2062,6 +2082,20 @@ Remaining:
     status panels via the companion, then the resource strip, the to-do widget
     and the event queue — §2 of the recon, and note §2.5 was CORRECTED: the event
     queue IS retained (`UIEventQueue_ListItem.Title` / `DaysValue`, read live).
+11. The selected-unit readout is BUILT (2026-08-21, see **Selected unit** above)
+    and **not yet run live**. What the first Gatecrasher run has to establish, in
+    order: that the switch line fires on plain Tab and does NOT fire twice or
+    stutter during the enemy turn (the `ControllingUnitVisualizer` follow is the
+    thing to watch, and `just dev-speech` marks the interrupting lines); that the
+    `;` block reads a soldier's CLASS and its buff/debuff names localized rather
+    than blank; that `NumAllActionPoints()` tracks the pips as the soldier
+    spends, moves and goes on overwatch; and that the per-mission reset really
+    does fire once — shape-count the speech ring afterwards
+    (`grep -oP 'TTS!?: "\K[^"]*' X2Access.log | sed 's/[0-9]\+/N/g' | sort |
+    uniq -c | sort -rn`), where a healthy run shows one switch line per Tab and a
+    "No actions left" clause that actually appears. Two clauses have never been
+    exercised at all: the mind-controlled-ADVENT case, which is the only way a
+    non-soldier reaches the readout, and "No unit selected".
 
 When researching for this project, focus on engine/native/UE3 technicals.
 Do not survey the accessibility-mod landscape — the author knows it better
