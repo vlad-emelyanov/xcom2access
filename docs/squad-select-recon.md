@@ -185,12 +185,53 @@ icon — cosmetic for us.)
 
 ## 7. The shape it took — a graph recipe, not a bespoke reader
 
-**Status 2026-08-21: BUILT, not yet run live.** `game_ui.cpp`'s `ReadSquadSelect` (structure and
-selection, every offset pinned in `sdk_layout_checks.cpp`), `X2AccessSquadReader.uc` (the words),
-and the `squad select` recipe in `menu_navigator.cpp`. The C++ half compiles and the kernel tests
-pass; the UnrealScript half is **uncompiled** — `build_uscript` hangs forever against a running
-game, and the session that built this was mid-mission (see the Build & deploy rule in CLAUDE.md).
-First live run needs `just kill && just go-full`, then a mission launch from the Avenger.
+**Status 2026-08-21: BUILT AND RUN LIVE** (`Операция "Божественный обвал"`, four rookies).
+`game_ui.cpp`'s `ReadSquadSelect` (structure and selection, every offset pinned in
+`sdk_layout_checks.cpp`), `X2AccessSquadReader.uc` (the words), and the `squad select` recipe in
+`menu_navigator.cpp`. The first run attached on both entries, read the mission header and every
+card, and launched the mission — and found five defects, all fixed the same day. They are worth
+recording because four of the five are the SAME defect wearing different clothes: **a field looked
+up in the wrong place answers "" and an empty answer is indistinguishable from "the game is not
+showing this"**, which is the exact ambiguity the drop-empties wire format was built on.
+
+1. ⛔ **The four screen-wide labels live on the MISSION record and were read off the CARD.**
+   `edit`, `dismiss`, `promotelabel` and `selectunit` are class defaults — identical for every
+   card, so the companion sends them once. `SquadControlLabel` asked the card for them, got "",
+   and the build skips an unlabelled node. **So the Edit, Dismiss and Promote nodes did not exist
+   at all**, and an empty slot announced nothing but "button": a whole live run offered a weapon
+   and its utility slots and nothing else, and read as a screen with three controls per soldier.
+   The empty label was silent in both directions — nothing logged, nothing spoken.
+2. ⛔ **`util` was dropped when empty, so the utility slots shifted.** `AddField` drops empty
+   values by design; `util` is the one field that REPEATS, and native indexes it by list position
+   (`SquadControl::utilityIndex`). A locked slot in front of an occupied one therefore made the
+   occupied one answer for the pocket in front of it and pushed the last slot off the end into the
+   `Utility slot` fallback. It happened not to bite on this squad — a rookie's second slot is
+   locked and comes LAST — which is exactly why it needed finding by reading rather than by
+   listening. `AddPositionalField` now emits the blank.
+3. A nickname that `CleanText` reduced to nothing still left its separator behind, because the
+   companion pre-joined rank/name/nick/class into one `who` field: every rookie read
+   *"Новобранец, Sokolova,,"*. The four are separate fields now and native joins them AFTER
+   cleaning each.
+4. The header labels were English constants against localized values —
+   *"objective, Уничтожить передатчик"*. They come from `UISquadSelectMissionInfo`'s own
+   `m_strObjectives` / `m_strDifficulty` / `m_strRewards` now, the same rule
+   `X2AccessHelper.GetInputVocabulary` exists to enforce on the tutorial side.
+5. Every rookie's card header ended in *"ВЗАИМОСВЯЗЬ СОЛДАТ"* — `UISoldierBondScreen.BondTitle`,
+   spoken for the state in which `UpdateData` leaves the bond icon at `SetBondLevel(0)` with
+   `AnimateCohesion(false)`, i.e. unlit and passed over by a sighted eye. That state gets no words
+   now; the icon's own node still carries the title as its label, which is the parity a mouse
+   player has.
+
+**⚠️ Not a defect, and the run's most useful negative result.** The session reported a frag grenade
+still being named after a medikit had been equipped for it. The reader's chain is live at every
+keypress — `KeyGraph::Move` re-renders, `BuildSquadSelect` re-calls `DescribeSquad`, and the
+companion resolves the item through `XCOMHISTORY` exactly as `UpdateData` does — so a stale answer
+has nowhere to come from. What the log shows in that 15-second window instead is
+`UISquadSelect` losing focus with **five Escapes and two Enters passed straight to the game**:
+`UIArmory_Loadout` has no recipe and no listener, so the swap was attempted with **zero feedback of
+any kind**. The likeliest reading is that it never landed. That makes the loadout screen the
+highest-value next recipe in this flow — ahead of `UIPersonnel_SquadSelect` — because it is the one
+screen this one hands the player to. ✅ **BUILT the same day: see `docs/loadout-recon.md`.**
 
 
 The tempting read of §4 is "vanilla navigation works, so this only needs narration". That is wrong,
@@ -201,13 +242,25 @@ a mission-header key; in a graph they are simply four more nodes in a third regi
 and arriving with position announcements and stop memory for free. So: **a `menu_navigator.cpp`
 recipe**, like the shell screens, with the companion supplying the words the way tactical does.
 
+**Arrows follow the screen's own geometry** (changed 2026-08-21 after the live run): the cards sit
+SIDE BY SIDE and each stacks its controls vertically, so **Up/Down walks one soldier's card and
+Left/Right steps to the soldier beside them at the same height**. The first build let
+`GraphBuilder`'s automatic single-item chain wire it, which runs Down out of the bottom of one card
+and into the top of the next — one long list, and the column the screen actually draws is lost. The
+squad stop now wires all four directions EXPLICITLY with `Connect` (raw edges are applied after the
+menu pass, so they win), and a direction with nowhere to go points **at itself**: `KeyGraph::Move`
+returns not-moved on `dest == node`, which is how a card's top and bottom stop without wrapping.
+Cards are ragged — a Reaper has one utility slot where a Grenadier has three, and only some
+soldiers can be promoted — so Left/Right clamps to the neighbour's last control rather than falling
+off its end.
+
 **Structure** (`GraphBuilder`: parent chains for context, `StopKey` for Tab, `RegionKey` for
 Ctrl+arrows):
 
 | Stop / region | Nodes |
 |---|---|
-| `mission` | operation name, objective, difficulty, rewards, sit-rep — non-activatable |
-| `squad` | one non-focusable parent per card carrying *rank, name, nickname, class, HP, will, status* (the announcer reads it on entering the card and stays quiet while moving inside it), children in vanilla's own vertical order: promote, edit, dismiss, primary weapon, heavy weapon, the utility row (horizontal siblings), bond |
+| `mission` | operation name, squad size, objective, difficulty, rewards, sit-rep and its effect text — non-activatable, each with the game's own label |
+| `squad` | one non-focusable parent per card carrying *rank, name, nickname, class, HP, will, mental state, psi gift, faction, bond state* (the announcer reads it on entering the card and stays quiet while moving inside it), children in vanilla's own vertical order: promote, edit, dismiss, primary weapon, heavy weapon, the utility slots, the bond icon, and — only for a soldier the game marks tired — the flyover warning as a read-only tail |
 | `actions` | launch, strip items, strip weapons, strip gear, build items, boost soldier |
 
 **The recipe owns the arrows and writes focus back.** Attaching claims the arrows, so vanilla's
@@ -243,11 +296,47 @@ every mission, and unlike the Avenger it does not need a mid-campaign save to st
 
 ---
 
+## 7a. Parity audit — everything the screen draws, and where we get it
+
+Read off `UISquadSelect_ListItem.UpdateData` and `UISquadSelectMissionInfo` line by line, so the
+list is the screen's own inventory rather than a sketch of one. ✅ covered, ⚪ deliberately not.
+
+| On screen | How it is drawn | Ours |
+|---|---|---|
+| rank, name, nickname, class | `AS_SetFilled` lines 1-3 + `ClassStr` | ✅ card header, four fields joined after cleaning |
+| class icon, rank icon | images | ⚪ the words beside them say the same thing |
+| health bar | `AS_SetUnitHealth` | ✅ `N of M health` |
+| will bar | `AS_SetUnitWill` | ✅ percent |
+| mental-state warning | `AS_SetUnitStatus`, only below ready will | ✅ label in the header |
+| tired flyover | `CreateFlyoverTooltip`, only at `eMentalState_Tired` | ✅ tail node inside the card |
+| psi-gift markup | `PsiMarkup.SetVisible(HasPsiGift())` — icon only | ✅ the Psi Operative class name, the game's own word for what the icon means |
+| faction crest | `AS_SetFactionIcon` — icon only | ✅ `GetFactionTitle()` |
+| promote chevron | `AS_SetFilled`'s `PromoteLabel`, only when `ShowPromoteIcon()` | ✅ node |
+| edit / dismiss | `AS_SetFilled`, greyed via `disableEdit`/`disableDismiss` | ✅ nodes, announced when greyed |
+| primary weapon + label | `AS_SetFilled` | ✅ node |
+| heavy weapon + desc | `AS_SetFilled`, hidden by `AS_HasHeavyWeapon(false)` | ✅ node, emitted only when the widget is |
+| heavy weapon ability icon | `UIIcon` in `AbilityIcons` | ⚪ the weapon's name carries it |
+| utility slots | the icon strip, padlock per locked slot | ✅ one node each, item name or the lock's own reason |
+| bond icon | level, bondmate-on-squad, cohesion animation, tooltip | ✅ node labelled from its tooltip, state in the header |
+| operation name, objective, difficulty, rewards | `UISquadSelectMissionInfo.UpdateData` | ✅ mission stop, labels included |
+| sit-rep name | `UpdateSitRepPanel` | ✅ |
+| sit-rep effect | the sit-rep panel's TOOLTIP | ✅ rebuilt the way `UpdateSitRep` builds it |
+| filled slots at a glance | six cards side by side | ✅ `SOLDIERS, 4 of 6` — an aid, not a widget: serially the empty slots are several presses apart |
+| launch button | `UILargeButton`, `bIsNavigable` false | ✅ node + its refusal tooltip |
+| strip / build / boost verbs | nav-help, mouse-dispatched only | ✅ nodes |
+
+⚪ **Armour is deliberately absent** and that is parity, not a gap: the card never draws it. It
+lives one screen deeper, in `UIArmory_Loadout` — which nothing narrates yet.
+
+---
+
 ## 8. Open questions for a second pass
 
-1. Everything gated off in this save: promote chevron, bond icon, faction icon, heavy weapon,
-   mental-state warning, `СОЗДАТЬ ПРЕДМЕТЫ`, `ОЗДОРОВИТЬ СОЛДАТА`, the rewards line and the sit-rep
-   strip. Each needs one live look at a mid-campaign squad select.
+1. Still unexercised, because this save has none of them: promote chevron, bond icon, faction
+   icon, heavy weapon, mental-state warning and its flyover, `СОЗДАТЬ ПРЕДМЕТЫ`,
+   `ОЗДОРОВИТЬ СОЛДАТА`. Each needs one live look at a mid-campaign squad select — and the
+   utility-slot fix above matters most for a Grenadier, whose grenade pocket is the case where
+   the old positional bug actually bit.
 2. Empty slots — what the card reads as, whether `HandleEmptyListItemFocus` changes the focus
    model, and whether `Enter` on one really lands in `UIPersonnel_SquadSelect`.
 3. Multi-squad missions (`SquadCount > 1`, the `СЛЕДУЮЩИЙ ОТРЯД` button) — untested, and the launch
@@ -257,12 +346,10 @@ every mission, and unlike the Avenger it does not need a mid-campaign save to st
 5. Harness gap noticed while measuring: `/props` prints the elements of object arrays but not of
    scalar ones, so `SlotListOrder` reads as `6 x IntProperty` with no values — the one number in
    this screen's model that had to come from `SrcOrig` rather than from the running process.
-6. **`/call` refuses a function whose only "parameter" is its return value**, which is how it
-   turned down `UIButton.Click()` — the exact ungate this endpoint exists for. The guard should
-   test the parameters that are not `CPF_ReturnParm`: ProcessEvent writes the return straight into
-   our block (`Parms + ReturnValueOffset`), so a zero-argument call is safe whether or not it
-   answers. `ReadFunctionParmsRaw` already records `isReturn`; only the `parmCount > 0` test in
-   `GuiDump::Call` needs to change, plus a parameter block sized to hold the return.
+6. ✅ **FIXED 2026-08-21.** `/call` refused a function whose only "parameter" was its return
+   value, which is how it turned down `UIButton.Click()` — the exact ungate the endpoint exists
+   for. The guard now counts only the parameters that are not `CPF_ReturnParm`, the block is
+   sized to hold the return, and the answer is printed through the same formatter `/props` uses.
    Pressing `НАЧАТЬ ЗАДАНИЕ` for the 2026-08-21 session therefore went through Frida instead —
    one `Interceptor.attach` on `ProcessEvent`, calling `Click()` on the game thread from inside the
    first hit and standing down (`ret 1`, screen popped, `UIDropShipBriefing_MissionStart` up). That

@@ -23,6 +23,8 @@
 //
 // SIGHTED PARITY, per field:
 //   rank / name / nickname / class -> AS_SetFilled, the card's own top and bottom lines
+//   psi gift marker / faction crest-> PsiMarkup.SetVisible / AS_SetFactionIcon, icon-only on the
+//                                     card, so nothing but a word of ours can carry them
 //   health bar, will bar           -> AS_SetUnitHealth / AS_SetUnitWill
 //   mental state warning           -> AS_SetUnitStatus, drawn only while BelowReadyWillState
 //   primary + heavy weapon         -> AS_SetFilled's weapon name/label pairs
@@ -106,8 +108,23 @@ private function string DescribeMission(UISquadSelect Screen)
 		AddField(Rec, "difficulty", MissionState.GetMissionDifficultyLabel());
 		AddField(Rec, "rewards", MissionState.GetRewardAmountString());
 	}
+	// The LABELS the panel prints beside each value. Ours were English constants in native, which
+	// put "objective, Уничтожить передатчик" three words from the game's own word for it — the same
+	// defect X2AccessHelper.GetInputVocabulary exists to prevent on the tutorial side.
+	AddField(Rec, "objlabel", class'UISquadSelectMissionInfo'.default.m_strObjectives);
+	AddField(Rec, "difflabel", class'UISquadSelectMissionInfo'.default.m_strDifficulty);
+	AddField(Rec, "rewlabel", class'UISquadSelectMissionInfo'.default.m_strRewards);
 	if (Screen.m_kMissionInfo != none)
+	{
 		AddField(Rec, "sitrep", Screen.m_kMissionInfo.SitRepText);
+		// What a sighted player gets by hovering the sit-rep panel, rebuilt the way UpdateSitRep
+		// builds it. Without it a sit-rep names an effect and never says what the effect does.
+		AddField(Rec, "sitrepdesc", DescribeSitReps(Screen));
+	}
+	// The game has no localized noun for "the squad" on this screen, so the count borrows the
+	// personnel list's own tab caption — the word the game already uses for a roster of soldiers.
+	AddField(Rec, "squadlabel", class'UIPersonnel'.default.m_strSoldierTab);
+	AddField(Rec, "squadsize", DescribeSquadSize(Screen));
 
 	// The two card verbs are localized on the card class, so they ride along here rather than
 	// costing native two more transcribed offsets.
@@ -146,7 +163,17 @@ private function string DescribeCard(UISquadSelect Screen, UISquadSelect_ListIte
 		return Rec;
 	}
 
-	AddField(Rec, "who", DescribeSoldier(Unit));
+	// Rank / name / nickname / class as SEPARATE fields, joined by native after CleanText has run
+	// over each. Pre-joining them here meant a nickname that cleaned away to nothing left its
+	// separator behind — live 2026-08-21 every rookie read "Новобранец, Sokolova,,".
+	AddField(Rec, "rank", class'X2ExperienceConfig'.static.GetRankName(Unit.GetRank(),
+		Unit.GetSoldierClassTemplateName()));
+	AddField(Rec, "name", DescribeName(Unit));
+	AddField(Rec, "nick", Unit.GetName(eNameType_Nick));
+	// Rookies are told their rank and nothing else — see the header note.
+	if (Unit.GetRank() > 0 && Unit.GetSoldierClassTemplate() != none)
+		AddField(Rec, "class", Unit.GetSoldierClassTemplate().DisplayName);
+
 	AddField(Rec, "hp", DescribeHealth(Unit));
 	AddField(Rec, "will", DescribeWill(Unit));
 	AddField(Rec, "weapon", DescribeWeapon(Unit, eInvSlot_PrimaryWeapon));
@@ -169,34 +196,98 @@ private function string DescribeCard(UISquadSelect Screen, UISquadSelect_ListIte
 	if (Unit.ShowPromoteIcon())
 		AddField(Rec, "promote", "1");
 	if (Unit.GetSoldierClassTemplate() != none && Unit.GetSoldierClassTemplate().bCanHaveBonds)
+	{
+		// Two fields, because the ICON and its WORDS answer different questions: the icon exists
+		// (and is clickable, and carries the bondmate tooltip) whenever the class can bond, while
+		// the words exist only for the states the icon actually lights up for.
+		AddField(Rec, "canbond", "1");
 		AddField(Rec, "bond", DescribeBond(Screen, Unit));
+	}
+
+	// Two markers the card draws as ICONS and nothing else, so nothing above would ever have named
+	// them. PsiMarkup.SetVisible(HasPsiGift()) is the psi one; the faction crest is drawn whenever
+	// the soldier belongs to a faction, which on a Reaper also explains the missing utility slot.
+	if (Unit.HasPsiGift())
+		AddField(Rec, "psi", PsiWord());
+	if (Unit.GetResistanceFaction() != none)
+		AddField(Rec, "faction", Unit.GetResistanceFaction().GetFactionTitle());
 
 	AppendUtilitySlots(Card, Unit, Rec);
 	return Rec;
 }
 
-// Rank, last name, nickname and class — the card's own four lines, in the order they are drawn
-// top to bottom. The name falls back to the first name exactly as UpdateData does.
-private function string DescribeSoldier(XComGameState_Unit Unit)
+// The name line, falling back to the first name exactly as UpdateData does.
+private function string DescribeName(XComGameState_Unit Unit)
 {
-	local string Result, NameStr, Nick;
-
-	Result = class'X2ExperienceConfig'.static.GetRankName(Unit.GetRank(),
-		Unit.GetSoldierClassTemplateName());
+	local string NameStr;
 
 	NameStr = Unit.GetName(eNameType_Last);
 	if (NameStr == "")
 		NameStr = Unit.GetName(eNameType_First);
-	AppendComma(Result, NameStr);
+	return NameStr;
+}
 
-	Nick = Unit.GetName(eNameType_Nick);
-	if (Nick != "")
-		AppendComma(Result, Nick);
+// The word for the psi-gift markup. That icon has no caption anywhere, so the honest label is the
+// game's own name for what it means — the Psi Operative class — rather than a coinage of ours.
+private function string PsiWord()
+{
+	local X2SoldierClassTemplate Psi;
 
-	// Rookies are told their rank and nothing else — see the header note.
-	if (Unit.GetRank() > 0 && Unit.GetSoldierClassTemplate() != none)
-		AppendComma(Result, Unit.GetSoldierClassTemplate().DisplayName);
+	Psi = class'X2SoldierClassTemplateManager'.static.GetSoldierClassTemplateManager()
+		.FindSoldierClassTemplate('PsiOperative');
+	return Psi != none ? Psi.DisplayName : "";
+}
 
+// "4 of 6" — how many of the mission's slots hold a soldier. A sighted player counts the filled
+// cards at a glance; serially, the empty ones are several arrow presses apart.
+private function string DescribeSquadSize(UISquadSelect Screen)
+{
+	local int i, Filled, Total;
+
+	if (Screen.XComHQ == none)
+		return "";
+
+	Total = Screen.GetTotalSlots();
+	if (Total <= 0)
+		return "";
+
+	for (i = 0; i < Screen.XComHQ.Squad.Length && i < Total; ++i)
+	{
+		if (Screen.XComHQ.Squad[i].ObjectID > 0)
+			Filled++;
+	}
+	return string(Filled) @ "of" @ string(Total);
+}
+
+// The sit-rep tooltip, rebuilt the way UISquadSelect.UpdateSitRep builds it: one "name: effect"
+// line per template the mission actually shows.
+private function string DescribeSitReps(UISquadSelect Screen)
+{
+	local GeneratedMissionData MissionData;
+	local XComGameState_MissionSite MissionState;
+	local X2SitRepTemplateManager SitRepManager;
+	local X2SitRepTemplate SitRepTemplate;
+	local name SitRepName;
+	local string Result;
+
+	if (Screen.XComHQ == none)
+		return "";
+
+	MissionState = Screen.GetMissionState();
+	if (MissionState == none || MissionState.GetMissionSource().bBlockSitrepDisplay)
+		return "";
+
+	MissionData = Screen.XComHQ.GetGeneratedMissionData(Screen.XComHQ.MissionRef.ObjectID);
+	SitRepManager = class'X2SitRepTemplateManager'.static.GetSitRepTemplateManager();
+	foreach MissionData.SitReps(SitRepName)
+	{
+		SitRepTemplate = SitRepManager.FindSitRepTemplate(SitRepName);
+		if (SitRepTemplate == none || SitRepTemplate.bExcludeFromStrategy)
+			continue;
+		if (Result != "")
+			Result $= ". ";
+		Result $= SitRepTemplate.GetFriendlyName() $ ":" @ SitRepTemplate.Description;
+	}
 	return Result;
 }
 
@@ -282,7 +373,12 @@ private function string DescribeBond(UISquadSelect Screen, XComGameState_Unit Un
 	if (Unit.HasSoldierBondAvailable(BondmateRef, BondData))
 		return class'XComHQPresentationLayer'.default.m_strBannerBondAvailable;
 
-	return class'UISoldierBondScreen'.default.BondTitle;
+	// ⛔ The third state gets NO words. UpdateData leaves the icon at SetBondLevel(0) with
+	// AnimateCohesion(false) — an unlit slot a sighted eye passes straight over — and saying
+	// "SOLDIER BOND" about it shouted a label on every rookie in the squad (live 2026-08-21: four
+	// cards, four times). The icon's own node still carries it as a tooltip, which is exactly the
+	// parity a mouse player has; the card header stays quiet.
+	return "";
 }
 
 // ---------------------------------------------------------------------------------------
@@ -290,7 +386,7 @@ private function string DescribeBond(UISquadSelect Screen, XComGameState_Unit Un
 // ---------------------------------------------------------------------------------------
 
 // One `util=` field per slot, in the card's own list order — the order native walks and the
-// order the game's Left/Right walks. The panel is asked what KIND of slot it is and which index
+// order the game's Left/Right walks, EMITTED EVEN WHEN EMPTY so the two sides stay aligned. The panel is asked what KIND of slot it is and which index
 // within that kind, because that pair is what UpdateData filled it from; asking the unit how
 // many pockets it has would disagree with the Highlander's CHUIItemSlotEnumerator rebuild.
 private function AppendUtilitySlots(UISquadSelect_ListItem Card, XComGameState_Unit Unit,
@@ -324,7 +420,7 @@ private function AppendUtilitySlots(UISquadSelect_ListItem Card, XComGameState_U
 			// disabled — so the word here is only ever "what would go in it".
 			Text = SlotKindLabel(Slot);
 		}
-		AddField(Rec, "util", Text);
+		AddPositionalField(Rec, "util", Text);
 	}
 }
 
@@ -374,6 +470,16 @@ private function AddField(out string Rec, string Key, string Value)
 		return;
 	// Markup is left in: native runs every value through GameUI::CleanText on the way out, so
 	// there is exactly one implementation of "strip the HTML the game colours its text with".
+	Rec $= FLD_SEP $ Key $ "=" $ Value;
+}
+
+// The exception to the drop-empties rule, for the one field that repeats: `util` is POSITIONAL
+// — the nth one describes the nth widget in the card's utility row, which is exactly what
+// native's SquadControl::utilityIndex counts. Dropping an empty one shifts every later slot up by
+// one, so an empty pocket in front of a grenade made the grenade answer for the pocket. Emit the
+// blank and let native decide what to say about it.
+private function AddPositionalField(out string Rec, string Key, string Value)
+{
 	Rec $= FLD_SEP $ Key $ "=" $ Value;
 }
 
