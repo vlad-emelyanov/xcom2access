@@ -153,11 +153,21 @@ void Init()
     RegisterClaim({VK_LEFT, ModNone, active, OnPress([] { StepCall(kDirWest); }), "tile cursor: west"});
     RegisterClaim({VK_RIGHT, ModNone, active, OnPress([] { StepCall(kDirEast); }), "tile cursor: east"});
 
-    // Shift+comma / Shift+period (the literal < and >): floor down / up. The UNSHIFTED keys
-    // stay unclaimed — reserved for the object scanner's quick navigation.
-    RegisterClaim({VK_OEM_COMMA, ModShift, active, OnPress([] { FloorCall(-1); }),
+    // Ctrl+comma / Ctrl+period: floor down / up. The UNSHIFTED keys belong to the object
+    // scanner's quick navigation and SHIFT+them is now its reverse cycle, so the floor keys
+    // moved here — which is also where they always belonged. Ctrl is the safe modifier
+    // (Key_Left_Control only toggles the pathing pawn's waypoint mode), and comma/period carry
+    // no bare binding in any tactical input section, so leniency cannot double-fire the chord.
+    //
+    // This also fixes a shipped bug rather than merely relocating a key: Key_Left_Shift's
+    // RELEASE calls PrevUnit() unconditionally in state ActiveUnit_Moving
+    // (XComTacticalInput.uc:2147), so every one of these presses used to cycle the selected
+    // soldier when the player let go. It never reproduced in the tutorial because the REPLAY
+    // state's copy of the same function (:587) is a bare `return false`. The scanner now takes
+    // Shift properly (LeftShift claim in object_scanner.cpp); this pair no longer needs it.
+    RegisterClaim({VK_OEM_COMMA, ModCtrl, active, OnPress([] { FloorCall(-1); }),
         "tile cursor: floor down"});
-    RegisterClaim({VK_OEM_PERIOD, ModShift, active, OnPress([] { FloorCall(1); }),
+    RegisterClaim({VK_OEM_PERIOD, ModCtrl, active, OnPress([] { FloorCall(1); }),
         "tile cursor: floor up"});
 
     RegisterClaim({'C', ModNone, active, OnPress([] { SimpleCall("CursorRecenter"); }),

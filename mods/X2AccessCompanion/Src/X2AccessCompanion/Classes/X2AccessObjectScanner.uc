@@ -4,7 +4,8 @@
 // thread, from the tick drain) and reads NativeResult back through reflection right after the call
 // returns. Nothing here runs on its own — no listeners, no timers, no polling.
 //
-// Five categories, each with its own cycle key on the native side and its own remembered position:
+// Twelve categories. Three carry a dedicated cycle key on the native side; the rest are reached
+// through the ring. Each keeps its own remembered position:
 //   markers               — the world-space things the game points the player AT. Three
 //                           contributors in one ring: the tutorial's required-action marker
 //                           (XComTutorialMgr.NextPlayerAbilityContext), objective-carrying objects
@@ -32,6 +33,9 @@
 //   objects.towers        — ADVENT towers and their detection radius, shown ONLY while something
 //                           of ours is concealed, because that is the only time the radius means
 //                           anything. The ring's empty-skip makes a mode-dependent category free.
+//   world.connectors      — the ramps and ladders between Z levels. The only category that is
+//                           SWEPT rather than enumerated (no global ramp list exists), and so the
+//                           only one whose empty text names a scope rather than the map.
 //
 // The last two exist because they are where the gap is WIDEST: the game gives a sighted player a
 // countdown (a number on the HUD counter, a number on the loot waypoint) and a persistent glowing
@@ -68,6 +72,10 @@ struct AccessMarker
 const KEY_TUTORIAL = -101;
 const KEY_LOST_SWARM = -102;
 const KEY_HAZARD = -200;    // minus the hazard type index — see HazardWord
+// Minus a LINEAR TILE INDEX, so every connector tile on the map gets its own key and the
+// remembered selection survives a rebuild. Far below the others: the index can run to the
+// hundreds of thousands on a big grid.
+const KEY_CONNECTOR = -300000000;
 
 // Categories. Each has its own cycle key on the native side and its own remembered position, so
 // checking an enemy and then checking a marker does not lose your place in either.
@@ -82,7 +90,8 @@ const CAT_HAZARDS = 7;
 const CAT_INTERACT = 8;
 const CAT_LOST = 9;
 const CAT_TOWERS = 10;
-const CAT_COUNT = 11;       // how many are REAL — what the category ring wraps around
+const CAT_CONNECTORS = 11;
+const CAT_COUNT = 12;       // how many are REAL — what the category ring wraps around
 const NUM_CATEGORIES = 16;  // headroom for the rest; a static array, so the slack costs nothing
 
 // Hazard types, in the order HazardWord/HazardClass/TileHasHazard agree on.
@@ -156,6 +165,51 @@ function ScanCategory(int Category, int Delta)
 function ScanCurrent(int Delta)
 {
 	ScanCategory(CurCategory, Delta);
+}
+
+// Shift+Tab: select the PREVIOUS soldier — vanilla's own meaning, re-provided because we now
+// swallow LeftShift outright (object_scanner.cpp explains why). Key_Tab's prev-soldier branch
+// reads Input.PressedKeys, which cannot contain a key the engine never saw pressed, so without
+// this Shift+Tab would quietly become NEXT soldier.
+//
+// The guard is XComTacticalInput.IsManualUnitSwitchAllowed's, copied rule for rule (:1850): it is
+// declared inside state ActiveUnit_Moving and so is unreachable by name from here, but both of its
+// tests are plain script. The visualizer-busy flag is set the same way PrevUnit does it (:2165) —
+// the controller reads it when the visualization finishes to decide whether to re-select.
+//
+// SILENT on purpose. The selected-unit reader (src/unit_info.cpp) POLLS the controller for
+// selection changes, so it announces this one like every other — including the mouse click and
+// the turn start that no key claim could see. Speaking here too would name the soldier twice.
+//
+// And note what this claim is NOT: it does not break "Tab stays the game's, in both of its
+// meanings". Bare Tab is untouched and still the player's `eTBC_NextUnit`. Shift+Tab is taken
+// only because WE took Shift, which is what removed the LeftShift entry from Input.PressedKeys
+// that Key_Tab's prev-soldier branch reads — so this restores the vanilla meaning rather than
+// displacing it. Give Shift back and this claim goes with it.
+function PrevSoldier()
+{
+	local XComTacticalController TC;
+	local XComGameStateVisualizationMgr VisMgr;
+
+	NativeResult = "";
+
+	TC = class'X2AccessTileReader'.static.TacCtrl();
+	if (TC == none)
+		return;
+
+	if (class'XComGameState_Cheats'.static.GetVisualizedCheatsObject().DisableUnitSwitching)
+		return;
+
+	VisMgr = `XCOMVISUALIZATIONMGR;
+	if (VisMgr == none)
+		return;
+	if (VisMgr.VisualizerBlockingAbilityActivation(true))
+		return;
+	if (class'XComGameStateVisualizationMgr'.static.VisualizerBusy())
+		TC.bManuallySwitchedUnitsWhileVisualizerBusy = true;
+
+	// NativeResult stays empty whatever this returns — see the SILENT note above.
+	TC.Visualizer_SelectPreviousUnit();
 }
 
 // Move the ring cursor to the next category that HAS something in it, and announce that something
@@ -288,6 +342,9 @@ private function BuildCategory(int Category, TTile Origin, out array<AccessMarke
 	case CAT_TOWERS:
 		AddTowers(Origin, Entries);
 		break;
+	case CAT_CONNECTORS:
+		AddConnectors(Origin, Entries);
+		break;
 	}
 }
 
@@ -313,6 +370,9 @@ private function string EmptyText(int Category)
 	// Says WHY it is empty. "No towers" while revealed would read as "this map has none", which is
 	// a different and much more dangerous claim than "the radius does not apply right now".
 	case CAT_TOWERS: return "Towers shown only while concealed";
+	// Names the SCOPE, not the map: the sweep is deliberately local, so "none" here means none
+	// nearby rather than none at all, and saying so keeps the reading honest.
+	case CAT_CONNECTORS: return "No ramps or ladders nearby";
 	}
 	return "Nothing here";
 }
@@ -333,6 +393,7 @@ private function string CategoryName(int Category)
 	case CAT_INTERACT: return "Objects";
 	case CAT_LOST: return "Lost";
 	case CAT_TOWERS: return "Towers";
+	case CAT_CONNECTORS: return "Level connectors";
 	}
 	return "Category" @ string(Category);
 }
@@ -1088,6 +1149,124 @@ private function bool AnyoneConcealed()
 			return true;
 	}
 	return false;
+}
+
+// LEVEL CONNECTORS — the ramps and ladders that get you between Z levels.
+//
+// Why this is a category at all: every other readout in the mod answers "how far and which way",
+// and on a multi-storey map the honest answer often ends in "2 up" — which a blind player cannot
+// act on without knowing where the stairs are. A sighted player reads that off the geometry in a
+// glance. The idea is WrathAccess's (Pathfinder: WotR), where a whole watershed segmentation of
+// the navmesh exists mostly to make every staircase its own room so it can be cycled as an exit;
+// XCOM keeps the same fact in the tile grid and hands it over for the asking.
+//
+// Two sources, because the engine offers exactly two:
+//   * LADDERS have a global list — CollectLadderLandingTiles, the same one XGAIPlayer_Civilian
+//     uses to route panicking civilians. Both landings of one ladder are separate entries, and
+//     that is right: "1 up" and "2 down" at the same bearing is the shape of a ladder.
+//   * RAMPS have no list, only the per-tile IsRampTile predicate (TileDataIsRampTile, "a special
+//     type of floor tile, so ramp tiles are Ramp AND Floor tiles"). So they are swept out of a
+//     bounded box instead — which is also the right SCOPE: a ramp 40 tiles away is not the one
+//     you would take, and the tile cursor already says "Ramp" when you stand on one, so the two
+//     surfaces agree by construction.
+//
+// The sweep costs CONNECTOR_RADIUS^2 * 3 native predicate calls per keypress — ~1900, each an
+// array lookup. That is the same "rebuild on every press" bargain the whole scanner makes (see
+// NO REGISTRY above), and it is why the box is bounded to one Z level either side: a connector
+// two floors away is reached by taking the one on this floor first.
+const CONNECTOR_RADIUS = 12;   // tiles, in X and Y, swept around the scan origin for ramps
+const CONNECTOR_LADDER_MAX = 30; // tiles; the ladder list is map-wide, so it needs a horizon
+const CONNECTOR_CLUSTER = 3;   // tiles; nearer than this and it is the same staircase
+const CONNECTOR_MAX = 12;      // entries; a ring longer than this is a list, not a cue
+
+private function AddConnectors(TTile Origin, out array<AccessMarker> Entries)
+{
+	local XComWorldData WorldData;
+	local array<AccessMarker> Raw;
+	local array<TTile> Ladders;
+	local TTile T;
+	local int i, j, DX, DY, DZ;
+	local bool bClustered;
+
+	WorldData = `XWORLD;
+	if (WorldData == none)
+		return;
+
+	WorldData.CollectLadderLandingTiles(Ladders);
+	for (i = 0; i < Ladders.Length; i++)
+	{
+		if (TileDistance(Origin, Ladders[i]) > CONNECTOR_LADDER_MAX)
+			continue;
+		AddConnectorCandidate(WorldData, Origin, Ladders[i], "Ladder", Raw);
+	}
+
+	for (DZ = -1; DZ <= 1; DZ++)
+	{
+		T.Z = Origin.Z + DZ;
+		if (T.Z < 0 || T.Z >= WorldData.NumZ)
+			continue;
+		for (DY = -CONNECTOR_RADIUS; DY <= CONNECTOR_RADIUS; DY++)
+		{
+			T.Y = Origin.Y + DY;
+			if (T.Y < 0 || T.Y >= WorldData.NumY)
+				continue;
+			for (DX = -CONNECTOR_RADIUS; DX <= CONNECTOR_RADIUS; DX++)
+			{
+				T.X = Origin.X + DX;
+				if (T.X < 0 || T.X >= WorldData.NumX)
+					continue;
+				if (!WorldData.IsRampTile(T))
+					continue;
+				AddConnectorCandidate(WorldData, Origin, T, "Ramp", Raw);
+			}
+		}
+	}
+
+	// Cluster LAST, over the already-distance-sorted candidates. A staircase is many ramp tiles
+	// and a player wants one entry for it, not eight — and because Raw is nearest-first, the tile
+	// that survives a cluster is always the nearest one, i.e. the end of the staircase you would
+	// actually walk to. Doing this while collecting would keep whichever tile the sweep happened
+	// to reach first instead.
+	for (i = 0; i < Raw.Length && Entries.Length < CONNECTOR_MAX; i++)
+	{
+		bClustered = false;
+		for (j = 0; j < Entries.Length; j++)
+		{
+			if (Entries[j].Label == Raw[i].Label
+				&& TileDistance(Entries[j].Tile, Raw[i].Tile) <= CONNECTOR_CLUSTER)
+			{
+				bClustered = true;
+				break;
+			}
+		}
+		if (!bClustered)
+			Entries.AddItem(Raw[i]);
+	}
+}
+
+// One candidate connector tile, fog-gated and keyed by its position.
+//
+// The gate is the LATCHING one: a staircase is static layout, so it stays known once seen —
+// exactly the rule X2AccessTileReader.DescribeTile applies to cover and floors, and the opposite
+// of what hazards get. bIsDestination is true because a connector is somewhere you WALK to, so
+// "out of range" is a fact about it worth having rather than the nonsense it would be about an
+// enemy.
+private function AddConnectorCandidate(XComWorldData WorldData, TTile Origin, TTile T,
+	string Label, out array<AccessMarker> Raw)
+{
+	local AccessMarker M;
+
+	if (!TileSeen(WorldData, T, true))
+		return;
+
+	// A linear tile index, so the key is unique per tile and stable across rebuilds however big
+	// the map is — a packed decimal would collide on a grid wider than its digit budget.
+	M.Key = KEY_CONNECTOR - ((T.Z * WorldData.NumY + T.Y) * WorldData.NumX + T.X);
+	M.Tile = T;
+	M.Label = Label;
+	M.Detail = "";
+	M.bIsDestination = true;
+	InsertByDistance(Origin, M, Raw);
 }
 
 

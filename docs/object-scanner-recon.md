@@ -685,6 +685,38 @@ the shot-breakdown key while targeting is raised).
 
 ### 4.6 Freeing `Shift` — move prev-soldier onto an explicit Shift+Tab
 
+> ✅ **RESOLVED 2026-08-21 — and by neither option below. Both are superseded; Option B is
+> actively DANGEROUS and must not be attempted.**
+>
+> What shipped: the arbiter now accepts a claim on a MODIFIER KEY, and `object_scanner.cpp`
+> claims `{VK_LSHIFT, ModNone}` while the tactical layer owns input. The engine never sees
+> LeftShift go down or up, so the bound command never runs and `Key_Left_Shift` is never reached.
+> Our own chord matching is unaffected, because `GetKeyState` reflects the state the OS updated
+> when the message came off the queue — not what the window procedure did with it afterwards.
+> Side resolution comes from lParam's scan code (`MAPVK_VSC_TO_VK_EX`), since WM_KEYDOWN reports
+> the generic `VK_SHIFT`. `RightShift` is left alone: it carries no tactical binding.
+>
+> ⛔ **Why Option B below is wrong.** The mouse-gate trick does NOT apply verbatim to
+> `Key_Left_Shift`. That function takes an `int ActionMask` and returns a `bool`;
+> `MouseGate::SwallowThunk` consumes a lone `EX_EndFunctionParms` byte and writes no result. Here
+> it would meet the parameter EXPRESSION instead, decline to advance, leave the VM's `Code`
+> pointer pointing into the middle of that expression for the caller to execute as its own
+> bytecode, and hand `bConsume` (`XComInputBase.uc:610`) an unwritten return value. Making it
+> correct means either popping the parameter through `FFrame::Step` (which needs `GNatives`) or
+> swapping `UFunction::Script` for the replay state's identically-signatured `{ return false; }`
+> body (which needs `UStruct::Script` — an offset this project has never measured; the generated
+> SDK buries it inside `UStruct`'s `UnknownData01`). The swallow needs no engine offset at all.
+>
+> The one thing Option B got right and the swallow has to pay for: swallowing LeftShift costs
+> `Input.PressedKeys` its entry, which is exactly what `Key_Tab`'s prev-soldier branch reads. So
+> `Shift+Tab` is claimed too and re-provided by `X2AccessObjectScanner.PrevSoldier`, which
+> reproduces `IsManualUnitSwitchAllowed`'s guard rule for rule (it is state-scoped and so
+> unreachable by name, but both of its tests are plain script).
+>
+> Also settled, and it explains open question 3 below: the live test that "did not reproduce" ran
+> in the TUTORIAL, which is a replay — and `InReplayPlayback`'s copy of `Key_Left_Shift`
+> (`:587`) is a bare `return false`. The bug was real the whole time; the replay hid it.
+
 > ⚠ **Rewritten 2026-08-20 after the leniency finding (§4.4). The premise below inverted.**
 > Under lenient matching `Shift+Tab` DOES reach `Key_Tab`, so its
 > `PressedKeys.Find('LeftShift')` branch is **live code, not dead** — prev-soldier on Shift+Tab

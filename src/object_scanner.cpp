@@ -45,9 +45,9 @@ void Call(const char* funcName, void* params)
 constexpr int32_t kCatMarkers = 0;
 constexpr int32_t kCatEnemies = 1;
 constexpr int32_t kCatSquad = 2;
-// Loot (3) and reinforcements (4) have no dedicated key — they are reached through the category
-// ring below, so nothing here names them. Listed for the record, since this comment block is the
-// only place the two halves' numbering is written down side by side.
+// Everything from loot (3) to level connectors (11) has no dedicated key — those are reached
+// through the category ring below, so nothing here names them. Listed for the record, since this
+// comment block is the only place the two halves' numbering is written down side by side.
 
 // Delta 0 re-announces the current selection without moving it — the reason a one-entry ring is
 // answerable at all without cycling through it.
@@ -69,6 +69,14 @@ void StepCall(const char* funcName, int32_t delta)
         int32_t delta;
     } params{delta};
     Call(funcName, &params);
+}
+
+// A no-parameter companion function still gets a zeroed buffer — ProcessEvent copies ParmsSize
+// bytes out of whatever it is handed.
+void SimpleCall(const char* funcName)
+{
+    int64_t zeros[2] = {};
+    Call(funcName, zeros);
 }
 
 // Once per press, no auto-repeat: same discipline as the tile cursor, and a held cycle key would
@@ -103,22 +111,33 @@ void Init()
         "scanner: next marker"});
 
     // Period is RT's own "cycle enemies" key and is unbound in every tactical input section, so
-    // unlike B and O it displaces nothing at all. Shift+period stays the tile cursor's floor key —
-    // the arbiter matches the exact chord, so the two never contend.
+    // unlike B and O it displaces nothing at all.
     RegisterClaim({VK_OEM_PERIOD, ModNone, active, OnPress([] { ScanCall(kCatEnemies, 1); }),
         "scanner: next enemy"});
 
     // Comma is period's twin and equally unbound: the two sit under the same two fingers, so
-    // "who is on my side" and "who is not" are one key apart. Shift+comma stays the tile cursor's
-    // floor-down key — the arbiter matches the exact chord, so the two never contend.
+    // "who is on my side" and "who is not" are one key apart.
     RegisterClaim({VK_OEM_COMMA, ModNone, active, OnPress([] { ScanCall(kCatSquad, 1); }),
         "scanner: next squad member"});
+
+    // SHIFT REVERSES, on every dedicated cycle key — the idiom WrathAccess (Pathfinder: WotR)
+    // uses across all seven of its review keys, and the one every other scanner in this lineage
+    // has. Before this the only way back was PageUp, which walks the RING's current category and
+    // so could not step "one enemy back" while the ring sat on markers. The floor keys vacated
+    // Shift for exactly this (they are on Ctrl now).
+    RegisterClaim({'B', ModShift, active, OnPress([] { ScanCall(kCatMarkers, -1); }),
+        "scanner: previous marker"});
+    RegisterClaim({VK_OEM_PERIOD, ModShift, active, OnPress([] { ScanCall(kCatEnemies, -1); }),
+        "scanner: previous enemy"});
+    RegisterClaim({VK_OEM_COMMA, ModShift, active, OnPress([] { ScanCall(kCatSquad, -1); }),
+        "scanner: previous squad member"});
 
     // Everything else is reached through the RING rather than through a key of its own. Three
     // dedicated keys is what the recon doc budgets — markers, enemies, squad, the ones pressed
     // every turn — and the ring is what keeps loot, reinforcements and each category after them
-    // from costing a key the tactical layer does not have. It also leaves ; and ' free for the
-    // vantage read and the inspect verb they are earmarked for.
+    // from costing a key the tactical layer does not have. It also left ; and ' free — ; has
+    // since gone to the selected-unit readout (unit_info.cpp) and ' is still earmarked for the
+    // vantage read.
     //
     // PageUp/PageDown are genuinely unbound in tactical (docs/object-scanner-recon.md §4.4) — no
     // Bindings= entry in any input section — so both the bare pair and the Ctrl pair are free, and
@@ -151,6 +170,41 @@ void Init()
                 TileReader::GoToMarker();
         }),
         "scanner: cursor to marker / aim at marker"});
+
+    // ---- taking Shift off the game, so the reverse-cycle chords above are safe ----
+    //
+    // ⛔ `LeftShift` is bound in [XComGame.XComTacticalInput] and `Key_Left_Shift`'s RELEASE
+    // calls PrevUnit() UNCONDITIONALLY in state ActiveUnit_Moving (XComTacticalInput.uc:2147).
+    // So a bare Shift tap — and therefore the tail of EVERY Shift chord — cycles the selected
+    // soldier when the player lets go. That is what made Shift unusable as a modifier here, and
+    // it silently afflicted the tile cursor's old Shift+comma / Shift+period floor keys for
+    // months. It never showed up in testing because the tutorial runs state InReplayPlayback,
+    // whose copy of the same function (:587) is a bare `return false`.
+    //
+    // The fix is to swallow the modifier itself at the window procedure while our layer owns
+    // tactical input: the engine never sees LeftShift go down or up, so the bound command never
+    // runs. Our own chord matching is unaffected — GetKeyState reflects the state the OS updated
+    // when the message was pulled off the queue, not what the window procedure did with it.
+    //
+    // Considered and rejected: the mouse-gate trick on that UFunction (docs/object-scanner-recon
+    // §4.6 Option B). It does NOT apply verbatim there — Key_Left_Shift takes an `int ActionMask`
+    // and returns a bool, so MouseGate's thunk would find a parameter expression instead of the
+    // EX_EndFunctionParms it expects, leave the VM's Code pointer mid-expression, and hand the
+    // caller an unwritten return value. Making it correct needs UStruct::Script, an offset this
+    // project has never measured. A swallow needs no engine offset at all.
+    //
+    // ⚠ RightShift is deliberately NOT claimed: it carries no binding in the tactical section, so
+    // it was never part of the problem — and leaving it alone keeps a vanilla escape hatch, since
+    // Key_Tab checks for RightShift in PressedKeys too.
+    RegisterClaim({VK_LSHIFT, ModNone, active, nullptr, "scanner: own Shift (suppress PrevUnit)"});
+
+    // What the swallow costs, paid straight back. Key_Tab's own prev-soldier branch reads
+    // PressedKeys, which no longer contains LeftShift while we hold the key — so Shift+Tab would
+    // silently become NEXT soldier. Claiming the chord and doing it ourselves keeps the vanilla
+    // meaning and makes it deterministic in both directions (a RightShift+Tab now also comes
+    // through here rather than through the engine, so there is one behaviour, not two).
+    RegisterClaim({VK_TAB, ModShift, active, OnPress([] { SimpleCall("PrevSoldier"); }),
+        "scanner: previous soldier (Shift+Tab)"});
 
     LOG_INFO("ObjectScanner: claims registered");
 }

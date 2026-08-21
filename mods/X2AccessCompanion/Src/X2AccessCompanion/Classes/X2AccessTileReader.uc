@@ -287,6 +287,7 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 	local FOWTileStatus FOW;
 	local byte GameplayFlags;
 	local bool bImpassable;
+	local int LedgeDrop;
 
 	WorldData = `XWORLD;
 	TilePos = WorldData.GetPositionFromTileCoordinates(Tile);
@@ -308,7 +309,20 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 	// speaking "Impassable" over an ally read as a bug in the first live test.
 	bImpassable = (UnitPart == "" && !WorldData.CanUnitsEnterTile(Tile));
 	if (bImpassable)
-		AppendPart(Result, "Impassable");
+	{
+		// A LEDGE outranks "Impassable", because the two are not the same fact and only one of
+		// them is what a sighted player sees. Sweeping the cursor off a roof, a catwalk or the
+		// top of a container lands on a tile with no floor at this Z and open air below it — the
+		// railing a sighted player is looking at. "Impassable" describes that identically to a
+		// wall, which is exactly the information a blind player most needs to tell apart.
+		// Ported from WrathAccess's grid.edge_drop (Pathfinder: WotR), which has to infer the
+		// drop from a physics linecast plus a navmesh-validity test; XCOM answers it outright.
+		LedgeDrop = LedgeDepth(WorldData, Tile);
+		if (LedgeDrop > 0)
+			AppendPart(Result, "Ledge," @ string(LedgeDrop) @ "down");
+		else
+			AppendPart(Result, "Impassable");
+	}
 	AppendPart(Result, UnitPart);
 
 	AppendPart(Result, DescribeInteractives(Tile));
@@ -655,6 +669,33 @@ private function TTile CurTile()
 	T.Y = CurY;
 	T.Z = CurZ;
 	return T;
+}
+
+// How far the ground is below a tile that has no floor of its own — 0 when this is not a ledge.
+//
+// The two conditions are what separate "you are standing over a drop" from "there is a wall
+// here", and both come from the engine rather than from a rule of ours. NO FLOOR AT THIS Z is
+// the whole reason the cursor is left hanging: CursorStep's ResolveFloor searches only one tile
+// down (GetFloorTileForPosition's bUnlimitedSearch = false), so stepping off a roof keeps the
+// cursor's height instead of falling — deliberately, so the edge can be felt. GetFloorTileZ with
+// the UNLIMITED search then answers how deep, and documents its own miss by returning the source
+// Z, which is why the comparison is strictly-less-than rather than a bool.
+//
+// A wall at ground level is not caught by this and must not be: buildings sit on the ground grid,
+// so a tile inside a wall still HAS a floor and never reaches here. That is what keeps the word
+// honest — a ledge is open air, not merely something you cannot walk into.
+private function int LedgeDepth(XComWorldData WorldData, TTile Tile)
+{
+	local int FloorZ;
+
+	if (WorldData.IsFloorTile(Tile))
+		return 0;
+
+	FloorZ = WorldData.GetFloorTileZ(Tile, true);
+	if (FloorZ >= Tile.Z)
+		return 0;
+
+	return Tile.Z - FloorZ;
 }
 
 // Snap a target tile to the floor of its column near the current height, so stepping follows

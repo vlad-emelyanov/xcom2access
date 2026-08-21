@@ -110,18 +110,18 @@ void Init()
     RegisterClaim({VK_LEFT, ModNone, active, OnPress([] { StepCall(kDirWest); }), "free aim: west"});
     RegisterClaim({VK_RIGHT, ModNone, active, OnPress([] { StepCall(kDirEast); }), "free aim: east"});
 
-    // Shift+comma / Shift+period (the literal < and >): aim point down / up one floor. Same
-    // chord as the tile cursor's floor keys and never contending with them — the tile cursor
-    // stands down exactly while the shot HUD is raised.
+    // Ctrl+comma / Ctrl+period: aim point down / up one floor. Same chord as the tile cursor's
+    // floor keys and never contending with them — the tile cursor stands down exactly while the
+    // shot HUD is raised. They moved off Shift with that pair, and for the same reason: Shift is
+    // now the scanner's reverse-cycle modifier in BOTH modes, so leaving the floor keys there
+    // would collide with Shift+comma / Shift+period stepping the scanner backwards.
     //
-    // Note this mode does NOT carry the tile cursor's Shift hazard. Key_Left_Shift's release
-    // calls PrevUnit(), but that function is declared in state ActiveUnit_Moving with no
-    // class-scope twin, so it is unreachable from a targeting state. The vanilla handler that
-    // does see Shift here is UITacticalHUD_AbilityContainer's PrevTarget(), which for a
-    // cursor-targeted ability is the base class's no-op.
-    RegisterClaim({VK_OEM_COMMA, ModShift, active, OnPress([] { FloorCall(-1); }),
+    // (Free aim never carried the tile cursor's Shift *hazard*: Key_Left_Shift is declared in
+    // state ActiveUnit_Moving with no class-scope twin, so its PrevUnit() is unreachable from a
+    // targeting state. The move here is about keymap consistency, not about that bug.)
+    RegisterClaim({VK_OEM_COMMA, ModCtrl, active, OnPress([] { FloorCall(-1); }),
         "free aim: floor down"});
-    RegisterClaim({VK_OEM_PERIOD, ModShift, active, OnPress([] { FloorCall(1); }),
+    RegisterClaim({VK_OEM_PERIOD, ModCtrl, active, OnPress([] { FloorCall(1); }),
         "free aim: floor up"});
 
     // Enter, Space and Escape are deliberately NOT claimed: the game's own confirm
