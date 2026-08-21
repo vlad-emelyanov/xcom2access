@@ -2202,6 +2202,220 @@ bool SetRoomListIndex(void* screen, int index)
 // facility screen is TOPMOST rather than merely present.
 const Recipe kRoomRecipe{"avenger room", ProbeRoom, BuildRoom, RoomName, SetRoomListIndex};
 
+// ---- an un-excavated room (UIRoom): assign an engineer, clear the debris ----
+//
+// The strongest case in the strategy layer for a recipe rather than narration, because vanilla
+// leaves this screen not merely unspoken but UNOPERABLE from the keyboard: ExcavateButton and
+// ExcavationPanel both call DisableNavigation(), the staff slots answer only to controller
+// D-pad constants, and UIRoom.OnAccept — the thing Enter reaches — is an empty function body.
+// See the RoomBuildView comment in game_ui.h for the full list.
+//
+// TWO SHAPES, one recipe. While the personnel picker is open the game routes every key into it
+// (UIStaffContainer.OnUnrealCommand tests m_kPersonnelDropDown.bIsVisible before anything else),
+// so the graph becomes candidate-only rather than showing the room's stops behind a modal the
+// player is already inside. That mirrors the game's own input routing instead of inventing a
+// parallel one, which is the same discipline the tactical gate follows.
+
+constexpr const char* kRoomReaderClass = "X2AccessRoomReader";
+
+// Words for the room screen, keyed by the widget pointers they describe. Same self-invalidating
+// cache as the save rows: the slot widgets are respawned by RealizeStaffSlots and the picker's
+// rows by UpdateList, so a changed pointer set is an exact cache key — and the outbound call is
+// the cost here, not the payload.
+struct RoomWords {
+    std::vector<WireRecord> records;
+    std::vector<void*> key;
+    bool dropOpen = false;
+};
+
+RoomWords gRoomWords;
+
+const std::vector<WireRecord>& FetchRoomWords(const GameUI::RoomBuildView& view)
+{
+    std::vector<void*> key = view.slots;
+    key.push_back(view.excavate);
+    key.push_back(view.dropDown);
+    const bool dropOpen = view.dropDown != nullptr;
+
+    // Re-ask whenever the widget set changes OR the picker opens/closes. ⛔ Also re-ask every
+    // time the picker is OPEN and nothing else moved: assigning a staffer rewrites the slot's
+    // occupant and the status panel's whole state machine ("engineer required" → "ready") without
+    // respawning a single widget, so a pointer-only cache key would speak the pre-assignment
+    // room back at the player.
+    if (key != gRoomWords.key || dropOpen != gRoomWords.dropOpen || dropOpen) {
+        gRoomWords.records = FetchCompanionRecords(kRoomReaderClass, "DescribeRoom");
+        gRoomWords.key = std::move(key);
+        gRoomWords.dropOpen = dropOpen;
+    }
+    return gRoomWords.records;
+}
+
+std::unique_ptr<GraphRender> BuildRoomBuild()
+{
+    gFocus.clear();
+
+    GameUI::RoomBuildView view = GameUI::ReadRoomBuild(gScreen);
+    const std::vector<WireRecord>& records = FetchRoomWords(view);
+
+    GraphBuilder b;
+
+    // --- shape 2: the picker owns the keys ---
+    if (view.dropDown) {
+        b.BeginStop("staff");
+        int shown = 0;
+        for (const WireRecord& rec : records) {
+            if (RecField(rec, "kind") != "candidate")
+                continue;
+            const int index = atoi(RecField(rec, "index").c_str());
+            std::string label = RecField(rec, "name");
+            const std::string status = RecField(rec, "status");
+            if (label.empty())
+                continue;
+            if (!status.empty())
+                label += ". " + status;
+
+            ControlId id = ControlId::Structural("roompick/" + std::to_string(index));
+            gFocus[id.StructuralKey] = FocusTarget{index, nullptr, false, nullptr};
+
+            NodeVtable vt;
+            vt.Type = &ButtonType();
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+            vt.OnActivate = [index]() {
+                GameUI::RoomBuildView live = GameUI::ReadRoomBuild(gScreen);
+                GameUI::ChooseStaffCandidate(live, index);
+            };
+            b.AddItem(std::move(id), std::move(vt));
+            shown++;
+        }
+        if (shown == 0) {
+            // The picker opens even with nothing to put in it — IsUnitAvailableForThisSlot is
+            // what greys the SLOT, not what closes the list. Saying so beats an empty graph,
+            // which would read as the layer having failed.
+            b.AddLabel(ControlId::Structural("roompick/empty"),
+                []() { return std::string(Vocab::RoomNoStaff); });
+        }
+        return b.Build();
+    }
+
+    // --- shape 1: the room itself ---
+    for (const WireRecord& rec : records) {
+        const std::string kind = RecField(rec, "kind");
+
+        if (kind == "status") {
+            // The status panel, which no keyboard in the game can focus. Header, state, time and
+            // reward as one stop: they are one paragraph on screen and a sighted player takes
+            // them in together, so splitting them into four stops would be worse than the game.
+            b.BeginStop("status");
+            std::string line;
+            for (const char* field : {"title", "time", "rewardLabel", "reward"}) {
+                const std::string part = RecField(rec, field);
+                if (part.empty())
+                    continue;
+                if (!line.empty())
+                    line += ". ";
+                line += part;
+            }
+            if (!line.empty()) {
+                b.AddLabel(ControlId::Structural("room/status"), [line]() { return line; });
+            }
+            continue;
+        }
+
+        if (kind == "slot") {
+            b.BeginStop("slot");
+            const int index = atoi(RecField(rec, "index").c_str());
+            std::string label = RecField(rec, "label");
+            const std::string bonus = RecField(rec, "bonus");
+            if (!bonus.empty())
+                label += ". " + bonus;
+
+            ControlId id = ControlId::Structural("room/slot/" + std::to_string(index));
+
+            NodeVtable vt;
+            vt.Type = &ButtonType();
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+
+            // "No one is available" is NOT the same as "you cannot press this": the game greys
+            // the slot but still opens its picker, and the picker is where a filled slot is
+            // emptied. So this is spoken as a Reason and the node stays activatable.
+            if (RecField(rec, "available") == "0" && RecField(rec, "filled") == "0") {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::RoomNoStaff));
+                vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+            }
+
+            const size_t slotPos = static_cast<size_t>(index);
+            vt.OnActivate = [slotPos]() {
+                GameUI::RoomBuildView live = GameUI::ReadRoomBuild(gScreen);
+                if (slotPos < live.slots.size())
+                    GameUI::OpenStaffSlotPicker(live.slots[slotPos]);
+            };
+            b.AddItem(std::move(id), std::move(vt));
+            continue;
+        }
+
+        if (kind == "excavate") {
+            b.BeginStop("excavate");
+            const std::string label = RecField(rec, "label");
+            const bool enabled = RecField(rec, "enabled") == "1";
+
+            ControlId id = ControlId::Structural("room/excavate");
+            NodeVtable vt;
+            vt.Type = &ButtonType();
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+
+            if (!enabled) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+                vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+                const std::string reason = RecField(rec, "reason");
+                if (!reason.empty()) {
+                    vt.Announcements.emplace_back(NodeAnnouncement::Static(reason));
+                    vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+                }
+            } else {
+                vt.OnActivate = []() {
+                    GameUI::RoomBuildView live = GameUI::ReadRoomBuild(gScreen);
+                    GameUI::StartRoomExcavation(live);
+                };
+            }
+            b.AddItem(std::move(id), std::move(vt));
+        }
+    }
+    return b.Build();
+}
+
+void* ProbeRoomBuild()
+{
+    void* screen = GameUI::FindRoomBuildScreen();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+std::string RoomBuildName()
+{
+    GameUI::RoomBuildView view = GameUI::ReadRoomBuild(gScreen);
+    // Named by the room's own header, the same source the facility recipe uses — the ant farm's
+    // grid is still underneath and its FacilityHeader has not been retargeted.
+    std::string name = GameUI::ReadRoom(gScreen).room;
+    if (name.empty())
+        name = Vocab::ScreenRoomFallback;
+    if (view.dropDown)
+        name += ". " + std::string(Vocab::RoomPickStaff);
+    return name;
+}
+
+// P11 write-back, and it only means anything while the picker is open — the room's own stops are
+// panels and buttons the game never selects, which is exactly why they needed a recipe.
+bool SetRoomBuildListIndex(void* screen, int index)
+{
+    GameUI::RoomBuildView view = GameUI::ReadRoomBuild(screen);
+    return GameUI::SetStaffPickerSelection(view, index);
+}
+
+const Recipe kRoomBuildRecipe{
+    "avenger debris room", ProbeRoomBuild, BuildRoomBuild, RoomBuildName, SetRoomBuildListIndex};
+
 // Above the pause menu and the shell it is opened from, below any dialog it raises.
 const Recipe kSaveLoadRecipe{"save/load", ProbeSaveLoad, BuildSaveLoad, SaveLoadName};
 
@@ -2209,7 +2423,8 @@ const Recipe kSaveLoadRecipe{"save/load", ProbeSaveLoad, BuildSaveLoad, SaveLoad
 // pause menu — has to resolve before it, or the layer would attach to the screen underneath.
 const Recipe* const kRecipes[] = {&kDialogRecipe, &kNarrativeRecipe, &kIronManRecipe,
     &kSoundtrackRecipe, &kOptionsRecipe, &kDifficultyRecipe, &kSaveLoadRecipe, &kPauseMenuRecipe,
-    &kArmoryLoadoutRecipe, &kSquadSelectRecipe, &kRoomRecipe, &kMainMenuRecipe};
+    &kArmoryLoadoutRecipe, &kSquadSelectRecipe, &kRoomBuildRecipe, &kRoomRecipe,
+    &kMainMenuRecipe};
 
 // ---- key handlers (game thread, via the arbiter's drain) ----
 

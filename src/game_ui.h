@@ -659,6 +659,7 @@ TacticalGate ReadTacticalGate();
 struct AvengerGate {
     bool gridOnStack = false; // UIFacilityGrid is somewhere on the stack
     bool current = false;     // ...and it is the first entry, i.e. GetCurrentScreen() == it
+    bool buildMode = false;   // UIBuildFacilities is above it — which does NOT block
     char blocker[64] = {};    // what sits on top instead, when it is not; for the log
 
     bool Active() const { return current; }
@@ -726,6 +727,60 @@ bool SetRoomActionSelection(const RoomView& view, int index);
 /// that delegate reads SelectedIndex and ignores the row the caller had in mind, the same trap
 /// UISaveGame.OnAccept sets. Refuses a disabled row, as the game does. Game thread only.
 bool ActivateRoomAction(const RoomView& view, const RoomAction& action);
+
+// ---- an un-excavated room (UIRoom): assign an engineer, clear the debris ----
+//
+// ⛔ NOT UIFacility. A room with no facility gets UIRoom, whose staffing is over the ROOM's
+// BuildSlots rather than a facility's StaffSlots — and both halves of the player's task
+// dead-end on mouse+keyboard in vanilla:
+//   * ExcavateButton calls DisableNavigation(), and UIRoom.OnAccept — what Enter and Space
+//     reach — is an EMPTY FUNCTION BODY. StartExcavation is bound only to FXS_BUTTON_X, a
+//     controller button. Clicking is the only way to start clearing a room.
+//   * The staff slots move on FXS_DPAD_LEFT/RIGHT; the ARROW constants are absent from that
+//     switch entirely.
+//   * ExcavationPanel calls DisableNavigation() as well, so the status line, the time estimate
+//     and the loot are unreachable text even for a sighted keyboard player.
+// The recipe over this screen is therefore not narration over something that works — it is what
+// makes the screen operable at all.
+//
+// Native reads STRUCTURE only. Every word comes from X2AccessRoomReader, because this screen
+// retains almost none: ExcavationPanel is a pure Flash pipe, UIStaffSlot keeps only its
+// StaffSlotRef, and the picker's rows call AS_UpdateData directly — bypassing UIButton.SetText,
+// so even the retained UIButton.Text is empty on them.
+
+struct RoomBuildView {
+    void* screen = nullptr;
+    std::vector<void*> slots;     // UIRoom_StaffSlot widgets, in list order
+    void* excavate = nullptr;     // ExcavateButton, only when it is actually showing
+    bool excavateDisabled = false;
+    void* dropDown = nullptr;     // UIPersonnel_DropDown, only while it is OPEN
+    void* dropList = nullptr;     // its UIList
+    int dropSelected = -1;
+};
+
+/// The UIRoom, when one is the current screen. Game thread only.
+void* FindRoomBuildScreen();
+
+RoomBuildView ReadRoomBuild(void* screen);
+
+/// Open a build slot's personnel picker through the widget's own HandleClick — the same entry
+/// the mouse and UIStaffSlot's own Enter use, so a LOCKED slot still offers the facility
+/// upgrade instead, as the game intends. Game thread only.
+bool OpenStaffSlotPicker(void* slotWidget);
+
+/// P11 write-back inside the open picker (UIList::SetSelectedIndex). Game thread only.
+bool SetStaffPickerSelection(const RoomBuildView& view, int index);
+
+/// Pick a candidate from the open picker: select, then hand the LIST an Enter, which fires
+/// OnItemClicked → UIPersonnel_DropDown.OnStaffSelected — and that indexes m_staff by
+/// SelectedIndex, so selecting first is the argument, not a courtesy. Game thread only.
+bool ChooseStaffCandidate(const RoomBuildView& view, int index);
+
+/// Press Excavate through the button's own Click, i.e. the mouse path, firing the
+/// StartExcavation delegate. ⛔ Not UIRoom.OnAccept (empty), and not StartClearRoom on the room
+/// state (StartExcavation also closes the screen; a room left open over a started project is a
+/// state the game never produces). Game thread only.
+bool StartRoomExcavation(const RoomBuildView& view);
 
 // ---- tutorial mission (Tutorial_01) — the text surfaces and the replay state ----
 //

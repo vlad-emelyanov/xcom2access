@@ -113,8 +113,10 @@ void OnTick()
         if (active)
             LOG_INFO("Avenger: ant farm active");
         else
-            LOG_INFO("Avenger: ant farm inactive (grid on stack %d, current %d, blocker '%s')",
-                gate.gridOnStack ? 1 : 0, gate.current ? 1 : 0, gate.blocker);
+            LOG_INFO("Avenger: ant farm inactive (grid on stack %d, current %d, build %d, "
+                     "blocker '%s')",
+                gate.gridOnStack ? 1 : 0, gate.current ? 1 : 0, gate.buildMode ? 1 : 0,
+                gate.blocker);
     }
 
     // The poll runs only while the grid is the current screen — the geoscape and every other

@@ -2974,6 +2974,16 @@ AvengerGate ReadAvengerGate()
                 gate.current = false;
             break;
         }
+        // ⛔ ONE screen may sit on top of the grid without blocking it: UIBuildFacilities.
+        // Its OnUnrealCommand ends by forwarding every unhandled key to
+        // `HQPRES.m_kFacilityGrid.Navigator.OnUnrealCommand — so in build mode the arrows still
+        // drive the ant farm, and treating it as a blocker went silent exactly where a player is
+        // choosing a room to excavate or build in. This is the game's own delegation, read off
+        // its own source, not an exception we invented.
+        if (!sawTop && strcmp(name, "UIBuildFacilities") == 0) {
+            gate.buildMode = true;
+            continue;
+        }
         if (!sawTop) {
             sawTop = true;
             strncpy_s(gate.blocker, name, _TRUNCATE);
@@ -3165,6 +3175,138 @@ bool ActivateRoomAction(const RoomView& view, const RoomAction& action)
     // whatever row the caller had in mind. A stale render would otherwise open the wrong screen.
     SetListIndex(view.list, action.index);
     return SendRowCommand(view.list, kCmdEnter);
+}
+
+// ---- an un-excavated room (UIRoom) — assign the engineer, clear the debris ----
+//
+// A different class from UIFacility and a different problem. A room with no facility gets
+// UIRoom: BUILD slots (Room.BuildSlots, not Facility.StaffSlots), a status panel and an
+// excavate button. ⛔ BOTH halves of the player's task dead-end on mouse+keyboard in vanilla:
+//
+//   * ExcavateButton calls DisableNavigation(), so no keyboard can focus it, and the thing Enter
+//     and Space DO reach — UIRoom.OnAccept — is an empty function body. StartExcavation is wired
+//     only to FXS_BUTTON_X. Clicking is the only way to start clearing a room.
+//   * The staff slots move on FXS_DPAD_LEFT/RIGHT; the ARROW constants are not in that switch.
+//   * ExcavationPanel calls DisableNavigation() too, so the status, the time estimate and the
+//     loot are unreachable text even for a sighted keyboard player.
+//
+// So the recipe here is not narration over a working screen — it is what makes the screen
+// operable. Native reads STRUCTURE (which widgets exist, which are visible, which are refused);
+// X2AccessRoomReader supplies every word, because this screen retains almost none of them: the
+// status panel is a pure Flash pipe, UIStaffSlot keeps only StaffSlotRef, and the drop-down's
+// rows call AS_UpdateData directly, bypassing UIButton.SetText — so even the retained Text is
+// empty on them.
+
+namespace {
+
+constexpr int32_t kRoomStaffContainerOffset = 0x608;  // UIRoom::m_kStaffSlotContainer
+constexpr int32_t kRoomExcavateButtonOffset = 0x628;  // UIRoom::ExcavateButton
+constexpr int32_t kStaffContainerDropDownOffset = 0x428; // UIStaffContainer::m_kPersonnelDropDown
+constexpr int32_t kDropDownListOffset = 0x3E0;        // UIPersonnel_DropDown::m_kList
+constexpr int kMaxBuildSlots = 8;
+
+} // namespace
+
+void* FindRoomBuildScreen()
+{
+    void* stack = gStackFinder.Find();
+    if (!stack)
+        return nullptr;
+
+    void* screens[kMaxStackScreens] = {};
+    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+
+    // Topmost non-null entry, the GetCurrentScreen rule again — and UIRoom's own OnUnrealCommand
+    // is unguarded, so anything above it has already taken the keys.
+    for (int i = 0; i < count; i++) {
+        if (!screens[i])
+            continue;
+        char name[64];
+        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
+            return nullptr;
+        if (strcmp(name, "UIRoom") != 0)
+            return nullptr;
+        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
+        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+            return nullptr;
+        return screens[i];
+    }
+    return nullptr;
+}
+
+RoomBuildView ReadRoomBuild(void* screen)
+{
+    RoomBuildView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+
+    void* staff = ReadPtrRaw(screen, kRoomStaffContainerOffset);
+    if (staff) {
+        void* slots[kMaxBuildSlots] = {};
+        int n = ReadPtrArrayRaw(staff, kStaffContainerSlotsOffset, slots, kMaxBuildSlots);
+        for (int i = 0; i < n; i++) {
+            if (slots[i])
+                v.slots.push_back(slots[i]);
+        }
+
+        // The picker is a PANEL on the container, not a screen — it never reaches the screen
+        // stack, so its visibility is the only thing that says whether it owns the keys. This is
+        // the child-widget case where bIsVisible is meaningful: ShowDropDown/CloseMenu toggle it
+        // deliberately, and UIStaffContainer.OnUnrealCommand routes input on exactly this test.
+        void* drop = ReadPtrRaw(staff, kStaffContainerDropDownOffset);
+        if (drop && (ReadU32Raw(drop, kPanelFlagsOffset) & kPanelVisible)) {
+            v.dropDown = drop;
+            v.dropList = ReadPtrRaw(drop, kDropDownListOffset);
+            if (v.dropList)
+                v.dropSelected = ReadI32Raw(v.dropList, kListSelectedIndexOffset);
+        }
+    }
+
+    void* excavate = ReadPtrRaw(screen, kRoomExcavateButtonOffset);
+    if (excavate && (ReadU32Raw(excavate, kPanelFlagsOffset) & kPanelVisible)) {
+        v.excavate = excavate;
+        v.excavateDisabled = (ReadU32Raw(excavate, kButtonFlagsOffset) & kButtonDisabled) != 0;
+    }
+    return v;
+}
+
+bool OpenStaffSlotPicker(void* slotWidget)
+{
+    if (!slotWidget)
+        return false;
+    // The widget's own HandleClick, which is what both the mouse path and UIStaffSlot's Enter
+    // reach. It branches on IsLocked() to offer the facility upgrade instead of the picker, so
+    // calling it rather than ShowDropDown keeps the locked case behaving as the game intends.
+    int64_t zeros[2] = {};
+    return CallNamedFunction(slotWidget, "HandleClick", zeros);
+}
+
+bool SetStaffPickerSelection(const RoomBuildView& view, int index)
+{
+    return SetListIndex(view.dropList, index);
+}
+
+bool ChooseStaffCandidate(const RoomBuildView& view, int index)
+{
+    if (!view.dropList)
+        return false;
+    // Same select-then-Enter shape as the room menu, for the same reason: UIList's accept path
+    // fires OnItemClicked(self, SelectedIndex) — here UIPersonnel_DropDown.OnStaffSelected,
+    // which indexes m_staff by that number — so the selection is the argument.
+    SetListIndex(view.dropList, index);
+    return SendRowCommand(view.dropList, kCmdEnter);
+}
+
+bool StartRoomExcavation(const RoomBuildView& view)
+{
+    if (!view.excavate || view.excavateDisabled)
+        return false;
+    // The button's own Click, i.e. the mouse path, which fires the StartExcavation delegate.
+    // ⛔ Do NOT reach for UIRoom.OnAccept: it is an empty function. And do not call
+    // StartClearRoom on the room state directly either — StartExcavation also closes the screen,
+    // and a room left open over a started project is a state the game never produces.
+    return ClickButton(view.excavate);
 }
 
 // ---- tutorial mission (Tutorial_01) ----

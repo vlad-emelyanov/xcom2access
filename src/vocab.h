@@ -92,6 +92,12 @@ inline constexpr const char* RoomCrewSeparator = ": ";
 inline constexpr const char* RoomUrgent = "urgent";
 inline constexpr const char* RoomWarning = "attention";
 
+// An un-excavated room (UIRoom): the engineer slot and the excavate button, neither of which
+// vanilla lets a keyboard reach. "No one available" is a REASON, never a refusal — the game
+// greys the slot but still opens its picker, and the picker is where a filled slot is emptied.
+inline constexpr const char* RoomNoStaff = "no one available";
+inline constexpr const char* RoomPickStaff = "choose who to assign";
+
 // The text-entry dialog (naming a save). The field is a Flash TextField, so no screen reader
 // sees the keystrokes and this layer has to echo them itself — hence the boundary words and the
 // punctuation table below.

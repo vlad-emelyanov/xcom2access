@@ -352,4 +352,17 @@ static_assert(offsetof(AUIListItemString, Text) == 0x3F4, "list item text");
 static_assert(offsetof(AUIListItemString, ConfirmText) == 0x418,
     "UIListItemString flag dword precedes ConfirmText at 0x414");
 
+// ---- an un-excavated room: UIRoom, its build-slot container and the personnel picker ----
+//
+// UIRoom is NOT a UIFacility subclass and shares none of its layout, so these are pinned
+// separately even though the field names rhyme.
+static_assert(offsetof(AUIRoom, RoomRef) == 0x600, "room state reference");
+static_assert(offsetof(AUIRoom, m_kStaffSlotContainer) == 0x608, "room build-slot container");
+static_assert(offsetof(AUIRoom, ExcavateButton) == 0x628, "room excavate button");
+static_assert(offsetof(AUIRoom, m_strExcavate) == 0x640, "room excavate label");
+
+static_assert(offsetof(AUIStaffContainer, m_kPersonnelDropDown) == 0x428, "staff picker");
+static_assert(offsetof(AUIPersonnel_DropDown, m_kList) == 0x3E0, "staff picker list");
+static_assert(offsetof(AUIPersonnel_DropDown, m_staff) == 0x3F8, "staff picker candidates");
+
 } // namespace
