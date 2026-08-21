@@ -57,6 +57,11 @@ inline constexpr const char* ScreenPauseMenuFallback = "Pause menu";
 inline constexpr const char* ScreenSquadSelectFallback = "Squad select";
 inline constexpr const char* SoldierFallback = "Soldier";
 inline constexpr const char* UtilitySlotFallback = "Utility slot";
+inline constexpr const char* ScreenLoadoutFallback = "Loadout";
+/// An equipped slot the soldier is carrying nothing in. The screen draws the slot's name over an
+/// empty box, and the name alone would read the same as a filled slot whose item we failed to
+/// resolve — so the emptiness is said out loud.
+inline constexpr const char* LoadoutEmptySlot = "empty";
 
 // Save / load. Both screens carry their own localized title and reach these only if it reads
 // empty. The other three are the layer's own words for states the screen shows without text:

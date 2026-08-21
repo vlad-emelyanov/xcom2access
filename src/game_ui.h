@@ -444,6 +444,80 @@ struct TextFieldState {
 /// keystroke, NOT on a free-running poll. Game thread only.
 TextFieldState ReadFocusedTextField(void* screen);
 
+// ---- armory loadout (UIArmory_Loadout) ----
+//
+// The screen squad select hands the player to, and the one place armour and a soldier's actual
+// inventory can be changed. Structurally it is the ANT FARM's pattern, not the tactical HUD's:
+// every UIArmory_LoadoutItem keeps `Title` / `Subtitle` / `SlotType` / `Count` and its five state
+// bits in real script properties, each written under a dirty check immediately before the matching
+// Flash op — so the retained value IS what Flash was last told, and native can read the rows
+// without a companion. What the rows do NOT retain is `disabledText` (declared, never assigned —
+// SetDisabled pushes the reason straight into Flash) and the item's stat block, which is why
+// X2AccessLoadoutReader exists at all.
+//
+// Only ONE list is live at a time. ChangeActiveList disables navigation and mouse hits on the
+// other, so the recipe exposes the active one as the navigable stop and the equipped list as a
+// READ-ONLY mirror while the locker is open — which is what a sighted player still sees, since
+// "openList" only slides it aside.
+
+enum class LoadoutList {
+    Equipped, // the soldier's slots
+    Locker,   // what could go in the slot just chosen
+};
+
+/// One row of either list. An EMPTY equipped slot is a row with `slotLabel` and no `title` —
+/// exactly what the screen draws (the slot's name over an empty box).
+struct LoadoutRow {
+    void* handle = nullptr;    // UIArmory_LoadoutItem
+    void* dropButton = nullptr;// its clear-this-slot button, or null
+    std::string slotLabel;     // SlotType: the localized slot name, equipped rows only
+    std::string title;         // the item's friendly name, "" for an empty slot
+    std::string subtitle;      // ItemCat — an internal name, spoken only where it is not a dupe
+    int count = 0;             // how many are in the inventory (locker rows)
+    int equipmentSlot = -1;    // EInventorySlot
+    bool infinite = false;     // an item the player can never run out of
+    bool disabled = false;     // greyed — announce it with its reason, never skip it
+    bool canBeCleared = false; // bCanBeCleared: the row offers "make available"
+    bool loadoutSlot = false;  // bLoadoutSlot: an equipped SLOT rather than a locker item
+};
+
+struct LoadoutView {
+    bool valid = false;
+    LoadoutList active = LoadoutList::Equipped;
+    std::vector<LoadoutRow> rows;     // the ACTIVE list, in its own order
+    int selectedRow = -1;             // the game's own selection in that list
+    std::vector<LoadoutRow> equipped; // the mirror, filled only while the locker is active
+    std::string inventoryTitle;       // m_strInventoryTitle — the left panel's heading
+    std::string lockerTitle;          // m_strLockerTitle — the right panel's heading
+    std::string makeAvailable;        // m_strMakeAvailable — the unequip verb's own word
+    /// The three nav-help verbs. On mouse+keyboard they are dispatched from OnMouseEvent and from
+    /// CONTROLLER trigger codes only, so a keyboard player cannot reach any of them (recon §4).
+    bool itemsStripped = false;
+    bool gearStripped = false;
+    bool weaponsStripped = false;
+    std::string tipStripItems, tipStripItemsOff;
+    std::string tipStripGear, tipStripGearOff;
+    std::string tipStripWeapons, tipStripWeaponsOff;
+};
+
+/// The focused UIArmory_Loadout instance, or null. Game thread only.
+void* FindArmoryLoadout();
+
+LoadoutView ReadArmoryLoadout(void* screen);
+
+/// Focus write-back into the ACTIVE list. Never call it for the read-only mirror: while the
+/// locker is open the equipped list has had DisableNavigation() called on it, and moving a
+/// selection the game has switched off is how the two models drift apart.
+bool SetLoadoutSelection(void* screen, int index);
+
+/// Activate the selected row through the screen's own OnAccept(), which is the argument-free
+/// entry point into OnItemClicked(ActiveList, ActiveList.SelectedIndex) — so the selection has to
+/// land FIRST. Same order rule the save/load rows earned.
+bool ActivateLoadoutSelection(void* screen);
+
+/// "Make available": the row's own OnDropItemClicked, whose UIButton parameter it never reads.
+bool ClearLoadoutRow(const LoadoutRow& row);
+
 // ---- squad select (UISquadSelect) ----
 //
 // The last gate before every mission, and structurally the tactical HUD's pattern rather than
@@ -473,6 +547,10 @@ struct SquadControl {
     int utilityIndex = -1;    // >= 0 only for Utility: index within UtilitySlots
     int utilitySlotType = -1; // that slot's EInventorySlot, or -1
     bool disabled = false;    // greyed: announce it, do not skip it (recon §7)
+    /// The reason the game itself gives for the grey, from the widget's own tooltip — a locked
+    /// utility slot is SetLocked(LockedReason) under the Highlander, which is the string a mouse
+    /// player reads by hovering the padlock and the only place it exists.
+    std::string tooltip;
 };
 
 /// One card. `slotIndex` is the index into XComHQ.Squad and is NOT the visual position — the
@@ -484,6 +562,14 @@ struct SquadSlot {
     bool locked = false;  // bDisabled — the greyed "increase squad size" card, holds stale data
     bool focused = false; // bIsFocused: the authority, matching the game's GetActiveListItem
     int activeButton = -1;
+    /// UIBondIcon — spawned on every card, but only ever CLICKABLE (and only carrying a tooltip)
+    /// for a class that can bond, which is a fact only the unit state has. So the recipe emits
+    /// the node on the companion's say-so and uses this handle for the tooltip.
+    void* bondIcon = nullptr;
+    /// The card's own flyover tooltip. CreateFlyoverTooltip sets bHasTooltip ONLY for a soldier
+    /// at eMentalState_Tired, so its presence is the game's own "this one is tired" test and its
+    /// text is the warning a mouse player hovers for.
+    std::string tooltip;
     std::vector<SquadControl> controls;
 };
 
@@ -527,7 +613,7 @@ bool ActivateSquadControl(void* screen, const SquadSlot& slot, const SquadContro
 /// Invoke one of the screen's own argument-free handlers by name (OnLaunchMission's button is
 /// clicked instead; this is OnStripItems / OnStripGear / OnStripWeapons / OnBuildItems /
 /// OnBoostSoldier). Game thread only.
-bool InvokeSquadSelectVerb(void* screen, const char* funcName);
+bool InvokeScreenVerb(void* screen, const char* funcName);
 
 // ---- tactical HUD (UITacticalHUD) — tile reader support ----
 

@@ -258,7 +258,40 @@ constexpr uint32_t kCardDisabledLoadout = 0x0002; // bDisabledLoadout
 constexpr uint32_t kCardDisabledEdit = 0x0004;    // bDisabledEdit
 constexpr uint32_t kCardDisabledDismiss = 0x0008; // bDisabledDismiss
 constexpr int32_t kCardUtilitySlotsOffset = 0x408; // UtilitySlots (UIList*)
+constexpr int32_t kCardBondIconOffset = 0x410;     // BondIcon (UIBondIcon*)
 constexpr int32_t kCardActiveButtonOffset = 0x4E0; // m_eActiveButton (byte, ESquadSelectButton)
+
+// UIArmory_Loadout / UIArmory_LoadoutItem. The flag dwords are pinned by the plain members
+// on either side of them, the way every other bitfield in this file is.
+constexpr int32_t kLoadoutActiveListOffset = 0x04FC;   // ActiveList (UIList*)
+constexpr int32_t kLoadoutEquippedListOffset = 0x050C; // EquippedList
+constexpr int32_t kLoadoutLockerListOffset = 0x051C;   // LockerList
+constexpr int32_t kLoadoutInventoryTitleOffset = 0x053C;
+constexpr int32_t kLoadoutLockerTitleOffset = 0x054C;
+constexpr int32_t kLoadoutTipStripItemsOffset = 0x09DC;
+constexpr int32_t kLoadoutTipStripItemsOffOffset = 0x09EC;
+constexpr int32_t kLoadoutTipStripGearOffset = 0x09FC;
+constexpr int32_t kLoadoutTipStripGearOffOffset = 0x0A0C;
+constexpr int32_t kLoadoutTipStripWeaponsOffset = 0x0A1C;
+constexpr int32_t kLoadoutTipStripWeaponsOffOffset = 0x0A2C;
+constexpr int32_t kLoadoutMakeAvailableOffset = 0x0A4C;
+constexpr int32_t kLoadoutFlagsOffset = 0x0A74; // between LocTag (0xA6C) and StrippedUnits (0xA78)
+constexpr uint32_t kLoadoutGearStripped = 0x0001;
+constexpr uint32_t kLoadoutItemsStripped = 0x0002;
+constexpr uint32_t kLoadoutWeaponsStripped = 0x0004;
+
+constexpr int32_t kLoadItemTitleOffset = 0x03D8;
+constexpr int32_t kLoadItemSubtitleOffset = 0x03E8;
+constexpr int32_t kLoadItemSlotTypeOffset = 0x0428;
+constexpr int32_t kLoadItemCountOffset = 0x0438;
+constexpr int32_t kLoadItemFlagsOffset = 0x043C; // between Count and EquipmentSlot
+constexpr uint32_t kLoadItemLocked = 0x0001;
+constexpr uint32_t kLoadItemInfinite = 0x0002;
+constexpr uint32_t kLoadItemDisabled = 0x0004;
+constexpr uint32_t kLoadItemCanBeCleared = 0x0008;
+constexpr uint32_t kLoadItemLoadoutSlot = 0x0010;
+constexpr int32_t kLoadItemEquipSlotOffset = 0x0440; // EInventorySlot (byte)
+constexpr int32_t kLoadItemDropButtonOffset = 0x0458;
 
 // UISquadSelect_UtilityItem — one small inventory slot on a card.
 constexpr int32_t kUtilButtonOffset = 0x3E0;    // Button (UIButton*) — carries the disabled bit
@@ -1732,6 +1765,7 @@ enum TrackedScreen {
     kScrLoadScreen,
     kScrTacticalHUD,
     kScrTutorialBox,
+    kScrArmoryLoadout,
     kScrSquadSelect,
     kScrLoadGame,
     kScrSaveGame,
@@ -1749,6 +1783,7 @@ const char* const kTrackedClassNames[kTrackedScreenCount] = {
     "UILoadScreenAnimation",
     "UITacticalHUD",
     "UITutorialBox",
+    "UIArmory_Loadout",
     "UISquadSelect",
     "UILoadGame",
     "UISaveGame",
@@ -1808,6 +1843,7 @@ constexpr bool (*kTrackedUsable[kTrackedScreenCount])(void*) = {
     /*LoadScreen*/ IsShownRaw,
     /*TacticalHUD*/ IsFocusedRaw,
     /*TutorialBox*/ IsFocusedRaw,
+    /*ArmoryLoadout*/ IsFocusedRaw,
     /*SquadSelect*/ IsFocusedRaw,
     /*LoadGame*/ IsFocusedRaw,
     /*SaveGame*/ IsFocusedRaw,
@@ -2446,6 +2482,11 @@ TextFieldState ReadFocusedTextField(void* screen)
 
 // ---- squad select (UISquadSelect) ----
 
+void* FindArmoryLoadout()
+{
+    return FindScreen(kScrArmoryLoadout);
+}
+
 void* FindSquadSelect()
 {
     return FindScreen(kScrSquadSelect);
@@ -2457,6 +2498,29 @@ namespace {
 // game's own Left/Right walks them) and separately locked, and the Highlander rebuilds this list
 // through CHUIItemSlotEnumerator — so it is READ, never derived from the unit's pockets, which is
 // what keeps a slot-adding mod from shifting every index under us (recon §3).
+// One list into LoadoutRow structs, in the list's own order.
+void ReadLoadoutRows(void* list, std::vector<LoadoutRow>& out)
+{
+    void* items[64] = {};
+    const int count = ReadListItemsRaw(list, items, 64);
+    for (int i = 0; i < count; i++) {
+        LoadoutRow row;
+        row.handle = items[i];
+        row.dropButton = ReadPtrRaw(items[i], kLoadItemDropButtonOffset);
+        row.slotLabel = CleanText(ReadFStringField(items[i], kLoadItemSlotTypeOffset));
+        row.title = CleanText(ReadFStringField(items[i], kLoadItemTitleOffset));
+        row.subtitle = CleanText(ReadFStringField(items[i], kLoadItemSubtitleOffset));
+        row.count = ReadI32Raw(items[i], kLoadItemCountOffset);
+        row.equipmentSlot = static_cast<int>(ReadU8Raw(items[i], kLoadItemEquipSlotOffset));
+        const uint32_t flags = ReadU32Raw(items[i], kLoadItemFlagsOffset);
+        row.infinite = (flags & kLoadItemInfinite) != 0;
+        row.disabled = (flags & kLoadItemDisabled) != 0;
+        row.canBeCleared = (flags & kLoadItemCanBeCleared) != 0;
+        row.loadoutSlot = (flags & kLoadItemLoadoutSlot) != 0;
+        out.push_back(std::move(row));
+    }
+}
+
 void AppendUtilityControls(void* card, std::vector<SquadControl>& out)
 {
     void* list = ReadPtrRaw(card, kCardUtilitySlotsOffset);
@@ -2474,11 +2538,85 @@ void AppendUtilityControls(void* card, std::vector<SquadControl>& out)
         // The lock lives on the item's own Button (SetLocked disables it), not on the panel.
         void* button = ReadPtrRaw(items[i], kUtilButtonOffset);
         c.disabled = !button || (ReadU32Raw(button, kButtonFlagsOffset) & kButtonDisabled) != 0;
+        // ⛔ SetLocked writes the reason and NOTHING ELSE — not SlotType, not SlotIndex — so a
+        // locked slot is the one case the companion cannot name from the widget, and this
+        // tooltip is the whole of what the game says about it.
+        c.tooltip = ReadPanelTooltip(button);
         out.push_back(c);
     }
 }
 
 } // namespace
+
+LoadoutView ReadArmoryLoadout(void* screen)
+{
+    LoadoutView v;
+    if (!screen)
+        return v;
+
+    void* equippedList = ReadPtrRaw(screen, kLoadoutEquippedListOffset);
+    void* lockerList = ReadPtrRaw(screen, kLoadoutLockerListOffset);
+    void* activeList = ReadPtrRaw(screen, kLoadoutActiveListOffset);
+    if (!equippedList || !activeList)
+        return v; // still building — InitArmory spawns both before PopulateData
+
+    v.active = (activeList == lockerList && lockerList) ? LoadoutList::Locker
+                                                        : LoadoutList::Equipped;
+    ReadLoadoutRows(activeList, v.rows);
+    v.selectedRow = ReadI32Raw(activeList, kListSelectedIndexOffset);
+    // The equipped list stays on screen while the locker is open ("openList" only slides it),
+    // so it is read as a mirror — and ONLY then, since when it is the active list it is v.rows.
+    if (v.active == LoadoutList::Locker)
+        ReadLoadoutRows(equippedList, v.equipped);
+
+    v.inventoryTitle = CleanText(ReadFStringField(screen, kLoadoutInventoryTitleOffset));
+    v.lockerTitle = CleanText(ReadFStringField(screen, kLoadoutLockerTitleOffset));
+    v.makeAvailable = CleanText(ReadFStringField(screen, kLoadoutMakeAvailableOffset));
+
+    const uint32_t flags = ReadU32Raw(screen, kLoadoutFlagsOffset);
+    v.gearStripped = (flags & kLoadoutGearStripped) != 0;
+    v.itemsStripped = (flags & kLoadoutItemsStripped) != 0;
+    v.weaponsStripped = (flags & kLoadoutWeaponsStripped) != 0;
+    v.tipStripItems = CleanText(ReadFStringField(screen, kLoadoutTipStripItemsOffset));
+    v.tipStripItemsOff = CleanText(ReadFStringField(screen, kLoadoutTipStripItemsOffOffset));
+    v.tipStripGear = CleanText(ReadFStringField(screen, kLoadoutTipStripGearOffset));
+    v.tipStripGearOff = CleanText(ReadFStringField(screen, kLoadoutTipStripGearOffOffset));
+    v.tipStripWeapons = CleanText(ReadFStringField(screen, kLoadoutTipStripWeaponsOffset));
+    v.tipStripWeaponsOff = CleanText(ReadFStringField(screen, kLoadoutTipStripWeaponsOffOffset));
+
+    v.valid = true;
+    return v;
+}
+
+bool SetLoadoutSelection(void* screen, int index)
+{
+    void* active = screen ? ReadPtrRaw(screen, kLoadoutActiveListOffset) : nullptr;
+    if (!active || index < 0)
+        return false;
+    SetListIndex(active, index);
+    return true;
+}
+
+bool ActivateLoadoutSelection(void* screen)
+{
+    if (!screen)
+        return false;
+    // ⛔ OnAccept() reads ActiveList.SelectedIndex and ignores everything else, so the caller
+    // MUST have written the selection first — the same ordering the save/load rows earned, where
+    // a click sent while the two disagreed deleted the wrong save.
+    uint8_t noParams[16] = {};
+    return CallNamedFunction(screen, "OnAccept", noParams);
+}
+
+bool ClearLoadoutRow(const LoadoutRow& row)
+{
+    if (!row.handle)
+        return false;
+    // The handler's UIButton parameter is dead weight in its body — it works from the row's own
+    // ItemRef — but the real button is right there, so the frame is honest either way.
+    void* parms[2] = {row.dropButton, nullptr};
+    return CallNamedFunction(row.handle, "OnDropItemClicked", parms);
+}
 
 SquadSelectView ReadSquadSelect(void* screen)
 {
@@ -2516,6 +2654,10 @@ SquadSelectView ReadSquadSelect(void* screen)
         // This is the same bit the game's own GetActiveListItem() looks at (recon §5).
         slot.focused = (ReadU32Raw(cards[i], kPanelFlagsOffset) & kPanelFocused) != 0;
         slot.activeButton = static_cast<int>(ReadU8Raw(cards[i], kCardActiveButtonOffset));
+        slot.bondIcon = ReadPtrRaw(cards[i], kCardBondIconOffset);
+        // bHasTooltip on the CARD is set by CreateFlyoverTooltip and only for a tired soldier,
+        // so this is empty exactly when the game shows no warning.
+        slot.tooltip = ReadPanelTooltip(cards[i]);
 
         if (!slot.locked) {
             // Declaration order IS the card's top-to-bottom order. Edit and Dismiss are emitted
@@ -2634,15 +2776,21 @@ bool ActivateSquadControl(void* screen, const SquadSlot& slot, const SquadContro
     case SquadButton::WeaponHeavy:
         return CallNamedFunction(slot.handle, "OnClickedHeavyWeapon", noParams);
     case SquadButton::Bond:
-        // Its own handler takes the icon it was clicked on, and ignores it — but a parameter we
-        // cannot fill is a parameter we do not pass, so this one goes through the icon instead.
-        return false;
+        // OnClickBondIcon(UIBondIcon Icon) is the card's own handler and the icon is the one
+        // parameter it never reads — its body looks the unit up through GetUnitRef() and branches
+        // on bCanHaveBonds. Passing the real icon anyway costs nothing and keeps the frame
+        // honest, so the usual "never hand script a pointer it might deref" rule is not even
+        // tested here.
+        {
+            void* parms[2] = {slot.bondIcon, nullptr};
+            return CallNamedFunction(slot.handle, "OnClickBondIcon", parms);
+        }
     default:
         return false;
     }
 }
 
-bool InvokeSquadSelectVerb(void* screen, const char* funcName)
+bool InvokeScreenVerb(void* screen, const char* funcName)
 {
     if (!screen || !funcName)
         return false;

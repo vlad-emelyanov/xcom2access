@@ -258,6 +258,42 @@ static_assert(offsetof(AUITacticalHUD, CachedVisibility) == 0x414,
 // The screen's own bitfield sits at 0x478 (bLaunched / bReceivedWalkupEvent / bNoCancel /
 // bDisableLoadout); SquadMinimums is the plain member before it and SoldierSlotCount the one
 // before that, so the pair pins the dword from both sides.
+// UIArmory_Loadout: the two lists, the panel headings, the strip tooltips and the flag dword
+// at 0x0A74 — pinned by LocTag before it and StrippedUnits after, since a bitfield has no
+// offsetof of its own. m_strInventoryLabels is a SIXTY-SEVEN entry array here rather than the
+// stock seventeen, which is a second independent confirmation that this dump is Highlander-built
+// (CHItemSlot extends EInventorySlot).
+static_assert(offsetof(AUIArmory_Loadout, ActiveList) == 0x4FC, "loadout active list");
+static_assert(offsetof(AUIArmory_Loadout, EquippedList) == 0x50C, "loadout equipped list");
+static_assert(offsetof(AUIArmory_Loadout, LockerList) == 0x51C, "loadout locker list");
+static_assert(offsetof(AUIArmory_Loadout, m_strInventoryTitle) == 0x53C, "loadout left title");
+static_assert(offsetof(AUIArmory_Loadout, m_strLockerTitle) == 0x54C, "loadout right title");
+static_assert(offsetof(AUIArmory_Loadout, m_strTooltipStripItems) == 0x9DC, "loadout tip items");
+static_assert(offsetof(AUIArmory_Loadout, m_strTooltipStripItemsDisabled) == 0x9EC,
+    "loadout tip items off");
+static_assert(offsetof(AUIArmory_Loadout, m_strTooltipStripGear) == 0x9FC, "loadout tip gear");
+static_assert(offsetof(AUIArmory_Loadout, m_strTooltipStripGearDisabled) == 0xA0C,
+    "loadout tip gear off");
+static_assert(offsetof(AUIArmory_Loadout, m_strTooltipStripWeapons) == 0xA1C, "loadout tip wpn");
+static_assert(offsetof(AUIArmory_Loadout, m_strTooltipStripWeaponsDisabled) == 0xA2C,
+    "loadout tip wpn off");
+static_assert(offsetof(AUIArmory_Loadout, m_strMakeAvailable) == 0xA4C, "loadout make available");
+static_assert(offsetof(AUIArmory_Loadout, LocTag) == 0xA6C,
+    "UIArmory_Loadout flag dword follows LocTag at 0xA74");
+static_assert(offsetof(AUIArmory_Loadout, StrippedUnits) == 0xA78,
+    "UIArmory_Loadout flag dword precedes StrippedUnits at 0xA74");
+
+// UIArmory_LoadoutItem: every word the row RETAINS, plus the dword at 0x043C pinned between
+// Count and EquipmentSlot. `disabledText` is declared at 0x03F8 and never assigned by any setter
+// — the reason goes straight into Flash — which is why the companion recomputes it.
+static_assert(offsetof(AUIArmory_LoadoutItem, Title) == 0x3D8, "loadout row title");
+static_assert(offsetof(AUIArmory_LoadoutItem, Subtitle) == 0x3E8, "loadout row subtitle");
+static_assert(offsetof(AUIArmory_LoadoutItem, SlotType) == 0x428, "loadout row slot label");
+static_assert(offsetof(AUIArmory_LoadoutItem, Count) == 0x438, "loadout row count");
+static_assert(offsetof(AUIArmory_LoadoutItem, EquipmentSlot) == 0x440,
+    "UIArmory_LoadoutItem flag dword sits between Count and EquipmentSlot at 0x43C");
+static_assert(offsetof(AUIArmory_LoadoutItem, DropItemButton) == 0x458, "loadout row drop button");
+
 static_assert(offsetof(AUISquadSelect, m_iSelectedSlot) == 0x410, "squad select slot");
 static_assert(offsetof(AUISquadSelect, m_kSlotList) == 0x420, "squad select card list");
 static_assert(offsetof(AUISquadSelect, LaunchButton) == 0x428, "squad select launch button");
@@ -278,6 +314,7 @@ static_assert(offsetof(AUISquadSelect_ListItem, SlotIndex) == 0x3D8, "squad card
 static_assert(offsetof(AUISquadSelect_ListItem, CannotEditSlots) == 0x3E0,
     "UISquadSelect_ListItem flag dword precedes CannotEditSlots at 0x3DC");
 static_assert(offsetof(AUISquadSelect_ListItem, UtilitySlots) == 0x408, "squad card utility list");
+static_assert(offsetof(AUISquadSelect_ListItem, BondIcon) == 0x410, "squad card bond icon");
 static_assert(offsetof(AUISquadSelect_ListItem, m_eActiveButton) == 0x4E0,
     "squad card active button");
 
