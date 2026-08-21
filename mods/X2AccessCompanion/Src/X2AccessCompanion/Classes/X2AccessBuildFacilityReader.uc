@@ -92,11 +92,14 @@ function DescribeFacilityChoice()
 	// figure is power produced (a generator, or anything on a shielded coil), a negative one is
 	// power consumed, and the panel shows the absolute value either way. Speech gets the word the
 	// icon was standing in for.
+	// ⛔ int(Abs(...)), not Abs(...). UnrealScript's Abs is FLOAT, so string() on its result
+	// prints four decimals — live 2026-08-21 this read "ЭНЕРГИЯ: -3.0000". The game's own line
+	// wraps it the same way (string(int(Abs(power)))); dropping the cast was the whole bug.
 	Power = Screen.GetPowerRequirement(Facility);
 	if (Power >= 0)
 		Rec $= FLD_SEP $ "power=" $ Screen.m_strPowerLabel @ "+" $ string(Power);
 	else
-		Rec $= FLD_SEP $ "power=" $ Screen.m_strPowerLabel @ "-" $ string(Abs(Power));
+		Rec $= FLD_SEP $ "power=" $ Screen.m_strPowerLabel @ "-" $ string(int(Abs(Power)));
 
 	Reqs = class'UIUtilities_Strategy'.static.GetStrategyReqString(Facility.Requirements);
 	if (Reqs != "")

@@ -432,16 +432,35 @@ private function LogRoomGeometry(UIFacilityGrid Grid)
 // honours the grid's own visibility test, which its OnUnrealCommand consults before handling
 // anything. (That is the documented exception to "never gate readiness on bIsVisible": here the
 // game itself gates on it, so mirroring it is what keeps us agreeing with where arrows go.)
+// ⛔ BUILD MODE PUTS A SCREEN ON TOP OF THE GRID, and the grid still owns the arrows.
+// GetCurrentScreen() is the first stack entry, which in build mode is UIBuildFacilities — so a
+// bare cast answers `none`, this function bails, and the ant farm goes silent on the ONE screen
+// where a player is choosing a room to build in. Worse, the none branch clears bWasOnGrid, so it
+// forgets where the cursor was as well. Measured live 2026-08-21: ten arrow presses in build
+// mode, the gate reporting active throughout, and not one word spoken.
+//
+// Native's ReadAvengerGate already tolerates exactly this one screen; the companion never got
+// the same rule, so the two halves disagreed about whether the player was on the grid.
+//
+// The tolerance is not a guess about layering: UIBuildFacilities.OnUnrealCommand ends by calling
+// `HQPRES.m_kFacilityGrid.Navigator.OnUnrealCommand, so the grid its keys drive IS
+// `HQPRES.m_kFacilityGrid — read from the same place the game reads it.
 private function UIFacilityGrid GetGrid()
 {
 	local UIScreenStack Stack;
 	local UIFacilityGrid Grid;
+	local UIScreen Current;
 
 	Stack = `SCREENSTACK;
 	if (Stack == none)
 		return none;
 
-	Grid = UIFacilityGrid(Stack.GetCurrentScreen());
+	Current = Stack.GetCurrentScreen();
+	Grid = UIFacilityGrid(Current);
+
+	if (Grid == none && UIBuildFacilities(Current) != none)
+		Grid = `HQPRES.m_kFacilityGrid;
+
 	if (Grid == none || !Grid.bIsVisible || Grid.Navigator == none)
 		return none;
 
