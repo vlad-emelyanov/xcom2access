@@ -83,6 +83,7 @@ function DescribeRoom()
 private function AppendStatus(UIRoom Room)
 {
 	local XComGameState_HeadquartersRoom RoomState;
+	local XComGameState_FacilityXCom Building;
 	local string Rec;
 
 	RoomState = Room.GetRoom();
@@ -96,8 +97,18 @@ private function AppendStatus(UIRoom Room)
 	// "РЕЗУЛЬТАТЫ ЗАДАНИЯ" (MISSION RESULTS), left over from the post-mission screen.
 	// These three branches are the grid overlay's own, so the room is called the same thing here
 	// as it is one screen up.
+	// ⛔ The FACILITY BEING BUILT, not m_strFacilityLabel — that is the word "ОТСЕК", a column
+	// heading, so naming the room with it announced a construction site as, literally, "ROOM".
+	// The grid overlay one screen up calls it GetFacility().GetMyTemplate().DisplayName
+	// (UpdateConstructionFacility), and so does GetExcavationRewardString's own construction
+	// branch; this is the same read, so all three agree on what the room is called.
 	if (RoomState.UnderConstruction && RoomState.GetBuildFacilityProject() != none)
-		Rec $= FLD_SEP $ "room=" $ Room.m_strFacilityLabel;
+	{
+		Building = XComGameState_FacilityXCom(`XCOMHISTORY.GetGameStateForObjectID(
+			RoomState.GetBuildFacilityProject().ProjectFocus.ObjectID));
+		if (Building != none && Building.GetMyTemplate() != none)
+			Rec $= FLD_SEP $ "room=" $ Building.GetMyTemplate().DisplayName;
+	}
 	else if (RoomState.ClearingRoom)
 		Rec $= FLD_SEP $ "room=" $ RoomState.GetClearingInProgressLabel();
 	else if (RoomState.HasSpecialFeature())
