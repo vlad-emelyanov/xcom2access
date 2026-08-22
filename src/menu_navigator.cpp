@@ -284,9 +284,20 @@ void SpeakMove(const GraphNode* from, const GraphNode* to, const std::string& tr
     RefreshLiveBaseline(to);
 }
 
+// Defined with the geoscape recipe below. Detaching has to hand the tray icon we hovered its
+// matching MOUSE_OUT — the pair is symmetric (IN saves the camera location and sets
+// bOverrideZoomHide, OUT restores and clears both), so leaving without it strands the pin in its
+// hover state and leaves the camera parked on whatever site the player was last reading.
+void ClearGeoscapeHover();
+
 void Detach()
 {
     const char* name = gActive ? gActive->logName : "?";
+    ClearGeoscapeHover();
+    // The alert text cache is keyed on symbol+path+name, which is self-invalidating for a
+    // REPLACED alert — but a second alert of the same kind, raised after the first closed,
+    // reuses all three, so without this it would be answered from the first one's reading.
+    GameUI::ResetAlertTextCache();
     gAttached = false;
     gActive = nullptr;
     gPending = nullptr;
@@ -3419,12 +3430,424 @@ const Recipe kChooseFacilityRecipe{"choose facility", ProbeChooseFacility, Build
 // Above the pause menu and the shell it is opened from, below any dialog it raises.
 const Recipe kSaveLoadRecipe{"save/load", ProbeSaveLoad, BuildSaveLoad, SaveLoadName};
 
+// ---- the geoscape's mission tray (UIStrategyMap) ----
+//
+// The globe itself is unreachable from the keyboard — pin selection is per-frame and
+// ISCONTROLLERACTIVE-gated, so it is not the ant farm's one-call ungate — but the TRAY along the
+// bottom is the game's own list of everything actionable, and its navigator already answers the
+// arrows on mouse+keyboard. What the mouse-active guard withholds is only the visible half:
+// UIStrategyMap_MissionIcon.OnReceiveFocus early-returns, so there are no selection brackets, no
+// camera fly-to and no tooltip refresh. This recipe supplies those three and the voice.
+//
+// Claiming the arrows is deliberate and costs the player nothing they cannot get back: bare
+// arrows pan the globe, Ctrl+arrow still does (the leniency rule), and panning actively degrades
+// our own data — an off-screen pin stops updating (UpdateVisuals gates on bOnScreen), so sharing
+// the axis would leave the reader describing widgets holding class defaults.
+
+// The icon our hover currently sits on, so the next move can hand the one being LEFT its
+// matching MOUSE_OUT. The pair is symmetric by design — IN saves the camera location and sets
+// bOverrideZoomHide, OUT restores and clears both — so an unmatched IN strands the pin in its
+// hover state and overwrites the saved location with a site the player never asked to return to.
+//
+// Stored as a raw pointer and always re-matched against a freshly read view before use: the
+// twenty icons are spawned once and reused, so the pointers are stable across UpdateMissions,
+// but a screen teardown collects them and a stale one must never be called into.
+void* gGeoHovered = nullptr;
+
+void ClearGeoscapeHover()
+{
+    if (!gGeoHovered)
+        return;
+    void* screen = GameUI::FindStrategyMapScreen();
+    if (screen) {
+        GameUI::StrategyMapView live = GameUI::ReadStrategyMap(screen);
+        for (const GameUI::TrayIcon& icon : live.icons) {
+            if (icon.handle == gGeoHovered) {
+                GameUI::MoveTrayHover(icon, /*entering*/ false);
+                break;
+            }
+        }
+    }
+    gGeoHovered = nullptr;
+}
+
+// eSMS_Flight — the Avenger is in transit and the game itself takes NO input on this screen:
+// UIStrategyMap.OnUnrealCommand opens with `if(m_eUIstate == eSMS_Flight) return true;`, above
+// even its release check. Attaching there would claim the arrows for a tray whose icons cannot
+// be acted on and whose pins are moving under the camera, so the layer stands down for exactly
+// as long as the game does. It is also the state the pins are least readable in — UpdateVisuals
+// skips UpdateFromGeoscapeEntity entirely while bFlightMode.
+constexpr int kStrategyMapFlight = 2;
+
+void* ProbeGeoscape()
+{
+    void* screen = GameUI::FindStrategyMapScreen();
+    if (!screen || !GameUI::IsScreenFocused(screen))
+        return nullptr;
+    if (GameUI::ReadStrategyMap(screen).uiState == kStrategyMapFlight)
+        return nullptr;
+    return screen;
+}
+
+std::string GeoscapeName()
+{
+    return Vocab::ScreenGeoscapeFallback;
+}
+
+std::unique_ptr<GraphRender> BuildGeoscape()
+{
+    gFocus.clear();
+
+    GameUI::StrategyMapView view = GameUI::ReadStrategyMap(gScreen);
+
+    GraphBuilder b;
+    b.BeginStop("tray");
+
+    if (view.icons.empty()) {
+        // Legitimate, not a fault: with no missions live, no scan site available and no faction
+        // met, UpdateMissions binds nothing and hides all twenty slots. Naming the way out
+        // matters most here, as it does in an empty room — with no nodes to move between, a
+        // player has nothing to feel their way with.
+        b.AddLabel(ControlId::Structural("geoscape/empty"), []() {
+            return std::string(Vocab::GeoscapeTrayEmpty) + ". " + Vocab::GeoscapeLeaveHint;
+        });
+        return b.Build();
+    }
+
+    // A horizontal row, because that is what the tray IS on screen — Left/Right step it, which
+    // is also the direction the game's own navigator moves in (HorizontalNavigation is set in
+    // InitScreen).
+    b.StartRow("tray");
+
+    for (const GameUI::TrayIcon& icon : view.icons) {
+        // Keyed by the pin's ObjectID where there is one: the tray is rebuilt whenever the map
+        // changes and a slot index is not stable across that, while an ObjectID is stable over
+        // the whole campaign history. Placeholders have no entity, so they key by slot.
+        ControlId id = ControlId::Referenced(icon.handle,
+            "geoscape/" + std::string(icon.entityId ? "e" : "s")
+                + std::to_string(icon.entityId ? icon.entityId : icon.slot));
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+
+        if (icon.placeholder) {
+            // The slot of a faction not yet met. The game gives it no tooltip at all, so a
+            // sighted player hovering it learns nothing either — the grey Faction_unknown art is
+            // the whole message. Parity is therefore "one of the faction slots, and you have not
+            // met them", which is exactly what the PIN's generic localized noun plus our clause
+            // says. ⛔ Never name WHICH faction: the icon deliberately does not, and the tray
+            // slot order (Reaper, Skirmisher, Templar) would leak it.
+            const std::string label
+                = icon.pinHeader.empty() ? std::string(Vocab::GeoscapeUnmetFaction)
+                                         : icon.pinHeader;
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+            if (!icon.pinHeader.empty()) {
+                vt.Announcements.emplace_back(
+                    NodeAnnouncement::Static(Vocab::GeoscapeUnmetFaction));
+                vt.Announcements.back().Kind = AnnouncementKinds::Value;
+            }
+        } else {
+            // The game's own hover tooltip, verbatim: Title is the site, Body the detail
+            // ("НЕПОВРЕЖДЕННЫЕ СТРОЕНИЯ: АФРИКА" / "Новобранцы: 6 дн. осталось"). Read at
+            // ANNOUNCE time rather than closed over, because our own MOUSE_IN refreshes them —
+            // it re-fetches the scan site from the history first, so a days-remaining count
+            // that has ticked since UpdateMissions last ran is current by the time we speak.
+            void* handle = icon.handle;
+            // Never silence. A tooltip is spawned lazily by SetMissionIconTooltip, so an icon
+            // bound this frame can legitimately have none yet — and a stop that says only
+            // "button, 3 of 5" tells a player nothing at all. The pin's own generic localized
+            // noun ("RESISTANCE HQ", "POINT OF INTEREST") is the honest last word for that.
+            const std::string titleFallback = icon.title.empty() ? icon.pinHeader : icon.title;
+            vt.Announcements.emplace_back(
+                [handle, titleFallback]() {
+                    GameUI::StrategyMapView live = GameUI::ReadStrategyMap(gScreen);
+                    for (const GameUI::TrayIcon& t : live.icons)
+                        if (t.handle == handle)
+                            return t.title.empty() ? titleFallback : t.title;
+                    return titleFallback;
+                },
+                /*live*/ false, AnnouncementKinds::Label);
+
+            const std::string bodyFallback = icon.body;
+            if (!bodyFallback.empty()) {
+                vt.Announcements.emplace_back(
+                    [handle, bodyFallback]() {
+                        GameUI::StrategyMapView live = GameUI::ReadStrategyMap(gScreen);
+                        for (const GameUI::TrayIcon& t : live.icons)
+                            if (t.handle == handle)
+                                return t.body.empty() ? bodyFallback : t.body;
+                        return bodyFallback;
+                    },
+                    /*live*/ false, AnnouncementKinds::Value);
+            }
+
+            // Send the Avenger there — or make contact, or build the outpost, or start the
+            // scan, whichever the game's own priority picks for this pin. Vanilla reaches none
+            // of it from the keyboard: FXS_BUTTON_A is the only entry, so this is the layer
+            // supplying a route the game already built and never wired to a key.
+            //
+            // ⚠ It acts on the game's SelectedMapItem, which our focus write-back has already
+            // moved onto this icon — so it is re-read here only to confirm the screen is still
+            // there, not to identify the target.
+            vt.OnActivate = []() {
+                GameUI::StrategyMapView live = GameUI::ReadStrategyMap(gScreen);
+                GameUI::ActivateTraySelection(live);
+            };
+        }
+
+        // Focus write-back, two INDEPENDENT halves. Conflating them was the first version's bug.
+        //
+        //  1. Move the game's own navigator, so SelectedMapItem follows what was just spoken.
+        //     This applies to placeholders TOO — measured live, an unmet faction's slot IS in
+        //     NavigableControls — and SetTraySelection no-ops on the navIndex < 0 case by itself.
+        //  2. Hand the icon the mouse hover, for the camera fly-to and the tooltip refresh. NOT
+        //     for a placeholder: OnMouseEvent early-returns on an unmet faction before reaching
+        //     any of that, so the game would not move the camera either, and pretending to would
+        //     be worse than parity rather than better.
+        void* handle = icon.handle;
+        gFocus[id.StructuralKey] = FocusTarget{-1, nullptr, false, [handle]() {
+            GameUI::StrategyMapView live = GameUI::ReadStrategyMap(gScreen);
+            for (const GameUI::TrayIcon& t : live.icons) {
+                if (t.handle != handle)
+                    continue;
+                GameUI::SetTraySelection(live, t.navIndex);
+                if (t.placeholder) {
+                    ClearGeoscapeHover();
+                    return;
+                }
+                if (gGeoHovered != handle)
+                    ClearGeoscapeHover();
+                if (GameUI::MoveTrayHover(t, /*entering*/ true))
+                    gGeoHovered = handle;
+                return;
+            }
+        }};
+
+        b.AddItem(std::move(id), std::move(vt));
+    }
+
+    b.EndRow();
+
+    // ---- stop 2: the HUD's four keyboard-unreachable verbs ----
+    //
+    // PARITY, which is what earns them a stop at all: Dark Events, Chosen Info and Resistance
+    // Orders are drawn on screen and clickable with a mouse, and vanilla reaches none of them
+    // from the keyboard (AddDarkEventsButton ends in DisableNavigation() on both the container
+    // and the button; the two HUD buttons are children of StrategyMapHUD, which UpdateMissions'
+    // Navigator.Clear() leaves out of the screen's navigator entirely). The ResNet toggle is a
+    // nav-help hotlink with a controller-only key. So this is the ant-farm shape again — the
+    // game has the verb and only the mouse can reach it.
+    //
+    // ⛔ And it is what justifies TAKING Tab on this screen. The world ring and the ';' status
+    // block are AIDS — they enumerate regions and continents no sighted player can read off the
+    // globe — so by the stop-list parity rule they stay on their own keys and out of the Tab
+    // cycle. Without this stop the tray would be the only one and Tab would have nothing to do.
+    if (!view.verbs.empty()) {
+        b.BeginStop("hud");
+        for (const GameUI::HudVerb& verb : view.verbs) {
+            const auto kind = verb.kind;
+            ControlId id = ControlId::Structural(
+                "geoscape/verb/" + std::to_string(static_cast<int>(kind)));
+
+            NodeVtable vt;
+            vt.Type = &ButtonType();
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(verb.label));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+
+            // The map-mode toggle is the one verb that HAS a state, and a sighted player reads
+            // it off the globe itself changing — so speech has to say it outright.
+            if (kind == GameUI::HudVerb::Kind::ResNetToggle) {
+                const bool on = verb.on;
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(
+                    on ? Vocab::GeoscapeResNetOn : Vocab::GeoscapeResNetOff));
+                vt.Announcements.back().Kind = AnnouncementKinds::Value;
+            }
+
+            // Re-read at activation rather than closing over the verb: the handler runs from the
+            // input drain a frame or more after this render, and the two HUD buttons are
+            // Show()/Hide()n on every RefreshData — so the pointer captured here may describe a
+            // verb the game has since taken off screen.
+            vt.OnActivate = [kind]() {
+                GameUI::StrategyMapView live = GameUI::ReadStrategyMap(gScreen);
+                for (const GameUI::HudVerb& v : live.verbs) {
+                    if (v.kind == kind) {
+                        GameUI::ActivateHudVerb(live, v);
+                        return;
+                    }
+                }
+            };
+
+            b.AddItem(std::move(id), std::move(vt));
+        }
+    }
+
+    return b.Build();
+}
+
+// Above the ant farm and the Avenger HUD it sits over, below anything it pushes (a mission
+// briefing, the pause menu, a dialog) — which is what ProbeGeoscape's "must be the current
+// screen" test enforces, mirroring UIStrategyMap's own input routing.
+const Recipe kGeoscapeRecipe{"geoscape tray", ProbeGeoscape, BuildGeoscape, GeoscapeName};
+
 // Probe order is topmost-screen-first: anything that can overlay squad select — a dialog, the
 // pause menu — has to resolve before it, or the layer would attach to the screen underneath.
-const Recipe* const kRecipes[] = {&kDialogRecipe, &kNarrativeRecipe, &kIronManRecipe,
+// ---- the popup recipe (docs/popup-inventory.md §1-3) ----
+//
+// One recipe for every modal notification in the game: the strategy alert family (UIAlert, 118
+// variants), the bespoke one-screen popups (faction, bond, ability, Chosen fragment/level-up/
+// reveal, UFO attack), and the blocking progress dialog. They look nothing alike and they share
+// exactly what a reader needs: the popup is the topmost stack screen, and its own
+// OnUnrealCommand answers Enter and Escape at SCREEN level.
+//
+// TWO STOPS. The MESSAGE, one node per line — which is the point of this whole recipe: a bond
+// alert or a Chosen reveal is several paragraphs, and speech is serial, so a player has to be
+// able to step through it with Tab rather than sit through all of it to reach the part they
+// wanted. Then the BUTTONS. Nothing goes in gFocus: every one of these screens either disables
+// navigation on its buttons or spawns them with an empty label, so pushing the game's own focus
+// at them would ask the navigator for something it refuses to keep.
+//
+// ⛔ Activation is the SCREEN's own OnUnrealCommand, never a button's Click. UIAlert's Button1/
+// Button2 are spawned with InitButton(…, "", …) and get their labels only through Flash, so
+// there is no delegate to reach that the screen's own accept path does not already run — and for
+// several alert names OnUnrealCommand branches BEFORE dispatching (eAlert_Contact refuses when
+// the player cannot afford contact, eAlert_TrainingComplete routes Enter to cancel rather than
+// confirm). Sending the key keeps every one of those branches; poking a delegate loses them all.
+
+constexpr const char* kPopupReaderClass = "X2AccessPopupReader";
+
+std::unique_ptr<GraphRender> BuildPopup()
+{
+    gFocus.clear(); // Flash-driven throughout: no panel the game will accept focus on
+
+    const std::vector<WireRecord> words = FetchCompanionRecords(kPopupReaderClass, "DescribePopup");
+    if (words.empty())
+        return nullptr;
+
+    const WireRecord* header = FindRecord(words, "popup");
+    const std::string screenClass = header ? RecField(*header, "class") : std::string();
+
+    // Message lines: the companion's own, plus — for UIAlert — the ones native reads back out of
+    // the Flash panel, because that screen retains none (see GameUI::ReadAlertText).
+    std::vector<std::string> lines;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") == "line")
+            lines.push_back(RecField(rec, "text"));
+    }
+
+    std::vector<std::string> alertButtons;
+    if (const WireRecord* alert = FindRecord(words, "alert")) {
+        const GameUI::AlertView view = GameUI::ReadAlertText(gScreen, RecField(*alert, "mcpath"),
+            RecField(*alert, "symbol"), RecField(*alert, "name"));
+        // The Flash reading leads: for every alert but the objective one the companion has
+        // nothing, and where it DOES have something (ObjectiveUIHeaderText/BodyText) the panel
+        // is showing the same words, so appending would say each of them twice.
+        if (!view.lines.empty())
+            lines = view.lines;
+        alertButtons = view.buttons;
+    }
+
+    // Identity carries the text, for the dialog recipe's reason: one popup can be replaced by
+    // another between two polls (a callback raising the next alert in the queue), and without
+    // the words in the key the differ would see the same node and stay silent about a message
+    // the player has not heard.
+    std::string key = screenClass + "\n";
+    for (const std::string& line : lines)
+        key += line + "\n";
+
+    GraphBuilder b;
+    b.BeginStop("message");
+
+    // The screen's own title as a context rather than a node: a REPLACED popup gets no fresh
+    // attach to speak a screen name with, so the heading has to ride in the node path to be
+    // heard at all.
+    const std::string title = header ? RecField(*header, "title") : std::string();
+    if (!title.empty())
+        b.PushContext(title, "", /*positions*/ false);
+
+    // ⛔ NO StartRow here, and that is the point: a control added outside an open row becomes its
+    // OWN single-item row, so the message reads DOWN with Up/Down instead of across with
+    // Left/Right. A message is prose stacked vertically on screen, not a strip of side-by-side
+    // controls, and walking it sideways contradicts both the layout and the reading order.
+    // It also drops the "N of M" stamp, which GraphBuilder only applies within a row holding more
+    // than one item — right here, because "СОЛДАТ ПОЛУЧИЛ НОВОЕ ЗВАНИЕ, 1 of 6" reads as a menu
+    // position on something that is a sentence.
+    for (size_t i = 0; i < lines.size(); i++) {
+        const std::string& line = lines[i];
+        b.AddLabel(ControlId::Structural(key + "line/" + std::to_string(i)),
+            [line]() { return line; });
+    }
+    if (lines.empty()) {
+        // Recognised, but nothing readable came back. Say so rather than attaching an empty
+        // graph: silence here is indistinguishable from "no popup", and the player still has to
+        // press something to get out of it.
+        b.AddLabel(ControlId::Structural(key + "line/none"),
+            []() { return std::string(Vocab::PopupNoText); });
+    }
+
+    // The buttons. Their labels come from the companion when it has them and from Flash for an
+    // alert; when neither does, the accept/cancel pair is still offered under the game's own
+    // generic wording, because a modal a blind player cannot dismiss is worse than one that
+    // reads badly.
+    struct Choice {
+        std::string label;
+        int cmd;
+    };
+    std::vector<Choice> choices;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "button")
+            continue;
+        const std::string label = RecField(rec, "label");
+        if (!label.empty())
+            choices.push_back({label, atoi(RecField(rec, "cmd").c_str())});
+    }
+    // Flash order is Button0 = confirm, Button1 = cancel — the same order UIAlert's own
+    // OnUnrealCommand maps Enter and Escape onto.
+    for (size_t i = 0; i < alertButtons.size(); i++)
+        choices.push_back({alertButtons[i], i == 0 ? GameUI::kCmdEnter : GameUI::kCmdEscape});
+    if (choices.empty()) {
+        choices.push_back({std::string(Vocab::PopupContinue), GameUI::kCmdEnter});
+        choices.push_back({std::string(Vocab::PopupDismiss), GameUI::kCmdEscape});
+    }
+
+    b.BeginStop("buttons");
+    b.StartRow();
+    for (size_t i = 0; i < choices.size(); i++) {
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(choices[i].label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        // Read gScreen at activation rather than capturing it: the handler runs from the input
+        // drain, a frame or more after this render, and the popup may already have been replaced.
+        vt.OnActivate = [cmd = choices[i].cmd]() { GameUI::SendScreenCommand(gScreen, cmd); };
+        b.AddItem(ControlId::Structural(key + "button/" + std::to_string(i)), std::move(vt));
+    }
+    b.EndRow();
+    return b.Build();
+}
+
+void* ProbePopup()
+{
+    const GameUI::PopupView view = GameUI::FindPopupScreen();
+    // Focus is the readiness test the shell screens use; the finder has already refused anything
+    // that is not topmost, inited and un-removed.
+    return (view.screen && GameUI::IsScreenFocused(view.screen)) ? view.screen : nullptr;
+}
+
+// Just the word. The popup's own title and its message ride in the graph — as a context and as
+// the message stop — so naming the screen only has to announce that a modal has appeared.
+std::string PopupName()
+{
+    return Vocab::ScreenPopup;
+}
+
+const Recipe kPopupRecipe{"popup", ProbePopup, BuildPopup, PopupName};
+
+const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kNarrativeRecipe, &kIronManRecipe,
     &kSoundtrackRecipe, &kOptionsRecipe, &kDifficultyRecipe, &kSaveLoadRecipe, &kPauseMenuRecipe,
     &kPersonnelRecipe, &kChooseFacilityRecipe, &kArmoryLoadoutRecipe, &kSquadSelectRecipe,
-    &kCommodityRecipe, &kRoomBuildRecipe, &kRoomRecipe, &kMainMenuRecipe};
+    &kCommodityRecipe,
+    &kRoomBuildRecipe, &kRoomRecipe, &kGeoscapeRecipe, &kMainMenuRecipe};
 
 // ---- key handlers (game thread, via the arbiter's drain) ----
 
@@ -3542,6 +3965,34 @@ void Init()
 
     auto attached = []() { return gAttached; };
     auto optionsAttached = []() { return gAttached && gActive == &kOptionsRecipe; };
+
+    // ⛔ THE GEOSCAPE KEEPS SPACE, and Space alone.
+    //
+    // UIStrategyMap.OnUnrealCommand maps BOTH Enter and Space to ToggleScan(), which is the only
+    // keyboard route to scanning there is. Taking BOTH would have removed scanning outright — so
+    // one of the pair stays the game's, permanently, and Space is the one with nothing else to
+    // do. (Its usual job here, reading the focused control's tooltip, is a courtesy; the tray's
+    // words are already in the focus readout.)
+    //
+    // ✅ ENTER IS OURS, because the tray now has something for it that the game does not: a
+    // keyboard route to AttemptSelectionCheckInterruption — send the Avenger there, make contact,
+    // build the outpost. Vanilla reaches that ONLY through FXS_BUTTON_A, the controller accept
+    // button, which no key on a mouse+keyboard setup produces. Leaving Enter to ToggleScan made
+    // it a dead key on every tray stop where the Avenger is not already parked, which is most of
+    // them. Space still scans, so nothing was traded away to get it.
+    //
+    // ✅ TAB IS OURS, earned by the HUD stop — Dark Events, Chosen Info, Resistance Orders and
+    // the ResNet toggle, all drawn on screen and reachable by no key in the game. ⛔ NOT by the
+    // world ring or the ';' status block: those are AIDS, enumerating regions and continents no
+    // sighted player can read off the globe, so by the stop-list parity rule they live on
+    // PageUp/PageDown and ';' and stay OUT of the Tab cycle. And Tab's own case label falls
+    // through into FXS_KEY_ESCAPE's body inside `if(`notdefined(FINAL_RELEASE)), a debug
+    // convenience, so Escape already carries the action it looked like it owned.
+    //
+    // The general test, which the Enter and Tab rulings each failed once before landing: a key is
+    // takeable when the ACTION behind it survives losing it AND the layer has parity-legitimate
+    // work for it. Space fails the first — ToggleScan has no other key once Enter is spent.
+    auto attachedNotGeoscape = []() { return gAttached && gActive != &kGeoscapeRecipe; };
     auto onDown = [](void (*fn)()) {
         return [fn](const KeyEvent& e) {
             if (e.down)
@@ -3560,7 +4011,12 @@ void Init()
         [](const KeyEvent& e) { if (e.down) OnArrow(GraphDir::Left); }, "menu: left"});
     RegisterClaim({VK_RIGHT, ModNone, attached,
         [](const KeyEvent& e) { if (e.down) OnArrow(GraphDir::Right); }, "menu: right"});
-    RegisterClaim({VK_HOME, ModNone, attached, onDown([]() { OnEdgeJump(GraphDir::Up); }),
+    // ⛔ HOME GOES TO THE GEOSCAPE RING, not to the edge jump. The ring's sort origin is the only
+    // cursor the globe has for a mouse+keyboard player — pin selection by proximity is per-frame
+    // and `ISCONTROLLERACTIVE-gated — so Home there means "measure everything from what I just
+    // heard" (see geo_scanner.cpp). Jump-to-first on a five-icon strip is a convenience; a place
+    // to stand on a world map is not. End keeps the edge jump on every screen, this one included.
+    RegisterClaim({VK_HOME, ModNone, attachedNotGeoscape, onDown([]() { OnEdgeJump(GraphDir::Up); }),
         "menu: home"});
     RegisterClaim({VK_END, ModNone, attached, onDown([]() { OnEdgeJump(GraphDir::Down); }),
         "menu: end"});
@@ -3572,7 +4028,7 @@ void Init()
     // Claimed either way, so it can't reach the game's own handler and double-act on the
     // focus our write-back keeps in sync. No tooltip → silent (the layer's refusals are
     // silent).
-    RegisterClaim({VK_SPACE, ModNone, attached,
+    RegisterClaim({VK_SPACE, ModNone, attachedNotGeoscape,
         [](const KeyEvent& e) { if (e.down && !e.repeat) OnTooltipKey(); }, "menu: tooltip"});
     RegisterClaim({VK_PRIOR, ModNone, optionsAttached, onDown([]() { OnTabPage(-1); }),
         "settings: previous tab"});

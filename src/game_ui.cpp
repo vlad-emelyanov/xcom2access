@@ -1,5 +1,8 @@
 #include "game_ui.h"
 #include "log.h"
+// For UIAlert's message text: its words live in the screen's own `localized` vars, reachable only
+// by NAME — which is what reflection does and UnrealScript cannot. See ReadAlertLocalized.
+#include "ue3_reflection.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -13,6 +16,7 @@
 #include "SDK_HEADERS/Core_structs.hpp"
 #include "SDK_HEADERS/Core_classes.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cstring>
 #include <string>
@@ -2999,6 +3003,85 @@ AvengerGate ReadAvengerGate()
     return gate;
 }
 
+// ---- the Skyranger load screen (UIDropShipBriefing_MissionStart / _MissionEnd) ----
+//
+// The two variants share a base but not a layout: UIDropShipBriefingBase adds a TArray<int> at
+// 0x410, and each subclass then declares its own strings from 0x420, in its own order. So the
+// offsets below cannot be folded into one set, and the little table is what keeps the two apart.
+//
+// ⛔ Read the MOUSE+KEYBOARD prompt, never the console one. Both classes carry a second,
+// controller-worded string (m_strConsoleLaunch / m_strConsolePressKeyToContinue) that the game
+// substitutes a button GLYPH into via a %A token — speaking it would say "%A LAUNCH MISSION".
+// The game picks between them on `ISCONTROLLERACTIVE and so, implicitly, do we by never
+// transcribing the console one's offset at all.
+
+constexpr int32_t kDropStartLaunchOffset = 0x460;  // m_strLaunch
+constexpr int32_t kDropStartLoadingOffset = 0x470; // m_strLoadingText
+constexpr int32_t kDropStartButtonOffset = 0x4B4;  // LaunchButton
+constexpr int32_t kDropStartTipOffset = 0x4C4;     // m_strCurrentTip
+
+constexpr int32_t kDropEndButtonOffset = 0x424;  // LaunchButton
+constexpr int32_t kDropEndPromptOffset = 0x43C;  // m_strPressKeyToContinue
+constexpr int32_t kDropEndLoadingOffset = 0x4DC; // m_strLoadingText
+
+DropshipView ReadDropship()
+{
+    DropshipView v;
+
+    // Stack lookup, not a ScreenFinder: this screen lives on the TRANSITION map, where the
+    // presentation layer is destroyed and rebuilt around it (XComPlayerController:1298). A
+    // cached instance is exactly the corpse the hard rules warn about, and the stack — which
+    // StackIsLiveRaw re-finds per call — is the one handle that survives the rebuild.
+    //
+    // ONE walk for both classes rather than FindStackScreenRaw twice: this poll runs for the
+    // whole session and finds nothing in almost all of it, and taking whichever variant is
+    // TOPMOST is also the more honest answer than preferring one by name.
+    void* stack = gStackFinder.Find();
+    if (!stack)
+        return v;
+
+    void* screens[kMaxStackScreens] = {};
+    const int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    for (int i = 0; i < count && !v.screen; i++) {
+        if (!screens[i])
+            continue;
+        const uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
+        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+            continue;
+        char name[64];
+        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
+            continue;
+        if (strcmp(name, "UIDropShipBriefing_MissionStart") == 0) {
+            v.screen = screens[i];
+            v.missionStart = true;
+        } else if (strcmp(name, "UIDropShipBriefing_MissionEnd") == 0) {
+            v.screen = screens[i];
+        }
+    }
+    if (!v.screen)
+        return v;
+
+    // ⛔ The VISIBLE bit alone, not IsShownRaw. The game's readiness signal is one statement —
+    // `LaunchButton.bIsVisible = true;` in OnCheckLoading — and nothing else on this screen ever
+    // writes it, so that bit is the whole answer. Also requiring bIsInited would tie our
+    // announcement to the button's Flash init callback, and if that callback never arrived we
+    // would simply never say "ready": a silent failure indistinguishable from a slow load, which
+    // is precisely the failure mode this feature exists to remove.
+    const int32_t buttonOffset = v.missionStart ? kDropStartButtonOffset : kDropEndButtonOffset;
+    if (void* button = ReadPtrRaw(v.screen, buttonOffset))
+        v.ready = (ReadU32Raw(button, kPanelFlagsOffset) & kPanelVisible) != 0;
+
+    if (v.missionStart) {
+        v.loadingText = ReadFStringField(v.screen, kDropStartLoadingOffset);
+        v.prompt = ReadFStringField(v.screen, kDropStartLaunchOffset);
+        v.tip = ReadFStringField(v.screen, kDropStartTipOffset);
+    } else {
+        v.loadingText = ReadFStringField(v.screen, kDropEndLoadingOffset);
+        v.prompt = ReadFStringField(v.screen, kDropEndPromptOffset);
+    }
+    return v;
+}
+
 // ---- inside a room (UIFacility and its 22 subclasses) ----
 //
 // The room SCREEN is not the room's content, and that is the whole shape of this reader.
@@ -3363,6 +3446,467 @@ bool StartRoomExcavation(const RoomBuildView& view)
     // StartClearRoom on the room state directly either — StartExcavation also closes the screen,
     // and a room left open over a started project is a state the game never produces.
     return ClickButton(view.excavate);
+}
+
+// ---- the popup family (docs/popup-inventory.md §1-3) ----
+//
+// Every modal notification in the game, behind ONE finder. What lets a dozen unrelated classes
+// share it is that they agree on the only two things a reader needs: the popup is the topmost
+// stack screen, and its OWN OnUnrealCommand answers FXS_KEY_ENTER / FXS_KEY_ESCAPE at screen
+// level (checked class by class against SrcOrig). So activation is the screen's own accept path
+// and needs no per-class button offsets — which is why this whole family hand-transcribes NO
+// offsets and adds NO static_asserts, the same property the hacking screen has.
+
+namespace {
+
+// Ordered most-specific first only for readability; the match is exact on the class name, so
+// order does not matter. UIAlert's two DLC subclasses are listed because the finder compares the
+// concrete class name, not the base.
+constexpr const char* kPopupClasses[] = {
+    // Strategy alerts — one class, 118 variants (words come from Flash, see ReadAlertText)
+    "UIAlert",
+    "UIAlert_DLC_Day60",
+    "UIAlert_DLC_Day90",
+    // Bespoke strategy popups
+    "UIFactionPopup",
+    "UIAbilityPopup",
+    "UISoldierBondAlert",
+    "UIChosenFragmentRecovered",
+    "UIChosenLevelUp",
+    "UIUFOAttack",
+    "UISitRepInformation",
+    "UIAdventOperations",
+    // Tactical
+    "UIChosenReveal",
+    "UICombatLose",
+    // Both layers
+    "UIProgressDialogue",
+    "UIRedScreen",
+};
+
+} // namespace
+
+bool IsPopupClass(const char* className)
+{
+    if (!className)
+        return false;
+    for (const char* known : kPopupClasses) {
+        if (strcmp(className, known) == 0)
+            return true;
+    }
+    return false;
+}
+
+PopupView FindPopupScreen()
+{
+    PopupView v;
+    void* stack = gStackFinder.Find();
+    if (!stack)
+        return v;
+
+    void* screens[kMaxStackScreens] = {};
+    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+
+    // TOPMOST only, and a non-popup on top is a refusal rather than a reason to keep looking:
+    // a popup under another screen has already lost the keys, and answering for it would put
+    // our stops in front of a screen the player is actually on. Same rule as UIRoom's finder.
+    for (int i = 0; i < count; i++) {
+        if (!screens[i])
+            continue;
+        char name[64];
+        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
+            return v;
+        if (!IsPopupClass(name))
+            return v;
+        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
+        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+            return v;
+        v.screen = screens[i];
+        v.className = name;
+        return v;
+    }
+    return v;
+}
+
+bool SendScreenCommand(void* screen, int cmd)
+{
+    // A UIScreen's OnUnrealCommand has the row signature, so the row helper is the whole
+    // implementation. Kept as its own name because the INTENT differs: for most of this family
+    // the screen's own accept path is the only route there is — UIAlert's buttons carry no
+    // retained label, no navigable focus and no reachable delegate of their own.
+    return SendRowCommand(screen, cmd);
+}
+
+// ---- UIAlert's words, read back out of its Flash panel ----
+//
+// See the header for why this is the one deliberate exception to "verification only, never the
+// speech path". The short version: 106 Build*Alert functions, not one retained string, and a
+// popup is read once rather than once per keypress.
+//
+// The field lists come from decompiling the shipped movie — docs/popup-inventory.md §6 has the
+// method and the full table. They are in UpdateData's own assignment order, which is the order a
+// sighted player reads the panel top to bottom, so it is also the tab-stop order.
+
+namespace {
+
+// How a field carries its text. The decompile says which per field, so a KNOWN symbol never
+// guesses; only the unknown-symbol fallback tries more than one shape.
+enum class FlashTextShape : uint8_t {
+    Getter, // XComScrollingTextField / XComButton — addProperty('text', …), so `<f>.text` runs it
+    TheText, // a plain clip wrapping a TextField named theText — `<f>.theText.text`
+};
+
+struct AlertField {
+    const char* name;
+    FlashTextShape shape;
+};
+
+struct AlertPanel {
+    const char* symbol;
+    const AlertField* fields;
+    int fieldCount;
+};
+
+#define X2A_FIELDS(name, ...)                                                                      \
+    const AlertField name[] = {__VA_ARGS__};                                                       \
+    constexpr int name##Count = sizeof(name) / sizeof(name[0])
+
+constexpr FlashTextShape kGet = FlashTextShape::Getter;
+constexpr FlashTextShape kHdr = FlashTextShape::TheText;
+
+X2A_FIELDS(kAlienSplash, {"headerMC", kHdr}, {"titleMC", kGet}, {"descriptionMC", kGet});
+X2A_FIELDS(kAssignStaff, {"headerMC", kHdr}, {"nameMC", kGet}, {"bonusMC", kGet},
+    {"titleMC", kGet}, {"descriptionMC", kGet});
+X2A_FIELDS(kBlackMarket, {"logoTitle", kGet}, {"title", kGet}, {"subTitle", kGet},
+    {"description", kGet}, {"footer", kGet}, {"leftText", kGet}, {"rightText", kGet});
+X2A_FIELDS(kComplete, {"headerTitle", kHdr}, {"headerSubTitle", kGet}, {"alertTitle", kGet},
+    {"alertDescription", kGet});
+X2A_FIELDS(kContactMade, {"titleMC", kHdr}, {"nameMC", kGet}, {"descriptionMC", kGet},
+    {"incomeLabel", kGet}, {"incomeValue", kGet}, {"rewardLabel", kGet}, {"rewardValue", kGet});
+X2A_FIELDS(kCouncilReport, {"councilTitle", kHdr});
+X2A_FIELDS(kDarkEvent, {"headerMC", kHdr}, {"titleMC", kGet}, {"descriptionMC", kGet},
+    {"quoteMC", kGet}, {"quoteNameMC", kGet});
+X2A_FIELDS(kHelp, {"headerMC", kHdr}, {"titleMC", kGet}, {"descriptionMC", kGet});
+// ⚠ WOTC DROPPED `headerField` from this panel and the base-game movie still has it — checked by
+// decompiling both. Kept in the list anyway: it costs one empty read under WOTC and is the right
+// answer if this ever runs against the base game's movie.
+X2A_FIELDS(kItemAvailable, {"headerTitle", kHdr}, {"headerField", kGet}, {"header", kGet},
+    {"headTitle", kGet}, {"headName", kGet});
+
+// ---- WOTC-only panels ----
+//
+// Recovered by decompressing WOTC's own packages with Oodle (see docs/popup-inventory.md §6).
+// The four XPACK_* panels and the *Splash family carry no AS2 class of their own, so their fields
+// come from the sprite's placed child-instance names rather than from an UpdateData constant
+// pool — which is exactly why ReadAlertField always tries both text shapes.
+X2A_FIELDS(kBreakthrough, {"breakthroughTitle", kHdr}, {"descriptionTitle", kGet},
+    {"descriptionText", kGet});
+X2A_FIELDS(kChosenSplash, {"titleMC", kHdr}, {"chosenType", kGet}, {"chosenName", kGet},
+    {"chosenNickname", kGet}, {"descriptionMC", kGet});
+X2A_FIELDS(kCouncilMissionSplash, {"splashTitle", kHdr}, {"splashSubtitle", kGet},
+    {"splashDescription", kGet}, {"splashGreebleText", kGet});
+X2A_FIELDS(kGuerrillaOpsSplash, {"GOPSSplashTitle", kHdr}, {"GOPSSplashHeader", kGet},
+    {"GOPSSplashDescription", kGet});
+X2A_FIELDS(kNegativeSoldierEvent, {"headerMC", kHdr}, {"rankNameMC", kGet}, {"nameMC", kGet},
+    {"classNameMC", kGet}, {"abilityLabelMC", kGet}, {"abilityNameMC", kGet},
+    {"descriptionMC", kGet});
+X2A_FIELDS(kNewStaffSmall, {"NewStaffHeader", kHdr}, {"NewStaffTitle", kGet},
+    {"NewStaffName", kGet}, {"NewStaffBonus", kGet});
+X2A_FIELDS(kProvingGroundAvail, {"header", kHdr}, {"headTitle", kGet}, {"headName", kGet});
+X2A_FIELDS(kRetaliationSplash, {"headerMC", kHdr}, {"subHeaderMC", kGet}, {"descriptionMC", kGet},
+    {"footerMC", kGet});
+X2A_FIELDS(kSupplyRaidSplash, {"splashHeader", kHdr}, {"splashTitle", kGet},
+    {"splashDescription", kGet}, {"splashGreebleText", kGet});
+X2A_FIELDS(kSitRep, {"theTitle", kHdr});
+X2A_FIELDS(kCovertOpConfirm, {"titleMC", kHdr}, {"confirmHeader", kGet}, {"missionName", kGet},
+    {"rewardLabel", kGet}, {"rewardDescription", kGet});
+X2A_FIELDS(kCovertOps, {"titleMC", kHdr}, {"descriptionText", kGet});
+X2A_FIELDS(kXpackMissionSplash, {"titleMC", kHdr}, {"descriptionText", kGet});
+X2A_FIELDS(kRetribution, {"theRegion", kHdr}, {"theDescription", kGet}, {"bottomLeftText", kGet},
+    {"bottomRightText", kGet});
+X2A_FIELDS(kMakeContact, {"titleMC", kHdr}, {"nameMC", kGet}, {"costLabelMC", kGet},
+    {"subLabelMC", kGet}, {"costValueMC", kGet}, {"costDescriptionMC", kGet},
+    {"daysLabelMC", kGet}, {"daysValueMC", kGet}, {"descriptionMC", kGet}, {"hintMC", kGet},
+    {"rewardLabelMC", kGet}, {"rewardValueMC", kGet});
+X2A_FIELDS(kNewObjective, {"headerTitle", kHdr}, {"headerSubTitle", kGet}, {"alertTitle", kGet},
+    {"alertDescription", kGet}, {"alertObjectiveText", kGet});
+X2A_FIELDS(kNewRegion, {"titleMC", kHdr}, {"nameMC", kGet}, {"descriptionMC", kGet},
+    {"hintMC", kGet});
+X2A_FIELDS(kNewStaff, {"NewStaffHeader", kHdr}, {"NewStaffName", kGet}, {"NewStaffBonus", kGet},
+    {"NewStaffTitle", kGet});
+X2A_FIELDS(kOpenStaff, {"headerMC", kHdr}, {"titleMC", kGet}, {"descriptionMC", kGet},
+    {"wideTipMC", kGet});
+X2A_FIELDS(kPOI, {"headerTitle", kHdr}, {"headerSubTitle", kGet}, {"alertDescription", kGet},
+    {"POILabel01", kGet}, {"POIValue01", kGet}, {"POILabel02", kGet}, {"POIValue02", kGet});
+X2A_FIELDS(kSpecialPOI, {"headerTitle", kHdr}, {"headerSubTitle", kGet},
+    {"alertDescription", kGet}, {"POILabel01", kGet}, {"POIValue01", kGet});
+X2A_FIELDS(kTrainingComplete, {"headerMC", kHdr}, {"rankNameMC", kGet}, {"nameMC", kGet},
+    {"classNameMC", kGet}, {"abilityLabelMC", kGet}, {"abilityNameMC", kGet},
+    {"descriptionMC", kGet});
+X2A_FIELDS(kWarning, {"headerMC", kHdr}, {"titleMC", kGet}, {"descriptionMC", kGet});
+X2A_FIELDS(kXcomGeneric, {"headerMC", kHdr}, {"titleMC", kGet}, {"descriptionMC", kGet});
+
+// The union, for a symbol the table does not know. It should now be UNREACHABLE for stock
+// content: the table above covers all 30 names UIAlert.GetLibraryID() can return. It stays as the
+// guard for a MOD that adds an alert of its own, and every miss is logged so a live run names it.
+X2A_FIELDS(kUnionFields, {"headerMC", kHdr}, {"headerTitle", kHdr}, {"titleMC", kHdr},
+    {"NewStaffHeader", kHdr}, {"councilTitle", kHdr}, {"headerSubTitle", kGet},
+    {"headerField", kGet}, {"header", kGet}, {"logoTitle", kGet}, {"alertTitle", kGet},
+    {"title", kGet}, {"subTitle", kGet}, {"nameMC", kGet}, {"headTitle", kGet},
+    {"headName", kGet}, {"rankNameMC", kGet}, {"classNameMC", kGet}, {"NewStaffName", kGet},
+    {"alertDescription", kGet}, {"descriptionMC", kGet}, {"description", kGet},
+    {"alertObjectiveText", kGet}, {"abilityLabelMC", kGet}, {"abilityNameMC", kGet},
+    {"bonusMC", kGet}, {"NewStaffBonus", kGet}, {"NewStaffTitle", kGet}, {"quoteMC", kGet},
+    {"quoteNameMC", kGet}, {"hintMC", kGet}, {"wideTipMC", kGet}, {"footer", kGet},
+    {"leftText", kGet}, {"rightText", kGet}, {"incomeLabel", kGet}, {"incomeValue", kGet},
+    {"rewardLabel", kGet}, {"rewardValue", kGet}, {"POILabel01", kGet}, {"POIValue01", kGet},
+    {"POILabel02", kGet}, {"POIValue02", kGet},
+    // …and the WOTC vocabulary, so a modded panel built from an XPACK one still reads.
+    {"theTitle", kHdr}, {"theRegion", kHdr}, {"splashTitle", kGet}, {"splashHeader", kGet},
+    {"splashSubtitle", kGet}, {"splashDescription", kGet}, {"splashGreebleText", kGet},
+    {"descriptionTitle", kGet}, {"descriptionText", kGet}, {"theDescription", kGet},
+    {"breakthroughTitle", kGet}, {"chosenType", kGet}, {"chosenName", kGet},
+    {"chosenNickname", kGet}, {"subHeaderMC", kGet}, {"footerMC", kGet}, {"missionName", kGet},
+    {"confirmHeader", kGet}, {"rewardDescription", kGet}, {"bottomLeftText", kGet},
+    {"bottomRightText", kGet});
+
+#undef X2A_FIELDS
+
+#define X2A_PANEL(sym, arr) {sym, arr, arr##Count}
+const AlertPanel kAlertPanels[] = {
+    X2A_PANEL("Alert_AlienSplash", kAlienSplash),
+    X2A_PANEL("Alert_AssignStaff", kAssignStaff),
+    X2A_PANEL("Alert_BlackMarket", kBlackMarket),
+    X2A_PANEL("Alert_Complete", kComplete),
+    X2A_PANEL("Alert_ContactMade", kContactMade),
+    X2A_PANEL("Alert_CouncilReport", kCouncilReport),
+    X2A_PANEL("Alert_DarkEventActive", kDarkEvent),
+    X2A_PANEL("Alert_Help", kHelp),
+    X2A_PANEL("Alert_ItemAvailable", kItemAvailable),
+    X2A_PANEL("Alert_MakeContact", kMakeContact),
+    X2A_PANEL("Alert_NewObjective", kNewObjective),
+    X2A_PANEL("Alert_NewRegion", kNewRegion),
+    X2A_PANEL("Alert_NewStaff", kNewStaff),
+    X2A_PANEL("Alert_OpenStaff", kOpenStaff),
+    X2A_PANEL("Alert_POI", kPOI),
+    X2A_PANEL("Alert_ProvingGroundAvailable", kItemAvailable), // GetLibraryID aliases these two
+    X2A_PANEL("Alert_SpecialPOI", kSpecialPOI),
+    X2A_PANEL("Alert_TrainingComplete", kTrainingComplete),
+    X2A_PANEL("Alert_Warning", kWarning),
+    X2A_PANEL("Alert_XComGeneric", kXcomGeneric),
+    X2A_PANEL("Alert_XcomGeneric", kXcomGeneric), // GetLibraryID's spelling vs the AS2 class's
+    // WOTC-only. Every name here is one GetLibraryID() can actually return — the full set of 30
+    // was read off UIAlert.uc's own switch, so this table and that switch cover each other.
+    X2A_PANEL("Alert_Breakthrough", kBreakthrough),
+    X2A_PANEL("Alert_ChosenSplash", kChosenSplash),
+    X2A_PANEL("Alert_CouncilMissionSplash", kCouncilMissionSplash),
+    X2A_PANEL("Alert_GuerrillaOpsSplash", kGuerrillaOpsSplash),
+    X2A_PANEL("Alert_NegativeSoldierEvent", kNegativeSoldierEvent),
+    X2A_PANEL("Alert_NewStaffSmall", kNewStaffSmall),
+    X2A_PANEL("Alert_ProvingGroundAvailable", kProvingGroundAvail),
+    X2A_PANEL("Alert_RetaliationSplash", kRetaliationSplash),
+    X2A_PANEL("Alert_SupplyRaidSplash", kSupplyRaidSplash),
+    X2A_PANEL("Alert_SitRep", kSitRep),
+    X2A_PANEL("XPACK_Alert_CovertOpConfirm", kCovertOpConfirm),
+    X2A_PANEL("XPACK_Alert_CovertOps", kCovertOps),
+    X2A_PANEL("XPACK_Alert_MissionSplash", kXpackMissionSplash),
+    X2A_PANEL("XPACK_Alert_Retribution", kRetribution),
+};
+#undef X2A_PANEL
+
+const AlertPanel* FindAlertPanel(const std::string& symbol)
+{
+    for (const AlertPanel& panel : kAlertPanels) {
+        if (symbol == panel.symbol)
+            return &panel;
+    }
+    return nullptr;
+}
+
+// One field's text. `<f>.text` runs XComScrollingTextField's addProperty getter; `<f>.theText`
+// is a raw TextField, whose own `.text` is a plain property. Blank is AMBIGUOUS in GFx — an
+// unresolved path answers exactly like an empty field — which is fine here: both mean "nothing
+// to say about this field", and the union fallback treats a blank as "not this shape".
+// ⚠ The shape is a PREFERENCE, not an assertion, and both are always tried. The decompile shows
+// which children a panel assigns but not reliably how each one wraps its text, and several
+// symbols are recovered from sprite child-names with no AS2 class at all to consult. Guessing
+// wrong would silently drop a line — the failure mode a blind player cannot report, because a
+// missing line reads exactly like a screen that has nothing more to say. A second read on an
+// empty field is cheap when the whole panel is read once, on attach.
+std::string ReadAlertField(void* movie, const std::string& mcPath, const AlertField& field)
+{
+    const std::string base = mcPath + "." + field.name;
+    const bool headerFirst = field.shape == FlashTextShape::TheText;
+    const char* first = headerFirst ? ".theText.text" : ".text";
+    const char* second = headerFirst ? ".text" : ".theText.text";
+
+    std::wstring w = FlashString(movie, "GetVariableString", base + first);
+    if (w.empty())
+        w = FlashString(movie, "GetVariableString", base + second);
+    if (w.empty())
+        return std::string();
+    return CleanText(WcharToUtf8(w.c_str(), static_cast<int>(w.size())));
+}
+
+// ⛔ THE MESSAGE TEXT DOES NOT COME FROM FLASH, and this is the measured correction to the whole
+// read-back design (live 2026-08-22, eAlert_LostAndAbandoned / XPACK_Alert_MissionSplash):
+//
+//   * `ButtonGroup.Button0.text` READS — XComButton keeps `text` as a plain variable.
+//   * `titleMC` and `descriptionText` RESOLVE as clips (`titleMC._width` = 665.75) but carry no
+//     text at all: no `.text`, `.htmlText`, `._text`, `.textField`, `.theText`, and no `getText`.
+//     XComScrollingTextField exposes its text through an addProperty GETTER, which GFx's
+//     GetVariableString cannot run, and the underlying storage is not reachable by path either.
+//   * `UIMCController.CommandQueue` is not a way round it: EndOp() flushes and clears it, and it
+//     reads back as an empty array immediately after the build.
+//
+// What DOES answer is the screen itself. Every Build*Alert resolves its words out of UIAlert's
+// own `localized` vars, and those are retained — 383 of them — under a naming convention:
+// `eAlert_LostAndAbandoned` → `m_strLostAndAbandonedTitle` / `...Label` / `...Body`. Measured
+// across the whole enum, 81 of 118 alert names follow it. Native can exploit that where script
+// cannot, because reading a property BY NAME is exactly what UE3 reflection does and
+// UnrealScript has no equivalent.
+//
+// Verified live against the screenshot: Title = "ВХОДЯЩЕЕ СООБЩЕНИЕ!",
+// Body = "Шеф, нам надо выступить посредниками в делах двух фракций Сопротивления."
+namespace {
+
+// Reading order, matching how the panel stacks them top to bottom. `Confirm` is deliberately
+// absent — it is a BUTTON label and the Flash button read already has it, so including it here
+// would say it twice. `Flare` is the map caption, not shown on the popup, and `Image` is a path.
+// Counted across UIAlert.uc's own QueueString calls, which is the only honest test of whether a
+// suffix ever reaches the screen: Title 48, Header 24, Body 25, Label 20, Desc/Description 3 each,
+// Text 0 (declared but never displayed — so it is not read). `Flare` is queued 7 times but only
+// as the MAP caption, never on the popup, so it stays out too.
+// ⚠ Known over-read: a given alert uses only some of these, and nothing in the naming convention
+// says which. eAlert_LostAndAbandoned displays Title and Body but not Label, so its Label is
+// spoken though a sighted player never sees it. That is bounded and one-directional — the
+// alternative is dropping a line 20 other alerts really do show — but it is the first thing to
+// measure on a live pass.
+const char* const kAlertTextSuffixes[] = {
+    "Title", "Header", "Label", "Body", "Description", "Desc",
+};
+
+std::vector<std::string> ReadAlertLocalized(void* screen, const std::string& alertName)
+{
+    std::vector<std::string> lines;
+    constexpr const char* kPrefix = "eAlert_";
+    if (alertName.compare(0, strlen(kPrefix), kPrefix) != 0)
+        return lines;
+    const std::string stem = alertName.substr(strlen(kPrefix));
+    if (stem.empty())
+        return lines;
+
+    for (const char* suffix : kAlertTextSuffixes) {
+        const std::string prop = "m_str" + stem + suffix;
+        std::string value = UE3Reflect::ReadStringProperty(
+            reinterpret_cast<UObject*>(screen), prop.c_str());
+        if (value.empty())
+            continue;
+        value = CleanText(value);
+        if (value.empty())
+            continue;
+        // A suffix that repeats an earlier one adds nothing but length — several alerts set
+        // Title and Label to the same string.
+        if (std::find(lines.begin(), lines.end(), value) == lines.end())
+            lines.push_back(std::move(value));
+    }
+    return lines;
+}
+
+} // namespace
+
+// A read is cached on the triple that decides its content. The alert NAME is in the key because
+// one library symbol serves many alerts (Alert_Complete covers seven), and the MCPath because a
+// second UIAlert gets a fresh panel — so a changed key is an exact, self-invalidating signal
+// that the words are different, the same argument the save rows' pointer-vector key makes.
+struct AlertTextCache {
+    std::string symbol;
+    std::string mcPath;
+    std::string alertName;
+    AlertView view;
+    bool valid = false;
+};
+
+AlertTextCache gAlertText;
+
+} // namespace
+
+void ResetAlertTextCache()
+{
+    gAlertText = AlertTextCache();
+}
+
+AlertView ReadAlertText(
+    void* screen, const std::string& mcPath, const std::string& symbol, const std::string& alertName)
+{
+    if (gAlertText.valid && gAlertText.symbol == symbol && gAlertText.mcPath == mcPath
+        && gAlertText.alertName == alertName)
+        return gAlertText.view;
+
+    AlertView v;
+    v.screen = screen;
+    v.alertName = alertName;
+    v.symbol = symbol;
+    if (!screen || mcPath.empty())
+        return v;
+
+    void* movie = ReadPtrRaw(screen, kPanelMovieOffset);
+    if (!movie)
+        return v;
+
+    const AlertPanel* panel = FindAlertPanel(symbol);
+    v.knownSymbol = panel != nullptr;
+    const AlertField* fields = panel ? panel->fields : kUnionFields;
+    const int count = panel ? panel->fieldCount : kUnionFieldsCount;
+
+    // The screen's own localized vars FIRST — they are the authoritative source (see the long
+    // comment above) and cost no Flash calls at all. Flash is the fallback, not the lead.
+    v.lines = ReadAlertLocalized(screen, alertName);
+
+    if (v.lines.empty()) {
+        if (!panel) {
+            // An alert name outside the convention AND a symbol the table does not know. Log
+            // both so a live run enumerates the gap rather than hiding it behind a sweep.
+            LOG_INFO("Popup: no localized text for '%s' and unknown symbol '%s' — field sweep",
+                alertName.c_str(), symbol.c_str());
+        } else {
+            LOG_INFO("Popup: no localized text for '%s' — falling back to Flash on '%s'",
+                alertName.c_str(), symbol.c_str());
+        }
+        for (int i = 0; i < count; i++) {
+            std::string text = ReadAlertField(movie, mcPath, fields[i]);
+            if (!text.empty())
+                v.lines.push_back(std::move(text));
+        }
+    }
+
+    // The buttons. Almost every panel puts them in a ButtonGroup and Flash names them 0 and 1
+    // (while the UnrealScript vars are Button1/Button2). A hidden button answers blank, which is
+    // exactly the "no cancel option" case BuildCompleteAlert produces when strCarryOn is empty.
+    // ⚠ Alert_Breakthrough is the exception the decompile turned up: it has NO ButtonGroup and
+    // names its two buttons outright, so the confirm/cancel pair is looked for at both places.
+    // Order matters — the first hit becomes the Enter action and the second the Escape action.
+    const char* const kButtonPaths[] = {
+        ".ButtonGroup.Button0",
+        ".ButtonGroup.Button1",
+        ".breakthroughButton",
+        ".abandonButton",
+    };
+    for (const char* path : kButtonPaths) {
+        std::wstring w = FlashString(movie, "GetVariableString", mcPath + path + ".text");
+        if (w.empty())
+            continue;
+        std::string label = CleanText(WcharToUtf8(w.c_str(), static_cast<int>(w.size())));
+        if (!label.empty())
+            v.buttons.push_back(std::move(label));
+    }
+
+    gAlertText.symbol = symbol;
+    gAlertText.mcPath = mcPath;
+    gAlertText.alertName = alertName;
+    gAlertText.view = v;
+    gAlertText.valid = true;
+    return v;
 }
 
 // ---- the commodity list (UIInventory and its dozen subclasses) ----
@@ -3926,6 +4470,367 @@ std::string ConsoleCommand(const std::string& command)
     if (len <= 0)
         return {}; // ran fine, said nothing — most commands are silent
     return WcharToUtf8(buf.data(), len);
+}
+
+// ---- the geoscape (UIStrategyMap) — the mission tray ------------------------------------------
+//
+// The globe has no cursor for a mouse+keyboard player: ProcessGeoscapeSelection, and therefore
+// UpdateSelection -> SelectMapItemNearestLocation, runs only inside `if( `ISCONTROLLERACTIVE)`.
+// What IS live on mouse+keyboard is the mission TRAY along the bottom — the game's own list of
+// everything actionable — because InitScreen sets Navigator.HorizontalNavigation and
+// UIScreen.OnUnrealCommand pipes unhandled arrows into Navigator.Prev/Next. And because nothing
+// recomputes it, whatever those arrows select STICKS: measured live 2026-08-21, one synthetic
+// Left moved SelectedIndex 0 -> 1 and SelectedMapItem POI -> Mission, unchanged 12 s later.
+//
+// So the game hands us a working list cursor that is invisible and silent, and this reader
+// supplies the three things the mouse-active guard withholds — brackets, camera, tooltip.
+
+namespace {
+
+// Offsets from the generated SDK's reflection-dump comments, cross-checked live 2026-08-21
+// against the running class through /props on an ordinary campaign.
+constexpr int32_t kStratMapUiStateOffset = 0x620;      // UIStrategyMap::m_eUIState (byte)
+constexpr int32_t kStratMapMissionIconsOffset = 0x624; // ::MissionItemUI.MissionIcons
+constexpr int32_t kStratMapSelectedItemOffset = 0x78C; // ::SelectedMapItem
+constexpr int32_t kPanelNavigatorOffset = 0x2D8;       // UIPanel::Navigator
+constexpr int32_t kNavSelectedIndexOffset = 0x6C;      // UINavigator::SelectedIndex
+constexpr int32_t kNavControlsOffset = 0x74;           // ::NavigableControls
+constexpr int32_t kIconScanSiteOffset = 0x49C;         // UIStrategyMap_MissionIcon::ScanSite
+constexpr int32_t kIconMissionSiteOffset = 0x4A4;      // ::MissionSite
+constexpr int32_t kIconMapItemOffset = 0x4AC;          // ::MapItem
+constexpr int32_t kIconTooltipOffset = 0x4B4;          // ::ToolTip
+constexpr int32_t kIconIdNumOffset = 0x4C0;            // ::idNum
+constexpr int32_t kIconImagePathOffset = 0x3DC;        // UIIcon::ImagePath
+constexpr int32_t kMapItemPinHeaderOffset = 0x4A0;     // UIStrategyMapItem::MapPin_Header
+
+// The art the game draws in a faction slot whose faction has not been met. This is the game's
+// OWN answer to "is this a placeholder", and it is the only reliable one — see ReadStrategyMap.
+constexpr char kFactionUnknownArt[] = "Faction_unknown";
+constexpr int32_t kTooltipTitleOffset = 0x484;         // UIStrategyMap_MissionIconTooltip::Title
+constexpr int32_t kTooltipBodyOffset = 0x494;          // ::Body
+constexpr int32_t kMapItemEntityRefOffset = 0x494;     // UIStrategyMapItem::GeoscapeEntityRef
+
+// The HUD's four keyboard-unreachable verbs, and the localized words the screen already owns
+// for them. m_strDarkEventsLabel is the one measured live so far ("СОБЫТИЯ", 2026-08-21).
+constexpr int32_t kStratMapHudOffset = 0x610;             // UIStrategyMap::StrategyMapHUD
+constexpr int32_t kStratMapDarkEventsButtonOffset = 0x654;    // ::DarkEventsButton
+constexpr int32_t kStratMapDarkEventsContainerOffset = 0x65C; // ::DarkEventsContainer
+constexpr int32_t kStratMapDarkEventsLabelOffset = 0x6AC;     // ::m_strDarkEventsLabel
+constexpr int32_t kStratMapToggleResNetOffset = 0x6BC;        // ::m_strToggleResNet
+constexpr int32_t kStratMapResOrdersOffset = 0x6CC;           // ::m_srResistanceOrders
+constexpr int32_t kStratMapChosenInfoOffset = 0x6DC;          // ::m_srChosenInfo
+constexpr int32_t kStratMapFlagsOffset = 0x7C8;               // bCursorAlwaysVisible..
+constexpr uint32_t kStratMapResNetForcedOn = 0x08;            // ::m_bResNetForcedOn
+constexpr int32_t kHudChosenButtonOffset = 0x474;  // UIStrategyMap_HUD::m_kChosenInfoButton
+constexpr int32_t kHudResOrdersButtonOffset = 0x47C; // ::m_kResistanceInfoButton
+
+constexpr int kMaxTrayIcons = 20; // UIStrategyMap.MAX_NUM_STRATEGYICONS
+constexpr int kMaxNavControls = 32;
+
+// UIUtilities_Input's own constants. The hover PAIR is deliberately the mouse one rather than a
+// D-pad command: that handler is where the game itself keeps the camera fly-to and the tooltip
+// refresh. FXS_L_MOUSE_UP is what the Dark Events handler tests for, and what the game's own
+// FXS_BUTTON_Y branch passes it.
+constexpr int32_t kFxsLMouseUp = 391;
+constexpr int32_t kFxsLMouseIn = 392;
+constexpr int32_t kFxsLMouseOut = 393;
+
+// A child widget's visible bit IS meaningful (unlike a screen's) — the game toggles it
+// deliberately, which is exactly how it answers "is this verb on screen right now".
+bool WidgetShowing(void* panel)
+{
+    if (!panel)
+        return false;
+    uint32_t flags = ReadU32Raw(panel, kPanelFlagsOffset);
+    return (flags & kPanelVisible) && !(flags & kPanelRemoved);
+}
+
+} // namespace
+
+GeoscapeGate ReadGeoscapeGate()
+{
+    GeoscapeGate gate;
+    void* stack = gStackFinder.Find();
+    if (!stack)
+        return gate;
+
+    void* screens[kMaxStackScreens] = {};
+    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+
+    // GetCurrentScreen is the FIRST non-none entry and applies no state-bit filter of its own,
+    // so neither do we — the same rule ReadAvengerGate follows, and for the same reason: a gate
+    // that disagreed with the game about which screen the arrows reach is the one disagreement
+    // that matters.
+    bool sawTop = false;
+    for (int i = 0; i < count; i++) {
+        if (!screens[i])
+            continue;
+        char name[64];
+        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
+            continue;
+        if (strcmp(name, "UIStrategyMap") == 0) {
+            gate.mapOnStack = true;
+            gate.current = !sawTop;
+            if (!sawTop) {
+                // Still refuse a map that is on the stack but torn down.
+                uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
+                if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+                    gate.current = false;
+            }
+            break;
+        }
+        if (!sawTop) {
+            sawTop = true;
+            strncpy_s(gate.blocker, name, _TRUNCATE);
+        }
+    }
+    return gate;
+}
+
+void* FindStrategyMapScreen()
+{
+    GeoscapeGate gate = ReadGeoscapeGate();
+    if (!gate.Active())
+        return nullptr;
+
+    void* stack = gStackFinder.Find();
+    if (!stack)
+        return nullptr;
+    void* screens[kMaxStackScreens] = {};
+    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    for (int i = 0; i < count; i++) {
+        if (!screens[i])
+            continue;
+        char name[64];
+        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
+            continue;
+        return strcmp(name, "UIStrategyMap") == 0 ? screens[i] : nullptr;
+    }
+    return nullptr;
+}
+
+StrategyMapView ReadStrategyMap(void* screen)
+{
+    StrategyMapView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+    v.uiState = static_cast<int>(ReadU32Raw(screen, kStratMapUiStateOffset) & 0xFF);
+
+    v.navigator = ReadPtrRaw(screen, kPanelNavigatorOffset);
+
+    // The game's own navigable set, which is the ONLY honest source for "is this icon
+    // reachable": UpdateMissions calls AddControl exactly for the icons it wants reachable, so
+    // membership here is the game's own parity filter rather than a rule of ours.
+    // ⚠ It is NavigableControls, not NavigationTargets — the latter is empty on this screen and
+    // is what the ant farm's re-arm test looks at, a different list entirely.
+    void* navControls[kMaxNavControls] = {};
+    int navCount = 0;
+    if (v.navigator) {
+        v.selected = ReadI32Raw(v.navigator, kNavSelectedIndexOffset);
+        navCount = ReadPtrArrayRaw(v.navigator, kNavControlsOffset, navControls, kMaxNavControls);
+    }
+
+    void* icons[kMaxTrayIcons] = {};
+    int iconCount = ReadPtrArrayRaw(screen, kStratMapMissionIconsOffset, icons, kMaxTrayIcons);
+
+    for (int i = 0; i < iconCount; i++) {
+        void* icon = icons[i];
+        if (!icon)
+            continue;
+        // A tray slot the game is not showing is not a stop. Unlike a SCREEN's bIsVisible —
+        // which the game leaves false on screens it is plainly showing, hence the hard rule
+        // against gating readiness on it — a child widget's visible bit is toggled deliberately
+        // and does mean hidden. UpdateMissions calls Hide() on every slot it did not bind.
+        uint32_t flags = ReadU32Raw(icon, kPanelFlagsOffset);
+        if (!(flags & kPanelVisible) || (flags & kPanelRemoved))
+            continue;
+
+        TrayIcon t;
+        t.handle = icon;
+        t.slot = i;
+        t.idNum = ReadI32Raw(icon, kIconIdNumOffset);
+        t.scanSite = ReadPtrRaw(icon, kIconScanSiteOffset) != nullptr;
+        t.mission = ReadPtrRaw(icon, kIconMissionSiteOffset) != nullptr;
+        t.mapItem = ReadPtrRaw(icon, kIconMapItemOffset);
+        if (t.mapItem) {
+            t.entityId = ReadI32Raw(t.mapItem, kMapItemEntityRefOffset);
+            // A localized, GENERIC noun for the kind of place the pin marks ("ШТАБ
+            // СОПРОТИВЛЕНИЯ"). It is a CPF_Localized class default, so unlike everything else on
+            // a pin it is NOT subject to the §4.3 staleness rule — an off-screen pin holds it
+            // just as correctly as a framed one, because every instance of the class holds the
+            // same value. That is exactly why it is safe to use for a slot with no tooltip.
+            t.pinHeader = ReadFStringField(t.mapItem, kMapItemPinHeaderOffset);
+        }
+
+        void* tooltip = ReadPtrRaw(icon, kIconTooltipOffset);
+        if (tooltip) {
+            t.title = ReadFStringField(tooltip, kTooltipTitleOffset);
+            t.body = ReadFStringField(tooltip, kTooltipBodyOffset);
+        }
+
+        for (int n = 0; n < navCount; n++) {
+            if (navControls[n] == icon) {
+                t.navIndex = n;
+                break;
+            }
+        }
+
+        // ⛔ THE PLACEHOLDER TEST IS THE ART, and nothing else works.
+        //
+        // The obvious tests both fail, measured live 2026-08-21 on an unmet faction's slot:
+        // ScanSite is SET (to the faction's XComGameState_Haven, so "no site" is false), and the
+        // icon IS in NavigableControls (so "not navigable" is false). What is actually true of
+        // it is that ToolTip is NULL — SetMissionIconTooltip early-returns on
+        // `HavenState != None && !IsResistanceFactionMet()` before it ever spawns one — and that
+        // the game draws the Faction_unknown art. The art is the better test of the two: it is
+        // the same fact a sighted player is reading off the screen, and it cannot be confused
+        // with an icon whose tooltip merely has not been built yet.
+        t.placeholder = ReadFStringField(icon, kIconImagePathOffset).find(kFactionUnknownArt)
+            != std::string::npos;
+
+        v.icons.push_back(std::move(t));
+    }
+
+    // The HUD's four verbs, each present only when the game is drawing it. Order is the screen's
+    // own left-to-right reading of the top bar, with the map-mode toggle last because it changes
+    // what the globe SHOWS rather than opening anything.
+    void* darkContainer = ReadPtrRaw(screen, kStratMapDarkEventsContainerOffset);
+    void* darkButton = ReadPtrRaw(screen, kStratMapDarkEventsButtonOffset);
+    if (WidgetShowing(darkContainer) && darkButton) {
+        HudVerb verb;
+        verb.kind = HudVerb::Kind::DarkEvents;
+        verb.button = darkButton;
+        // On mouse+keyboard AddDarkEventsButton does a plain SetText(m_strDarkEventsLabel), so
+        // the button RETAINS the localized word; the screen's own string is the fallback for the
+        // controller branch, which wraps it in an icon injection.
+        verb.label = ReadFStringField(darkButton, kButtonTextOffset);
+        if (verb.label.empty())
+            verb.label = ReadFStringField(screen, kStratMapDarkEventsLabelOffset);
+        v.verbs.push_back(std::move(verb));
+    }
+
+    void* hud = ReadPtrRaw(screen, kStratMapHudOffset);
+    if (hud) {
+        void* chosenBtn = ReadPtrRaw(hud, kHudChosenButtonOffset);
+        if (WidgetShowing(chosenBtn)) {
+            HudVerb verb;
+            verb.kind = HudVerb::Kind::ChosenInfo;
+            verb.button = chosenBtn;
+            // InitButton was called with no caption, so the button's own Text is empty — these
+            // two read from the SCREEN's localized strings instead.
+            verb.label = ReadFStringField(screen, kStratMapChosenInfoOffset);
+            v.verbs.push_back(std::move(verb));
+        }
+        void* ordersBtn = ReadPtrRaw(hud, kHudResOrdersButtonOffset);
+        if (WidgetShowing(ordersBtn)) {
+            HudVerb verb;
+            verb.kind = HudVerb::Kind::ResistanceOrders;
+            verb.button = ordersBtn;
+            verb.label = ReadFStringField(screen, kStratMapResOrdersOffset);
+            v.verbs.push_back(std::move(verb));
+        }
+    }
+
+    // The resistance-network toggle has no button of its own on mouse+keyboard — UpdateButtonHelp
+    // adds it as a nav-help hotlink — so there is no widget to gate on and it is always offered.
+    // That matches the screen: the hotlink is drawn whenever the map is.
+    {
+        HudVerb verb;
+        verb.kind = HudVerb::Kind::ResNetToggle;
+        verb.label = ReadFStringField(screen, kStratMapToggleResNetOffset);
+        verb.on = (ReadU32Raw(screen, kStratMapFlagsOffset) & kStratMapResNetForcedOn) != 0;
+        v.verbs.push_back(std::move(verb));
+    }
+    return v;
+}
+
+bool ActivateTraySelection(const StrategyMapView& view)
+{
+    if (!view.screen)
+        return false;
+    // SendRowCommand already sends everything that is not a direction key on the RELEASE phase,
+    // which is what CheckInputIsReleaseOrDirectionRepeat demands at both levels of this chain.
+    return SendRowCommand(view.screen, kCmdButtonA);
+}
+
+bool ActivateHudVerb(const StrategyMapView& view, const HudVerb& verb)
+{
+    if (!view.screen)
+        return false;
+
+    switch (verb.kind) {
+    case HudVerb::Kind::ChosenInfo:
+    case HudVerb::Kind::ResistanceOrders:
+        // UIButton::Click() fires OnClickedDelegate and refuses a disabled or hidden button
+        // itself, so the guard the mouse path gets comes along for free. Both handlers also
+        // check the screen stack before pushing, which is what stops a double press stacking
+        // two copies of the same screen.
+        return ClickButton(verb.button);
+
+    case HudVerb::Kind::DarkEvents: {
+        // ⛔ NOT Click(): ProcessMouseEvents wired this button's handler as an
+        // OnMouseEventDelegate, so it has no OnClickedDelegate and Click() would return false
+        // having done nothing at all. This is the game's own keyboard route reproduced exactly,
+        // `none` panel included — OnDarkEventsClicked ignores the panel and tests only the
+        // command, which must be FXS_L_MOUSE_UP or the body does not run.
+        struct {
+            void* Panel;
+            int32_t Cmd;
+        } params{nullptr, kFxsLMouseUp};
+        return CallNamedFunction(view.screen, "OnDarkEventsClicked", &params);
+    }
+
+    case HudVerb::Kind::ResNetToggle: {
+        // Zero parameters, but ProcessEvent still needs a block to point at. The screen's own
+        // function owns both halves of the toggle — the forced-on flag and the SetUIState call
+        // whose ordering its comment calls load-bearing — so this must never be open-coded.
+        char noParams[8] = {};
+        return CallNamedFunction(view.screen, "OnResNetClicked", noParams);
+    }
+    }
+    return false;
+}
+
+bool SetTraySelection(const StrategyMapView& view, int navIndex)
+{
+    // ⛔ A placeholder must leave the game's navigator alone. Moving it would put
+    // SelectedMapItem on an icon other than the one just spoken, and nothing on screen would
+    // ever show the disagreement.
+    if (!view.navigator || navIndex < 0)
+        return false;
+
+    void* controls[kMaxNavControls] = {};
+    int count = ReadPtrArrayRaw(view.navigator, kNavControlsOffset, controls, kMaxNavControls);
+    if (navIndex >= count || !controls[navIndex])
+        return false;
+
+    // UINavigator.SetSelected(UIPanel optionalSelectedControl) — the game's own mover, so
+    // OnSelectedIndexChanged fires and OnNavigationChanged runs SetSelectedMapItem for us.
+    // Passing the CONTROL rather than writing SelectedIndex is what keeps that delegate in the
+    // loop; a poked index would move the number and nothing else.
+    struct {
+        void* Control;
+    } params{controls[navIndex]};
+    return CallNamedFunction(view.navigator, "SetSelected", &params);
+}
+
+bool MoveTrayHover(const TrayIcon& icon, bool entering)
+{
+    if (!icon.handle || icon.placeholder)
+        return false;
+
+    // OnMouseEvent(int cmd, array<string> args). The args array is passed by pointer into
+    // ProcessEvent's frame (parameters are shallow-memcpy'd) and the destroy pass skips
+    // everything below ParmsSize, so a zeroed empty TArray we own is both safe and never freed
+    // by the engine. Nothing on either branch reads it.
+    struct {
+        int32_t Cmd;
+        void* ArgsData;
+        int32_t ArgsCount;
+        int32_t ArgsMax;
+    } params{entering ? kFxsLMouseIn : kFxsLMouseOut, nullptr, 0, 0};
+    return CallNamedFunction(icon.handle, "OnMouseEvent", &params);
 }
 
 // ---- dev harness only: raw object access for the /gui and /props dumps -------------------------

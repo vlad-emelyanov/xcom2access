@@ -340,6 +340,35 @@ static_assert(offsetof(AUIFacility, m_kRoomContainer) == 0x610, "facility room c
 static_assert(offsetof(AUIFacility, UpgradeButton) == 0x648, "facility upgrade button");
 static_assert(offsetof(AUIRoomContainer, RoomFuncs) == 0x3DC, "room bottom-bar buttons");
 
+// ---- the Skyranger load screen (UIDropShipBriefing_MissionStart / _MissionEnd) ----
+//
+// Two sibling classes over one base, each declaring its own strings from 0x420 in its own order,
+// so nothing here is shared but AUIDropShipBriefingBase's array. Pinning matters more than usual
+// on this pair: m_strConsoleLaunch carries a `<workshop> UI_CONSOLE_LOAD_SCREEN_FIXES` marker in
+// SrcOrig, i.e. it was added by a patch — exactly the kind of field that can differ between the
+// stock package and the Highlander's recompile (UIShellSoundtrackPicker all over again). It sits
+// immediately BEFORE TipCycle, so a divergence there would silently move the two fields the
+// reader depends on: LaunchButton (readiness) and m_strCurrentTip.
+static_assert(offsetof(AUIDropShipBriefingBase, TipCounters) == 0x410, "dropship tip counters");
+
+static_assert(offsetof(AUIDropShipBriefing_MissionStart, m_strLaunch) == 0x460,
+    "dropship launch prompt");
+static_assert(offsetof(AUIDropShipBriefing_MissionStart, m_strLoadingText) == 0x470,
+    "dropship loading text");
+static_assert(offsetof(AUIDropShipBriefing_MissionStart, m_strConsoleLaunch) == 0x4A0,
+    "dropship console prompt (never read — pins the patched field ahead of LaunchButton)");
+static_assert(offsetof(AUIDropShipBriefing_MissionStart, LaunchButton) == 0x4B4,
+    "dropship launch button (its bIsVisible is the map-loaded signal)");
+static_assert(offsetof(AUIDropShipBriefing_MissionStart, m_strCurrentTip) == 0x4C4,
+    "dropship current tip");
+
+static_assert(offsetof(AUIDropShipBriefing_MissionEnd, LaunchButton) == 0x424,
+    "post-mission dropship continue button");
+static_assert(offsetof(AUIDropShipBriefing_MissionEnd, m_strPressKeyToContinue) == 0x43C,
+    "post-mission dropship prompt");
+static_assert(offsetof(AUIDropShipBriefing_MissionEnd, m_strLoadingText) == 0x4DC,
+    "post-mission dropship loading text");
+
 // ---- the personnel roster (UIPersonnel and its ten subclasses) ----
 //
 // One offset for the whole family. Everything else is either a companion read (the rows retain
@@ -396,5 +425,57 @@ static_assert(offsetof(AUIPersonnel_DropDown, m_staff) == 0x3F8, "staff picker c
 // the companion reads by name — which is what makes this the cheapest screen in the layer to
 // keep working across a Highlander bump or a mod that rebuilds it.
 static_assert(offsetof(AUIInventory, List) == 0x498, "commodity list");
+
+// ---- the geoscape: UIStrategyMap, its mission tray and the navigator behind it ----
+//
+// UINavigator is pinned here for the first time. Every other recipe reaches a list through
+// UIList, whose own selection accessor does the work; the geoscape has no list at all — the
+// tray is a bare navigator over twenty spawned icons — so this is the one screen where the
+// navigator's own fields have to be read directly.
+static_assert(offsetof(AUIPanel, Navigator) == 0x2D8, "panel navigator");
+static_assert(offsetof(UUINavigator, SelectedIndex) == 0x6C, "navigator selection");
+static_assert(offsetof(UUINavigator, NavigableControls) == 0x74,
+    "navigator controls — NOT NavigationTargets, which is empty on this screen");
+
+static_assert(offsetof(AUIStrategyMap, m_eUIState) == 0x620, "strategy map state");
+static_assert(offsetof(AUIStrategyMap, MissionItemUI) == 0x624, "strategy map tray struct");
+static_assert(offsetof(FTStrategyMapMissionItemUI, MissionIcons) == 0x0,
+    "tray icons lead the struct, so the array offset is the struct's own");
+static_assert(offsetof(AUIStrategyMap, SelectedMapItem) == 0x78C, "strategy map selection");
+
+static_assert(offsetof(AUIStrategyMap_MissionIcon, ScanSite) == 0x49C, "tray icon scan site");
+static_assert(offsetof(AUIStrategyMap_MissionIcon, MissionSite) == 0x4A4, "tray icon mission");
+static_assert(offsetof(AUIStrategyMap_MissionIcon, MapItem) == 0x4AC, "tray icon globe pin");
+static_assert(offsetof(AUIStrategyMap_MissionIcon, ToolTip) == 0x4B4, "tray icon tooltip");
+static_assert(offsetof(AUIStrategyMap_MissionIcon, idNum) == 0x4C0, "tray icon id");
+
+static_assert(offsetof(AUIStrategyMap_MissionIconTooltip, Title) == 0x484, "tray tooltip title");
+static_assert(offsetof(AUIStrategyMap_MissionIconTooltip, Body) == 0x494, "tray tooltip body");
+
+// The pin's entity reference is what keys a tray cursor across a rebuild — an ObjectID is
+// stable over the campaign history where a slot index is not.
+static_assert(offsetof(AUIStrategyMapItem, GeoscapeEntityRef) == 0x494, "globe pin entity ref");
+// MapPin_Header is a CPF_Localized class default — a generic noun for the kind of place, and
+// the only word available for a tray slot the game gave no tooltip.
+static_assert(offsetof(AUIStrategyMapItem, MapPin_Header) == 0x4A0, "globe pin generic label");
+// The tray icon's ART, which is how an unmet faction's placeholder slot is told apart: its
+// ScanSite is set and it IS navigable, so only the Faction_unknown image distinguishes it.
+static_assert(offsetof(AUIIcon, ImagePath) == 0x3DC, "icon art path");
+
+// The HUD's four keyboard-unreachable verbs. The flag dword at 0x7C8 is bitfields
+// (m_bResNetForcedOn among them); SelectedMapItem before it and LeftBumperIcon after it pin the
+// layout around it, the same way every other bitfield in this file is pinned.
+static_assert(offsetof(AUIStrategyMap, StrategyMapHUD) == 0x610, "strategy map HUD panel");
+static_assert(offsetof(AUIStrategyMap, DarkEventsButton) == 0x654, "dark events button");
+static_assert(offsetof(AUIStrategyMap, DarkEventsContainer) == 0x65C, "dark events container");
+static_assert(offsetof(AUIStrategyMap, m_strDarkEventsLabel) == 0x6AC, "dark events label");
+static_assert(offsetof(AUIStrategyMap, m_strToggleResNet) == 0x6BC, "resnet toggle label");
+static_assert(offsetof(AUIStrategyMap, m_srResistanceOrders) == 0x6CC, "resistance orders label");
+static_assert(offsetof(AUIStrategyMap, m_srChosenInfo) == 0x6DC, "chosen info label");
+static_assert(offsetof(AUIStrategyMap, LeftBumperIcon) == 0x79C,
+    "UIStrategyMap flag dword (m_bResNetForcedOn) precedes LeftBumperIcon at 0x7C8");
+static_assert(offsetof(AUIStrategyMap_HUD, m_kChosenInfoButton) == 0x474, "chosen info button");
+static_assert(offsetof(AUIStrategyMap_HUD, m_kResistanceInfoButton) == 0x47C,
+    "resistance orders button");
 
 } // namespace

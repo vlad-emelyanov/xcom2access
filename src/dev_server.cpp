@@ -226,6 +226,21 @@ std::string StatusText()
     out += std::string("movie: ") + (GameUI::MoviePlaying() ? "playing" : "no") + "\n";
     out += std::string("loadscreen: ") + (GameUI::LoadScreenShowing() ? "showing" : "no") + "\n";
 
+    // The Skyranger load screen. Worth its own line rather than leaving it to the stack dump
+    // below: this screen lives on the TRANSITION map, where the presentation layer is destroyed
+    // and rebuilt, so "did we find it, and does it say the map is loaded" is exactly the pair
+    // that says whether our layer is alive over there at all.
+    const GameUI::DropshipView drop = GameUI::ReadDropship();
+    if (!drop.screen) {
+        out += "dropship: no\n";
+    } else {
+        snprintf(buf, sizeof(buf), "dropship: %s at %p, %s, status \"%s\", tip \"%s\"\n",
+            drop.missionStart ? "mission-start" : "mission-end", drop.screen,
+            drop.ready ? "READY (any key launches)" : "loading",
+            (drop.ready ? drop.prompt : drop.loadingText).c_str(), drop.tip.c_str());
+        out += buf;
+    }
+
     const GameUI::StackState st = GameUI::ReadStackState();
     if (!st.valid) {
         out += "stack: UNREADABLE (no live UIScreenStack)\n";

@@ -54,6 +54,20 @@ inline constexpr const char* ScreenNarrativeFallback = "Optional narrative conte
 inline constexpr const char* ScreenSoundtrackFallback = "Soundtrack";
 inline constexpr const char* ScreenDialog = "Dialog";
 
+// The modal popup family (docs/popup-inventory.md). The popup's own title and message ride in
+// the graph, so the screen name only announces that a modal has appeared.
+inline constexpr const char* ScreenPopup = "Notification";
+// ⚠ These three are OURS, not the game's, and each is a last resort rather than a normal
+// reading. PopupNoText fires when a popup was recognised but nothing readable came back — worth
+// saying, because silence there is indistinguishable from no popup at all while the player still
+// has to press something to escape it. The other two are the accept/cancel pair offered when
+// neither the companion nor the Flash panel yielded a button label: a modal a blind player
+// cannot dismiss is worse than one that reads badly. If a live run shows these often, the fix is
+// a missing field name in the alert table, not better wording here.
+inline constexpr const char* PopupNoText = "No readable text";
+inline constexpr const char* PopupContinue = "Continue";
+inline constexpr const char* PopupDismiss = "Dismiss";
+
 // The in-game Escape menu. It carries its own localized title and only falls back to this.
 inline constexpr const char* ScreenPauseMenuFallback = "Pause menu";
 
@@ -139,6 +153,27 @@ inline constexpr const char* PersonnelPromote = "promotion available";
 inline constexpr const char* PersonnelSortBy = "sort by";
 inline constexpr const char* SortAscending = "ascending";
 inline constexpr const char* SortDescending = "descending";
+
+// The geoscape's mission tray. Almost nothing here is ours: each icon's Title and Body are the
+// game's own hover tooltip, already localized and already exactly what a sighted player reads.
+//
+// The one exception is the placeholder slot, and it has no localized source at all: the game
+// draws a Faction_unknown icon for each of the three factions not yet met and
+// SetMissionIconTooltip early-returns for them, so there is no string in the game to borrow.
+// A sighted player still SEES those three slots, which is why they get a stop rather than being
+// filtered out — the wording is ours only because the game wrote none.
+// Escape, not Tab, even though UIStrategyMap answers both: Tab's case label falls through into
+// Escape's own body inside `if(`notdefined(FINAL_RELEASE)), so it is a debug convenience rather
+// than a shipped binding — and naming the key the whole game uses beats naming the odd one out.
+inline constexpr const char* ScreenGeoscapeFallback = "Geoscape";
+inline constexpr const char* GeoscapeLeaveHint = "Escape to leave the map";
+// The resistance-network overlay is a map MODE, and a sighted player reads its state off the
+// globe redrawing itself. The verb's own label ("ПЕРЕКЛЮЧИТЬ СЕТЬ СОПРОТИВЛЕНИЯ") names the
+// action but not which way it is currently set, so speech supplies that.
+inline constexpr const char* GeoscapeResNetOn = "on";
+inline constexpr const char* GeoscapeResNetOff = "off";
+inline constexpr const char* GeoscapeTrayEmpty = "Nothing on the map right now";
+inline constexpr const char* GeoscapeUnmetFaction = "Faction not yet met";
 
 // The text-entry dialog (naming a save). The field is a Flash TextField, so no screen reader
 // sees the keystrokes and this layer has to echo them itself — hence the boundary words and the

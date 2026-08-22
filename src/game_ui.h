@@ -214,6 +214,9 @@ bool SetOptionsListIndex(void* screen, int index);
 inline constexpr int kCmdArrowRight = 501;
 inline constexpr int kCmdArrowLeft = 503;
 inline constexpr int kCmdEnter = 511;
+// The popup family's cancel path. Every class in kPopupClasses handles this at SCREEN level
+// alongside FXS_BUTTON_B, so it is the keyboard route their own code already offers.
+inline constexpr int kCmdEscape = 510;
 // The controller accept button. Normally not ours to send — but a few widgets handle ONLY it
 // and never the keyboard constants, so it is the only entry their own code offers. The room's
 // bottom-bar buttons are the case in point: UIFacility_RoomFunc.OnUnrealCommand tests
@@ -680,6 +683,42 @@ struct AvengerGate {
 /// Game thread only.
 AvengerGate ReadAvengerGate();
 
+// ---- the Skyranger load screen (UIDropShipBriefing_MissionStart / _MissionEnd) ----
+//
+// The screen the game shows while a mission map loads: your squad in the dropship interior, with
+// the operation name, location, briefing, objectives and a rotating gameplay tip beside them.
+// Not a movie and not a UIProgressDialogue — a real UIScreen, pushed onto the stack by
+// XComPlayerController.SetupDropshipBriefingScreen(). See docs/dropship-briefing-recon.md.
+//
+// Everything below is RETAINED. The labels and the current tip are ordinary properties on the
+// screen; only the mission's own values went into Flash, and those are the companion's job.
+struct DropshipView {
+    void* screen = nullptr;    // null when neither variant is on the stack — the usual case
+    bool missionStart = false; // false => the mission-END variant, i.e. the flight home
+
+    /// LaunchButton.bIsVisible — the map has finished loading and ANY key now launches.
+    ///
+    /// This is the screen's own answer, set in the same statement block that writes the prompt
+    /// into Flash (OnCheckLoading, on a 1 s timer), which is why it is read rather than
+    /// XComPlayerController.bSeamlessTravelDestinationLoaded. It is also squarely inside the
+    /// documented exception to "never gate readiness on bIsVisible": this is a child BUTTON,
+    /// whose visibility the game toggles deliberately and which therefore does mean hidden.
+    bool ready = false;
+
+    std::string loadingText; // "TRAVELING TO DROP POINT" — shown for the whole load
+    std::string prompt;      // "PRESS ANY KEY TO LAUNCH" / "...TO CONTINUE"; only true once ready
+    std::string tip;         // m_strCurrentTip — MissionStart only (see below)
+};
+
+/// The dropship briefing that is on the stack, or a default-constructed view when none is.
+///
+/// ⛔ `tip` is empty on the mission-END variant and that is not a gap in this read: that class
+/// passes GetTip(eTip_Strategy) straight into the Flash op and retains nothing, so there is no
+/// tip to read. Only UIDropShipBriefing_MissionStart keeps m_strCurrentTip.
+///
+/// Game thread only.
+DropshipView ReadDropship();
+
 // ---- inside a room (UIFacility and its 22 subclasses) ----
 //
 // ⛔ The room SCREEN is not the room's content. All seven FIXED rooms declare ZERO staff slots —
@@ -827,6 +866,74 @@ bool ChooseStaffCandidate(const RoomBuildView& view, int index);
 /// state (StartExcavation also closes the screen; a room left open over a started project is a
 /// state the game never produces). Game thread only.
 bool StartRoomExcavation(const RoomBuildView& view);
+
+// ---- popups (the modal notification family across all three layers) ----
+//
+// One finder for every screen in docs/popup-inventory.md §1-3 that is a MODAL with a message and
+// a couple of buttons. They share the only two things a reader needs: the screen is the topmost
+// stack entry, and its own OnUnrealCommand answers FXS_KEY_ENTER / FXS_KEY_ESCAPE at SCREEN
+// level — so activation needs no per-class button offsets, and this whole family costs ZERO
+// hand-transcribed offsets and zero static_asserts. Words come from X2AccessPopupReader, except
+// UIAlert's, which come from Flash (see ReadAlertText).
+
+struct PopupView {
+    void* screen = nullptr;
+    std::string className; // the concrete class, so the companion can branch on it
+};
+
+/// The topmost stack screen, when it is one of the known popup classes and is inited, not
+/// removed and focused. Anything above a popup has taken the keys, so a popup that is not
+/// topmost is deliberately refused. Game thread only.
+PopupView FindPopupScreen();
+
+/// Is `className` in the popup table? Exposed so the recipe can keep its probe and its build in
+/// agreement without re-listing the classes.
+bool IsPopupClass(const char* className);
+
+/// Hand a SCREEN one of its own input commands. Identical to SendRowCommand — a UIScreen's
+/// OnUnrealCommand has the same signature as a row's — but named separately because the intent
+/// differs: here it is the screen's own accept/cancel path, which is the ONLY route several of
+/// these popups offer (UIAlert's buttons carry no retained label and no navigable focus).
+/// Game thread only.
+bool SendScreenCommand(void* screen, int cmd);
+
+// ---- UIAlert: the 118-variant strategy alert, read back out of Flash ----
+//
+// ⛔ This is the ONE place in the project that reads the speech text out of the movie, and it is
+// a deliberate, bounded exception to "verification only, never the speech path". The reason is
+// that UIAlert has 106 separate Build*Alert functions, none of which retain a single string:
+// each resolves its own state object, picks from 389 localized vars, and pushes the result
+// through LibraryPanel.MC.BeginFunctionOp("UpdateData"). There is no accessor, no shared data
+// path, and re-deriving all 106 in the companion would be thousands of lines that silently drift
+// from the game's own source.
+//
+// What makes the exception affordable is that a popup is read ONCE, on attach (plus a Delete
+// re-announce) — never per arrow press, which is the cost the "use sparingly" warning is about.
+// And it is bounded rather than a blind sweep: the panel's Flash library symbol is known
+// (UIAlert.GetLibraryID), and each symbol's exact ordered field list was recovered by
+// decompiling the shipped movie, so a known alert costs one read per field it actually has.
+// An UNKNOWN symbol (the WOTC XPACK panels, whose package ships LZO-encrypted) falls back to the
+// union of every field name the base movie uses, and logs the symbol so the gap is enumerable
+// from a live run rather than silent.
+
+struct AlertView {
+    void* screen = nullptr;
+    std::string alertName;             // eAlertName, e.g. "eAlert_ResearchComplete"
+    std::string symbol;                // Flash library symbol, e.g. "Alert_Complete"
+    std::vector<std::string> lines;    // message lines, in the order UpdateData wrote them
+    std::vector<std::string> buttons;  // Button0 then Button1, empty entries dropped
+    bool knownSymbol = false;          // false => the union fallback ran
+};
+
+/// Read an alert's text out of its Flash panel. `mcPath` is LibraryPanel.MCPath and `symbol` is
+/// GetLibraryID(), both supplied by the companion (which can reach them in one script call).
+/// Results are cached per symbol+path+alertName, so a re-announce costs nothing. Game thread only.
+AlertView ReadAlertText(
+    void* screen, const std::string& mcPath, const std::string& symbol, const std::string& alertName);
+
+/// Drop the alert text cache. Called when the popup layer detaches, so a second alert of the
+/// same kind with different words is never answered from the first one's reading.
+void ResetAlertTextCache();
 
 // ---- the commodity list (UIInventory and everything derived from it) ----
 //
@@ -1059,6 +1166,203 @@ struct TutorialState {
 
 /// Game thread only.
 TutorialState ReadTutorialState();
+
+// ---- the geoscape (UIStrategyMap) — the mission tray ----
+//
+// ⛔ The globe has NO cursor for a mouse+keyboard player. XComHeadquartersInput's
+// PostProcessCheckGameLogic runs ProcessGeoscapeSelection — and therefore
+// UIStrategyMap.UpdateSelection -> SelectMapItemNearestLocation — only inside
+// `if( `ISCONTROLLERACTIVE)`, so nothing sets SelectedMapItem by proximity and no pin on the
+// map can be reached from the keyboard at all. Unlike the ant farm's InitializeNavigationGrid
+// this is NOT a one-call ungate: it is a per-frame tick.
+//
+// What IS live is the mission TRAY — the strip of icons along the bottom, which is the game's
+// own list of everything actionable right now (faction HQs, then scan sites, then missions,
+// in UpdateMissions' order). UIStrategyMap.InitScreen sets Navigator.HorizontalNavigation, so
+// Left/Right already reach Navigator.Prev/Next on mouse+keyboard — and because UpdateSelection
+// never runs to overwrite it, whatever the arrows select STICKS. Measured live 2026-08-21: one
+// synthetic Left moved SelectedIndex 0 -> 1 and SelectedMapItem POI -> Mission, unchanged 12 s
+// later. So the game hands us a working list cursor that is simply invisible and silent.
+//
+// Three things it does NOT hand us, all because UIStrategyMap_MissionIcon.OnReceiveFocus opens
+// with `if (Movie.IsMouseActive()) return;` — the selection brackets, the camera fly-to, and
+// the tooltip refresh. Verified live: /call OnReceiveFocus returned normally and left bFocused
+// false. Supplying those is this reader's whole job, and it supplies them through the icon's
+// OWN OnMouseEvent rather than by poking state (see MoveTrayHover).
+//
+// Every word here is a RETAINED widget read. Tooltip.Title/Body are written by
+// SetMissionIconTooltip from the state object's GetUIButtonTooltipTitle/Body at bind time —
+// already localized, already exactly what a sighted player's hover tooltip says. Measured live:
+// "НЕПОВРЕЖДЕННЫЕ СТРОЕНИЯ: АФРИКА" / "Новобранцы: 6 дн. осталось".
+
+/// The geoscape reader's activation gate.
+///
+/// Same rule as the ant farm's, and for the same reason: UIStrategyMap is a screen whose input
+/// only reaches it while it is the CURRENT screen (the first non-none stack entry, matching
+/// GetCurrentScreen's own definition — no state-bit filter). Anything above it has already
+/// taken the arrows before the map gets a say.
+struct GeoscapeGate {
+    bool mapOnStack = false; // UIStrategyMap is somewhere on the stack
+    bool current = false;    // ...and it is the first entry
+    char blocker[64] = {};   // what sits on top instead, when it is not; for the log
+
+    bool Active() const { return current; }
+};
+
+/// Game thread only.
+GeoscapeGate ReadGeoscapeGate();
+
+/// One icon of the mission tray.
+struct TrayIcon {
+    void* handle = nullptr; // UIStrategyMap_MissionIcon
+    void* mapItem = nullptr; // its UIStrategyMapItem pin on the globe, or null
+    int slot = 0;            // index in MissionItemUI.MissionIcons — the on-screen order
+    /// The GAME's Navigator index, or -1 when this icon is not navigable.
+    ///
+    /// ⚠ These two numbers are deliberately different. UpdateMissions calls Navigator.AddControl
+    /// only for icons it wants reachable, so the three Faction_unknown placeholders for factions
+    /// not yet met are VISIBLE and NOT navigable — measured live: five visible icons, two
+    /// navigable. We give the placeholders stops (a sighted player sees them) but must never
+    /// move the game's navigator while sitting on one, or SelectedMapItem silently disagrees
+    /// with what was last spoken.
+    int navIndex = -1;
+    int idNum = 0;
+    int entityId = 0;   // GeoscapeEntityRef.ObjectID off the pin — stable across a re-sort
+    std::string title;  // Tooltip.Title — EMPTY when the icon has no tooltip object at all
+    std::string body;   // Tooltip.Body
+    /// The PIN's MapPin_Header: a localized, generic noun for the kind of place ("RESISTANCE
+    /// HQ"). A CPF_Localized class default, so every instance of the pin class holds it and the
+    /// §4.3 staleness rule does not apply — which is what makes it usable as the last word for a
+    /// slot the game gave no tooltip.
+    std::string pinHeader;
+    bool mission = false;   // MissionSite != none
+    bool scanSite = false;  // ScanSite != none
+    /// The faction slot of a faction not yet met.
+    ///
+    /// ⛔ Decided by the ART (ImagePath contains "Faction_unknown"), because the two obvious
+    /// tests are both FALSE for it — measured live 2026-08-21. Its ScanSite IS set, to the
+    /// faction's XComGameState_Haven; and it IS in NavigableControls. What is true of it is that
+    /// SetMissionIconTooltip early-returned on `!IsResistanceFactionMet()` before spawning a
+    /// tooltip, so ToolTip is null and there are no words. The art is the same fact a sighted
+    /// player reads off the screen, and unlike "has no tooltip" it cannot be confused with an
+    /// icon whose tooltip has merely not been built yet.
+    bool placeholder = false;
+};
+
+/// One of the geoscape HUD's four verbs — the buttons a sighted player can see and click and no
+/// keyboard in the game can reach (recon §6.3-§6.5).
+///
+/// These are PARITY content, not an aid, which is what earns them a Tab stop: each is drawn on
+/// screen, each carries a localized label the screen itself owns, and each has a handler the
+/// game already calls. The world ring and the `;` status block are the opposite case and stay
+/// off the Tab cycle — they enumerate regions and continents nobody can read off the globe.
+struct HudVerb {
+    enum class Kind {
+        DarkEvents,       // the ADVENT operations board
+        ChosenInfo,       // UIChosenInformation
+        ResistanceOrders, // UIStrategyPolicy
+        ResNetToggle,     // the resistance-network map overlay
+    };
+    Kind kind = Kind::DarkEvents;
+    void* button = nullptr; // the UIButton to Click(), or null for a screen-function verb
+    std::string label;      // already localized
+    bool on = false;        // ResNetToggle only: m_bResNetForcedOn
+};
+
+struct StrategyMapView {
+    void* screen = nullptr;
+    void* navigator = nullptr;
+    int selected = -1;  // Navigator::SelectedIndex — the GAME's index, not a slot
+    int uiState = 0;    // EStrategyMapState
+    std::vector<TrayIcon> icons;
+    /// Only the verbs the game is actually SHOWING. Each is gated on the widget's own visible
+    /// bit, which here is the game's own answer rather than a rule of ours: RefreshData calls
+    /// Show()/Hide() on the two HUD buttons off HaveMetAnyChosen() / HaveMetAnyFactions(), and
+    /// UpdateDarkEvents shows the Dark Events container only when ShowDarkEventsButton() says
+    /// so. (This is the documented child-widget exception to "never gate readiness on
+    /// bIsVisible" — a BUTTON's visible bit is toggled deliberately and does mean hidden.)
+    std::vector<HudVerb> verbs;
+};
+
+/// UIStrategyMap when it is the current screen. Game thread only.
+void* FindStrategyMapScreen();
+
+StrategyMapView ReadStrategyMap(void* screen);
+
+/// P11 write-back: move the game's own tray navigator onto `navIndex` via UINavigator.SetSelected,
+/// so OnNavigationChanged fires and SelectedMapItem follows our cursor rather than drifting from
+/// it. Refuses navIndex < 0 — that is a placeholder, and the caller must leave the game's
+/// navigator where it was. Game thread only.
+bool SetTraySelection(const StrategyMapView& view, int navIndex);
+
+/// Hand an icon the mouse-hover event the game itself uses, which is where the camera fly-to,
+/// the pin highlight and the tooltip refresh all live:
+///
+///   OnMouseEvent(FXS_L_MOUSE_IN)  -> CAMSaveCurrentLocation, MapItem.OnMouseIn,
+///                                    SetMissionIconTooltip(<site>.GetUIButtonTooltipTitle/Body),
+///                                    CAMLookAtEarth(<site>.Get2DLocation(), ZoomLevel)
+///   OnMouseEvent(FXS_L_MOUSE_OUT) -> MapItem.OnMouseOut, CAMRestoreSavedLocation
+///
+/// The camera half is gated on `bMoveCamera || `ISCONTROLLERACTIVE == false`, and on
+/// mouse+keyboard that second term is already true — so it runs without our setting anything.
+/// The tooltip half matters as much: it re-fetches the scan site from the history first (the
+/// game's own comment says "Force an update of Scan Site game state"), so a days-remaining
+/// count that has ticked since UpdateMissions last ran is refreshed by the same call.
+///
+/// ⛔ Call these in PAIRS, OUT on the icon being left before IN on the one being entered. They
+/// are symmetric by design — IN saves the camera location and sets bOverrideZoomHide, OUT
+/// restores and clears both — so an unmatched IN leaves the pin stuck in its hover state and
+/// overwrites the saved location with a site the player never asked to return to.
+///
+/// ⛔ Never on a placeholder: with both ScanSite and MissionSite none, OnMouseEvent's final
+/// else branch dereferences MissionSite.Get2DLocation(). An unmet faction's slot is saved from
+/// that only by the Haven early-return at the top, which is not a guarantee worth leaning on.
+/// Game thread only.
+bool MoveTrayHover(const TrayIcon& icon, bool entering);
+
+/// Run a HUD verb the way the game runs it.
+///
+/// The two HUD buttons go through UIButton::Click(), which fires their OnClickedDelegate and
+/// self-gates on `!IsDisabled && bIsVisible` — the same guard the mouse path gets.
+///
+/// ⛔ Dark Events does NOT: AddDarkEventsButton wires its handler with ProcessMouseEvents(), so
+/// the button carries an OnMouseEventDelegate and NO OnClickedDelegate, and Click() would return
+/// false having done nothing. The game's own keyboard route is what this reproduces verbatim,
+/// `none` argument included — UIStrategyMap.OnUnrealCommand's FXS_BUTTON_Y case is
+/// `if (ShowDarkEventsButton() && DarkEventsButton != None) OnDarkEventsClicked(none,
+/// FXS_L_MOUSE_UP);` — and the handler ignores the panel it is handed, testing only the command.
+///
+/// ResNetToggle calls the screen's own zero-parameter OnResNetClicked(), which owns the
+/// forced-on flag and the SetUIState ordering its comment warns about. Game thread only.
+bool ActivateHudVerb(const StrategyMapView& view, const HudVerb& verb);
+
+/// Activate whatever the tray cursor is on — for a site, "send the Avenger there".
+///
+/// ⛔ Vanilla offers NO keyboard route to this. The only entry is `FXS_BUTTON_A`, the controller
+/// accept button, and the whole chain hangs off it:
+///
+///   UIStrategyMap.OnUnrealCommand(FXS_BUTTON_A)
+///     -> the Haven special case: ToggleScan when this IS the site the Avenger sits on
+///     -> SelectedMapItem.OnUnrealCommand(FXS_BUTTON_A)
+///          -> GeoscapeEntity.AttemptSelectionCheckInterruption()
+///               -> CanInteract() && !DisplayInterruptionPopup()
+///                    -> AttemptSelection -> ConfirmSelection
+///                         -> XComHQ.SetPendingPointOfTravel(entity)   // the Avenger flies
+///
+/// So this sends the command to the SCREEN, not to the pin: going straight to the pin would skip
+/// the Haven scan-toggle case, and UIStrategyMapItem_Region's own override — which picks between
+/// Make Contact, Build Outpost, Scan and plain selection in the game's own priority order — is
+/// reached either way. Every gate along the chain stays the game's, including the confirmation
+/// popups; nothing here decides whether the action is legal.
+///
+/// ⚠ It acts on `SelectedMapItem`, NOT on any icon passed in — which is precisely why focus
+/// write-back must have moved the game's navigator first. That is also what makes it safe on an
+/// unmet faction's placeholder: the selection lands on that faction's Haven, whose CanInteract()
+/// refuses, exactly as it would for a controller player pressing A there.
+///
+/// The action phase must be RELEASE — both the screen's and the pin's handlers open with
+/// CheckInputIsReleaseOrDirectionRepeat and drop anything else. Game thread only.
+bool ActivateTraySelection(const StrategyMapView& view);
 
 // ---- outbound calls into companion-mod script ----
 

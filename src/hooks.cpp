@@ -6,10 +6,12 @@
 #include "menu_navigator.h"
 #include "tile_reader.h"
 #include "avenger.h"
+#include "dropship.h"
 #include "text_input.h"
 #include "tactical_hud.h"
 #include "unit_info.h"
 #include "hacking_screen.h"
+#include "transient_reader.h"
 #include "tutorial_reader.h"
 #include "narrator.h"
 #include "process_event_hook.h"
@@ -102,9 +104,20 @@ static void RegisterEventHandlers() {
             // on-rails rejections. Only the tutorial mission has an XComTutorialMgr, so every
             // other mission pays one cached pointer check here.
             TutorialReader::OnTick();
+            // The transient surfaces: the narrative commlink subtitle, the toast stack and the
+            // strategy help blade. Deliberately LAST of the readers and on the slowest interval
+            // (250 ms) — nothing here answers a keypress, and its lines queue on the Combat
+            // channel behind whatever the surfaces above have already said. Runs in every layer,
+            // shell included, because story dialogue plays in all of them.
+            TransientReader::OnTick();
             // The Avenger's ant farm. Its gate is a plain "is UIFacilityGrid the current
             // screen", so outside the strategy layer this is one stack walk and no more.
             Avenger::OnTick();
+            // The Skyranger load screen. Deliberately AFTER TransientReader: the dropship's own
+            // narrative moment starts within a beat of the briefing appearing, and the arrival
+            // block queues behind Central rather than over him. Off the transition map this is
+            // two stack walks and nothing else.
+            Dropship::OnTick();
             // The text-entry dialog (naming a save). Narrate-only and claims one key, so it
             // never contends with the navigator — which has no recipe for this screen precisely
             // because a recipe's claims would eat the keys the player is typing with.

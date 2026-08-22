@@ -5,9 +5,11 @@
 #include "menu_navigator.h"
 #include "mouse_gate.h"
 #include "object_scanner.h"
+#include "geo_scanner.h"
 #include "free_aim.h"
 #include "tile_reader.h"
 #include "avenger.h"
+#include "dropship.h"
 #include "text_input.h"
 #include "tactical_hud.h"
 #include "unit_info.h"
@@ -89,14 +91,25 @@ static void InitThread() {
     // navigation graph does the moving once the companion installs it)
     Avenger::Init();
 
-    // 13. Text-entry dialog (naming a save). Registers an OBSERVER, not a claim: the keys must
+    // 13. Geoscape ring (claims — same). An AID, not parity: it reads the whole globe, including
+    // the fourteen regions the mission tray never holds, so it lives on its own keys and stays
+    // out of the tray recipe's Tab cycle. Its gate is the same UIStrategyMap-is-current test the
+    // recipe probes on, so the two stand down at the same instant.
+    GeoScanner::Init();
+
+    // 14. Skyranger load screen (claims — same; one re-announce key). Its gate is the transition
+    // map's own briefing screen, which exists in no layer any of the above can be active in, so
+    // it contends with none of them.
+    Dropship::Init();
+
+    // 15. Text-entry dialog (naming a save). Registers an OBSERVER, not a claim: the keys must
     // reach the Flash text field AND be spoken, because no screen reader can see that field.
     TextInput::Init();
 
-    // 14. Game hooks
+    // 16. Game hooks
     Hooks::Init();
 
-    // 15. Dev harness (dev builds + marker file only; no-op otherwise). Last, so it can report
+    // 17. Dev harness (dev builds + marker file only; no-op otherwise). Last, so it can report
     // on everything above, and so a failure here can never keep the mod itself from loading.
     DevServer::Start(dir);
 
