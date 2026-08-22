@@ -112,6 +112,15 @@ foreach ($mod in $wantedMods) {
         Write-Host "Re-enabled $mod in ActiveMods ($modOptionsPath) - the game wipes the list when it exits with no mods loaded."
     }
 }
+# The whole Config DIRECTORY is absent until the game has been run once on this machine, and
+# Set-Content does not create parents — so on a fresh PC the build died here with "Could not
+# find a part of the path", after every compile step had already succeeded. Creating it is what
+# the game itself would do on first launch, and it regenerates any other ini it needs.
+$modOptionsDir = Split-Path -Parent $modOptionsPath
+if (-not (Test-Path $modOptionsDir)) {
+    New-Item -ItemType Directory -Force -Path $modOptionsDir | Out-Null
+    Write-Host "Created $modOptionsDir - the game had not been run on this machine yet."
+}
 Set-Content -NoNewline -LiteralPath $modOptionsPath -Value $optsRaw
 
 switch ($config)

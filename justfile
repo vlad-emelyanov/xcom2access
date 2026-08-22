@@ -4,8 +4,8 @@
 set windows-shell := ["pwsh", "-NoProfile", "-NonInteractive", "-Command"]
 
 # Override any of these per-invocation, e.g. `just config=Debug build`
-game_path := "D:/SteamLibrary/steamapps/common/XCOM 2/XCom2-WarOfTheChosen"
-sdk_path := "D:/SteamLibrary/steamapps/common/XCOM 2 War of the Chosen SDK"
+game_path := "C:/Program Files (x86)/Steam/steamapps/common/XCOM 2/XCom2-WarOfTheChosen"
+sdk_path := "C:/Program Files (x86)/Steam/steamapps/common/XCOM 2 War of the Chosen SDK"
 build_dir := "build"
 config := "Release"
 
@@ -19,7 +19,12 @@ launch_flags := "-review -noRedScreens -noStartUpMovies"
 
 win64 := game_path / "Binaries/Win64"
 asi_log := win64 / "scripts/X2Access.log"
-game_log := "C:/Users/alex/Documents/My Games/XCOM2 War of the Chosen/XComGame/Logs/Launch.log"
+# Launch.log sits under the REAL Documents folder, which is not "$HOME/Documents" on a machine
+# where OneDrive has redirected it (and is not even spelled in English there — this one resolves
+# to C:\Users\<user>\OneDrive\Документы). So `gamelog` asks Windows for the folder instead of
+# carrying a path baked in on whatever PC last edited this file; src/dev_server.cpp's /exec
+# already resolves it the same way, through SHGetKnownFolderPath(FOLDERID_Documents).
+game_log_rel := "My Games/XCOM2 War of the Chosen/XComGame/Logs/Launch.log"
 
 _default:
     @just --list --unsorted
@@ -82,7 +87,7 @@ logf:
 
 # Last N lines of the game's own Launch.log (default 50).
 gamelog lines="50":
-    @if (Test-Path "{{ game_log }}") { Get-Content -Path "{{ game_log }}" -Tail {{ lines }} } else { Write-Output "no Launch.log yet at {{ game_log }}" }
+    @$log = Join-Path ([Environment]::GetFolderPath('MyDocuments')) "{{ game_log_rel }}"; if (Test-Path $log) { Get-Content -Path $log -Tail {{ lines }} } else { Write-Output "no Launch.log yet at $log" }
 
 # Show what is currently installed in the game and whether it is running.
 status:
@@ -217,12 +222,20 @@ dev-shot path="":
 
 gen_dir := justfile_directory() / "deps/CodeRed-Generator"
 gen_dll := gen_dir / "x64/Release/CodeRedGenerator.dll"
-msbuild := "C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/MSBuild/Current/Bin/MSBuild.exe"
+# MSBuild and the C++ toolset are LOOKED UP rather than written down. Two things move between
+# machines and a hardcoded MSBuild path sees neither: which Visual Studio is installed (this
+# tree has been built under VS 2022 and under VS Build Tools 2026, whose MSBuild lives under
+# .../Microsoft Visual Studio/18/BuildTools), and which PlatformToolset ships with it. The
+# generator's .vcxproj asks for v143, and MSBuild does not fall back when only a newer toolset
+# is present — it fails with "the build tools for v143 cannot be found", which reads like a
+# broken project rather than a missing component. So: use the project's own toolset when it IS
+# installed, else the newest one that is. vswhere's location is fixed by Microsoft's contract,
+# which is what makes it the one path here worth hardcoding.
+vswhere := "C:/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
 
 # Compile the SDK generator DLL (needed only after changing its Configuration.cpp).
 sdk-build:
-    @if (-not (Test-Path "{{ msbuild }}")) { throw "MSBuild not found at {{ msbuild }}" }
-    @& "{{ msbuild }}" "{{ gen_dir }}/CodeRedGenerator.sln" -p:Configuration=Release -p:Platform=x64 -v:minimal -nologo
+    @$ErrorActionPreference = 'Stop'; if (-not (Test-Path "{{ vswhere }}")) { throw "vswhere not found at {{ vswhere }} - install Visual Studio Build Tools with the C++ workload" }; $vs = & "{{ vswhere }}" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath; if (-not $vs) { throw "no Visual Studio install carries the x64 C++ toolset" }; $msbuild = Join-Path $vs 'MSBuild/Current/Bin/MSBuild.exe'; if (-not (Test-Path $msbuild)) { throw "MSBuild not found at $msbuild" }; $want = (Select-String -Path "{{ gen_dir }}/CodeRedGenerator.vcxproj" -Pattern '<PlatformToolset>(v\d+)</PlatformToolset>' | Select-Object -First 1).Matches[0].Groups[1].Value; $have = @(Get-ChildItem (Join-Path $vs 'MSBuild/Microsoft/VC/*/Platforms/x64/PlatformToolsets/*') -Directory -ErrorAction SilentlyContinue | ForEach-Object Name | Where-Object { $_ -match '^v\d+$' } | Sort-Object -Descending -Unique); if (-not $have) { throw "no v1NN platform toolsets under $vs" }; $ts = if ($have -contains $want) { $want } else { $have[0] }; Write-Output "MSBuild: $msbuild"; Write-Output "toolset: $ts (project asks for $want; installed: $($have -join ', '))"; & $msbuild "{{ gen_dir }}/CodeRedGenerator.sln" -p:Configuration=Release -p:Platform=x64 -p:PlatformToolset=$ts -v:minimal -nologo; if ($LASTEXITCODE -ne 0) { throw "generator build failed (exit $LASTEXITCODE)" }
     @Write-Output "generator built: {{ gen_dll }}"
 
 # Inject the generator into the RUNNING game; it writes generated_sdk_new/ over a few minutes.
@@ -230,7 +243,7 @@ sdk-gen:
     @if (-not (Get-Process XCom2 -ErrorAction Ignore)) { throw "XCom2 is not running - use 'just run' first" }
     @if (-not (Test-Path "{{ gen_dll }}")) { throw "generator not built - run 'just sdk-build'" }
     @if (Test-Path "generated_sdk_new") { throw "generated_sdk_new already exists - move or delete it first" }
-    @python tools/frida-run.py --script tools/inject-sdk-generator.js
+    @python tools/frida-run.py --script tools/inject-sdk-generator.js -a "{{ gen_dll }}"
     @Write-Output "Injected. Generation starts ~10s later; wait for the message box, then quit the game."
 
 # Repair generated_sdk_new, swap it in (old kept), and verify via the layout asserts.

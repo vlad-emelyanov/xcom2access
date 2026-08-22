@@ -40,15 +40,57 @@ set(PRISM_ENABLE_WINDOW_EYES_BACKEND ON CACHE BOOL "" FORCE)
 set(PRISM_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
 set(PRISM_ENABLE_DEMOS OFF CACHE BOOL "" FORCE)
 set(PRISM_ENABLE_GDEXTENSION OFF CACHE BOOL "" FORCE)
+
+# Prism builds import libraries for the readers it delay-loads (ZDSR, PC-Talker, BoyPC...) by
+# shelling out to the MSVC librarian, which it locates with a bare `find_program(NAMES lib
+# llvm-lib)` — i.e. a PATH search. lib.exe is only on PATH inside a Developer Command Prompt,
+# so a plain `cmake -B build -A x64` from an ordinary shell fails the CONFIGURE with "Neither
+# 'lib' nor 'llvm-lib' found", which reads as a missing toolchain rather than a missing shell
+# environment. CMake already knows exactly where the compiler is, and lib.exe is its neighbour,
+# so hint the search there and populate Prism's own cache variable before its find_program runs.
+if(MSVC AND NOT PRISM_LIB_TOOL)
+    get_filename_component(_msvc_bin_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    find_program(PRISM_LIB_TOOL NAMES lib llvm-lib HINTS "${_msvc_bin_dir}")
+    if(PRISM_LIB_TOOL)
+        message(STATUS "X2Access: MSVC librarian for Prism: ${PRISM_LIB_TOOL}")
+    endif()
+endif()
+
 add_subdirectory(deps/prism EXCLUDE_FROM_ALL)
 
 # Generated SDK global definitions (GObjects/GNames externs)
 set(SDK_DIR "${CMAKE_SOURCE_DIR}/generated_sdk/X2SDK")
 
+# The generated SDK is a BUILD INPUT that is not in git (113 MB, .gitignore'd), so a fresh
+# clone — or a move to a new machine — starts without it and the only way to get it back is a
+# generation run against the live game (`just sdk-build`, `just run`, `just sdk-gen`,
+# `just sdk-adopt`). Left unchecked, that state fails at GENERATE time with "Cannot find source
+# file: .../GameDefines.cpp", which reads like a corrupt checkout, and it takes the whole
+# project down with it — including the Graph kernel tests and the UnrealScript companion, both
+# of which need no SDK at all. So the ASI target is declared only when its input is actually
+# there, and everything that does not depend on it keeps building meanwhile.
+if(EXISTS "${SDK_DIR}/GameDefines.cpp")
+    set(X2ACCESS_SDK_PRESENT TRUE)
+else()
+    set(X2ACCESS_SDK_PRESENT FALSE)
+    message(WARNING
+        "generated_sdk/X2SDK is missing, so the X2Access ASI target is NOT declared.\n"
+        "  Everything that needs no SDK still builds: GraphTests, build_uscript.\n"
+        "  To recover it: just sdk-build && just run && just sdk-gen && just sdk-adopt\n"
+        "  (the generator dumps from the LIVE game; run it with the same mod set players use).")
+endif()
+
 # Loopback HTTP dev harness (src/dev_server.cpp). OFF here means the TU is not compiled at all,
 # so a release .asi contains no socket code — the runtime marker file is the second gate, not
 # the only one. `just` turns it ON for the local dev tree; see the justfile's devserver var.
 option(X2ACCESS_DEVSERVER "Build the loopback HTTP dev harness (dev builds only)" OFF)
+
+# Graph kernel conformance suite (runs on the build machine, no game and no generated SDK
+# needed — that independence is the point, see src/Graph/ControlId.hpp).
+enable_testing()
+add_subdirectory(tests)
+
+if(X2ACCESS_SDK_PRESENT)
 
 add_library(X2Access SHARED
     src/dllmain.cpp
@@ -101,10 +143,6 @@ target_include_directories(X2Access PRIVATE
     ${SDK_DIR}/SDK_HEADERS
 )
 
-# Graph kernel conformance suite (runs on the build machine, no game needed)
-enable_testing()
-add_subdirectory(tests)
-
 # prism::prism carries PRISM_STATIC and the include dir itself (see the Prism block above).
 target_link_libraries(X2Access PRIVATE prism::prism)
 
@@ -146,12 +184,14 @@ set_target_properties(X2Access PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+endif()  # X2ACCESS_SDK_PRESENT
+
 # ---------------------------------------------------------------------------
 # XCOM 2 paths (override with -DXCOM2_SDK_PATH=... at configure time)
 # ---------------------------------------------------------------------------
-set(XCOM2_SDK_PATH "D:/SteamLibrary/steamapps/common/XCOM 2 War of the Chosen SDK"
+set(XCOM2_SDK_PATH "C:/Program Files (x86)/Steam/steamapps/common/XCOM 2 War of the Chosen SDK"
     CACHE PATH "Path to XCOM 2 WOTC SDK")
-set(XCOM2_GAME_PATH "D:/SteamLibrary/steamapps/common/XCOM 2/XCom2-WarOfTheChosen"
+set(XCOM2_GAME_PATH "C:/Program Files (x86)/Steam/steamapps/common/XCOM 2/XCom2-WarOfTheChosen"
     CACHE PATH "Path to XCOM 2 WOTC game directory")
 
 # ---------------------------------------------------------------------------
@@ -183,12 +223,24 @@ add_custom_target(build_uscript
 # ---------------------------------------------------------------------------
 set(DEPLOY_SCRIPTS_DIR "${XCOM2_GAME_PATH}/Binaries/Win64/scripts")
 
-add_custom_target(deploy
-    COMMAND ${CMAKE_COMMAND} -E make_directory "${DEPLOY_SCRIPTS_DIR}"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "$<TARGET_FILE:X2Access>" "${DEPLOY_SCRIPTS_DIR}/X2Access.asi"
-    DEPENDS X2Access
-    COMMENT "Deploying X2Access.asi and X2AccessCompanion to game"
-    VERBATIM
-)
+if(X2ACCESS_SDK_PRESENT)
+    add_custom_target(deploy
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${DEPLOY_SCRIPTS_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "$<TARGET_FILE:X2Access>" "${DEPLOY_SCRIPTS_DIR}/X2Access.asi"
+        DEPENDS X2Access
+        COMMENT "Deploying X2Access.asi and X2AccessCompanion to game"
+        VERBATIM
+    )
+else()
+    # Without the generated SDK there is no .asi to copy, but the companion mod still compiles
+    # and deploys itself — so `deploy` stays a valid target and does the half it can, rather
+    # than disappearing from the build and making `just deploy` look like a broken recipe.
+    add_custom_target(deploy
+        COMMAND ${CMAKE_COMMAND} -E echo
+            "deploy: companion mod only - generated_sdk/X2SDK is missing, so no X2Access.asi was built"
+        COMMENT "Deploying X2AccessCompanion to game (no ASI: generated SDK missing)"
+        VERBATIM
+    )
+endif()
 add_dependencies(deploy build_uscript)
