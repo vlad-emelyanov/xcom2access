@@ -4,7 +4,7 @@
 // thread, from the tick drain) and reads NativeResult back through reflection right after the call
 // returns. Nothing here runs on its own — no listeners, no timers, no polling.
 //
-// Twelve categories. Three carry a dedicated cycle key on the native side; the rest are reached
+// Eleven categories. Three carry a dedicated cycle key on the native side; the rest are reached
 // through the ring. Each keeps its own remembered position:
 //   markers               — the world-space things the game points the player AT. Three
 //                           contributors in one ring: the tutorial's required-action marker
@@ -13,7 +13,13 @@
 //                           waypoint and an objective glint are the same kind of thing to a player
 //                           working out where to go, and folding them together is what stops the
 //                           tutorial being a special case.
-//   units.enemies         — visible aliens.
+//   units.enemies         — visible aliens, and the Lost as ONE summary entry however many there
+//                           are (a swarm is 10-20 bodies with one shared name; stepping through
+//                           them individually is unusable and would bury the ADVENT pod behind
+//                           them). They share this ring rather than holding one of their own
+//                           because they ARE enemies — the enemy key is where a player looks for
+//                           them — and because a category empty on most missions still costs a
+//                           ring step on all of them.
 //   units.squad           — your own soldiers.
 //   ground.loot           — timed loot drops, with the turns left before they evaporate.
 //   ground.reinforcements — pending drop points, with the turns left before they land.
@@ -28,8 +34,6 @@
 //                           elevators. Deliberately ONE ring where the recon doc had six — since
 //                           InteractiveLabel names each object by its own interact ability, the
 //                           split bought nothing but extra presses to reach the chest.
-//   units.lost            — one summary entry, never a per-unit ring: a swarm is 10-20 bodies and
-//                           stepping through them individually is unusable.
 //   objects.towers        — ADVENT towers and their detection radius, shown ONLY while something
 //                           of ours is concealed, because that is the only time the radius means
 //                           anything. The ring's empty-skip makes a mode-dependent category free.
@@ -88,10 +92,9 @@ const CAT_EVAC = 5;
 const CAT_CIVILIANS = 6;
 const CAT_HAZARDS = 7;
 const CAT_INTERACT = 8;
-const CAT_LOST = 9;
-const CAT_TOWERS = 10;
-const CAT_CONNECTORS = 11;
-const CAT_COUNT = 12;       // how many are REAL — what the category ring wraps around
+const CAT_TOWERS = 9;
+const CAT_CONNECTORS = 10;
+const CAT_COUNT = 11;       // how many are REAL — what the category ring wraps around
 const NUM_CATEGORIES = 16;  // headroom for the rest; a static array, so the slack costs nothing
 
 // Hazard types, in the order HazardWord/HazardClass/TileHasHazard agree on.
@@ -314,6 +317,11 @@ private function BuildCategory(int Category, TTile Origin, out array<AccessMarke
 		break;
 	case CAT_ENEMIES:
 		AddEnemies(Origin, Entries);
+		// The Lost ride the ENEMY ring rather than one of their own. They are enemies, so the
+		// enemy key is where a player looks for them, and a category that is empty on most
+		// missions costs a ring step on all of them. Sharing is only safe because AddLost
+		// contributes ONE entry — see there.
+		AddLost(Origin, Entries);
 		break;
 	case CAT_SQUAD:
 		AddSquad(Origin, Entries);
@@ -335,9 +343,6 @@ private function BuildCategory(int Category, TTile Origin, out array<AccessMarke
 		break;
 	case CAT_INTERACT:
 		AddInteractables(Origin, Entries);
-		break;
-	case CAT_LOST:
-		AddLost(Origin, Entries);
 		break;
 	case CAT_TOWERS:
 		AddTowers(Origin, Entries);
@@ -366,7 +371,6 @@ private function string EmptyText(int Category)
 	case CAT_CIVILIANS: return "No civilians visible";
 	case CAT_HAZARDS: return "No hazards";
 	case CAT_INTERACT: return "Nothing to interact with";
-	case CAT_LOST: return "No Lost visible";
 	// Says WHY it is empty. "No towers" while revealed would read as "this map has none", which is
 	// a different and much more dangerous claim than "the radius does not apply right now".
 	case CAT_TOWERS: return "Towers shown only while concealed";
@@ -391,7 +395,6 @@ private function string CategoryName(int Category)
 	case CAT_CIVILIANS: return "Civilians";
 	case CAT_HAZARDS: return "Hazards";
 	case CAT_INTERACT: return "Objects";
-	case CAT_LOST: return "Lost";
 	case CAT_TOWERS: return "Towers";
 	case CAT_CONNECTORS: return "Level connectors";
 	}
@@ -906,7 +909,7 @@ private function AddCivilians(TTile Origin, out array<AccessMarker> Entries)
 	}
 }
 
-// The Lost, as ONE entry however many there are.
+// The Lost, as ONE entry however many there are. Contributed to CAT_ENEMIES, not a ring of its own.
 //
 // This is §5.1's summary-on-entry form and the reason is arithmetic: a swarm is 10-20 bodies with
 // one shared name, so a per-unit ring would be twenty identical lines and would bury the ADVENT pod

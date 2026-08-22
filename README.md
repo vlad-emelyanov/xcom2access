@@ -61,9 +61,10 @@ from a sort origin you choose.
 
 **Tactical combat** — a tile cursor you walk around the map with (cover per
 edge, hazards, ledges, fog parity, reachability, and a two-press move-to that
-commits through the game's own click path); an object scanner ring over twelve
-categories (markers, enemies, your squad, loot, reinforcements, evac, civilians,
-hazards, interactables, the Lost, towers, and ramps/ladders); the shot HUD with
+commits through the game's own click path); an object scanner ring over eleven
+categories (markers, enemies — the Lost included, as one swarm entry — your squad,
+loot, reinforcements, evac, civilians, hazards, interactables, towers, and
+ramps/ladders); the shot HUD with
 odds, damage band, target cover and health; free aim for grenades and other
 point-targeted abilities, which vanilla offers no keyboard path to at all; the
 hacking screen, likewise mouse-only in vanilla; a selected-soldier readout; and

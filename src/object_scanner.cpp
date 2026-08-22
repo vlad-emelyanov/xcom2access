@@ -45,7 +45,7 @@ void Call(const char* funcName, void* params)
 constexpr int32_t kCatMarkers = 0;
 constexpr int32_t kCatEnemies = 1;
 constexpr int32_t kCatSquad = 2;
-// Everything from loot (3) to level connectors (11) has no dedicated key — those are reached
+// Everything from loot (3) to level connectors (10) has no dedicated key — those are reached
 // through the category ring below, so nothing here names them. Listed for the record, since this
 // comment block is the only place the two halves' numbering is written down side by side.
 

@@ -75,12 +75,12 @@ focus.
 
 ## Object scanner
 
-The RT `Scanner.cs` port, a PULL surface next to the tile cursor's push. TWELVE
+The RT `Scanner.cs` port, a PULL surface next to the tile cursor's push. ELEVEN
 categories: `markers` (tutorial required-action marker + objective-carrying objects
 — one group, because a waypoint and an objective glint are the same thing to a
 player working out where to go), `units.enemies`, `units.squad`, `ground.loot`,
 `ground.reinforcements`, `ground.evac`, `units.civilians`, `hazards`,
-`objects.interact`, `units.lost`, `objects.towers`, `world.connectors`. Each keeps
+`objects.interact`, `objects.towers`, `world.connectors`. Each keeps
 its OWN remembered position; the `CAT_*` ids are the one thing the two halves share
 as a NUMBER rather than a name. The ring is what makes a further category cost one
 `case` label instead of a key.
@@ -117,6 +117,12 @@ swallow would otherwise cost.
   `bSquadIsConcealed`: a lone Phantom ranger ahead of a revealed squad is when a
   detection radius matters most. Its empty text names the GATE ("Towers shown only
   while concealed") rather than claiming the map has none.
+- **The Lost ride the ENEMY ring**, as ONE entry (label "Lost swarm", count and nearest
+  tile) however many there are. They are enemies, so the enemy key is where a player
+  looks for them, and a category empty on most missions costs a ring step on all of
+  them; the summary form is what makes sharing safe, since a swarm is 10-20 bodies
+  with one shared name and a per-unit ring would bury the ADVENT pod standing behind
+  them.
 - **Enemies carry a sight clause**: the ring stays on squad visibility (what the unit
   FLAGS show), but `GetAllVisibleEnemyTargetsForUnit` +
   `GetAllSquadsightEnemiesForUnit` — the two lists `UITacticalHUD_Enemies` builds —
