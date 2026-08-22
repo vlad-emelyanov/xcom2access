@@ -26,6 +26,13 @@
 //   action points              -> UIUnitFlag.RealizeMoves (the move pips)
 //   overwatch held             -> UIUnitFlag.AS_SetOverwatchIcon
 //   concealment                -> the flag's own concealment icon
+//   enemies visible            -> UITacticalHUD_Enemies, the strip of enemy icons beside the
+//                                 reticle, which is per-SOLDIER ("currently visible aliens to
+//                                 the active soldier" is Firaxis' own header comment) and
+//                                 therefore changes under the player on every Tab. Counted
+//                                 rather than listed: the object scanner's enemy key is where
+//                                 the individual enemies are read out, and repeating them here
+//                                 would make every switch a paragraph
 //   bonus / penalty effects    -> the soldier panel's buff arrows. SetStats shows only WHETHER
 //                                 there are any; the names live in the tooltip a mouse player
 //                                 opens by hovering — so naming them on a key is the same
@@ -128,10 +135,16 @@ function AnnounceUnit()
 // Wording
 // ---------------------------------------------------------------------------
 
-// What a switch is worth saying: who, in what shape, and can they still act. Deliberately
-// shorter than the full block — the player is usually cycling, and the next press interrupts
-// this line anyway (native sends it on the Focus channel). The class, the conditions and the
-// effect names wait for the key.
+// What a switch is worth saying: who, in what shape, can they still act, and what can they see.
+// Deliberately shorter than the full block — the player is usually cycling, and the next press
+// interrupts this line anyway (native sends it on the Focus channel). The class, the conditions
+// and the effect names wait for the key.
+//
+// The enemy count earns its place on the SHORT line because it is the one value here that
+// changes with the switch rather than describing the soldier: health and actions are facts a
+// player can ask for later, while "does this one see anything?" is the reason they pressed Tab.
+// Zero is spoken too — a silent clause would be indistinguishable from the readout not firing,
+// and an empty strip is exactly what a sighted player sees.
 private function string DescribeSelection(XComGameState_Unit UnitState)
 {
 	local string Result;
@@ -139,6 +152,7 @@ private function string DescribeSelection(XComGameState_Unit UnitState)
 	Result = class'X2AccessTacticalEvents'.static.UnitName(UnitState);
 	AppendPart(Result, class'X2AccessTacticalReader'.static.DescribeTargetHealth(UnitState));
 	AppendPart(Result, DescribeActions(UnitState));
+	AppendPart(Result, class'X2AccessTacticalReader'.static.DescribeVisibleEnemies(UnitState));
 	return Result;
 }
 
@@ -152,6 +166,7 @@ private function string DescribeUnit(XComGameState_Unit UnitState)
 	AppendPart(Result, class'X2AccessTacticalReader'.static.DescribeTargetHealth(UnitState));
 	AppendPart(Result, DescribeActions(UnitState));
 	AppendPart(Result, DescribeConcealment(UnitState));
+	AppendPart(Result, class'X2AccessTacticalReader'.static.DescribeVisibleEnemies(UnitState));
 	AppendPart(Result, DescribeEffects(UnitState));
 	return Result;
 }

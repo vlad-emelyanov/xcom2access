@@ -78,6 +78,7 @@ function PollTargeting()
 	local AvailableAction Action;
 	local XComGameState_Ability AbilityState;
 	local StateObjectReference TargetRef;
+	local int TargetIndex;
 	local string Result;
 
 	NativeResult = "";
@@ -98,7 +99,7 @@ function PollTargeting()
 	}
 	bWasRaised = true;
 
-	if (!ResolveShot(HUD, Action, AbilityState, TargetRef))
+	if (!ResolveShot(HUD, Action, AbilityState, TargetRef, TargetIndex))
 		return;
 
 	// Free aim is a MODE of this screen rather than a screen of its own, so it is reported from
@@ -115,11 +116,11 @@ function PollTargeting()
 	{
 		// A new ability brings its own target list, so both halves are news.
 		Result = DescribeAbility(HUD, Action, AbilityState);
-		AppendPart(Result, DescribeTarget(Action, AbilityState, TargetRef));
+		AppendPart(Result, DescribeTarget(Action, AbilityState, TargetRef, TargetIndex));
 	}
 	else if (TargetRef.ObjectID != LastTargetID)
 	{
-		Result = DescribeTarget(Action, AbilityState, TargetRef);
+		Result = DescribeTarget(Action, AbilityState, TargetRef, TargetIndex);
 	}
 	else
 	{
@@ -139,6 +140,7 @@ function AnnounceShot()
 	local AvailableAction Action;
 	local XComGameState_Ability AbilityState;
 	local StateObjectReference TargetRef;
+	local int TargetIndex;
 	local string Result;
 
 	NativeResult = "";
@@ -149,7 +151,7 @@ function AnnounceShot()
 		NativeResult = "Not targeting";
 		return;
 	}
-	if (!ResolveShot(HUD, Action, AbilityState, TargetRef))
+	if (!ResolveShot(HUD, Action, AbilityState, TargetRef, TargetIndex))
 	{
 		NativeResult = "No ability selected";
 		return;
@@ -169,7 +171,7 @@ function AnnounceShot()
 	}
 
 	Result = DescribeAbility(HUD, Action, AbilityState);
-	AppendPart(Result, DescribeTarget(Action, AbilityState, TargetRef));
+	AppendPart(Result, DescribeTarget(Action, AbilityState, TargetRef, TargetIndex));
 	AppendPart(Result, AbilityState.GetMyHelpText());
 
 	// Keep the poll quiet about what was just spoken.
@@ -187,6 +189,7 @@ function AnnounceBreakdown()
 	local XComGameState_Ability AbilityState;
 	local StateObjectReference TargetRef;
 	local ShotBreakdown Breakdown;
+	local int TargetIndex;
 	local string Result;
 
 	NativeResult = "";
@@ -197,7 +200,7 @@ function AnnounceBreakdown()
 		NativeResult = "Not targeting";
 		return;
 	}
-	if (!ResolveShot(HUD, Action, AbilityState, TargetRef))
+	if (!ResolveShot(HUD, Action, AbilityState, TargetRef, TargetIndex))
 	{
 		NativeResult = "No ability selected";
 		return;
@@ -246,11 +249,12 @@ private function UITacticalHUD GetTacticalHUD()
 // selected action's own target list. Returns false when there is no ability to talk about;
 // a valid ability with no target is a true result with TargetRef.ObjectID left 0.
 private function bool ResolveShot(UITacticalHUD HUD, out AvailableAction Action,
-	out XComGameState_Ability AbilityState, out StateObjectReference TargetRef)
+	out XComGameState_Ability AbilityState, out StateObjectReference TargetRef,
+	out int TargetIndex)
 {
 	local X2TargetingMethod Method;
-	local int TargetIndex;
 
+	TargetIndex = 0;
 	if (HUD.m_kAbilityHUD == none)
 		return false;
 
@@ -369,11 +373,11 @@ private function string DescribeAbility(UITacticalHUD HUD, AvailableAction Actio
 	return Result;
 }
 
-// "Sectoid, hit 73 percent, crit 20 percent, damage 4 to 6, 5 of 8 health, armour 1".
+// "Sectoid, 1 of 3, hit 73 percent, crit 20 percent, damage 4 to 6, 5 of 8 health, armour 1".
 // Free aim has no unit to name and no breakdown to give, so it says so rather than reading
 // as a shot with a missing target.
 private function string DescribeTarget(AvailableAction Action,
-	XComGameState_Ability AbilityState, StateObjectReference TargetRef)
+	XComGameState_Ability AbilityState, StateObjectReference TargetRef, int TargetIndex)
 {
 	local XComGameState_Unit TargetUnit;
 	local ShotBreakdown Breakdown;
@@ -407,6 +411,18 @@ private function string DescribeTarget(AvailableAction Action,
 		Result = TargetUnit.GetName(eNameType_Full);
 	else
 		Result = DescribeNonUnitTarget(TargetRef);
+
+	// WHERE IN THE CYCLE this target sits, worded like the ability icon's own index one clause
+	// earlier. TargetIndex is X2TargetingMethod.GetTargetIndex(), i.e. the index Tab and
+	// Shift+Tab move (X2TargetingMethod_OverTheShoulder.NextTarget is DirectSetTarget(LastTarget
+	// + 1)), and the list is the selected action's own AvailableTargets — the same pair
+	// GetTargetedObjectID() reads. So the count is not a survey of the map but the length of the
+	// ring the player is actually walking, which is the question "is there another one?" that a
+	// sighted player answers off the reticles and the enemy strip at a glance. Spoken even at 1
+	// of 1: knowing there is nothing else to cycle to is the same fact, and it is the press the
+	// player is spared.
+	AppendComma(Result, string(TargetIndex + 1) @ "of"
+		@ string(Action.AvailableTargets.Length));
 
 	if (GetBreakdown(AbilityState, TargetRef, Breakdown))
 	{
@@ -495,6 +511,64 @@ static function string DescribeTargetHealth(XComGameState_Unit TargetUnit)
 		AppendComma(Result, "armour" @ string(Armor));
 
 	return Result;
+}
+
+// "3 enemies visible" — how many enemies THIS soldier can see, which is the count of icons on
+// the enemy strip beside the reticle (UITacticalHUD_Enemies, whose own header calls itself
+// "currently visible aliens to the active soldier").
+//
+// PER-SOLDIER, not squad-wide, and that is the whole point: the squad's answer is already on the
+// map as unit flags, while the strip answers the question the player asks when they switch —
+// "can THIS one shoot anything?". The two lists are the ones UITacticalHUD_Enemies builds via
+// XComGameState_Unit.GetUISummary_TargetableUnits (:12601, :12606): what the unit sees, plus
+// what a sniper reaches through squadsight. GetAllSquadsightEnemiesForUnit already excludes
+// what the unit sees directly (X2TacticalVisibilityHelpers.uc:435), so the two never double-count.
+//
+// ⛔ Filtered to UNITS. The strip's array also carries hackable objects and destructibles
+// (GetUISummary_TargetableUnits appends GetHackableObjectsInRangeOfUnit), so counting it raw
+// would call a door an enemy. The alive/cosmetic pair is the game's own filter from the same
+// function — a cosmetic unit is a Gremlin, and it is on nobody's threat list.
+//
+// Static and public so the object scanner's enemy ring and this count can never disagree about
+// what "visible to this soldier" means; the ring itself stays on SQUAD visibility, which is a
+// deliberate difference and documented there.
+static function string DescribeVisibleEnemies(XComGameState_Unit UnitState)
+{
+	local array<StateObjectReference> Visible, ViaSquadsight;
+	local XComGameState_Unit EnemyUnit;
+	local X2CharacterTemplate Template;
+	local int i, Count;
+
+	if (UnitState == none)
+		return "";
+
+	class'X2TacticalVisibilityHelpers'.static.GetAllVisibleEnemyTargetsForUnit(
+		UnitState.ObjectID, Visible);
+	if (UnitState.HasSquadsight())
+	{
+		class'X2TacticalVisibilityHelpers'.static.GetAllSquadsightEnemiesForUnit(
+			UnitState.ObjectID, ViaSquadsight);
+		for (i = 0; i < ViaSquadsight.Length; i++)
+			Visible.AddItem(ViaSquadsight[i]);
+	}
+
+	for (i = 0; i < Visible.Length; i++)
+	{
+		EnemyUnit = XComGameState_Unit(
+			`XCOMHISTORY.GetGameStateForObjectID(Visible[i].ObjectID));
+		if (EnemyUnit == none || !EnemyUnit.IsAlive())
+			continue;
+		Template = EnemyUnit.GetMyTemplate();
+		if (Template != none && Template.bIsCosmetic)
+			continue;
+		Count++;
+	}
+
+	if (Count == 0)
+		return "No enemies visible";
+	if (Count == 1)
+		return "1 enemy visible";
+	return string(Count) @ "enemies visible";
 }
 
 // Targets that are not units: destructible cover, a hackable terminal, a door.
@@ -827,6 +901,7 @@ private function bool GetAimContext(out UITacticalHUD HUD, out X2TargetingMethod
 	local XComTacticalController TC;
 	local AvailableAction Action;
 	local StateObjectReference TargetRef;
+	local int TargetIndex;
 
 	HUD = GetTacticalHUD();
 	if (HUD == none || !HUD.m_isMenuRaised)
@@ -840,7 +915,9 @@ private function bool GetAimContext(out UITacticalHUD HUD, out X2TargetingMethod
 		NativeResult = "Not free aiming";
 		return false;
 	}
-	if (!ResolveShot(HUD, Action, AbilityState, TargetRef))
+	// TargetIndex is discarded here on purpose: free aim has no target list to be an index INTO
+	// (bFreeAim leaves AvailableTargets empty), so the aim point is the whole subject.
+	if (!ResolveShot(HUD, Action, AbilityState, TargetRef, TargetIndex))
 	{
 		NativeResult = "No ability selected";
 		return false;

@@ -188,6 +188,14 @@ raised and neither steering: `Delete` re-announces (never contends with the tile
 which stands down exactly then) and `H` reads the per-modifier breakdown — the spoken form
 of the shot wings a mouse player opens by clicking.
 
+The target line carries its **position in the cycle** (`Sectoid, 1 of 3, hit 73 percent…`)
+beside the ability line's own index. Both are the same fact in the same words: the length of
+a ring the player is walking with a key, not a survey of the map. The target ring is
+`AvailableTargets` and the index is `X2TargetingMethod.GetTargetIndex()` — literally what
+`GetTargetedObjectID()` reads and what `NextTarget()` advances — so it cannot drift from the
+reticle. Spoken at `1 of 1` too: "there is nothing else to Tab to" is the same answer a
+sighted player gets free from the reticles.
+
 ## Free aim / AoE preview
 
 The third tactical input mode. An ability whose target is a POINT (`bFreeAim` set,
@@ -233,8 +241,19 @@ polls before it is spoken.
 
 ## Selected unit
 
-An automatic line when the selection CHANGES (name + health/shield/armour + action points)
-and `;` for the whole block on demand (adds CLASS, concealment, named buffs and debuffs).
+An automatic line when the selection CHANGES (name + health/shield/armour + action points +
+how many enemies THIS soldier sees) and `;` for the whole block on demand (adds CLASS,
+concealment, named buffs and debuffs).
+
+- The enemy count is the **enemy strip's** own number (`UITacticalHUD_Enemies`, *"currently
+  visible aliens to the active soldier"*), from the two lists
+  `XComGameState_Unit.GetUISummary_TargetableUnits` builds it from — what the unit sees, plus
+  a sniper's squadsight, which `GetAllSquadsightEnemiesForUnit` already keeps disjoint. It is
+  PER-SOLDIER on purpose: the squad's answer is already on the map as unit flags, while the
+  strip answers the question the player pressed Tab to ask. ⛔ Filtered to living non-cosmetic
+  UNITS — the strip's raw array also carries hackable objects, and counting it whole would
+  call a door an enemy. Zero is spoken ("No enemies visible"), because a dropped clause reads
+  as the readout not firing.
 
 - ⛔ **Tab is NOT claimed and must not be.** The switch is found by POLLING
   `XComTacticalController` instead, which is the better instrument: selecting a soldier
