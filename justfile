@@ -53,6 +53,7 @@ uscript: configured
 
 # Install the freshly built ASI into the game. ASI-only changes never need the SDK.
 install: build
+    @if (-not (Test-Path "{{ win64 }}/scripts")) { New-Item -ItemType Directory -Force -Path "{{ win64 }}/scripts" | Out-Null; Write-Output "created {{ win64 }}/scripts" }
     @Copy-Item -Path "{{ build_dir }}/bin/{{ config }}/X2Access.asi" -Destination "{{ win64 }}/scripts/X2Access.asi" -Force
     @Write-Output "installed X2Access.asi -> {{ win64 }}/scripts"
 
@@ -91,7 +92,7 @@ gamelog lines="50":
 
 # Show what is currently installed in the game and whether it is running.
 status:
-    @$items = @{ "ASI" = "{{ win64 }}/scripts/X2Access.asi"; "ASI loader" = "{{ win64 }}/version.dll"; "NVDA client" = "{{ win64 }}/nvdaControllerClient.dll"; "Companion mod" = "{{ game_path }}/XComGame/Mods/X2AccessCompanion" }; foreach ($k in $items.Keys) { $p = $items[$k]; if (Test-Path $p) { Write-Output ("{0}: installed, {1}" -f $k, (Get-Item $p).LastWriteTime) } else { Write-Output ("{0}: MISSING ({1})" -f $k, $p) } }; if (Get-Process XCom2 -ErrorAction Ignore) { Write-Output "XCom2: running" } else { Write-Output "XCom2: not running" }
+    @$items = @{ "ASI" = "{{ win64 }}/scripts/X2Access.asi"; "ASI loader" = "{{ win64 }}/version.dll"; "Companion mod" = "{{ game_path }}/XComGame/Mods/X2AccessCompanion"; "Generated SDK" = "{{ justfile_directory() }}/generated_sdk/X2SDK/GameDefines.cpp" }; foreach ($k in $items.Keys) { $p = $items[$k]; if (Test-Path $p) { Write-Output ("{0}: installed, {1}" -f $k, (Get-Item $p).LastWriteTime) } else { Write-Output ("{0}: MISSING ({1})" -f $k, $p) } }; if (Get-Process XCom2 -ErrorAction Ignore) { Write-Output "XCom2: running" } else { Write-Output "XCom2: not running" }
 
 # ---- dev harness (loopback HTTP, port 8774) ---------------------------------
 #
@@ -247,14 +248,33 @@ sdk-gen:
     @Write-Output "Injected. Generation starts ~10s later; wait for the message box, then quit the game."
 
 # Repair generated_sdk_new, swap it in (old kept), and verify via the layout asserts.
-sdk-adopt:
+# Pass allow_vanilla=1 to adopt a dump taken with no Community Highlander loaded (you almost
+# certainly do not want this - see the check below).
+sdk-adopt allow_vanilla="0":
     @if (-not (Test-Path "generated_sdk_new/X2SDK")) { throw "no generated_sdk_new/X2SDK - run 'just sdk-gen' first" }
+    # ⛔ REFUSE A VANILLA DUMP. The Highlander ships replacement XComGame/Engine/Core .upk files,
+    # so with it loaded EVERY class layout comes from its recompile - and the project's offsets
+    # are calibrated against that build, not the stock one. A dump taken with no mods active is
+    # therefore wrong in ways nothing downstream reports: the layout asserts pass, because the
+    # one documented divergence (UIShellSoundtrackPicker's localized m_chooseSoundtrack, absent
+    # under the Highlander, shifting everything after 0x430 down 0x10) is precisely where
+    # sdk_layout_checks.cpp deliberately asserts NOTHING. So a green build proves nothing here
+    # and the tell has to be read off the dump itself. UIScreenStack.OnInputSubscribers is that
+    # tell (Highlander issue #198): present in their build, absent from stock.
+    @$hdr = "generated_sdk_new/X2SDK/SDK_HEADERS/XComGame_classes.hpp"; if (-not (Test-Path $hdr)) { throw "no $hdr - the generation run did not finish" }; $body = (Get-Content -Raw $hdr); $i = $body.IndexOf("class UUIScreenStack : public UObject"); if ($i -lt 0) { throw "UUIScreenStack not found in the dump - it is not a usable XComGame header" }; $cls = $body.Substring($i, [Math]::Min(2000, $body.Length - $i)); if ($cls -notmatch 'OnInputSubscribers') { if ("{{ allow_vanilla }}" -ne "1") { throw "VANILLA DUMP REFUSED: UIScreenStack carries no OnInputSubscribers, so this was generated with no Community Highlander loaded. Every layout in it is the stock package's. Fix the mod list (just uscript repopulates ActiveMods), relaunch, confirm the mods loaded, and regenerate. Override with 'just allow_vanilla=1 sdk-adopt' only if you know why." } else { Write-Output "WARNING: adopting a VANILLA dump (allow_vanilla=1). Offsets are calibrated for the Highlander build." } } else { Write-Output "Highlander-derived dump confirmed (UIScreenStack.OnInputSubscribers present)." }
     @python tools/fix_generated_sdk.py generated_sdk_new/X2SDK
     @if (Test-Path "generated_sdk_old") { Remove-Item -Recurse -Force "generated_sdk_old" }
     @if (Test-Path "generated_sdk") { Move-Item "generated_sdk" "generated_sdk_old" }
     @Move-Item "generated_sdk_new" "generated_sdk"
     @Write-Output "swapped in; previous SDK kept as generated_sdk_old"
-    @just build
+    # RECONFIGURE, not just build. Whether the X2Access target EXISTS is decided at configure
+    # time by X2ACCESS_SDK_PRESENT (see CMakeLists.txt), and this recipe is the one command in
+    # the tree that changes that answer — a fresh clone configures with no SDK, generates one,
+    # and lands here with a cache that never declared the target. `build` alone would reuse it
+    # and fail with MSBuild's "project file does not exist", which names neither the SDK nor the
+    # cache. The guard in `configured` cannot help: CMakeCache.txt is present, just stale.
+    @{{ just_executable() }} configure
+    @{{ just_executable() }} build
     @Write-Output "layout asserts passed - the new SDK agrees with every hand-transcribed offset"
 
 # Put the previous SDK back if sdk-adopt produced a build that disagrees with our offsets.

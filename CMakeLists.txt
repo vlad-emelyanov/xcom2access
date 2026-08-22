@@ -77,7 +77,10 @@ else()
         "generated_sdk/X2SDK is missing, so the X2Access ASI target is NOT declared.\n"
         "  Everything that needs no SDK still builds: GraphTests, build_uscript.\n"
         "  To recover it: just sdk-build && just run && just sdk-gen && just sdk-adopt\n"
-        "  (the generator dumps from the LIVE game; run it with the same mod set players use).")
+        "  (the generator dumps from the LIVE game; run it with the same mod set players use).\n"
+        "  This tree must then be RE-CONFIGURED: the target's existence is decided here, once,\n"
+        "  so a cache written now stays targetless however many SDKs appear later. sdk-adopt\n"
+        "  re-runs configure itself; a hand-built SDK needs `just configure` before `just build`.")
 endif()
 
 # Loopback HTTP dev harness (src/dev_server.cpp). OFF here means the TU is not compiled at all,
