@@ -123,6 +123,43 @@ if (-not (Test-Path $modOptionsDir)) {
 }
 Set-Content -NoNewline -LiteralPath $modOptionsPath -Value $optsRaw
 
+# ActiveMods is only half the rule: a mod is loaded when it is listed there AND its folder is
+# under a ModRootDirs root. The game ships '+ModRootDirs=../../XcomGame/Mods/' in
+# DefaultEngine.ini, but something on this setup rewrites the USER XComEngine.ini and leaves
+# only the Steam workshop path (observed twice on 2026-08-22), which drops every locally
+# deployed mod — ours — while every workshop mod, the Highlander included, keeps loading.
+#
+# That failure is silent and points the wrong way: the ASI loads, speaks its greeting and hooks
+# ProcessEvent, then every companion call logs "companion CDO Default__X2Access*Reader NOT
+# FOUND" and every script-sourced surface goes quiet. It reads as a broken bridge. The tell is
+# in the game's own Launch.log - the ABSENCE of a line saying
+# "Checking DLC installation for ../../XcomGame/Mods/X2AccessCompanion".
+#
+# ⛔ Repair only an EXISTING file. When the game has never run on this machine there is no user
+# XComEngine.ini, and the one it generates from Default*.ini carries the Mods root already;
+# writing a stub here would replace a full generated config with two lines.
+$engineIniPath = Join-Path (Split-Path -Parent $modOptionsPath) "XComEngine.ini"
+$modsRoot = "../../XcomGame/Mods/"
+if (Test-Path $engineIniPath) {
+    $engRaw = Get-Content -Raw -LiteralPath $engineIniPath
+    # Slash direction and casing both vary between what the game writes and what it ships, so
+    # match on shape rather than on the literal string - otherwise the repair appends a second,
+    # differently-spelled copy of a root that is already there.
+    if ($engRaw -notmatch '(?m)^ModRootDirs=\.\.[\\/]\.\.[\\/]XcomGame[\\/]Mods[\\/]?\s*$') {
+        if ($engRaw -match '(?m)^\[Engine\.DownloadableContentEnumerator\]') {
+            $engRaw = [regex]::Replace(
+                $engRaw,
+                '(?m)^(\[Engine\.DownloadableContentEnumerator\][^\r\n]*\r?\n)',
+                ('${1}ModRootDirs=' + $modsRoot + "`r`n"),
+                1)
+        } else {
+            $engRaw = $engRaw.TrimEnd() + "`r`n`r`n[Engine.DownloadableContentEnumerator]`r`nModRootDirs=$modsRoot`r`n"
+        }
+        Set-Content -NoNewline -LiteralPath $engineIniPath -Value $engRaw
+        Write-Host "Restored ModRootDirs=$modsRoot in $engineIniPath - without it the game never enumerates locally deployed mods, whatever ActiveMods says."
+    }
+}
+
 switch ($config)
 {
     "debug" {
