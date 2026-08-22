@@ -8,6 +8,12 @@ two-layer mod — the first known native (injected C++) mod for this game:
 2. **UnrealScript companion mod** (`mods/X2AccessCompanion/`) — built with the
    official SDK. Owns game-state interpretation and narration triggers.
 
+This file holds the RULES and the durable engine facts. Per-surface
+reconnaissance — measurements, live-run transcripts, what a first pass must
+answer — lives in `docs/*-recon.md`; the surface table maps each screen to its
+document. Keep this file rule-first: a fact earns its place by changing what the
+next session does, not by recording what a past one did.
+
 ## Architecture: division of responsibility
 
 Rule of thumb: **if the information is on screen (widgets, lists, focus), C++
@@ -15,6 +21,7 @@ reads it; if it is about the game simulation (units, cover, HP, turns,
 objectives), UnrealScript reads it and pushes; input and speech are always C++.**
 
 ### C++ ASI owns
+
 - **Event bus**: ProcessEvent hook (`src/process_event_hook.cpp`) patched into
   every UObject vtable at slot 72; `src/event_dispatch.cpp` routes watched
   function names to handlers. FNames defined by the mod resolve late — the
@@ -22,2167 +29,949 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
 - **Input**: `src/input_arbiter.cpp` subclasses the game window WNDPROC and
   swallows claimed key chords before the engine sees them. Handlers are queued
   and drained on the game tick. All new hotkeys and navigation input go through
-  the arbiter — not GetAsyncKeyState polling, not Highlander input hooks.
-  Since 2026-08-21 it also takes passive **observers** (`RegisterObserver`):
-  every key-down and every `WM_CHAR` it handles, claimed or not, fanned out to
-  callbacks that change NOTHING about what the game receives. That exists for
-  the one job a claim cannot do — echoing what the player types into a Flash
-  text field, where the keys must reach the field AND be spoken (see
-  **Text-entry dialog**). ⛔ An observer runs INSIDE the window procedure and
-  may do nothing but RECORD: no engine memory, no speech, no outbound calls —
-  the same rule a claim's `activeWhen` follows. Act on the game tick.
-  ⛔ **A GLOBAL claim — one with no `activeWhen`, live on every screen in every
-  layer — has to earn the WHOLE keyboard, not just the screens it was tested
-  on.** `src/input.cpp` holds exactly one now (`?`, navigation help). It used to
-  hold five more: F1 status, F2 help, F3 engine info, F4 event-discovery logging
-  and Ctrl+Shift+S speech mute — all testing scaffolding from before the dev
-  harness, all retired 2026-08-21 because the harness answers each of them
-  better (`/health`, `/speech`, `/log`) and without spending a chord. Retiring
-  them also fixed a real theft nobody had noticed: **F2/F3/F4 are live game keys
-  in the Avenger** — `UIFacilityStaffContainer.OnUnrealCommand` maps
-  `FXS_KEY_F2..F4` to "activate staff slot 0..2" with no `` `ISCONTROLLERACTIVE ``
-  gate, so on mouse+keyboard they are the game's own direct route into staffing a
-  facility, and we swallowed all three for as long as they shipped. F1-F8 are
-  the shot HUD's target hotkeys too (`UITacticalHUD.uc:432`), which is what the
-  tactical section already promised we left alone and, until now, did not.
-- **Speech**: `src/tts.cpp` wraps **Prism** (was SRAL until 2026-08-20 — same
-  library and same pin as CyberAccess, so a speech bug reproduces across both
-  mods). All speech in the project goes through it. Speak the focused item only;
-  navigation help on keypress; never dump all items on a screen. Prism gives us
-  three things SRAL could not: twelve backends instead of three, a *debounced
-  availability poll thread* in place of SRAL's per-utterance process-table walk,
-  and an error return from `speak` — so a reader that DIED under us (NVDA exited;
+  the arbiter — not GetAsyncKeyState polling, not Highlander input hooks. It also
+  takes passive **observers** (`RegisterObserver`): every key-down and `WM_CHAR`
+  it handles, claimed or not, fanned out to callbacks that change NOTHING about
+  what the game receives — for the one job a claim cannot do, echoing what the
+  player types into a Flash text field, where the keys must reach the field AND
+  be spoken.
+  - ⛔ An observer runs INSIDE the window procedure and may do nothing but
+    RECORD: no engine memory, no speech, no outbound calls — the same rule a
+    claim's `activeWhen` follows. Act on the game tick.
+  - ⛔ **A GLOBAL claim — no `activeWhen`, live on every screen in every layer —
+    has to earn the WHOLE keyboard, not just the screens it was tested on.**
+    `src/input.cpp` holds exactly one (`?`, navigation help). The retired
+    F1-F4/Ctrl+Shift+S scaffolding was never free: **F2/F3/F4 are live game keys
+    in the Avenger** (`UIFacilityStaffContainer.OnUnrealCommand` maps
+    `FXS_KEY_F2..F4` to "activate staff slot 0..2" with no `` `ISCONTROLLERACTIVE ``
+    gate), and F1-F8 are the shot HUD's target hotkeys (`UITacticalHUD.uc:432`).
+    The dev harness answers what they answered (`/health`, `/speech`, `/log`).
+- **Speech**: `src/tts.cpp` wraps **Prism** (same library and pin as CyberAccess,
+  so a speech bug reproduces across both mods). All speech goes through it. Speak
+  the focused item only; navigation help on keypress; never dump all items on a
+  screen. Prism's error return from `speak` and its debounced availability poll
+  both route to `RebindBackend()`, so a reader that DIED under us (NVDA exited;
   its RPC endpoint is gone and Prism never reconnects an existing instance) costs
-  one line instead of the rest of the session. Both the availability callback and
-  a failed `speak` route to the same `RebindBackend()`; a *backend instance* is
-  explicitly not thread-safe, so every `prism_backend_*` call stays under
-  `tts.cpp`'s mutex and the poll-thread callback only raises an atomic flag.
-- **Graph A11y Kernel** (`src/Graph/`): engine-neutral navigation core
-  (Factorio Access → … → RTAccess → CyberAccess lineage). STL-only by contract
-  — no UE3, SDK, or Windows includes; `tests/` compiles it standalone to
-  enforce this. It consumes structured `GraphRender` snapshots; this is why UI
-  reading belongs in C++ (feeding it through a string bridge cannot work).
-  ⛔ **A TABLE IS NOT A LIST, and the kernel has a `GraphSheet` for the
-  difference** (ported from WrathAccess 2026-08-21, with the host vocabulary
-  lifted into a `SheetConfig` so it can live inside the kernel rather than beside
-  it; 11 conformance tests). A list row is one thing with one name and flattens
-  into a sentence losing nothing. A table row is several facts under headings
-  drawn ONCE at the top, and speech has three problems a sighted reader does not:
-  a cell read alone is a value with no idea what it means; reading the whole row
-  every time makes every arrow press a paragraph on a twenty-soldier roster; and
-  focus snapping back to the first cell makes a COLUMN impossible to read down,
-  which is the single most useful thing a table offers. The sheet answers all
-  three with graph primitives and no announcer changes — the column header is the
-  **Left/Right edge label**, the row name is the **Up/Down edge label** into a
-  non-primary cell, and the whole-row readout is the **primary's own extra
-  announcement parts**, so column 0 IS the flat list and the cells to its right
-  are the same facts made addressable. Two kernel fields carry it:
-  `NodeVtable::Column` plus `KeyGraph::SlideToColumn`, which restores your column
-  after a NON-directional jump (a row vanishing under you — ordinary arrow moves
-  never consult it, they already went where you pointed), and
-  `NodeVtable::LandGroup`, the general row-vanish rule: land on the nearest
-  survivor of the SAME group, never on a header or a lead line. Sparse rows are
-  first-class — a null cell keeps its column NUMBER while being unlandable, which
-  is what lets Up/Down match columns across ragged rows and fall to the primary
-  where a row has no cell there. **Reach for a sheet whenever a screen draws
-  column headings**; the roster is the first user.
+  one line instead of the session. ⛔ A *backend instance* is not thread-safe:
+  every `prism_backend_*` call stays under `tts.cpp`'s mutex and the poll-thread
+  callback only raises an atomic flag.
+- **Graph A11y Kernel** (`src/Graph/`): engine-neutral navigation core (Factorio
+  Access → … → RTAccess → CyberAccess lineage). STL-only by contract — no UE3,
+  SDK, or Windows includes; `tests/` compiles it standalone to enforce this. It
+  consumes structured `GraphRender` snapshots; this is why UI reading belongs in
+  C++ (feeding it through a string bridge cannot work).
+  - ⛔ **A TABLE IS NOT A LIST, and the kernel has a `GraphSheet` for the
+    difference** (host vocabulary lifted into a `SheetConfig` so it lives inside
+    the kernel rather than beside it). A list row flattens into a sentence losing
+    nothing. A table row is several facts under headings drawn ONCE at the top,
+    and speech has three problems a sighted reader does not: a cell read alone is
+    a value with no idea what it means; reading the whole row every time makes
+    every arrow press a paragraph on a twenty-soldier roster; and focus snapping
+    back to the first cell makes a COLUMN impossible to read down. The sheet
+    answers all three with graph primitives and no announcer changes — the column
+    header is the **Left/Right edge label**, the row name is the **Up/Down edge
+    label** into a non-primary cell, and the whole-row readout is the **primary's
+    own extra announcement parts**, so column 0 IS the flat list and the cells to
+    its right are the same facts made addressable. Two fields carry it:
+    `NodeVtable::Column` plus `KeyGraph::SlideToColumn`, which restores your
+    column after a NON-directional jump (a row vanishing under you — ordinary
+    arrow moves never consult it), and `NodeVtable::LandGroup`, the general
+    row-vanish rule: land on the nearest survivor of the SAME group, never on a
+    header or a lead line. Sparse rows are first-class — a null cell keeps its
+    column NUMBER while being unlandable, which is what lets Up/Down match columns
+    across ragged rows. **Reach for a sheet whenever a screen draws column
+    headings.**
+  - ⛔ **Never join two spoken phrases with a bare `", "`** — the GAME ends plenty
+    of its own strings with `.`, `!`, `?` or `:`, and blind joining voices doubled
+    full stops at the player. `X2Access::Graph::AppendPhrase` is the rule (a
+    self-punctuated part takes a plain space, everything else the comma); both of
+    `GraphAnnouncer`'s join sites route through it, so recipes inherit it. **Any
+    surface that composes speech outside a recipe owes the same call** — the ant
+    farm is narrate-only and had to be given it by hand. Four kernel tests pin it.
 - **UI reading**: `src/game_ui.cpp` reads `UIScreen`/`UIPanel`/`UIList` object
   trees through EXPLICIT field offsets (never the generated class layouts) and
-  `src/menu_navigator.cpp` turns them into GraphRenders — one *recipe* per
-  screen (probe → build → name), one attached at a time. This replaces
-  per-screen UnrealScript listeners screen-by-screen; existing listeners stay
-  until a recipe covers their screen. Every hand-transcribed offset is pinned
-  by a `static_assert` in `src/sdk_layout_checks.cpp`, so a bad transcription
-  or a regenerated SDK is a build error, not a silent wrong read.
-  Covered so far: main menu, settings, the whole new-campaign flow
-  (difficulty + Second Wave, Ironman choice, optional narrative content,
-  soundtrack picker, and the modal `UIDialogueBox` that overlays them), and the
-  in-game pause menu (`UIPauseMenu`, both layers) — which is what lets a player
-  leave a campaign at all.
-- **Tactical tile cursor** (`src/tile_reader.cpp` + companion
-  `X2AccessTileReader.uc`): the RT TileExplorer port, deliberately OUTSIDE the
-  Graph kernel (the map is not a widget tree). C++ owns the keys and speech —
-  arbiter claims for camera-relative arrows, Ctrl+comma/period floors, C
-  recenter, Delete re-announce, Backspace two-press move-to; unshifted
-  comma/period and PageUp/Dn belong to the object scanner, and SHIFT+them is now
-  its reverse cycle — which is why the floor keys are on Ctrl and not, as they
-  shipped for two months, on Shift (see the tactical input section: that pair
-  fired `PrevUnit()` on every release). Each
-  press makes one outbound call to the companion CDO
-  (`GameUI::FindCompanionCDO` + `CallScriptFunction`) and speaks the
-  `NativeResult` string reflected back. The script side drives the game's OWN
-  `XCom3DCursor` (`CursorSetLocation`/`CursorSnapToFloor`/`MoveToUnit` — the
-  pathing-pawn preview and camera follow come for free; the cursor itself is
-  NOT range-clamped, only the pathing pawn's destination is) and commits moves
-  through the game's own click path (`XComTacticalInput.ClickToPath`), guarded:
-  commit only when the pathing pawn's clamped `LastDestinationTile` EQUALS the
-  cursor tile, so a move can never land anywhere other than the tile just
-  spoken. Readout is fog-parity gated (`GetTileFOWValue`: NeverSeen →
-  "unexplored"; HaveSeen → static layout only; Seen → full).
-  **A LEDGE outranks "Impassable"** (2026-08-21, ported from WrathAccess's
-  `grid.edge_drop`): a tile with no floor of its own but ground below it is the
-  railing a sighted player is looking at, and calling it "Impassable" described it
-  identically to a wall — the one distinction a blind player most needs. Both
-  halves of the test are the engine's: `IsFloorTile` false is the very reason the
-  cursor was left hanging there (`ResolveFloor` searches only one tile down, so
-  stepping off a roof keeps its height instead of falling — deliberately, so the
-  edge can be FELT), and `GetFloorTileZ(tile, bUnlimitedSearch=true)` answers how
-  deep, documenting its own miss by returning the source Z. A wall at ground level
-  is not caught and must not be: buildings sit on the ground grid, so a tile inside
-  a wall still HAS a floor and never reaches the test. That is what keeps the word
-  honest — a ledge is open air, not merely something you cannot walk into.
-  ⛔ **Per-edge cover: `COVER_<dir>` is PRESENCE, `COVER_<dir>Low` is a HEIGHT
-  MODIFIER on it — never an alternative.** A low-cover edge carries BOTH bits, so
-  the `if (dir) … else if (dirLow)` that shipped reported every covered edge as
-  high: 260 *"High cover"* and not one *"Low cover"* across a whole Gatecrasher
-  run (live 2026-08-21), on a map that is mostly cars and sandbags. The engine's
-  own reading is `X2AbilityToHitCalc_StandardAim.GetCoverTypeForTile` (`:934`),
-  comment included: *"if the cover flags in the specified direction don't have
-  the low cover flag, then it is high cover"*. Test presence first, height
-  second. Bit order is N/S/E/W (`0x01/0x02/0x04/0x08`, low bits four up), which
-  `DIR_NORTH..DIR_WEST` already matched — the directions were never wrong, only
-  the heights, and that is why a whole run of plausible-sounding readouts hid it.
-  The shot HUD's `DescribeTargetCover` was right throughout (it read *"in half
-  cover"* in the same run), so the two surfaces DISAGREED — a mismatch between
-  two of our own readouts is the cheapest bug signal this project has. Claims stand down
-  while the shot HUD is raised (`m_isMenuRaised` — targeting owns the arrows),
-  while a graph recipe is attached, or when `UITacticalHUD` loses focus.
-  **Mouse gate** (`src/mouse_gate.cpp`): with the mouse the active input
-  device, `XComTacticalInput.Mouse_CheckForPathing` re-pushes the cached mouse
-  pick point through `CursorSetLocation` EVERY FRAME (last line of the input
-  state's `PostProcessCheckGameLogic`), reverting any keyboard push one frame
-  later. There is **one such function per input state** and the gate now holds
-  three: `Mouse_CheckForPathing` for world mode, and `Mouse_CheckForFreeAim` for
-  each of `UsingTargetingMethod` and `UsingSecondaryTargetingMethod` (free aim,
-  measured live 2026-08-20 at exactly **60.0 pushes/second** on the cursor with a
-  stationary mouse). They never contend — the pathing function is not called from
-  a targeting state and vice versa — so each surface releases exactly what it
-  took. ⚠ The free-aim pair is **state-scoped**, so `FindScriptFunction`'s
-  class-chain walk cannot see it at all (verified live: at class scope NOT FOUND);
-  `GameUI::FindStateFunction` walks the `UState`'s own `Children`, which
-  `docs/object-scanner-recon.md` §4.6 had already flagged as needed for the
-  `Key_Left_Shift` fix. While the tile cursor has been used this mission AND owns world mode,
-  the gate flips that one UFunction to `FUNC_Native` with `Func` → a thunk
-  that consumes `EX_EndFunctionParms` and returns — script→script dispatch
-  goes through exactly those two fields — and restores both exactly whenever
-  targeting raises, a recipe attaches, tactical ends, or the ASI unloads.
-  Clicks, free-aim (`Mouse_CheckForFreeAim`), and camera scroll are untouched;
-  a mouse click while gated commits to the pathing pawn's preview of OUR tile,
-  the same two-press semantics as Backspace.
-- **Object scanner** (`src/object_scanner.cpp` + companion `X2AccessObjectScanner.uc`, markers
-  AND `units.enemies` both VERIFIED LIVE 2026-08-20, `Tutorial_01`; `units.squad`, `ground.loot`,
-  `ground.reinforcements`, six more categories and the category ring built 2026-08-20 and **not yet
-  run live**): the RT `Scanner.cs` port, a PULL surface next to the
-  tile cursor's push. Categories are the ring's dimension, TWELVE of them: `markers` (the tutorial's
-  required-action marker and objective-carrying objects — one group, because a tutorial waypoint
-  and an objective glint are the same thing to a player working out where to go), `units.enemies`,
-  `units.squad`, `ground.loot`, `ground.reinforcements`, `ground.evac`, `units.civilians`,
-  `hazards`, `objects.interact`, `units.lost`, `objects.towers` and `world.connectors`. Each keeps its OWN
-  remembered position, so checking an enemy and then a marker loses your place in neither; the
-  `CAT_*` ids are the one thing the two halves share as a NUMBER rather than a name.
-  Six of the eleven needed **no native change at all** — the ring is what makes a category cost one
-  `case` label instead of a key. `world.connectors` (2026-08-21) is the twelfth and the only one
-  that is **SWEPT rather than enumerated**, because the engine offers exactly two handles on
-  getting between Z levels and only one of them is a list: `CollectLadderLandingTiles` is global
-  (the same list `XGAIPlayer_Civilian` routes panicking civilians along, and both landings of one
-  ladder are separate entries — "1 up" and "2 down" at one bearing IS the shape of a ladder),
-  while ramps have only the per-tile `IsRampTile` predicate, so they come out of a bounded box
-  (±12 tiles, ±1 Z) instead. The bound is the right SCOPE and not just a budget: a ramp 40 tiles
-  off is not the one you would take, which is why this category's empty text names the SCOPE
-  ("No ramps or ladders nearby") where every other one names the map. Clustering happens LAST,
-  over the already-distance-sorted candidates, so the tile that survives is always the nearest end
-  of the staircase rather than whichever the sweep reached first. Keys are stable per TILE (a
-  linear index, not packed decimal, which would collide on a wide grid). Why it exists at all:
-  every other readout ends in "2 up" on a multi-storey map, and a blind player cannot act on that
-  without knowing where the stairs are. WrathAccess needs a whole watershed segmentation of the
-  navmesh to make each staircase its own room; XCOM keeps the fact in the tile grid. Four rules
-  the earlier ones earned:
-  **hazards group by TYPE, not by state object** (fire SPREADS, and every spread step writes another
-  `XComGameState_WorldEffectTileData`, so per-object entries would grow a new "Fire" every turn for
-  one fire), and each stored tile is re-checked against `TileContainsFire/Smoke/Poison/Acid` because
-  a burned-out blob keeps its state object — the state is an INDEX, the world is the truth, and
-  sharing that oracle with `X2AccessHelper.DescribeHazards` is why the ring and the tile cursor
-  cannot disagree. ⛔ Walk `StoredTileData` **by index**: its element type
-  `WorldEffectTileDataContainer` is declared inside that class and referenced NOWHERE else in the
-  SDK, so cross-class scoping of the name is untested ground. **`ground.evac` speaks the origin
-  CLAMPED into the zone bounds**, not `CenterLocation` — a rectangle's centre gives the wrong
-  distance, the wrong bearing and a plant you may not be able to stand on. **`objects.towers` gates
-  on ANY XCom unit concealed**, not the player state's `bSquadIsConcealed`, because a lone Phantom
-  ranger ahead of a revealed squad is when a detection radius matters most; its empty text names the
-  GATE ("Towers shown only while concealed") rather than claiming the map has none. And **enemies
-  carry a sight clause**: the ring stays on squad visibility (what the unit FLAGS show), but
-  `GetAllVisibleEnemyTargetsForUnit` + `GetAllSquadsightEnemiesForUnit` — the two lists
-  `UITacticalHUD_Enemies` builds — decide between "via squadsight", "spotted by the squad" and
-  silence, so the first unshootable target does not read as a bug in us. Keys, all
-  gated on `TileReader::IsActive()` (shared, not recomputed — the two surfaces must stand down at
-  the same instants): `B` next marker, `.` next enemy, `,` next squad member, **`Shift`+any of
-  those three for the PREVIOUS one**,
-  `PageDown`/`PageUp` next/previous within the current category, `Ctrl+PageDown`/`Ctrl+PageUp`
-  next/previous NON-EMPTY category (announcing its name), `O` re-announce whatever was last said,
-  `/` plant the tile cursor on it. Only three categories get a dedicated key — the ones pressed
-  every turn — because the ring is what stops each further category costing a key tactical does not
-  have, and it left `;` and `'` free — `;` has since gone to the selected-unit readout and `'` is
-  still earmarked for the vantage read. Shift-reverses
-  landed 2026-08-21 with the Shift swallow that made them safe (see the tactical input section);
-  before them the only way back was `PageUp`, which walks the RING's category and therefore could
-  not step one enemy back while the ring sat on markers. `Shift+Tab` is claimed by the same module
-  — not a scanner verb at all, but the vanilla prev-soldier the swallow would otherwise have cost. The ring cursor
-  lives on the CDO, NOT in native: stepping it means knowing which categories are EMPTY, and only
-  the model can answer that. `/` acting on the LAST ANNOUNCED entry rather than on a "current
-  category" is deliberate — it acts on what you just heard.
-  **The two countdown categories are where the sighted/blind gap was widest**, and both gate on
-  the game's OWN rule for drawing the mark rather than on a rule of ours: loot uses
-  `LootExpirationTurnsRemaining > 0 && HasAvailableLoot()`, copied verbatim from
-  `XComGameState_LootDrop.BuildVisualizationForLootTicked`'s `SetVisible`, so an entry exists
-  exactly when a waypoint is drawn there; reinforcements use `Countdown > 0` (what
-  `UITacticalHUD_Countdown.RefreshCounter` hides on) AND a `SpawnVisualizationType` that actually
-  builds the flare — `BuildVisualizationForSpawnerCreation` is SKIPPED for `''`, `'TheLostSwarm'`,
-  `'ChosenSpecialNoReveal'` and `'ChosenSpecialTopDownReveal'`, so those spawners leave nothing on
-  the ground and get no ring entry. Speaking the reinforcement LOCATION (which the HUD counter
-  never shows) is covered because that visualization leaves a persistent effect and a revealed
-  area — `bStopEffect = false`, `bDestroyViewer = false`. Its words come from the game's own
-  `m_strReinforcementsTitle`/`m_strReinforcementsBody`, and both countdowns speak the NUMBER,
-  because a number is what the sighted counter shows. Loot is labelled from `LastLootOwnerName`,
-  never `GetLootingName()` — the latter re-enters the source object and, for an interactive-object
-  source, walks into the same unguarded `GetVisualizer()` deref `InteractiveLabel` sidesteps. Reachability is per-entry
-  (`bIsDestination`): spoken for markers and objectives, which you walk to; suppressed for enemies
-  and the tutorial's attack marker, where "out of range" would read as "you cannot do this" about
-  a perfectly shootable target. Enemies reuse
-  `X2AccessTacticalReader.DescribeTargetCover`/`DescribeTargetHealth` verbatim, so the scanner and
-  the shot readout can never disagree about whether something is flanked. Note the ceiling on
-  enemy labels: `GetName(eNameType_Full)` gives a non-soldier its CHARACTER TEMPLATE, so every
-  ADVENT trooper reads alike and only distance/bearing/index tell them apart — which is parity,
-  not a gap, because the game gives a sighted player no per-enemy identifier either.
-  **Dev-harness note:** the companion CDOs are now inspectable — `/props?cdo=<Class>`, and
-  `?instance=` falls back to the CDO when nothing live matches (`GameUI::FindDefaultObject`).
-  That is the only way to see this subsystem's model; before it, the speech ring was the sole
-  evidence. **NO REGISTRY** — RT needs a ticked `WorldModel` because Unity entities are mutable
-  references; XCOM's `ObjectID` is a stable int over a versioned history, so the list is rebuilt
-  per keypress and only the selection persists (an int key plus its tile), keyed by ID so a
-  completed objective cannot silently shift what is selected. The tutorial contributor reads
-  `XComTutorialMgr.NextPlayerAbilityContext`, NOT the six `StaticMeshComponent`s (routinely hidden
-  at the origin while an action is still required), gated on `bIsTutorialAllowingControls` — the
-  replay's own "I have stopped and handed over control" flag — and honours the parity guard:
-  `AbilityTemplateName` / `SourceObject` / `PrimaryTarget` / `TargetLocations` /
-  `MovementPaths[0]` only, NEVER `ResultContext`, which carries the recorded hit/miss of a
-  scripted shot the player has not fired. Objective markers are deliberately NOT fog-gated —
-  that is the game's own rule (`UIUnitFlag`/`UISimpleFlag` special-case an `ObjectiveInfo`
-  component to keep the flag visible). Compass bearings come from
-  `X2AccessTileReader.OffsetWords`, now static and shared, so there is exactly ONE calibration of
-  `NORTH_DX`/`EAST_DX` and the two surfaces cannot drift apart about which way north is.
-- **Tutorial message reader** (`src/tutorial_reader.cpp` + companion
-  `X2AccessTutorial.uc`, built AND VERIFIED LIVE 2026-08-20 — all three text
-  surfaces spoke on the first run, `Tutorial_01` frame 150): the tutorial is a
-  REPLAY (`XComTutorialMgr extends XComReplayMgr`), so it plays a recording back,
-  halts at every frame that needed input, and REJECTS anything that does not
-  match — with a sound and **no text at all**. Four surfaces carry its words and
-  three are readable. The modal `UITutorialBox` keeps `Title`/`Desc`/`ButtonHelp`
-  in real script properties (it is deliberately NOT a graph recipe: it holds
-  nothing navigable — `OnInit` calls `DisableNavigation()` on both the container
-  and its button — and a recipe would claim Enter/Space/Escape, which are exactly
-  how the box is dismissed). The anchored blade and every other flyover come from
-  polling `UIWorldMessageMgr` (see the ProcessEvent bullet below). The
-  bottom-right HUD blade goes straight into Flash and its words are recovered by
-  the companion, walking the history back from `CurrentHistoryFrame` for the
-  newest un-removed `XComGameStateContext_TutorialBox`. **Markup is TRANSLATED,
-  not stripped**: `%KEY:...%` already resolves to a bracketed, binding-aware key
-  name, but the mouse/arrow glyphs arrive as `<img src='rmb_icon'>` and
-  `CleanText` would leave a hole exactly where the instruction is. Damage
-  flyovers are skipped and plain world messages are read only inside the tutorial
-  — `X2AccessTacticalEvents` already narrates those from the game state, and both
-  speaking would double every hit. Two more parity rules earned live 2026-08-20:
-  a plain world message is spoken only while `m_bVisible` (it is anchored in the
-  WORLD, and `UpdateMessageLocation` clears that bit off screen — an off-camera
-  "Unconscious" was read by nobody and named nothing), and it stays PENDING
-  rather than dropped so panning onto it still announces it; **blades are exempt
-  and must be**, because they sit at the DESTINATION rather than at the camera
-  and the tutorial's own instruction blade reads `vis=0` routinely.
-  ⛔ **World messages are queued PER UNIT** (`X2Action_ConcealmentLost` queues one
-  at each `Unit.GetLocation()`), so identical text from several slots is normal
-  and expected — a whole squad going concealed publishes the word once per
-  soldier. Do NOT "fix" that by de-duplicating on text: two soldiers falling
-  unconscious would collapse into one line — the fix is NAMING the anchor, and
-  that is what `DescribeMessageAnchor` does: it resolves
-  `m_kFollowObject.ObjectID` through the history (gated on `CurrentHistoryFrame`,
-  or the replay answers with the object as it WILL be) and reuses
-  `X2AccessTacticalEvents.IsNarratable` / `UnitName`, so a flyover line and a
-  combat-event line agree about who they name and obey one fog rule. Blades are
-  excluded on purpose: an anchored blade is an instruction about a PLACE, so
-  prefixing whoever stands there would be actively wrong.
-- **Hacking screen** (`src/hacking_screen.cpp` + companion
-  `X2AccessHackingReader.uc`, phases 1-2 built AND VERIFIED LIVE 2026-08-20,
-  phase 3 built the same day but **not yet run live**;
-  recon in `docs/hacking-screen-recon.md`): `UIHackingScreen` is the purest case
-  of "the widget tree holds no words" — `/gui` on it prints **`1 panels`**, the
-  screen and no children, because every string goes into Flash through
-  `MC.FunctionOp` / `ActionScriptVoid` and is retained nowhere. So the companion
-  supplies ALL of it and this module hand-transcribes **no offsets at all** —
-  which here is correctness, not tidiness: the Highlander interleaves
-  `m_UsingSkulljackScreen` and `m_hackCanceled` into the bitfield at 0x450, so
-  `bWaitingForInput`'s **MASK** is 0x20 under the Highlander and 0x08 in vanilla,
-  and `static_assert`s pin offsets, not masks. Phase 2 fixes more than narration:
-  the screen's `OnUnrealCommand` handles only the controller's `FXS_DPAD_*`, so
-  on mouse+keyboard the reward choice is reachable **only by clicking a card on
-  the 3D pad in the soldier's hands** — verified live 2026-08-20, two synthetic
-  Right presses left `SelectedHackRewardOption` at 1. `Left`/`Right` move a
-  cursor across the (up to) three cards and, on cards 1-2, hand the screen its
-  own `OnUnrealCommand(FXS_DPAD_LEFT/RIGHT, FXS_ACTION_PRESS)` — which is the
-  int `X2HackRewardTemplateManager.AcquireHackRewards` reads back off that very
-  screen object, so there is one source of truth; `Delete` re-announces.
-  `Enter`/`Space`/`Escape` are deliberately NOT claimed, and every claim drops
-  once the hack is committed (the reveal ends with "press any key", and a key we
-  swallowed would not dismiss it) — the companion reports that through a second
-  reflected-out property, `NativeState`. **Phase 3 speaks the outcome from the
-  pad, not the simulation**: `bWaitingForInput` (set from
-  `OnCommand("HackEnded")`) for WHEN, and for WHAT the award set the game itself
-  would build — because ⛔ **the lit cards are NOT the rewards**.
-  `AcquireHackRewards` only ever considers `i == 0 || i == SelectedHackRewardOption`,
-  so an unselected middle card cannot be awarded whatever the meter did, while
-  the meter lights panels by threshold and the thresholds DESCEND with the odds
-  — passing card 3's lights cards 1 and 2 as well, and on a MISS `InitiateHack`
-  further inflates the bar for drama
-  (`Max(DisplayedScore, Rand(100 - SelectedHackChance - 1))`, whose own comment
-  says it "does not affect the outcome of the hack at all"). Naming the lit
-  prefix therefore credits the player with rewards that were never in play: that
-  is what shipped 2026-08-20 and was corrected 2026-08-21, the first live reveal
-  having read correctly only because the player had selected card 2, where
-  prefix and award coincide. What `m_rewardsTaken` DOES answer is the only
-  question that matters — a panel lights at `100 - GetHackChance(index)` and the
-  inflation is bounded at `100 - SelectedHackChance - 2`, strictly under the
-  selected card's own threshold, so `m_rewardsTaken > SelectedHackRewardOption`
-  is an exact did-the-gamble-land test. The award is then rebuilt the way the
-  game builds it: slot 0 always, UNLESS it is `bBadThing`, in which case it is
-  the PENALTY and lands only when the gamble missed — and then it is named, so
-  "missed" says what it cost rather than only that there was a cost. That also
-  beats the banner Flash prints, which reads `HackRewards[RewardIndex].bBadThing` and so says
-  **Успех!** even on a miss whenever slot 0 is ordinary. Cancelling is detected
-  on the C++ falling edge (`OnCancel` closes the screen before anything can be
-  read, and a pad that goes away uncommitted was cancelled). Detection reuses `ReadTacticalGate()`,
-  whose `blocker` reads `UIHackingScreen` at exactly the instant the tile cursor
-  stands down, so the two can never disagree. ⛔ It must NOT gate on
-  `StackState::Interactive()`: the stack reports **cinematic=1** while this
-  screen is up, and legitimately so — `HideUIForCinematics` skips every screen
-  with `bShowDuringCinematic`, which this screen sets. Only the first
-  `Min(len, 3)` rewards are ever spoken: the movie has three panels and
-  `RefreshPreviewState` hard-loops `Index < 3`, so on the tutorial door (whose
-  array is FIVE, object rewards plus `BattleData.TacticalHackRewards`) the tail
-  is unreachable for everyone. Chances come from the screen's own
-  `GetHackChance` (never re-derived — sitreps, Gremlins and Skullmining all move
-  the inputs) and are truncated, matching Flash: 6.42 and 2.75 print as 6% and
-  2%.
-- **Free aim / AoE preview** (`src/free_aim.cpp` + the free-aim section of companion
-  `X2AccessTacticalReader.uc`, built AND VERIFIED LIVE 2026-08-20 — the tutorial's grenade step
-  was completed with it: `/` aimed at the object scanner's own *"Бросить гранату сюда"* marker,
-  the arrows stepped from there, and the throw landed; recon in `docs/free-aim-recon.md`): the
-  third tactical input mode. An ability whose target is a POINT
-  (`bFreeAim` set, `AvailableTargets` EMPTY) reads its aim point off the game's own
-  `XCom3DCursor` — grenades and everything deriving from their method, cones, lines, the blaster
-  launcher, the evac zone. **Vanilla has no keyboard aiming path at all**:
-  `UITacticalHUD_AbilityContainer.AbilityRequiresTargetingActivation` returns false unless a
-  controller is active (`:155`), so the D-pad branch is dead code, and `SetSelectionOnInputPress`
-  (`:405`, on every PRESS) sends a bare arrow to `CycleAbilitySelection` — which ABANDONS the
-  throw. Claiming the arrows therefore displaces nothing (ability cycling stays on `1`-`9`), and
-  this is where the old "targeting mode: we claim nothing that steers" rule is narrowed rather
-  than broken — see the tactical input section. Aim keys are the tile cursor's, deliberately:
-  arrows step, `Ctrl+,`/`Ctrl+.` change floor, `Delete` re-announces (ONE claim, branching in
-  script, never two racing for the chord), and the scanner's `/` retargets the AIM point instead
-  of planting the walk cursor. `Enter`/`Space`/`Escape` stay unclaimed — the game's own confirm
-  and cancel already work. Detection and every word live in the companion, which reports the mode
-  through a second reflected-out property (`NativeState`), published by `TacticalHUD::OnTick`'s
-  existing 150 ms poll — so the layer adds **no offsets, no `static_assert`s and no extra
-  outbound call**. ⛔ Three traps, each earned in recon: **do NOT reuse
-  `X2AccessTileReader.SetCursorTile`** — it zeroes `m_fMaxChainedDistance`, which under a
-  targeting method IS the throw-range limit (`X2TargetingMethod_Grenade.Init:43` sets it from
-  `GetAbilityCursorRangeMeters`; live 960 units = 15 m = 10 tiles), and its comment saying that
-  is safe "because our keys stand down while the shot HUD is raised" is exactly what free aim
-  falsifies. **Do NOT trust the pushed tile as the answer** — for a thrown object the blast
-  centre is `GrenadePath.GetEndPosition()`, where it comes to REST, so a bounced grenade lands
-  elsewhere; that resolves a frame late, which is why `PushAim` verifies the clamp synchronously
-  (reading `GetCursorFeetLocation()`, the exact inverse of the offset `CursorSetLocation` adds,
-  compared as a horizontal distance with half a tile of slack — the clamp lands on a SPHERE and
-  owes the tile grid nothing) while the landing divergence is reported by the poll. And **blast
-  contents come from `Ability.GatherAdditionalAbilityTargetsForLocation` asked about OUR tile**,
-  not from the method's `MarkedTargets` cache, because that cache only refreshes inside the
-  method's own `Update()`; it is the same list `ConfirmAbility` submits, fog-gated through
-  `X2AccessTacticalEvents.IsNarratable` (the native gather does not care what the squad can see,
-  so that filter is a real leak guard). Friendly fire is read from that list rather than from the
-  method's `bFriendlyFireAgainstUnits`, which is one frame stale; the game's own modal runs over
-  a WIDER list (`CheckForFriendlyUnit` uses the visual `GetTargetedActors`) and stays the
-  authority — ours is the early warning that keeps a blind player from ever reaching it.
-  ⚠ The first live run found the one thing 150 ms of poll interval does NOT buy: the arc resolves
-  a frame AFTER the push, so a single divergent reading is not evidence. It announced *"Blocked,
-  lands 6 north, 1 west"* about a throw that then landed perfectly — the reading was the pre-jump
-  arc, still pointing back at the shooter. A divergence now has to survive two consecutive polls
-  before it is spoken: a stale frame cannot, a real obstruction always does.
-
-- **Selected unit** (`src/unit_info.cpp` + companion `X2AccessUnitReader.uc`, built 2026-08-21,
-  **not yet run live**): who you are controlling, and in what shape. Two surfaces over one
-  subject, divided the way every other pair in the project is — an automatic line when the
-  selection CHANGES, and `;` (semicolon) for the whole block on demand. The switch line is
-  name + health/shield/armour + action points; the key adds the soldier's CLASS, concealment and
-  the named buffs and debuffs. ⛔ **Tab is NOT claimed and must not be** — it stays the player's
-  own binding. The switch is found by POLLING `XComTacticalController` instead, which is not a
-  workaround but the better instrument: selecting a soldier submits no game state and triggers no
-  event (it is a VISUALIZER change), so there is nothing for `X2AccessTacticalEvents` to hear and
-  nothing in the replay's frames for `X2AccessReplayNarration` to walk — and a poll catches every
-  OTHER way the selection moves, which a Tab claim never could: a mouse click on a soldier, the
-  start of your turn, and the game re-selecting for you when the unit you were on goes down.
-  It resolves through `X2AccessTileReader.ActiveUnitState()` rather than a resolver of its own, so
-  the readout and the tile cursor can never name different units. Every value is parity: name and
-  class are `UITacticalHUD_SoldierInfo.SetStats`, health/shield/armour is `UIUnitFlag.RealizeStats`
-  read through `X2AccessTacticalReader.DescribeTargetHealth` (the SAME oracle the shot HUD and the
-  object scanner use, so a soldier of yours and an enemy in the reticle are worded alike), action
-  points are `RealizeMoves`' move pips via `NumAllActionPoints()`, overwatch is the flag's own
-  `ReserveActionPoints.Find('Overwatch')`, and the effect names are the unit's own
-  `GetUISummary_UnitEffectsByCategory` — which is what gets panic, disorientation, burning and
-  stun spoken with no hand-written English word for any of them.
-  ⛔ **ACTION POINTS ARE A FRIENDLY-ONLY READOUT.** `UIUnitFlag.RealizeMoves` draws the pips
-  inside `if( m_bIsFriendly.GetValue() )` — *"Only show moves for friendly units"* is Firaxis' own
-  comment on that branch — so how many actions an ALIEN has left is a fact the game shows nobody.
-  That is why this reader is scoped to the SELECTED unit rather than to whatever the object
-  scanner or the tile cursor is pointing at: the selection is always one of yours, so the parity
-  question never arises. Do not generalize the companion's functions to an arbitrary unit without
-  splitting that clause off first. Two more rules the design earned. The team test comes BEFORE
-  the change check and deliberately does NOT record the id: `ControllingUnitVisualizer` can follow
-  a unit the player does not command, and recording those would make every transient follow look
-  like a change back to your own soldier and re-announce them turn after turn. And the
-  forget-what-was-selected edge is the **MISSION**, not usability — which is what
-  `GameUI::TacticalGate` grew `missionActive` for (a `UITacticalHUD` anywhere on the stack, however
-  deep, where `hudOnStack` means "and nothing over it"). `IsUsable()` drops on every pause menu,
-  every confirmation dialogue and every cinematic pod reveal, so resetting there would re-announce
-  the same soldier each time one closed; but never resetting is wrong too, because object IDs live
-  in the campaign history and a soldier keeps hers across missions, so the first selection of the
-  next mission can match the last of the previous one and go unspoken.
-
-- **Avenger ant farm** (`src/avenger.cpp` + companion `X2AccessAvengerReader.uc`, phase 1 built
-  AND VERIFIED LIVE 2026-08-21 — 82 arrow presses walked the hardcoded graph, every room read its
-  name, no crash and no script warning; recon in `docs/avenger-view-recon.md`, §11 is what was
-  built and §12 is the run): the first surface where the game already HAS the keyboard navigation
-  and merely never turns it on. `UIFacilityGrid.InitScreen` builds its whole eight-way room adjacency graph inside
-  `` `if( `ISCONTROLLERACTIVE) `` — and that macro is **not a hardware check**, it is the 2D
-  movie's mouse-active flag (`Core/Globals.uci:207`). ⛔ Do NOT flip the flag: mouse-inactive mode
-  changes which HUD the game builds (the same reason the tile cursor uses a swallow instead of
-  `DeactivateMouse`), and here it would make the keyboard WORSE — `UIAvengerShortcuts` routes
-  `2`-`6` through a highlight-then-confirm path in the controller branch instead of jumping
-  straight to the room. The surgical fix is to call the gated function ourselves, from script,
-  once per grid instance. So this layer is **narrate-only and claims no arrows**: the game's own
-  `UINavigator` does the moving and brings the camera swoop, the focus delivery and the highlight
-  box with it. CONFIRMED LIVE 2026-08-20 before any of it was built (via the dev harness's
-  `/call`): six injected arrows walked the hardcoded graph exactly, `Left`/`Right` moving at all
-  being the proof — the un-ungated fallback is `UINavigator`'s linear Prev/Next with
-  `HorizontalNavigation` false, so before the call they did nothing. The 51 DIAGONAL links are
-  `FXS_VIRTUAL_LSTICK_DIAG_*` only and have no keyboard chord; parsing all 152 `AddNavTarget*`
-  calls shows the cardinal-only graph is fully strongly connected across all 19 rooms, so losing
-  them costs reachability of nothing. Re-arming keys off the GRAPH'S OWN EMPTINESS
-  (`FacilityOverlays[0].Navigator.NavigationTargets.Length == 0`) rather than off screen
-  identity: idempotent (the game's function clears every overlay first), self-healing across a
-  map transition, a no-op on a controller, and it needs no `UIScreen` reference on the CDO.
-  Every word comes off the OVERLAY, never the game state — `Label`/`Status`/`Queue`/`bLocked`/
-  `bUnderConstruction`/`m_bClearing`/`IconTypes`/`BGColor` are each written by a setter under a
-  dirty check immediately before the matching Flash op, so the retained value IS what Flash was
-  last told, and the class holds not one `XCOMHISTORY` access. That is what buys parity for free:
-  the room NAME is set under `if( bIsFocused )`, so it appears exactly when the game shows it.
-  ⛔ **BUILD MODE PUTS A SCREEN ON TOP OF THE GRID, AND BOTH HALVES OF THE GATE HAVE TO KNOW.**
-  `ReadAvengerGate` was taught to tolerate `UIBuildFacilities` (see the debris-room bullet); the
-  COMPANION's own `GetGrid` was not, and resolved the grid as
-  `UIFacilityGrid(GetCurrentScreen())` — which in build mode is `UIBuildFacilities`, so the cast
-  answered `none`, `PollGrid` bailed on its first line, and the "left the ant farm" branch cleared
-  `bWasOnGrid` as well. Native said *go ahead* ten times a second while script said *not on the
-  grid*: measured live 2026-08-21 as ten arrow presses with the gate ACTIVE and not one word
-  spoken, on the one screen where a player is choosing a room to build in. The fix reads
-  `` `HQPRES.m_kFacilityGrid `` — not a guess about layering but the very object
-  `UIBuildFacilities.OnUnrealCommand` forwards its keys to. **A gate is only as good as its other
-  half**; when a surface has a native gate AND a script gate, changing one is changing half a
-  rule. What it restored is the line the mode exists for: `strLabel` is where `UpdateEmptyRoom`
-  puts *ПОСТРОИТЬ ОТСЕК* and `UpdateLockedRoom` puts *[НЕДОСТУПНО]*, and the run after the fix
-  read *"Инопланетные обломки. row 2, column 1. [НЕДОСТУПНО]. РАСЧИСТИТЕ СОСЕДНИЙ ОТСЕК, ЧТОБЫ
-  РАЗБЛОКИРОВАТЬ"* and *"Расчистить инопланетные обломки. НАГРАДА: Материалы x21"*.
-  ⛔ The ant farm is narrate-only, so it joins its OWN phrases and had to be given the
-  `AppendPhrase` rule by hand — it was voicing *"5 дн.. 1 of 1 staff slots filled"* at a room
-  being cleared. Any surface that composes speech outside a graph recipe owes the same check.
-  Two parity rulings from the live pass, and they go OPPOSITE ways. ⛔ A tutorial-locked room's
-  name must NOT be spoken — `UpdateTutorialLocked()` is the one update branch that sets no title
-  in any case, focused or not, and a screenshot confirmed a sighted player selecting that room is
-  told nothing either; speaking a name we looked up ourselves would hand a blind player what the
-  game withholds from everyone. ✅ A locked room's REFUSAL must be spoken — `OnConfirm` opens with
-  a bare `if( bLocked ) return;`, no sound and no popup, but a sighted player SEES the room dimmed
-  (`eUIState_Disabled`, `iAlpha` 0) and never presses it twice; saying *locked* on arrival is
-  parity with the dimming, and it needs no `Enter` claim (`FXS_KEY_ENTER`/`FXS_KEY_SPACEBAR` are
-  handled unconditionally by the overlay already). POSITION is spoken always, because the
-  highlight box's place in the ship is visible even when no title is drawn and, in the tutorial,
-  is the only thing distinguishing one arrow press from the next — core slots as
-  `row R, column C` (indices 3-14, row-major, 3 wide x 4 tall), the seven fixed rooms as a
-  spatial phrase, and ⚠ POSITIONS ONLY, never facility names. The gate is the game's OWN test:
-  `GameUI::ReadAvengerGate` asks whether `UIFacilityGrid` is the FIRST stack entry, matching
-  `GetCurrentScreen()`'s definition (first non-none, no state-bit filter), because that is what
-  `UIFacilityGrid.OnUnrealCommand` checks before handling anything on mouse+keyboard. The
-  companion additionally honours the grid's own `bIsVisible` — the documented exception to "never
-  gate readiness on `bIsVisible`", since here the GAME gates on it. One claim: `Delete`
-  re-announces (never contends with the tile cursor's or the shot HUD's `Delete` — those gate on
-  tactical), displacing only `[Engine.PlayerInput]`'s `Toggledebugcamera`, which stays reachable
-  at `Ctrl+Delete` for free.
-  Three things the first live run settled. ⛔ **The source's own room names are WRONG and the
-  overlay's are right**: `InitializeNavigationGrid` calls slot 1 `PowerCore`, slot 2 `Hangar` and
-  slot 17 `Storage`, but the player hears *Исследовательский отсек*, *Оружейная* and *Инженерный
-  отсек* — and Firaxis' own `shortcutRoomIndices` comments in the same function (`1 //Research`,
-  `17 //Engineering`, `2 //Armory`) side with the player. A name table built from the source would
-  have been wrong for three of seven fixed rooms, so do NOT "simplify" the `Label` read into a
-  lookup. **The strategy layer's text is COLOURED** — `GetQueueMessage` returns
-  `Солдаты: <font color='#53b45e'>Доступно: 11, </font>…` and `UpdateLockedRoom` runs
-  `m_strLockedLabel` through `GetColoredText` — so `NativeResult` goes through `GameUI::CleanText`;
-  a STRIP, not the translation the tutorial reader's `<img>` markup needs, because the colours
-  carry nothing the labelled numbers do not. And **the condition words come off the widget too**:
-  `m_strLocked` ("[НЕДОСТУПНО]") and `m_strUnderConstruction` ("ИДЕТ СТРОИТЕЛЬСТВО") are localized
-  AND, for an un-excavated room, literally what the game prints in the status line — which is why
-  `Status` is dropped when it CONTAINS the condition (`InStr`, not equality: the build-mode branch
-  wraps it in markup). Clearing emits no word at all, because `UpdateClearingRoom` sets `strTitle`
-  unconditionally and `Label` already says it. ⚠ What stays English is what the game ships no
-  string for: `needs attention` (a gloss of a border colour), the position phrases and the staff
-  phrasing — a companion-side vocabulary is the open decision there, not a bug.
-
-- **Inside a room** (`FindRoomScreen`/`ReadRoom` in `src/game_ui.cpp` + the `avenger room` recipe
-  in `menu_navigator.cpp`, built 2026-08-21, **not yet run live**; recon
-  `docs/avenger-view-recon.md` §4 and §13): ⛔ **the room SCREEN is not the room's content, and
-  building for its staff strip would have produced a reader that is silent on every room a new
-  player can reach.** All seven FIXED rooms declare **zero** `StaffSlotDefs` — CommandersQuarters,
-  CIC, PowerCore (Research), Hangar (Armory), LivingQuarters, BarMemorial, Storage (Engineering) —
-  so `RealizeStaffSlots` calls `Navigator.RemoveControl` and `UIFacility`'s navigator holds
-  nothing. Staff slots exist only in BUILDABLE facilities, and measured live 2026-08-21 all twelve
-  buildable slots read `BGColor="0x828282"` (unexcavated) on an ordinary early campaign. The
-  Commander's-Quarters silence of the previous session was therefore not one broken room but the
-  shape of the whole layer.
-  The content is one screen **down**: `UIFacility.OnUnrealCommand` returns false when it has
-  nothing, `UIScreenStack.OnInput` walks LIFO, and the keys land on `UIAvengerHUD` →
-  `Shortcuts.OnUnrealCommand` → `List` — the submenu the game AUTO-OPENS for the room just
-  entered (`SelectCategoryForFacilityScreen` → `ShowList` → `List.SetSelectedNavigation`). That is
-  where the Lab's *New Research / View Scientists* and the Armory's *Soldiers / Recruit /
-  Memorial* live. Confirmed live: two Downs moved `List.SelectedIndex` 2 → 0 → 1 with
-  `ItemCount` 4 — Next **with wrap**, the padding row skipped. So the view spans two screens on
-  purpose, and the recipe's nodes come from both.
-  **This is a RECIPE, and the contrast with the ant farm one bullet up is the whole ruling.**
-  Graph recipes are the RULE in this project — they buy focus tracking, a stable reading order,
-  and stops on panels the game makes unfocusable; game-native narrate-only is the EXCEPTION and
-  each one must be justified. The test: *narrate-only is justified only when taking the arrows
-  would destroy information we cannot reproduce.* The ant farm passes — the room NAME is set
-  inside `if( bIsFocused )`, so our own focus model would leave every room nameless (measured
-  live: of nineteen overlays exactly ONE carried a `Label`, the focused one), plus the camera
-  swoop and the highlight box. In here nothing is destroyed, and three things are bought: a stop
-  on the crew line (`UIStaffContainer.Title` + `Skill`, e.g. *"SCIENTISTS: 0"* — drawn in the
-  room, reachable by no keyboard in the game, and the number that decides whether the room's
-  verbs will do anything, which is why it reads BEFORE the actions); the row's `bIsBad`/
-  `bIsWarning` colouring, a whole channel of meaning speech otherwise loses; and focus tracking
-  on a screen where the game's own is invisible anyway — `UIStaffSlot.OnReceiveFocus` sends its
-  highlight op only under `` `ISCONTROLLERACTIVE ``.
-  Every word is a RETAINED widget read, no `XCOMHISTORY` and no Flash: `FacilityHeader`
-  (`UIX2ScreenHeader`) keeps `LocationField`/`RoomField`, the staff container keeps
-  `Title`/`Icon`/`Skill` **even while hidden**, and each row keeps its own localized `Text`.
-  Verified live: `RoomField="Исследовательский отсек"`, `Text="Показать ученых"`,
-  `Title="УЧЕНЫЕ"`, `Skill="0"`. ⛔ The name comes from `RoomField` and must keep coming from
-  there: the room TEMPLATES' own `DataName`s are systematically wrong — `PowerCore` is the
-  Research lab, `Hangar` is the Armory, `Storage` is Engineering — the same trap as the ant
-  farm's local variables, one layer up and in the shipped data rather than in one function.
-  Activation is select-then-Enter on the LIST (`SetSelectedIndex` then
-  `SendRowCommand(list, kCmdEnter)`), because `UIList.OnUnrealCommand` fires
-  `OnItemClicked(self, SelectedIndex)` and ignores the row the caller had in mind — the same trap
-  `UISaveGame.OnAccept` sets, so the same guard. Rows are matched by the GAME's index (padding
-  skipped but never renumbered) and re-read at activation, since `DoShowList` respawns every row
-  on a category change.
-  ⛔ **A room's verbs live in THREE places, and the shortcut submenu is only one of them.** The
-  first build read the staff strip and the submenu and called anything else empty — so the Bar
-  announced *"Nothing to do here"* at a screen with a visible button on it (reported live
-  2026-08-21). The other two are on the room screen itself: `UIFacility`'s
-  **`m_kRoomContainer`**, a bottom bar of `UIFacility_RoomFunc`s added by the subclass's
-  `CreateFacilityButtons()`, and **`UpgradeButton`**. Only six facilities have a bottom bar, but
-  two are FIXED rooms a new commander walks into on day one — the Bar's *Obituaries* and the
-  Living Quarters' *Personnel* — and for those two it is the ONLY content, because their
-  shortcut category really is -1. The game's own input order settles the reading order:
-  `UIFacility.OnUnrealCommand` offers the keys to the room first and lets them fall through to
-  `UIAvengerShortcuts` only when the room handles nothing, so a room WITH a bar consumes the
-  arrows and its bar is read before the submenu. An empty list is still a legitimate state — but
-  it now means empty, not "empty in the one place I looked".
-  ⛔ **A `UIFacility_RoomFunc` retains NO TEXT** — `InitRoomFunc` takes the label as a PARAMETER,
-  pushes it through `MC.FunctionString("update", label)` and keeps only the delegate — so
-  `X2AccessFacilityReader` reads it back off the SCREEN's own `localized` property
-  (`m_strObituaries`, `m_strPersonnel`, `m_strViewUnlocks`, `m_strStartProject`,
-  `m_strTrainAbilities`, `m_strViewActions`, all six checked present in `XComGame.<loc>`). The
-  class switch only ROUTES; it never supplies a word of its own. Reading the delegate's FName
-  instead — the one other thing the widget keeps — would say *"OnShowObituaries"* to a Russian
-  player. The upgrade button needs none of that: `ShowUpgradeButton` goes through
-  `UIButton.SetText`, so its `Text` is retained and already says which of *Upgrade* /
-  *Review upgrade* / *Review upgrades* the facility is in.
-  Activation is `FXS_BUTTON_A`, **not Enter**: `UIFacility_RoomFunc.OnUnrealCommand` tests that
-  one constant and nothing else, which is exactly why the bar is mouse-or-gamepad in vanilla.
-  Its labels are cached on the button pointers because the frame differ rebuilds ten times a
-  second and `AddFacilityButton` runs once, in `InitScreen`.
-  Probe insists the facility screen is TOPMOST, which is what keeps this recipe from attaching
-  over the choose-research screen or the facility summary that the room's own verbs push.
-  ⚠ Known gap: `UIFacility_Infirmary` spawns its own `PatientList` (`UIList`), the only facility
-  subclass that adds navigable content of its own; it is unread.
-- **The debris room** (`FindRoomBuildScreen`/`ReadRoomBuild` + the `avenger debris room` recipe +
-  companion `X2AccessRoomReader.uc`, built AND **VERIFIED LIVE 2026-08-21** — an engineer was
-  assigned and a room set clearing, end to end, by keyboard alone; recon §13): `UIRoom`, not
-  `UIFacility`. An un-built room has no facility, so its staffing is over `Room.BuildSlots`.
-  ⛔ **Vanilla gives this screen NO KEYBOARD AT ALL**, which makes it the clearest case in the
-  project for a recipe rather than narration: `ExcavateButton` and `ExcavationPanel` both call
-  `DisableNavigation()`; the staff slots move only on `FXS_DPAD_LEFT/RIGHT` (the ARROW constants
-  are absent from that switch); `StartExcavation` is bound only to `FXS_BUTTON_X`; and
-  `UIRoom.OnAccept` — what Enter and Space reach — is an **empty function body**. Clicking was the
-  only way to clear a room.
-  TWO SHAPES, one recipe: while the personnel picker is open the graph becomes candidate-only,
-  because `UIStaffContainer.OnUnrealCommand` tests `m_kPersonnelDropDown.bIsVisible` before
-  anything else — mirroring the game's routing rather than offering stops behind a modal the
-  player is already inside. Activation is the game's own path throughout: the slot through its
-  `HandleClick` (which branches to the facility upgrade when LOCKED), the candidate and the
-  submenu through select-then-Enter on the LIST, and Excavate through the button's `Click`.
-  ⛔ Never `UIRoom.OnAccept` (empty), and never `StartClearRoom` on the room state —
-  `StartExcavation` also closes the screen, and a room left open over a started project is a state
-  the game never produces.
-  Words come from the companion because the screen retains almost none: `ExcavationPanel` is a
-  pure Flash pipe, `UIStaffSlot` keeps only `StaffSlotRef`, and the picker's rows call
-  `AS_UpdateData` DIRECTLY — bypassing `UIButton.SetText`, so even the retained `Text` is empty on
-  them. The status strings are the screen's OWN accessors (`GetExcavationStatusString`,
-  `GetExcavationTimeEstimateString`, `GetExcavationRewardString`), which already branch on
-  under-construction / clearing / staffed / no-engineers: this screen's whole state machine,
-  expressed once, by the game.
-  ⛔ **The room's NAME must NOT come from `UIAvengerHUD.FacilityHeader`.** `UIRoom` never writes
-  that header — only `UIFacility.RealizeFacility` does — so it still holds the previous screen's
-  title, and the first live run announced *"РЕЗУЛЬТАТЫ ЗАДАНИЯ"* (MISSION RESULTS) on entering a
-  debris room. The companion names it off the room STATE using the grid overlay's own three
-  branches (`GetSpecialFeatureLabel` / `GetClearingInProgressLabel` / the facility), so the room
-  is called the same thing here as it is one screen up.
-  **Getting there needs BUILD MODE**, and that is why `ReadAvengerGate` now tolerates exactly one
-  screen above the grid: `UIBuildFacilities` ends its `OnUnrealCommand` by forwarding every
-  unhandled key to the facility grid's own `Navigator.OnUnrealCommand`, so the arrows still drive
-  the ant farm there. Treating it as a blocker went silent exactly where a player is choosing a
-  room to excavate. That is the game's own delegation, read off its own source — not an exception
-  we invented.
-
-- **The commodity list** (`FindCommodityScreen`/`ReadCommodity` in `src/game_ui.cpp` + the
-  `commodity list` recipe in `menu_navigator.cpp` + companion `X2AccessCommodityReader.uc`,
-  built AND **VERIFIED LIVE 2026-08-21** — the Research lab read, and Engineering's storage read
-  every item with its card, cost and description; recon `docs/avenger-view-recon.md` §14, and
-  §14.9 is the run): the widest
-  single recipe in the project — `UIInventory` and everything derived from it is THIRTEEN
-  screens with one layout, a `UIList` of `UIInventory_ListItem`s beside a `UIItemCard`: choose
-  research and the archives, choose project, psi ability, view objectives, choose class, the
-  officer school, both resistance screens, the black market's buy side, build items, storage,
-  implants, the XCOM database and post-mission loot. (`UIBlackMarket_Sell` is NOT in the family
-  despite the name — it `extends UIScreen` and has its own card call.)
-  ⛔ **BOTH halves are Flash-only, and the second is the one that matters.** `UIItemCard` retains
-  NOTHING — `PopulateData`/`PopulateCostData`/`PopulateResearchCostData`/
-  `PopulateSimpleCommodityCostData` resolve the title, description, cost, duration and
-  requirements into LOCALS and push them through `MC.BeginFunctionOp`; its only retained vars are
-  a `Texture2D` and two flags — AND it is in **no navigator**, so for a tech every fact that
-  decides whether to research it is unreachable twice over. Meanwhile
-  `UIInventory_ListItem.PopulateData` bypasses `UIListItemString.SetText`, so the retained `Text`
-  is EMPTY on a row that is visibly showing a name (the debris-room picker's trap again). What
-  the rows DO retain is the data they were built from — `ItemComodity` (the whole `Commodity`
-  struct), `ItemTemplate`, `ItemRef`, `Quantity`, `XComDatabaseEntry` — so the companion
-  re-derives every string from that, mirroring `UIInventory.SelectedItemChanged`'s branch and
-  then the populator it reaches, populator for populator. Three details only the source gives up:
-  `OrderHours == 0` means *instant* on the research card and *no time row at all* on the simple
-  commodity card; a finished non-repeatable tech shows **no time**, so a researched tech must not
-  keep advertising a duration; and `bTech` picks a DIFFERENT requirement formatter, not a
-  different wording — `GetTechReqString` folds the cost's own science and engineering scores into
-  the sentence and `GetStrategyReqString` never sees them.
-  **ONE OFFSET for thirteen screens** (`AUIInventory::List`, 0x498): the tab labels are localized
-  strings the companion reads by name, and every activation is a function call rather than a poke.
-  What native DOES read is the part it should — the row colour bits at 0x414, which are the whole
-  affordability channel (`RealizeBadState` sets `bIsBad` from `CanAffordItem`, `RealizeDisabledState`
-  sets `bDisabled` from `MeetsItemReqs`/`IsItemPurchased`, both refreshed on every `PopulateData`).
-  ⛔ The list holds things that are NOT rows: `UIInventory_LootRecovered` interleaves
-  `UIInventory_HeaderListItem` dividers, plain `UIPanel`s with no such bitfield — skipped by
-  CLASS while keeping `i` as the index, so every remaining number still equals the game's own.
-  ⛔ **Enter goes to the SCREEN, not to the row**, and the counter-example is what proves it:
-  `UIInventory_LootRecovered` overrides `OnUnrealCommand` to CLOSE on Enter and its rows buy
-  nothing, so a row-targeted Enter would strand a blind player on the post-mission loot screen
-  with no continue key; `UISimpleCommodityScreen` uses the same window to re-sync `iSelectedItem`,
-  the number its own purchase branch reads. Everything else falls through
-  `UIScreen.OnUnrealCommand` → `Navigator` → `ListContainer` → `List`, and `UIList` answers Enter
-  by calling the SELECTED row's `OnUnrealCommand` first (`:515`) — so the row still gets it, by
-  the game's own path, which is why selecting first is the argument rather than a courtesy.
-  **Three stops**, in the screen's own order: the category strip (Build Items only — the clearest
-  small case of *reachable but unspeakable*, since Left/Right already switch those tabs while
-  `CreateTabButton` calls `DisableNavigation()` on every button and `SetCategory` puts the new
-  name only into Flash); the list; and the CARD as its own stop with **one node per LINE**.
-  ⛔ **`EUIItemType` IS NOT THE ORDER THE CODE READS AS**: it declares `Misc=0, Weapon=1,
-  Armor=2`, while `BuildScreen` CALLS `CreateTabButton` in weapon, armor, misc order and INDEXES
-  `TabButtons` by the enum — so Flash slot 0 is Utility, and the strip draws
-  *ПРЕДМЕТЫ · ОРУЖИЕ · БРОНЯ* (screenshot-verified live). Pairing index 0 with the weapon label
-  shifted every caption AND every greyed-flag by one and made Enter switch to a different
-  category from the one just spoken. The index is what `SwitchTab` and `SetTabHighlight` are
-  expressed in, so the INDEX leads and the label follows it — never the call order.
-  A tab's post-activation line is read LIVE rather than from the render's closure: a captured
-  flag can only describe the state before the press, which spoke a bare *"selected"* when the
-  player pressed the tab they were already on and nothing at all when they actually switched. The
-  card is separate because a research list is fifteen entries long and a card is a paragraph —
-  folding one into the other would make every arrow press a paragraph — and split by line because
-  speech is serial and *what does it cost* should not require sitting through the write-up. Its
-  nodes read at ANNOUNCE time with the build-time text as fallback: the card is repopulated the
-  instant our write-back moves the selection (`List.OnSelectionChanged`), while the graph is up to
-  one poll old, so a Tab hard on the heels of an arrow would otherwise describe the row just left.
-
-- **The personnel roster** (`FindPersonnelScreen`/`ReadPersonnel` in `src/game_ui.cpp` + the
-  `personnel roster` recipe in `menu_navigator.cpp` + companion `X2AccessPersonnelReader.uc`,
-  built 2026-08-21, **not yet run live**): one recipe for every door the game opens when it asks
-  *which person?* — `UIPersonnel` and its ten subclasses: the Living Quarters' roster, the Bar's
-  obituaries, the Armory's soldiers, staffing a facility, choosing a scientist for a project, a
-  covert action's squad, the training centre, boosting a soldier. The subclasses swap which array
-  is filled and which tabs exist; the layout, the rows and the input path are all the base
-  class's, so **ONE OFFSET** (`AUIPersonnel::m_kList`, 0x45C) covers the family.
-  ⛔ **A row retains only its `UnitRef`.** `UIPersonnel_ListItem` extends `UIButton` and then
-  `UpdateData` pushes the name, status and location through `MC.BeginFunctionOp` — bypassing
-  `UIButton.SetText`, so the retained `Text` is EMPTY on a row that is visibly showing a
-  soldier's name (the debris-room picker's trap and the commodity rows' trap, a third time: it is
-  the house style for this game's list items). What it DOES keep is the reference it was built
-  from, so the companion re-derives every column the way the row did, one branch per row class —
-  `SoldierListItem` rank/name/class/status/time/location/mental state/promote,
-  `DeceasedListItem` name/kills/missions/last operation/date, the plain item name/status/location
-  for scientists and engineers. ⛔ **No `Caps()`**: every row caps the name before handing it to
-  Flash, and that is a visual style, not information — a reader that spells out all-caps words
-  would turn every soldier into an acronym.
-  ⛔ **It is a TABLE, and it is emitted as one** (`GraphSheet` — see the kernel section below).
-  Column 0 is the person's NAME and carries every other cell as extra announcement parts, so
-  walking DOWN reads the whole row exactly as a flat list would; stepping RIGHT lands on one fact
-  at a time, each announced with the heading the game draws over it. Every column takes a heading
-  the GAME ships — `m_strButtonLabels[]`, the same localized array the sort headers are drawn
-  from, all nine populated — and that constraint is what merges the soldier's TIME cell into
-  STATUS: the row draws them stacked in one column and the only time heading the game has is
-  *ДАТА*, right for the memorial's date of death and actively wrong for *"5 days until return"*.
-  The mental state folds in there too, for the same reason (no heading exists) and because
-  `GetMentalStateStringsSeparate` overwrites the time pair anyway. Columns are therefore
-  rank/class/status/location for soldiers, kills/missions/operation/date for the memorial, and
-  status/location for scientists and engineers. The wire format for rows is POSITIONAL —
-  `col=` per heading, `cell=` per value **including the empty ones** — because an empty cell is a
-  real thing (a scientist has no rank) and dropping it would shift every column after it, the one
-  mistake a table cannot survive.
-  **This is a READER, not a rescue** — `UIPersonnel.OnUnrealCommand` already walks the list on
-  Up/Down (through its `default:` branch into `m_kList.Navigator`), switches tabs on Left/Right,
-  accepts on Enter/Space and backs out on Escape, all on mouse+keyboard. Three stops, in the
-  screen's own top-to-bottom order, each for something the keyboard cannot get to: the TAB STRIP
-  (`CreateTabButton` calls `DisableNavigation()` and `SwitchTab` announces the change only into
-  Flash — Left/Right work and say nothing); the SORT header; and the list itself.
-  ⛔ **Focus STARTS on the list, not on the first stop.** `UpdateList` ends with
-  `Navigator.SetSelected(m_kList)`, so the roster is where the game itself puts a sighted player
-  — reading order and landing spot are different questions, and `GraphBuilder::SetStart` is what
-  answers the second one without inverting the first.
-  ⛔ **Sorting is the one verb here worth re-providing, and on mouse+keyboard it is CLICK-ONLY**:
-  the keyboard branches are `FXS_BUTTON_X` and `FXS_DPAD_LEFT`/`RIGHT`, all three controller
-  constants, so the only vanilla route is clicking a `UIFlipSortButton`. On a roster of twenty
-  soldiers the sort column IS the reading order. Unlike the rows, those headers RETAIN everything
-  — `Label`, `Value`, `bArrowVisible` ("this is the sort column") and `bArrowFlipped` (its
-  direction), all under dirty checks — so the reading needs no re-derivation; only the two WORDS
-  do, because the game draws both facts as a single triangle. Activation goes through the
-  header's own `OnMouseEvent(FXS_L_MOUSE_UP)` rather than through `SetSortType`, because that
-  handler owns three things a direct poke drops: deselecting every other header, FLIPPING the
-  direction when the column was already selected instead of resetting it, and calling
-  `RefreshData()`. Tab switching likewise goes through the screen's own `SwitchTab`, which
-  re-points `m_kList.OnItemClicked` at the right selection delegate — assigning `m_eCurrentTab`
-  directly would leave the PREVIOUS tab's delegate running against the new tab's list.
-  Enter goes to the **SCREEN** after the selection lands: `OnAccept` → `OnButtonCallback` reads
-  `m_kList.selectedIndex` and ignores everything else, the same trap `UISaveGame.OnAccept` sets.
-  A disabled row is refused rather than announced-and-tried, because every `OnXSelected` delegate
-  opens by testing `IsDisabled` — the Armory sets it on soldiers away on covert actions, the
-  tutorial on everyone but the one soldier the script wants. The empty-list line is the game's
-  own (`m_strEmptyListLabels[m_eCurrentTab]`, or the Bar's own `EmptyListMessage`, which it
-  spawns a `UIText` for). Words are cached on the row pointers — but ⛔ **NOT keyed on the
-  selection**, unlike the commodity list's: nothing here is the selection's shadow, so keying on
-  it would walk the whole roster through `XCOMHISTORY` once per arrow press for no new words.
-
-- **Choosing what to build in a room** (`FindChooseFacilityScreen`/`ReadChooseFacility` in
-  `src/game_ui.cpp` + the `choose facility` recipe in `menu_navigator.cpp` + companion
-  `X2AccessBuildFacilityReader.uc`, built AND **VERIFIED LIVE 2026-08-21** — six facilities read
-  by name with the greyed one flagged, and Tab gave the whole card: *125 Материалы*,
-  *ЭНЕРГИЯ: -3*, *ВРЕМЯ СТРОИТЕЛЬСТВА, 12 дн.*, *ЕЖЕМЕСЯЧНАЯ СТОИМОСТЬ ОБСЛУЖИВАНИЯ: §30* and the
-  write-up; recon `docs/avenger-view-recon.md` §16): `UIChooseFacility`, the screen build mode's Enter opens and
-  the only route by which a facility ever gets onto the Avenger. ⛔ **It LOOKS like a commodity
-  screen and is not one**: a `UIList` beside a panel of cost, power, upkeep, time, requirements
-  and a description — but it `extends UIScreen` rather than `UIInventory`, so
-  `FindCommodityScreen`'s class-chain test never matched it and it was SILENT (reported live
-  2026-08-21: *"I selected empty room, and then mod became silent"*).
-  ⛔ **Its two halves fail in OPPOSITE directions, which is why it needs both readers.** The list
-  is the good case and the first in this layer whose text native can simply read: `PopulateList`
-  goes through `UIListItemString.SetText`, so names, `bDisabled` (`CanBuildFacility`) and the
-  attention icon (`bPriority`) are all retained. The PANEL is the bad case — `UpdateSelection`
-  resolves every number into LOCALS and pushes them through `AS_SetDescription`/`AS_SetResources`,
-  retaining nothing. Every value is re-derived by asking the SCREEN's own functions again
-  (`GetStrategyCostString` with its own pending discount, `GetPowerRequirement`, which is what
-  knows a shielded power coil doubles a generator and zeroes everything else, `GetStrategyReqString`,
-  `GetBuildTime`, and the `CanBuildFacility`/`HasEnoughPower` warning branch in the game's own
-  order) — never reimplemented. ⛔ It reads `m_selectedFacility`, not a re-index of
-  `m_arrFacilities`: that field IS what `UpdateSelection` set and what `OnAccept` will build.
-  ⚠ POWER is drawn as an icon plus a bare number with the SIGN carrying the meaning — positive is
-  produced, negative consumed, absolute value shown either way — so speech supplies the word the
-  icon stood in for. Vanilla's keyboard was never the problem here (Up/Down walk the list,
-  Enter/Space accept, Escape cancels; Left/Right are deliberately swallowed) — the silence was.
-  Enter goes to the **SCREEN** after the selection lands, because `OnAccept` reads the screen's
-  own `SelectedIndex`, which only `UpdateSelection` writes and only `UIList::SetSelectedIndex`
-  triggers. A disabled row is passed through rather than refused: `OnAccept` re-tests and plays
-  its own refusal, which keeps the refusal where the game can be right about why.
-
-- ⛔ **Never join two spoken phrases with a bare `", "`** — the GAME ends plenty of its own
-  strings with `.`, `!`, `?` or `:`, and blind joining voiced *"5 дн.."*,
-  *"ТРЕБУЕТСЯ ИНЖЕНЕР!."* and *"Перезаписать эту сохраненную игру?,"* at the player — **14 of
-  them in one measured Avenger session**, across the room, the save screen and a dialog. The rule
-  lives in the kernel as `X2Access::Graph::AppendPhrase` (a self-punctuated part takes a plain
-  space, everything else takes the comma) and both of `GraphAnnouncer`'s join sites route through
-  it, so every recipe inherits the fix; recipes that pre-join their own labels must use it too,
-  rather than re-deriving the rule and drifting. Four kernel tests pin it.
-
-- **Save / load** (`src/game_ui.cpp` + the save/load recipe in
-  `menu_navigator.cpp` + companion `X2AccessSaveReader.uc`, built AND VERIFIED
-  LIVE 2026-08-21 — the load screen read its whole list on the first run and
-  Backspace deletions rebuilt and re-announced it each time; recon in
-  `docs/save-load-recon.md`): `UILoadGame` and
-  `UISaveGame` are one screen twice over — the same three fields at the same
-  offsets (`m_iCurrentSelection` 0x410, `m_arrListItems` 0x424) and the same row
-  widget — and they are the SHELL's first case of the tactical HUD's problem:
-  `UISaveLoadGameListItem.UpdateData` resolves the date, name and mission into
-  LOCALS, pushes them into Flash and retains only the `OnlineSaveGame` struct it
-  built them from. So native reads structure and the companion re-derives the
-  words from that struct, mirroring `UpdateData` line for line — with no
-  `XCOMHISTORY` and no `GetSaveGames` re-query, because the screen already asked.
-  The 12-hour clock conversion is a NATIVE function
-  (`FormatTimeStampFor12HourClock`), which is the whole reason the formatting is
-  not done in C++: reproducing it would say *14:22* to a player whose screen says
-  *2:22 PM*. Unlike the ant farm, nothing here is un-ungated —
-  `OnUnrealCommand` already walks the list with the arrows on mouse+keyboard and
-  `RawInputListener` already deletes on Delete/Backspace — so this is a reader,
-  not a rescue, and it is deliberately the thinnest recipe in the file.
-  **ONE NODE PER ROW**: the row shows two buttons, but a second column would
-  replace the one number a blind player cannot get any other way — *save 4 of
-  12* — with *1 of 2*, because `GraphBuilder` stamps positions WITHIN a row
-  holding more than one item. ⛔ The layer must NOT claim `Delete` here: every
-  other Delete claim in the project (tile cursor, shot HUD, hacking pad, ant
-  farm) stands down while this screen is up, so the key is free and it is the
-  screen's own delete verb — named once on attach in the row's own localized
-  word, since the game's nav help offers nothing but Back on mouse+keyboard.
-  Activation goes through the row's own `AcceptButton.Click()`, which dispatches
-  new-save-rename versus overwrite for free, **after** setting the selection —
-  and that order is load-bearing rather than tidy: `UISaveGame.OnAccept` and
-  `OnDelete` ignore the control they are handed and act on
-  `m_iCurrentSelection`, so a click sent while the two disagreed would overwrite
-  or delete the WRONG SAVE. Words are cached on the ROW POINTER VECTOR (the
-  navigator re-renders ten times a second and the save screen's new-save row
-  re-runs `FillInHeaderForSave`, which walks the history): a save list changes
-  only through `BuildMenu()`, which respawns every row panel, so a changed
-  pointer list is an exact, self-invalidating cache key. **Reading ORDER is not
-  the row's order**: the row draws the wall-clock timestamp at the head of its
-  first line, and speech puts it LAST, after the save description, the game type
-  and the mission. That is a speech decision rather than a parity one — a
-  sighted player takes the row in at a glance, while speech is serial, and a
-  list of autosaves differs in its description, not in the minute it was
-  written, so a leading timestamp is the part you sit through before reaching
-  the part you wanted. The companion emits `time` and `desc` as separate fields
-  for exactly this; `UpdateData` concatenates them.
-- **Text-entry dialog** (`src/text_input.cpp`, built AND VERIFIED LIVE
-  2026-08-21 on the save-name box): `UIInputDialogue` — naming a new save, and
-  the error reporter. The player types into a **Flash TextField**, which no
-  screen reader can see, so nothing echoes their own keystrokes back. ⛔ It is
-  NOT a graph recipe and it claims NOTHING: a recipe attaching turns on the
-  navigator's arrows, Enter, Space, Tab, Home and End, every one of which the
-  player is using to type or to answer — and a read-back key would answer the
-  wrong question anyway: what the player needs is the echo of the key they just
-  pressed, which no on-demand chord can give. (`?` is the one global claim left
-  in `src/input.cpp`; every other free key here is a text-editing key.) It
-  **observes and reads**: `InputArbiter::RegisterObserver` (a passive fan-out added for this)
-  records that a key happened, and the field itself answers what it did.
-  **The Flash side is READABLE — measured live** (see
-  `docs/save-load-recon.md` §7.1 for the table): AS2's global `Selection` class
-  resolves through `ActionScriptInt` **with or without the `_global.` prefix**,
-  so `Selection.getCaretIndex()` / `getBeginIndex()` / `getEndIndex()` give an
-  EXACT caret and selection, `Selection.getFocus()` names the focused field as a
-  full AS path, and `GetVariableString("<path>.text")` reads the contents. ⚠ The
-  probe's own trick is worth keeping: a path that does not resolve answers **0**
-  while the real accessors answer **-1** when nothing is focused, which is how
-  "it worked" was told from "it silently did nothing".
-  `GameUI::ReadFocusedTextField` is all four in one call. It costs two leaked
-  `FString`s per read — the `ConsoleCommand` bargain — so it runs behind a
-  keystroke and on a 500 ms heartbeat (which catches a mouse click placing the
-  caret), never free-running. Spoken: the prompt plus the starting text on
-  arrival, and *selected* with it when the whole prefill is selected — which it
-  IS (`begin 0, end 12, caret 12` live), meaning the next keystroke replaces the
-  name and no caret model could ever have known. Then per keystroke: the
-  inserted run, or what Backspace removed, or the newly selected text, or the
-  character the caret landed on. A key the field REFUSED changes nothing and
-  stays silent. `getFocus` earns its place beyond the caret — it says WHICH
-  field, which the crash-report dialog (a title box and a body box with Tab
-  between them) needs and "the text" alone cannot answer.
+  `src/menu_navigator.cpp` turns them into GraphRenders — one *recipe* per screen
+  (probe → build → name), one attached at a time, listed in `kRecipes` TOPMOST
+  SCREEN FIRST. This replaces per-screen UnrealScript listeners screen-by-screen;
+  existing listeners stay until a recipe covers their screen. Every hand-
+  transcribed offset is pinned by a `static_assert` in `src/sdk_layout_checks.cpp`,
+  so a bad transcription or a regenerated SDK is a build error, not a silent wrong
+  read.
 - **Outbound script calls**: C++ may invoke any UnrealScript function via
-  ProcessEvent. Always resolve the UFunction BY NAME at runtime and hand-roll
-  the param struct (`GameUI::CallNamedFunction`; `CallStaticNative` for
-  `static` functions, which take the CLASS object as `this`). The generated
-  SDK's typed wrappers are unusable — see **The generated SDK's function
-  wrappers are broken** below — and only `GameDefines.cpp` is compiled.
-  Native functions need no special handling: call them exactly like script
-  functions.
+  ProcessEvent. Always resolve the UFunction BY NAME at runtime and hand-roll the
+  param struct (`GameUI::CallNamedFunction`; `CallStaticNative` for `static`
+  functions, which take the CLASS object as `this`). The generated SDK's typed
+  wrappers are unusable (see the generator rule under **Hard rules**) and only
+  `GameDefines.cpp` is compiled. Native functions need no special handling —
+  `X2FiraxisLiveClient.IsLoggedIn` is `FUNC_Native` and has always worked through
+  plain ProcessEvent.
 
-### UnrealScript companion owns
+## Surfaces
+
+One row per screen or subsystem the mod reads. **Check this table before building
+anything that sounds like one of these** — a second reader for a covered screen is
+the failure mode it exists to prevent.
+
+⛔ **Read a surface's own rules before editing it.** `docs/surfaces/*.md` holds them,
+each earned by a live bug: which widget retains the words, which handler activation
+must go through, what the game withholds from a sighted player too. The Rules column
+names the file; the section heading inside it matches the Surface column. Recon
+(`docs/*-recon.md`) is how a surface was measured *before* it was built; the surface
+doc is what the build settled on. Rules general enough to bite the NEXT surface are
+in **Hard rules** below instead.
+
+| Surface | Native | Companion / recipe | Rules | Recon |
+|---|---|---|---|---|
+| Main menu, settings, new-campaign flow, pause menu | `menu_navigator.cpp` | recipes | — | — |
+| Save / load | `game_ui.cpp` | `X2AccessSaveReader.uc`, save/load recipe | surfaces/shell.md | `save-load-recon.md` |
+| Text-entry dialog | `text_input.cpp` | — (observer, no recipe) | surfaces/shell.md | `save-load-recon.md` §7.1 |
+| Tactical tile cursor | `tile_reader.cpp`, `mouse_gate.cpp` | `X2AccessTileReader.uc` | surfaces/tactical.md | — |
+| Object scanner | `object_scanner.cpp` | `X2AccessObjectScanner.uc` | surfaces/tactical.md | `object-scanner-recon.md` |
+| Targeting / shot HUD | `tactical_hud.cpp` | `X2AccessTacticalReader.uc` | surfaces/tactical.md | — |
+| Free aim / AoE | `free_aim.cpp` | `X2AccessTacticalReader.uc` | surfaces/tactical.md | `free-aim-recon.md` |
+| Selected unit | `unit_info.cpp` | `X2AccessUnitReader.uc` | surfaces/tactical.md | — |
+| Tutorial messages | `tutorial_reader.cpp` | `X2AccessTutorial.uc` | surfaces/tactical.md | — |
+| Hacking screen | `hacking_screen.cpp` | `X2AccessHackingReader.uc` | surfaces/tactical.md | `hacking-screen-recon.md` |
+| Avenger ant farm | `avenger.cpp` | `X2AccessAvengerReader.uc` | surfaces/avenger.md | `avenger-view-recon.md` §11 |
+| Inside a room | `game_ui.cpp` | `X2AccessFacilityReader.uc`, `avenger room` | surfaces/avenger.md | `avenger-view-recon.md` §13 |
+| Debris room | `game_ui.cpp` | `X2AccessRoomReader.uc`, `avenger debris room` | surfaces/avenger.md | `avenger-view-recon.md` §13 |
+| Commodity list (13 screens) | `game_ui.cpp` | `X2AccessCommodityReader.uc`, `commodity list` | surfaces/avenger.md | `avenger-view-recon.md` §14 |
+| Personnel roster | `game_ui.cpp` | `X2AccessPersonnelReader.uc`, `personnel roster` | surfaces/avenger.md | `avenger-view-recon.md` §15 |
+| Choose facility | `game_ui.cpp` | `X2AccessBuildFacilityReader.uc`, `choose facility` | surfaces/avenger.md | `avenger-view-recon.md` §16 |
+| Geoscape tray | `geo_scanner.cpp` | `X2AccessGeoScanner.uc`, `geoscape tray` | surfaces/strategy.md | `geoscape-recon.md` |
+| Skyranger briefing | `dropship.cpp` | `X2AccessDropshipReader.uc` | surfaces/strategy.md | `dropship-briefing-recon.md` |
+| Modals / alerts | — | `X2AccessPopupReader.uc`, `popup` | surfaces/strategy.md | `popup-inventory.md` |
+| Commlink / toasts | `transient_reader.cpp` | `X2AccessTransientReader.uc` | surfaces/strategy.md | `popup-inventory.md` |
+| Squad select | — | `X2AccessSquadReader.uc`, `squad select` | surfaces/strategy.md | `squad-select-recon.md` |
+| Armory loadout | — | `X2AccessLoadoutReader.uc`, `armory loadout` | surfaces/strategy.md | `loadout-recon.md` |
+
+## UnrealScript companion owns
+
 - **Game-state narration**: event listeners on Community Highlander hooks
-  (CHEventListenerTemplate, XComLWTuple events) for turn changes, ability
-  results, damage, mission state. Resolution through `XCOMHISTORY` and
-  localized strings is script-natural; never reimplement it via C++ reflection.
-- **Description helpers**: `X2AccessHelper.uc` static functions (cover,
-  hazards, units on tile), shared by listeners and the tile reader.
-  `X2AccessTileReader.uc` is the worked example of the native-callable pattern:
-  functions invoked on the CDO with simple params, result written to its
-  `NativeResult` string property, reflected out by C++ right after the
-  synchronous ProcessEvent returns. CDO rule: value-typed state only, never
-  object references (GC). `X2AccessSaveReader.uc` is the smallest instance of
-  the same pattern and the clearest statement of the rule behind it: it re-runs
-  `UISaveLoadGameListItem.UpdateData`'s own formatting over the struct that row
-  RETAINED, and touches neither the history nor `ONLINEEVENTMGR.GetSaveGames` —
-  the screen already asked, and asking again could answer differently.
-  ⛔ It also uses `Chr(10)` rather than `"\n"` for the separator the engine
-  wrote into `Header.Description`, for the same reason `X2AccessNarrator`'s
-  separators are printable.
-- **Tactical combat narration** (`X2AccessTacticalEvents.uc`, built 2026-08-20,
-  **VERIFIED LIVE 2026-08-21 on Gatecrasher** — the normal mission the tutorial
-  could never be): one `CHEventListenerTemplate`, tactical only, nine events. The
-  Gatecrasher run exercised ability, damage, death, turn handover and both
-  concealment events end to end, attributed and localized —
-  `Ряд. Jane Kelly: Выпад at Солдат "Адвента", хит.` /
-  `Сектоид: Пси-реанимация at Офицер "Адвента".` /
-  `Ряд. Jane Kelly, 3 damage, 4 of 7 health.` — with `Your turn.`/`Enemy turn.`
-  arriving on the Alert channel and marked interrupting in the speech ring. That
-  also settles the script half of Bridge v2, which the tutorial could not:
-  `X2AccessNarrator`'s `default.`-backed push and delimited drain really do carry
-  a burst. (An earlier 2026-08-20 tutorial run proved only registration and the
-  NATIVE half; ⛔ do not read its `Промах!` as evidence of this listener — that
-  was a world-message flyover `TutorialReader` hands straight to
-  `Narrator::Say`.) Still unexercised: panic, shields, evac.
-  This is what T1 forced — the flyover/notice/banner tap is not buildable, so
-  the game's own event bus is the path. **Deferral is a per-event decision, not
-  a default**, and for one action it is SPLIT ACROSS BOTH visualization windows:
-  `ELD_OnVisualizationBlockStarted` for the ACTION (`AbilityActivated`) and
-  `ELD_OnVisualizationBlockCompleted` for its OUTCOME (`UnitTakeEffectDamage`,
-  `UnitDied`), because a listener otherwise fires at state submission, seconds
-  ahead of the animation; `ELD_OnStateSubmitted` for structural facts
-  (`PlayerTurnBegun`, concealment, panic, shields, evac), which are tied to no
-  animation and would be dropped entirely by a state that never builds a
-  visualization block. ⛔ **The split is what puts cause before consequence, and
-  a shared window cannot.** Priority orders listeners for the SAME event only;
-  between events the order is the GAME's trigger order, and that is backwards
-  for us — `XComGameState_Unit` triggers `UnitTakeEffectDamage` (`:5874`) and
-  `UnitDied` (`:6022`) while effects are applied, and
-  `XComGameStateContext_Ability` only reaches `AbilityActivated` afterwards under
-  its own *"Trigger post-activation events"* comment (`:191`). All three on one
-  window spoke the outcome before the attack (live 2026-08-21: *"ADVENT Soldier
-  killed."* then *"Jane Kelly: Slash at ADVENT Soldier, hit."*, and worse for
-  damage — you learned you had been shot before you learned by whom), and they
-  landed in the SAME 100 ms drain, so the narrator could not reorder what it
-  could not tell apart. Blocks run sequentially, so the split also stops two
-  abilities resolving in one burst from interleaving; it is what the game's own
-  HUD does (`UIUnitFlagManager:55`, `UITacticalHUD_Enemies:68`). Note the replay
-  narrator needs none of this: walking frames in order gets the human order for
-  free. Three details
-  that needed the game's own source: damage is SUMMED over the entries whose
-  `DamageResult.Context` matches this state (`DamageResults` accumulates for the
-  whole mission and one grenade lands as several entries); only abilities that
-  actually roll get a result word (`X2AbilityToHitCalc_DeadEye` always hits, so
-  the word would be noise), and it is the game's own localized
-  `m_aAbilityHitResultStrings`; and the interrupt pass is skipped, because
-  `AbilityActivated` re-triggers per interrupt step. Fog parity via
-  `CanXComSquadSeeTarget` with ONE documented exception — a unit stops being
-  visible the moment it dies, so a kill the squad CAUSED is always announced.
-- **Replay narration** (`X2AccessReplayNarration.uc`, built 2026-08-20, not yet
-  run live): the tutorial's stand-in for the dead event bus. Polled from
-  `Narrator::OnTick` (100 ms, next to the drain), it walks history frames and
-  emits ability / damage / death / concealment / turn lines through
-  `X2AccessTacticalEvents`'s shared builders — `BuildAbilityLine`,
-  `BuildDamageLine`, `NarrateDeath` — so a shot reads identically whether an
-  event or a frame produced it. ⛔ **Never read past what the player was SHOWN**:
-  the whole tutorial script is in the history at mission start, so the cursor is
-  `XComGameStateVisualizationMgr.LastStateHistoryVisualized` (the game's own
-  "which frame is on screen", what `UIUnitFlag` uses), clamped again to the
-  replay's `CurrentHistoryFrame`. That also syncs narration to the animation,
-  which is what `ELD_OnVisualizationBlockStarted` buys the live listeners. ⛔ The
-  catch-up bound is a RUNAWAY guard, not a pacing one: normal playback advances
-  that cursor in steps of **25-50 frames**, because most history frames carry no
-  visualization of their own and `LastStateHistoryVisualized` jumps to the end of
-  a block when the block completes. A 24-frame bound therefore read as "seek" on
-  ordinary play and dropped 597 frames across one tutorial run — among them an
-  overwatch shot the player watched and never heard. It is 512 now, and the only
-  real seek is `StartReplay`'s own `JumpReplayToFrame`, which the first-poll
-  branch already adopts. A skip is always logged, never silently swallowed. Two
-  consequences elsewhere: a MISS reaches `UIWorldMessageMgr` as an ordinary world
-  message, not a damage one (`QueueWorldMessage` stamps `eHUDMessage_Damage` only
-  when `m_iDamagePrimary > 0`), so `tutorial_reader.cpp` now drops flyovers
-  matching the game's own result strings — the attributed line outranks the bare
-  word; and it resolves the GRI by hand rather than through `` `REPLAY `` /
-  `` `XCOMVISUALIZATIONMGR ``, because those dereference a null GRI in the shell
-  ten times a second.
-- **Speech vocabulary** (`X2AccessHelper.GetInputVocabulary` /
-  `GetResultFlyovers`): the game's OWN localized words for markup native has to
-  speak. Our built-in table is English, which is wrong the moment the player is
-  not — "Нажмите right mouse button" sat three words from the game's own
-  `[ПРАВАЯ КНОПКА МЫШИ]` live. Keyed by markup token (an `<img>` `src`, or
-  `KEY:NAME`) so a missing entry degrades to the English word instead of shifting
-  a positional table. ⚠️ `%KEY:LMB%` is the one that MUST be there:
-  `X2MissionNarrativeTemplate.KeyBindingMarkups` resolves only RMB/ENTER/TAB/Q/E/P
-  and `%KEY:LMB%` is substituted solely by `UIUtilities_Input.InsertPCIcons`,
-  which the blade path never calls — so it reached speech raw.
-- **Tutorial blade recovery** (`X2AccessTutorial.uc`): the one tutorial surface
-  native cannot read. Walks the history BACKWARDS from
-  `XComTutorialMgr.CurrentHistoryFrame` (never past it — the whole tutorial
-  script is already in the history at mission start, so the raw history end is
-  the future) collecting removed `MessageID`s as it goes, and resolves the newest
-  surviving UNANCHORED blade through the mission's own
+  (CHEventListenerTemplate, XComLWTuple events) for turn changes, ability results, damage, mission
+  state. Resolution through `XCOMHISTORY` and localized strings is script-natural; never
+  reimplement it via C++ reflection.
+- **Description helpers**: `X2AccessHelper.uc` static functions (cover, hazards, units on tile),
+  shared by listeners and the tile reader. `X2AccessTileReader.uc` is the worked example of the
+  native-callable pattern: functions invoked on the CDO with simple params, result written to its
+  `NativeResult` string property, reflected out by C++ right after the synchronous ProcessEvent
+  returns. CDO rule: value-typed state only, never object references (GC).
+  `X2AccessSaveReader.uc` is the smallest instance and the clearest statement of the rule behind
+  it: it re-runs `UISaveLoadGameListItem.UpdateData`'s own formatting over the struct that row
+  RETAINED, and touches neither the history nor `ONLINEEVENTMGR.GetSaveGames` — the screen already
+  asked, and asking again could answer differently. ⛔ It also uses `Chr(10)` rather than `"\n"`
+  for the separator the engine wrote into `Header.Description`, for the same reason
+  `X2AccessNarrator`'s separators are printable.
+- **Tactical combat narration** (`X2AccessTacticalEvents.uc`): one `CHEventListenerTemplate`,
+  tactical only, nine events — the path forced by the flyover/notice/banner tap not being
+  buildable. **Deferral is a per-event decision, not a default**, and for one action it is SPLIT
+  ACROSS BOTH visualization windows: `ELD_OnVisualizationBlockStarted` for the ACTION
+  (`AbilityActivated`) and `ELD_OnVisualizationBlockCompleted` for its OUTCOME
+  (`UnitTakeEffectDamage`, `UnitDied`), because a listener otherwise fires at state submission,
+  seconds ahead of the animation; `ELD_OnStateSubmitted` for structural facts (`PlayerTurnBegun`,
+  concealment, panic, shields, evac), which are tied to no animation and would be dropped entirely
+  by a state that never builds a visualization block.
+  - ⛔ **The split is what puts cause before consequence, and a shared window cannot.** Priority
+    orders listeners for the SAME event only; between events the order is the GAME's trigger order,
+    and that is backwards for us — `XComGameState_Unit` triggers `UnitTakeEffectDamage` (`:5874`)
+    and `UnitDied` (`:6022`) while effects are applied, and `XComGameStateContext_Ability` only
+    reaches `AbilityActivated` afterwards under its own *"Trigger post-activation events"* comment
+    (`:191`). All three on one window speak the outcome before the attack — you learn you have been
+    shot before you learn by whom — and they land in the SAME 100 ms drain, so the narrator cannot
+    reorder what it cannot tell apart. Blocks run sequentially, so the split also stops two
+    abilities resolving in one burst from interleaving; it is what the game's own HUD does
+    (`UIUnitFlagManager:55`, `UITacticalHUD_Enemies:68`). The replay narrator needs none of this:
+    walking frames in order gets the human order for free.
+  - Three details that needed the game's own source: damage is SUMMED over the entries whose
+    `DamageResult.Context` matches this state (`DamageResults` accumulates for the whole mission and
+    one grenade lands as several entries); only abilities that actually roll get a result word
+    (`X2AbilityToHitCalc_DeadEye` always hits, so the word would be noise), and it is the game's own
+    localized `m_aAbilityHitResultStrings`; and the interrupt pass is skipped, because
+    `AbilityActivated` re-triggers per interrupt step. Fog parity via `CanXComSquadSeeTarget` with
+    ONE documented exception — a unit stops being visible the moment it dies, so a kill the squad
+    CAUSED is always announced.
+- **Replay narration** (`X2AccessReplayNarration.uc`): the tutorial's stand-in for the dead event
+  bus. Polled from `Narrator::OnTick` (100 ms, next to the drain), it walks history frames and emits
+  ability / damage / death / concealment / turn lines through `X2AccessTacticalEvents`'s shared
+  builders — `BuildAbilityLine`, `BuildDamageLine`, `NarrateDeath` — so a shot reads identically
+  whether an event or a frame produced it. Its gate is `bInReplay`, i.e. exactly when the listeners
+  cannot fire, so the two paths can never both narrate one action.
+  - ⛔ **Never read past what the player was SHOWN**: the whole tutorial script is in the history at
+    mission start, so the cursor is `XComGameStateVisualizationMgr.LastStateHistoryVisualized` (the
+    game's own "which frame is on screen", what `UIUnitFlag` uses), clamped again to the replay's
+    `CurrentHistoryFrame`. That also syncs narration to the animation.
+  - ⛔ The catch-up bound is a RUNAWAY guard, not a pacing one: normal playback advances that cursor
+    in steps of **25-50 frames**, because most history frames carry no visualization of their own
+    and `LastStateHistoryVisualized` jumps to the end of a block when the block completes. A
+    24-frame bound read as "seek" on ordinary play and dropped 597 frames across one tutorial run —
+    among them an overwatch shot the player watched and never heard. It is 512 now, and the only
+    real seek is `StartReplay`'s own `JumpReplayToFrame`, which the first-poll branch already
+    adopts. A skip is always logged, never silently swallowed. It resolves the GRI by hand rather
+    than through `` `REPLAY `` / `` `XCOMVISUALIZATIONMGR ``, because those dereference a null GRI
+    in the shell ten times a second.
+- **Speech vocabulary** (`X2AccessHelper.GetInputVocabulary` / `GetResultFlyovers`): the game's OWN
+  localized words for markup native has to speak. Our built-in table is English, which is wrong the
+  moment the player is not. Keyed by markup token (an `<img>` `src`, or `KEY:NAME`) so a missing
+  entry degrades to the English word instead of shifting a positional table. ⚠️ `%KEY:LMB%` is the
+  one that MUST be there: `X2MissionNarrativeTemplate.KeyBindingMarkups` resolves only
+  RMB/ENTER/TAB/Q/E/P and `%KEY:LMB%` is substituted solely by `UIUtilities_Input.InsertPCIcons`,
+  which the blade path never calls — so it reaches speech raw.
+- **Tutorial blade recovery** (`X2AccessTutorial.uc`): the one tutorial surface native cannot read.
+  Walks the history BACKWARDS from `XComTutorialMgr.CurrentHistoryFrame` (never past it) collecting
+  removed `MessageID`s, and resolves the newest surviving UNANCHORED blade through the mission's own
   `X2MissionNarrativeTemplate.GetObjectiveText`, exactly as
-  `X2Action_ShowTutorialPopup.GetTutorialBoxText` does. A removal context carries
-  only `MessageID` + `Remove` — `BoxType` reads as its default — so removals must
-  be matched by id, never filtered by type.
-- **Legacy screen listeners**: `UIScreenListener_*.uc` polling listeners with
-  the `AccessibilityData` bridge. Working system; migrate to native UI reading
-  incrementally, do not expand this pattern to new screens without reason.
+  `X2Action_ShowTutorialPopup.GetTutorialBoxText` does. A removal context carries only `MessageID` +
+  `Remove` — `BoxType` reads as its default — so removals must be matched by id, never filtered by
+  type.
+- **Legacy screen listeners**: `UIScreenListener_*.uc` polling listeners with the
+  `AccessibilityData` bridge. Working system; migrate to native UI reading incrementally, do not
+  expand this pattern to new screens without reason.
 
-### The bridge (script ↔ native)
-- Script→native: listener writes its `AccessibilityData` string property, then
-  fires the empty sentinel function `X2Access_Speak()` via SetTimer; the
-  ProcessEvent hook catches it, reflects the property out
-  (`Hooks::ReadListenerProperty`), and speaks. This is the only script→native
-  path — **DLLBind is conclusively unavailable in XCOM 2** (the SDK compiler
-  rejects the keyword and the runtime support is compiled out of the exe).
-- Native→script: outbound ProcessEvent calls (see ScriptCall above).
-- **Bridge v2 — BUILT 2026-08-20** (`X2AccessNarrator.uc` + `src/narrator.cpp`),
-  the queued/channelled path the v1 sentinel cannot be: producers call
-  `Alert()` / `Combat()`, which append to an `ENTRY_SEP`-joined string on the
-  CDO, and C++ drains the whole burst in ONE `DrainNarration()` per 100 ms (the
-  outbound call is the cost, not the payload). Four channels on the native side
-  — `Focus`/`Aid` interrupt AND clear the queue (the player pressed a key;
-  what they asked for outranks what happened), `Alert` queues in order but marks
-  the BATCH as interrupting, `Combat` queues. That `Alert` rule is the subtle
-  one: an alert that simply cleared the queue would eat the damage line
-  explaining the kill it follows. Flush is on the frame pump, so the queue
-  orders *within* a frame and adds no latency; past the flush the screen
-  reader's own queue takes over, which is the honest limit (a burst can be
-  cancelled wholesale by an interrupt, never trimmed — hence the 24-line cap,
-  logged on overflow at both ends). A 128-line ring with channel, SOURCE and timestamp
-  backs the future speech-scrollback key. ⛔ `Narrator::Source` is not a channel:
-  it records whether a line was read off a surface the game itself displayed
-  (`Flyover`) or derived from the game state (`State`), and a `State` line is
-  dropped when an identical `Flyover` line was said in the last 5 s. **One way
-  only, and never State-against-State** — inside the tutorial both paths run at
-  once and an untargeted ability comes out word-for-word twice ("Osei:
-  Overwatch"), with the flyover ~150 ms ahead; but identical text from two state
-  events is load-bearing, because two ADVENT Troopers really are both called
-  "ADVENT Trooper" and collapsing a double kill loses a kill. Same reasoning as
-  the per-unit world-message rule, applied to the other side of the bridge. ⛔ **`default.X = ...` does not
-  compile unless X is a `config` property** — the UnrealScript compiler says
-  *"Can't change default values of non-config properties"*, and a static
-  producer has no other route to per-class storage, so the queue vars are
-  `config(Game)` with no ini section shipped (nothing is ever written back;
-  `SaveConfig` is never called). The payload is a delimited STRING rather than a
-  dynamic array because mutating one through `default.` is a pattern the shipped
-  SDK sources use nowhere.
+## The bridge (script ↔ native)
+
+- Script→native: listener writes its `AccessibilityData` string property, then fires the empty
+  sentinel `X2Access_Speak()` via SetTimer; the ProcessEvent hook catches it, reflects the property
+  out (`Hooks::ReadListenerProperty`), and speaks. This is the only script→native path — **DLLBind
+  is conclusively unavailable in XCOM 2** (the SDK compiler rejects the keyword and the runtime
+  support is compiled out of the exe).
+- Native→script: outbound ProcessEvent calls.
+- **Bridge v2** (`X2AccessNarrator.uc` + `src/narrator.cpp`), the queued/channelled path the v1
+  sentinel cannot be: producers call `Alert()` / `Combat()`, which append to an `ENTRY_SEP`-joined
+  string on the CDO, and C++ drains the whole burst in ONE `DrainNarration()` per 100 ms (the
+  outbound call is the cost, not the payload). Four channels natively — `Focus`/`Aid` interrupt AND
+  clear the queue (the player pressed a key; what they asked for outranks what happened), `Alert`
+  queues in order but marks the BATCH as interrupting, `Combat` queues. That `Alert` rule is the
+  subtle one: an alert that simply cleared the queue would eat the damage line explaining the kill
+  it follows. Flush is on the frame pump, so the queue orders *within* a frame and adds no latency;
+  past it the screen reader's own queue takes over, which is the honest limit (a burst can be
+  cancelled wholesale by an interrupt, never trimmed — hence the 24-line cap, logged on overflow at
+  both ends). A 128-line ring with channel, SOURCE and timestamp backs the future speech-scrollback
+  key.
+- ⛔ `Narrator::Source` is not a channel: it records whether a line was read off a surface the game
+  itself displayed (`Flyover`) or derived from the game state (`State`), and a `State` line is
+  dropped when an identical `Flyover` line was said in the last 5 s. **One way only, and never
+  State-against-State** — inside the tutorial both paths run at once and an untargeted ability comes
+  out word-for-word twice, with the flyover ~150 ms ahead; but identical text from two state events
+  is load-bearing, because two ADVENT Troopers really are both called "ADVENT Trooper" and
+  collapsing a double kill loses a kill.
+- ⛔ **`default.X = ...` does not compile unless X is a `config` property** — the UnrealScript
+  compiler says *"Can't change default values of non-config properties"*, and a static producer has
+  no other route to per-class storage, so the queue vars are `config(Game)` with no ini section
+  shipped (nothing is ever written back; `SaveConfig` is never called). The payload is a delimited
+  STRING rather than a dynamic array because mutating one through `default.` is a pattern the
+  shipped SDK sources use nowhere.
 
 ## Engine facts
 
-- Heavily modified UE3, 64-bit only, Scaleform GFx UI. No anti-cheat; Firaxis
-  ships EasyHook64.dll themselves — injection is tolerated.
-- ProcessEvent: UObject vtable slot 72, address `moduleBase + 0x143B50`
-  (found via Ghidra + `tools/OffsetFinder`). GNames/GObjects offsets live in
-  the generated SDK constants; `src/sdk_globals.cpp` validates them with
-  sanity heuristics before init proceeds.
-- Runtime `FString` is `TArray<wchar_t>` (UTF-16) even though the generated
-  SDK declares `char` — `ue3_reflection.cpp` handles the conversion.
-- **The ProcessEvent hook sees only NATIVE→script dispatch.** Verified live
-  2026-08-19 with F4 discovery during a mission: a full HUD refresh (Tab
-  switched soldier, `m_arrAbilities` went 4 → 5, every panel repainted)
-  produced not ONE UI script function — no `UpdateAbilitiesArray`, no
-  `SetStats`, no `OnUnrealCommand`, no `RealizeTargets`. What does arrive is the
-  engine calling into script: `Tick` / `PostRender` / `HandleInputKey` /
-  `BeginState` on `XComTacticalInput`, `FilterButtonInput` on `UIMovie_2D`, and
-  the simulation surface the native visibility and pathing systems call —
-  `CallAbilityMeetsCondition`, `GetVisibleFlankingEnemiesOfLocation`,
-  `NumActionPointsForMoving`, `TargetIsEnemy`, `UpdateGameplayVisibility`,
-  `GetEnvironmentDamagePreview` (our own outbound calls show up as traffic too,
-  which is how `IsAnyMoviePlaying` appears). That is UE3 behaving as documented:
-  a script→script call runs through `CallFunction` → `Function->Func`
-  (`ProcessInternal`), never the virtual slot 72 we patch. **So "watch a UI
-  function by name" is not an available technique.** The obvious narration tap
-  — `UIWorldMessageMgr.Message` (every flyover, with damage and crit label),
-  `UIEventNotices.Notify` / `NotifyBanner`, `UITacticalHUDMessageBanner.SetBanner`
-  — cannot be HOOKED this way. ⚠️ But `UIWorldMessageMgr` can be **POLLED**
-  (found 2026-08-20, `src/tutorial_reader.cpp`): the manager RETAINS every
-  message it is showing in `m_arrMsgs` (0x450, stride 0x78, text at +0x10) with
-  `m_arrActiveMessages` (0x460) indexing the ones on screen — so damage numbers,
-  crit labels, "Unconscious", the `UITacticalTutorialMgr` cursor-help strings
-  and the tutorial's anchored blades are all readable after all. Only the
-  *unanchored* HUD blade is genuinely lost to Flash. The rest of the paragraph
-  stands: `UIEventNotices` and `UITacticalHUDMessageBanner` retain nothing, and
-  game-event narration belongs to companion
-  `X2EventListener`s; reaching script→script traffic would need a second hook on
-  `ProcessInternal`, which would hand us the whole script call graph and is the
-  one thing that would change this calculus. Ghidra pass 2026-08-20 costed it:
-  `ProcessInternal` is **not virtual** — the UObject vtable block around slot 72
-  matches UE3's declaration order exactly with no gaps (72 ProcessEvent,
-  73 ProcessDelegate, 74 ProcessState, 75 ProcessRemoteFunction,
-  76 InitExecution, 77 GotoLabel, 78 GotoState,
-  79 CallFunctionByNameWithArguments), so it needs an INLINE hook (the first
-  real use for MinHook, not vendored yet). Its address needs no signature scan:
-  `UFunction::Func` (+0xF0) of any SCRIPT function is the dispatch target, and
-  ProcessEvent calls exactly that at `0x140143E40` — read it once at init and
-  the hook survives a game patch. The frame it receives carries the params
-  ALREADY EVALUATED, so existing reflection reads apply unchanged; layout under
-  pack(4) is `Node` +0x14, `Object` +0x1C, `Code` +0x24, `Locals` +0x2C (the
-  `Code` offset cross-checks with what `mouse_gate.cpp` derived independently
-  from `execSetLocation`). Native calls would NOT appear in such a tap (a
-  native's `Func` is its exec thunk), and script calls made through ProcessEvent
-  would appear TWICE.
-- ⛔ **A `localized` var can be declared on TWO classes and populated on only ONE — and the
-  empty one fails silently.** `m_sShotChanceLabel` / `m_sCritChanceLabel` are declared by both
-  `UITacticalHUD_InfoPanel` (`:43`) and `UITacticalHUD_ShotHUD` (`:40`), which use them
-  identically; but `XComGame.<loc>` ships the values under **`[UITacticalHUD_ShotHUD]` only**, so
-  the InfoPanel's copies are `""` at runtime. Measured live 2026-08-21 with `/props?cdo=`: EVERY
-  localized string on `UITacticalHUD_InfoPanel` read empty (`m_sUnavailable`, `m_sNoTargetsHelp`,
-  `m_sFreeAimingTitle`, the lot) while its plain defaults (`HitMCPath`) held their values, and
-  `UITacticalHUD_ShotHUD`'s read `ХИТ` / `КРИТ` / `УРОН:`. Reading the empty pair cost more than a
-  missing caption: with nothing to tell them apart, a sniper shot whose hit and crit both sat at
-  60 spoke as *"Сектоид,  60 percent,  60 percent"* — the same number twice, meaning two
+- Heavily modified UE3, 64-bit only, Scaleform GFx UI. No anti-cheat; Firaxis ships EasyHook64.dll
+  themselves — injection is tolerated.
+- ProcessEvent: UObject vtable slot 72, address `moduleBase + 0x143B50` (found via Ghidra +
+  `tools/OffsetFinder`). GNames/GObjects offsets live in the generated SDK constants;
+  `src/sdk_globals.cpp` validates them with sanity heuristics before init proceeds.
+- Runtime `FString` is `TArray<wchar_t>` (UTF-16) even though the generated SDK declares `char` —
+  `ue3_reflection.cpp` handles the conversion.
+- **The ProcessEvent hook sees only NATIVE→script dispatch.** A full HUD refresh (Tab switched
+  soldier, `m_arrAbilities` 4 → 5, every panel repainted) produces not ONE UI script function — no
+  `UpdateAbilitiesArray`, no `SetStats`, no `OnUnrealCommand`, no `RealizeTargets`. What arrives is
+  the engine calling into script: `Tick` / `PostRender` / `HandleInputKey` / `BeginState` on
+  `XComTacticalInput`, `FilterButtonInput` on `UIMovie_2D`, and the simulation surface the native
+  visibility and pathing systems call — `CallAbilityMeetsCondition`,
+  `GetVisibleFlankingEnemiesOfLocation`, `NumActionPointsForMoving`, `TargetIsEnemy`,
+  `UpdateGameplayVisibility`, `GetEnvironmentDamagePreview`. That is UE3 as documented: a
+  script→script call runs through `CallFunction` → `Function->Func` (`ProcessInternal`), never the
+  virtual slot 72 we patch. **So "watch a UI function by name" is not an available technique**, and
+  the obvious narration tap — `UIWorldMessageMgr.Message`, `UIEventNotices.Notify`/`NotifyBanner`,
+  `UITacticalHUDMessageBanner.SetBanner` — cannot be HOOKED this way.
+  - ⚠️ But `UIWorldMessageMgr` can be **POLLED**: it RETAINS every message it is showing in
+    `m_arrMsgs` (0x450, stride 0x78, text at +0x10) with `m_arrActiveMessages` (0x460) indexing the
+    ones on screen — so damage numbers, crit labels, "Unconscious", the `UITacticalTutorialMgr`
+    cursor-help strings and the tutorial's anchored blades are readable after all. Only the
+    *unanchored* HUD blade is genuinely lost to Flash. `UIEventNotices` and
+    `UITacticalHUDMessageBanner` retain nothing.
+  - Reaching script→script traffic would need a second hook on `ProcessInternal`, which would hand
+    us the whole script call graph and is the one thing that would change this calculus. It is **not
+    virtual** — the UObject vtable block around slot 72 matches UE3's declaration order exactly with
+    no gaps (72 ProcessEvent, 73 ProcessDelegate, 74 ProcessState, 75 ProcessRemoteFunction,
+    76 InitExecution, 77 GotoLabel, 78 GotoState, 79 CallFunctionByNameWithArguments), so it needs
+    an INLINE hook (the first real use for MinHook, not vendored yet). Its address needs no
+    signature scan: `UFunction::Func` (+0xF0) of any SCRIPT function is the dispatch target, and
+    ProcessEvent calls exactly that at `0x140143E40` — read it once at init and the hook survives a
+    game patch. The frame it receives carries the params ALREADY EVALUATED, so existing reflection
+    reads apply unchanged; layout under pack(4) is `Node` +0x14, `Object` +0x1C, `Code` +0x24,
+    `Locals` +0x2C (the `Code` offset cross-checks with what `mouse_gate.cpp` derived independently
+    from `execSetLocation`). Native calls would NOT appear in such a tap (a native's `Func` is its
+    exec thunk), and script calls made through ProcessEvent would appear TWICE.
+- ⛔ **A `localized` var can be declared on TWO classes and populated on only ONE — and the empty one
+  fails silently.** `m_sShotChanceLabel` / `m_sCritChanceLabel` are declared by both
+  `UITacticalHUD_InfoPanel` (`:43`) and `UITacticalHUD_ShotHUD` (`:40`), which use them identically;
+  but `XComGame.<loc>` ships the values under **`[UITacticalHUD_ShotHUD]` only**, so the InfoPanel's
+  copies are `""` at runtime — as is EVERY localized string on that class (`m_sUnavailable`,
+  `m_sNoTargetsHelp`, `m_sFreeAimingTitle`) while its plain defaults (`HitMCPath`) hold their
+  values. Reading the empty pair costs more than a missing caption: with nothing to tell them apart,
+  a sniper shot whose hit and crit both sit at 60 speaks the same number twice, meaning two
   different things. **The tell is a DOUBLE SPACE**, because `label @ value` still inserts its
-  separator when the label is empty; that is what a `grep -P '  '` over the speech ring finds, and
-  it is now part of the post-run audit. When sourcing a word from a class, verify the CDO actually
-  holds it (`just dev-props "cdo=<Class>"`) rather than trusting that the `.uc` declares it and
-  the loc file contains the key somewhere.
-- Some screens are Flash-driven with no UIList (e.g. key bindings): neither
-  layer can enumerate rows, and the same is true of anything a screen wrote into
-  Flash and did not retain — a text field's caret and selection above all. The
-  route in is `GFxMoviePlayer`'s own path-string API, ALL of which is script-
-  callable and therefore reachable by outbound ProcessEvent:
-  `GetVariableString` / `GetVariableNumber` / `GetVariableBool` / `Invoke`, plus
-  the `ActionScriptInt` / `ActionScriptString` / `ActionScriptObject` wrappers
-  that INVOKE a method at a path (which is how `UIInputDialogue.AS_GetInputText`
-  itself works — `Movie.ActionScriptString(MCPath $ ".GetInputText")`). Since
-  2026-08-21 `/call` takes arguments, so probing a path costs one HTTP call
-  (`just dev-flash`). ✅ **PROVEN LIVE 2026-08-21**: GFx's path resolution DOES
-  reach AS2's global `Selection` accessors, prefix optional, and TextField
-  properties (`.text`, `.length`, `.maxChars`, `.caretIndex`) read straight
-  through `GetVariableString`. `docs/save-load-recon.md` §7.1 has the measured
-  table. A path that does not resolve answers 0 or an empty string, so a probe
-  needs a value it can tell apart from silence. `/flash?field=` is the same read
-  made PANEL-RELATIVE (`just dev-field`): it composes the path off the selected
-  panel's own `MCPath`, exactly as `UIMCController` does, so any widget in a
-  `/gui` dump can be asked what it actually shows. ⛔ That is a VERIFICATION
-  tool and must not become a reading strategy — Firaxis' own comment on those
-  getters is *"an immediate and blocking operation … very expensive, use
-  sparingly"*, and the shipped game takes its own advice: two call sites in the
-  whole of `XComGame`. Flash also holds only the rendered TEXT, never the
-  semantics (which row is selected, what a number means, whether a button is
-  disabled), and no field name in it can be `static_assert`ed — so the
-  companion CDO stays the way words are read at runtime.
-- ⛔ **No gameplay event fires in the TUTORIAL — it replays history, it never
-  submits it** (proven live 2026-08-20: a full tutorial run produced zero lines
-  from `X2AccessTacticalEvents`, with the listener provably registered).
+  separator when the label is empty; a `grep -P '  '` over the speech ring finds it, and that is
+  part of the post-run audit. When sourcing a word from a class, verify the CDO actually holds it
+  (`just dev-props "cdo=<Class>"`) rather than trusting that the `.uc` declares it and the loc file
+  contains the key somewhere.
+- ⛔ **A list row in this game retains no text — that is the house style, not a quirk of one
+  screen.** `UIPersonnel_ListItem`, `UIInventory_ListItem`, the debris room's picker rows and
+  `UIFacility_RoomFunc` all take their words as parameters and push them through
+  `MC.BeginFunctionOp` / `AS_UpdateData` / `MC.FunctionString`, BYPASSING `UIButton.SetText` /
+  `UIListItemString.SetText` — so the retained `Text` is EMPTY on a row that is visibly showing a
+  name. What a row DOES keep is the data it was built from (`UnitRef`, `ItemComodity`,
+  `StaffSlotRef`, a delegate), so the companion re-derives the words the way the row did. Two
+  screens break the pattern and are the ones native can simply read:
+  `UIChooseFacility.PopulateList` and `UIButton.SetText`-based upgrade buttons. Check which kind a
+  row is before planning the read; do not read a delegate's FName as a label — it would say
+  *"OnShowObituaries"* to a Russian player.
+- Some screens are Flash-driven with no UIList (e.g. key bindings): neither layer can enumerate
+  rows, and the same is true of anything a screen wrote into Flash and did not retain — a text
+  field's caret and selection above all. The route in is `GFxMoviePlayer`'s own path-string API, ALL
+  of it script-callable and therefore reachable by outbound ProcessEvent: `GetVariableString` /
+  `GetVariableNumber` / `GetVariableBool` / `Invoke`, plus the `ActionScriptInt` /
+  `ActionScriptString` / `ActionScriptObject` wrappers that INVOKE a method at a path (how
+  `UIInputDialogue.AS_GetInputText` itself works — `Movie.ActionScriptString(MCPath $
+  ".GetInputText")`). ✅ GFx's path resolution DOES reach AS2's global `Selection` accessors, prefix
+  optional, and TextField properties (`.text`, `.length`, `.maxChars`, `.caretIndex`) read straight
+  through `GetVariableString`. A path that does not resolve answers 0 or an empty string, so a probe
+  needs a value it can tell apart from silence.
+  ⛔ That is a VERIFICATION tool and must not become a reading strategy — `UIMCController.uc` labels
+  those getters *"an immediate and blocking operation … very expensive, use sparingly"*, and the
+  shipped game takes its own advice: two call sites in the whole of `XComGame`. Flash also holds
+  only the rendered TEXT, never the semantics (which row is selected, what a number means, whether a
+  button is disabled), and no field name in it can be `static_assert`ed — so the companion CDO stays
+  the way words are read at runtime.
+- ⛔ **No gameplay event fires in the TUTORIAL — it replays history, it never submits it.**
   `X2GameRuleset.SubmitGameStateContext` (`:292`, `:401`) routes every context to
-  `XComTutorialMgr.HandleSubmittedGameStateContext` instead of
-  `SubmitGameStateContext_Internal` while `` `REPLAY.bInTutorial ``; on a match
-  that handler calls `ResumeReplay()`/`StepReplayForward()` and returns `true`,
-  DISCARDING the player's context, and `XComReplayMgr.StepReplayForward` merely
-  advances `CurrentHistoryFrame` and calls `BuildVisualizationFrame` on a frame
-  that was already in the history at mission start. So `ContextBuildGameState`
-  never runs and `X2EventManager.TriggerEvent` is never reached — for our
-  listeners or the game's own. Two consequences: **anything built on the event
-  bus must be tested on a normal mission** (Gatecrasher — campaign with the
-  tutorial checkbox off), and the tutorial reader's `UIWorldMessageMgr` polling
-  is not a nicety there but the ONLY narration source, which is exactly why
-  plain world messages are read inside the tutorial and nowhere else.
-  ✅ **Answered by `X2AccessReplayNarration.uc`** (built 2026-08-20): in a
-  replay the history IS the event stream, so it walks the frames instead of
-  waiting for events, through the SAME `X2AccessTacticalEvents` builders — one
-  place decides wording. Its gate is `bInReplay`, i.e. exactly when the
-  listeners cannot fire, so the two paths can never both narrate one action.
-
-- **The tactical HUD holds no text.** Unlike the shell screens, every panel of
-  `UITacticalHUD` is a write-only pipe into Flash: `SetStats` resolves name,
-  rank, class, aim and effects out of the game state and hands them straight to
-  `MC.BeginFunctionOp` / `QueueString`, retaining nothing
-  (`SrcOrig/.../UITacticalHUD_SoldierInfo.uc:199`) — and the shot HUD, info
-  panel, enemy list, countdown and banner all do the same. So `/gui` on
-  tactical prints 159 panels and almost no words, and the read-the-widget
-  recipe pattern does NOT transfer. What IS readable: the ability bar
-  (`UITacticalHUD_AbilityContainer.m_arrAbilities` + `m_iCurrentIndex`, and per
-  icon `m_strAntennaText` / `m_strCooldown` / `m_strCharge` / `IsAvailable` —
-  the antenna text only while `Movie.IsMouseActive()` — verified live
-  2026-08-19: populated and localized, e.g. slot 0 "ВЫСТРЕЛ" with
-  `m_strHotkeyLabel` "1", so the whole ability bar including each entry's
-  `AvailableCode` reason needs NO companion call), the enemy refs
-  (`UITacticalHUD_Enemies.m_arrTargets`), `UITacticalHUD.CurrentTargetID` /
-  `m_isMenuRaised` / `ConcealmentMode`, and `UIObjectiveListItem.Data`
-  (`ObjectiveDisplayInfo.DisplayLabel`, plus its timer). Everything else — HP,
-  armour, action points, effects, ammo, hit chance — exists only in
-  `XCOMHISTORY`. In tactical the widget tree therefore supplies STRUCTURE and
-  SELECTION while the companion supplies the WORDS: the content provider is a
-  companion CDO, not offset transcription in `game_ui.cpp`, which is also what
-  makes the structured bridge (v2) a prerequisite rather than a nicety.
-- Best public documentation of Firaxis' UE3 internals: robojumper's
-  "Too Real" series (https://robojumper.github.io/too-real/). Highlander event
-  reference: https://x2communitycore.github.io/X2WOTCCommunityHighlander/
+  `XComTutorialMgr.HandleSubmittedGameStateContext` instead of `SubmitGameStateContext_Internal`
+  while `` `REPLAY.bInTutorial ``; on a match that handler calls `ResumeReplay()` /
+  `StepReplayForward()` and returns `true`, DISCARDING the player's context, and
+  `XComReplayMgr.StepReplayForward` merely advances `CurrentHistoryFrame` and calls
+  `BuildVisualizationFrame` on a frame already in the history at mission start. So
+  `ContextBuildGameState` never runs and `X2EventManager.TriggerEvent` is never reached — for our
+  listeners or the game's own. Two consequences: **anything built on the event bus must be tested on
+  a normal mission** (Gatecrasher — campaign with the tutorial checkbox off), and the tutorial
+  reader's `UIWorldMessageMgr` polling is not a nicety there but the ONLY narration source.
+  ✅ `X2AccessReplayNarration.uc` answers the gap: in a replay the history IS the event stream, so it
+  walks frames instead of waiting for events, through the SAME builders.
+- **The tactical HUD holds no text.** Unlike the shell screens, every panel of `UITacticalHUD` is a
+  write-only pipe into Flash: `SetStats` resolves name, rank, class, aim and effects out of the game
+  state and hands them straight to `MC.BeginFunctionOp` / `QueueString`, retaining nothing
+  (`SrcOrig/.../UITacticalHUD_SoldierInfo.uc:199`) — as do the shot HUD, info panel, enemy list,
+  countdown and banner. So `/gui` on tactical prints 159 panels and almost no words, and the
+  read-the-widget recipe pattern does NOT transfer. What IS readable: the ability bar
+  (`UITacticalHUD_AbilityContainer.m_arrAbilities` + `m_iCurrentIndex`, and per icon
+  `m_strAntennaText` / `m_strCooldown` / `m_strCharge` / `IsAvailable` — antenna text only while
+  `Movie.IsMouseActive()` — so the whole bar including each entry's `AvailableCode` reason needs NO
+  companion call), the enemy refs (`UITacticalHUD_Enemies.m_arrTargets`),
+  `UITacticalHUD.CurrentTargetID` / `m_isMenuRaised` / `ConcealmentMode`, and
+  `UIObjectiveListItem.Data` (`ObjectiveDisplayInfo.DisplayLabel`, plus its timer). Everything else
+  — HP, armour, action points, effects, ammo, hit chance — exists only in `XCOMHISTORY`. In tactical
+  the widget tree supplies STRUCTURE and SELECTION while the companion supplies the WORDS.
+- Best public documentation of Firaxis' UE3 internals: robojumper's "Too Real" series
+  (https://robojumper.github.io/too-real/). Highlander event reference:
+  https://x2communitycore.github.io/X2WOTCCommunityHighlander/
 
 ## Hard rules (each earned by a crash or a design dead end)
 
-- **When a fact is on a screen, read it FROM that screen — even when the game
-  state would also answer.** Parity is defined against what a sighted player
-  sees, and the tutorial is the case that makes this bite: it replays history
-  and never submits states (`XComTutorialMgr.HandleSubmittedGameStateContext`
-  discards the player's context, so `ContextBuildGameState` never runs), yet the
-  UI on top is driven identically — the hacking pad animates, the panels light,
-  the flyovers appear. A sighted player cannot tell the two missions apart. So a
-  readout sourced from `XCOMHISTORY`, a submitted context or the event bus is
-  silently DEAD on the mission a new blind player starts with, while one sourced
-  from the screen's own properties works in both for free — with no
-  tutorial-shaped special case. Prefer, in order: the screen's own fields and
-  functions (`UIHackingScreen.GetHackChance`, `SelectedHackRewardOption`,
-  `m_rewardsTaken`), the state objects the screen itself cached to populate
-  Flash (`UnitState`/`ObjectState` — same objects, same values, no re-lookup),
-  and only then a fresh history query. `X2AccessHackingReader.uc` is the worked
-  example: not one `XCOMHISTORY` access in the whole class. This does NOT
-  contradict the rule of thumb above — the companion still owns the words; what
-  it changes is WHERE the companion reads them from.
-- **Outbound ProcessEvent calls: game thread only.** Trigger from the Tick
-  drain (InputArbiter handlers already run there), never from the WNDPROC or
-  the init thread.
-- **Nothing in `DllMain(DLL_PROCESS_DETACH)` may join a thread or touch a
-  library.** `ShutdownAll()` runs under the LOADER LOCK, and at process exit the
-  other threads are already dead, so a join never returns. This is why
-  `TTS::Shutdown` deliberately does NOT call `prism_shutdown()` or
-  `prism_log_shutdown()`: the first deletes the context, which joins the
-  `BackendEnumerator` jthread, then calls `CoUninitialize` and a run of
-  `__FUnloadDelayLoadedDLL2` (i.e. `FreeLibrary`); the second joins the logging
-  drain. Both are textbook loader-lock deadlocks. What Shutdown does instead is
-  the safe subset: clear the log handler so nothing can re-enter this module
-  after `Log::Shutdown`, `prism_backend_stop` so a player quitting does not hear
-  the rest of the sentence, and then LEAK the context on purpose — the process is
-  going away. Same reasoning as the dev server's bounded `Stop()`.
-- **Never cache UObject pointers across frames without revalidation** — GC
-  moves on. Re-find via GObjects/SCREENSTACK or validate before use.
-  **Type-revalidation is not enough**: after a world change the old screen is
-  still a well-formed instance of its class for as long as GC leaves it
-  allocated, so "is it still a UIFinalShell?" happily says yes about a dead one.
-  A cache may short-circuit a rescan only while the instance is still USABLE
-  (focused, showing) — otherwise rescan and take the newest. Getting this wrong
-  cost 63 seconds of dead silence after exiting a campaign to the main menu,
-  and it looked like a hang rather than a stale pointer.
-- **A screen's index in GObjects says nothing about its age, and a removed
-  screen keeps all its state bits.** UE3 reuses freed slots, so a freshly
-  spawned screen routinely sits at a LOWER index than corpses of its own class
-  (observed: live `UIPauseMenu` at 383831, removed ones at 383887 and 383932).
-  Removal sets `bIsRemoved` (0x80) and clears nothing else, so a corpse still
-  reads inited/visible/focused. "Take the last instance" therefore latched onto
-  a dead screen that passed every readiness test, read as empty, and left the
-  layer silently detached with the menu open. Screen scans must FILTER by the
-  usability predicate (which must reject `bIsRemoved`), never pick by position.
-  The durable fix is walking `UIScreenStack.Screens` (0x6C) instead of GObjects.
-- **Topmost is not the same as reachable.** Starting a campaign pops the
-  narrative screen and leaves `UIShellDifficulty` underneath inited, focused and
-  top of the stack for the ~12 s the loading movie plays, so the layer narrated
-  a screen that had visibly gone. The stack carries the game's own answer in its
-  flag dword at 0x60: `IsInputBlocked` (0x1), `ScreensVisible` (0x2, so hidden
-  when CLEAR) and `bCinematicMode` (0x8) — the same gates the game consults
-  before opening its pause menu. Any of them set means nothing is navigable;
+- **When a fact is on a screen, read it FROM that screen — even when the game state would also
+  answer.** Parity is defined against what a sighted player sees, and the tutorial makes this bite:
+  it replays history and never submits states, yet the UI on top is driven identically — the hacking
+  pad animates, the panels light, the flyovers appear. A sighted player cannot tell the two missions
+  apart. So a readout sourced from `XCOMHISTORY`, a submitted context or the event bus is silently
+  DEAD on the mission a new blind player starts with, while one sourced from the screen's own
+  properties works in both for free. Prefer, in order: the screen's own fields and functions
+  (`UIHackingScreen.GetHackChance`, `SelectedHackRewardOption`, `m_rewardsTaken`), the state objects
+  the screen itself cached to populate Flash (`UnitState`/`ObjectState` — same objects, same values,
+  no re-lookup), and only then a fresh history query. `X2AccessHackingReader.uc` is the worked
+  example: not one `XCOMHISTORY` access in the whole class. The companion still owns the words; what
+  this changes is WHERE it reads them from.
+- **Outbound ProcessEvent calls: game thread only.** Trigger from the Tick drain (InputArbiter
+  handlers already run there), never from the WNDPROC or the init thread.
+- **Nothing in `DllMain(DLL_PROCESS_DETACH)` may join a thread or touch a library.** `ShutdownAll()`
+  runs under the LOADER LOCK, and at process exit the other threads are already dead, so a join
+  never returns. This is why `TTS::Shutdown` deliberately does NOT call `prism_shutdown()` or
+  `prism_log_shutdown()`: the first deletes the context, which joins the `BackendEnumerator` jthread,
+  then calls `CoUninitialize` and a run of `__FUnloadDelayLoadedDLL2` (i.e. `FreeLibrary`); the
+  second joins the logging drain. Both are textbook loader-lock deadlocks. Shutdown does the safe
+  subset instead: clear the log handler so nothing can re-enter this module after `Log::Shutdown`,
+  `prism_backend_stop` so a player quitting does not hear the rest of the sentence, then LEAK the
+  context on purpose. Same reasoning as the dev server's bounded `Stop()`.
+- **Never cache UObject pointers across frames without revalidation** — GC moves on. Re-find via
+  GObjects/SCREENSTACK or validate before use. **Type-revalidation is not enough**: after a world
+  change the old screen is still a well-formed instance of its class for as long as GC leaves it
+  allocated, so "is it still a UIFinalShell?" happily says yes about a dead one. A cache may
+  short-circuit a rescan only while the instance is still USABLE (focused, showing) — otherwise
+  rescan and take the newest. Getting this wrong cost 63 seconds of dead silence after exiting a
+  campaign, and it looked like a hang rather than a stale pointer.
+- **A screen's index in GObjects says nothing about its age, and a removed screen keeps all its
+  state bits.** UE3 reuses freed slots, so a freshly spawned screen routinely sits at a LOWER index
+  than corpses of its own class. Removal sets `bIsRemoved` (0x80) and clears nothing else, so a
+  corpse still reads inited/visible/focused. "Take the last instance" therefore latches onto a dead
+  screen that passes every readiness test, reads as empty, and leaves the layer silently detached
+  with the menu open. Screen scans must FILTER by the usability predicate (which must reject
+  `bIsRemoved`), never pick by position. The durable fix is walking `UIScreenStack.Screens` (0x6C).
+- **Topmost is not the same as reachable.** Starting a campaign pops the narrative screen and leaves
+  `UIShellDifficulty` underneath inited, focused and top of the stack for the ~12 s the loading movie
+  plays. The stack carries the game's own answer in its flag dword at 0x60: `IsInputBlocked` (0x1),
+  `ScreensVisible` (0x2, so hidden when CLEAR) and `bCinematicMode` (0x8) — the same gates the game
+  consults before opening its pause menu. Any of them set means nothing is navigable;
   `MenuNavigator::OnTick` detaches and refuses to attach while gated.
-- **Never gate screen readiness on `bIsVisible`** (UIPanel flag dword bit
-  0x20). The game leaves it FALSE on screens it is plainly showing: a live,
-  focused pause menu reads 0x259 and so does the exit-to-main-menu confirmation
-  dialog over it — `bIsNavigable|bIsFocused|bIsInited`, no visible bit. Testing
-  it meant silence at a modal the player then answered blind. Use
-  `bIsInited && bIsFocused` (bit 0x10 + 0x40) — `bIsFocused` is what the screen
-  stack maintains for "top of the stack" — and for `UIDialogueBox`, whose queue
-  is the real state, `bIsInited` plus a non-empty `m_arrData`. Child widgets are
-  the exception: a BUTTON's `bIsVisible` is toggled deliberately and does mean
-  hidden.
-- **Never store UIScreen references as class vars on UIScreenListeners**
-  (listeners live on CDOs; a held reference blocks shell-world GC and crashes
-  map transitions). Re-find via `` `SCREENSTACK.GetFirstInstanceOf() ``.
+- **Never gate screen readiness on `bIsVisible`** (UIPanel flag dword bit 0x20). The game leaves it
+  FALSE on screens it is plainly showing: a live, focused pause menu reads 0x259 and so does the
+  exit-to-main-menu confirmation dialog over it — `bIsNavigable|bIsFocused|bIsInited`, no visible
+  bit. Testing it meant silence at a modal the player then answered blind. Use
+  `bIsInited && bIsFocused` (0x10 + 0x40) — `bIsFocused` is what the screen stack maintains for "top
+  of the stack" — and for `UIDialogueBox`, whose queue is the real state, `bIsInited` plus a
+  non-empty `m_arrData`. Child widgets are the exception: a BUTTON's `bIsVisible` is toggled
+  deliberately and does mean hidden. (The ant farm's grid is the one documented exception on a
+  screen, because the GAME gates on it there.)
+- **Never store UIScreen references as class vars on UIScreenListeners** (listeners live on CDOs; a
+  held reference blocks shell-world GC and crashes map transitions). Re-find via
+  `` `SCREENSTACK.GetFirstInstanceOf() ``.
 - **Three generator settings must stay FALSE** in
-  `deps/CodeRed-Generator/Engine/XCOM2/Configuration.cpp`, and each cost real
-  debugging: `m_useConstants` (with it on, all 29388 wrappers resolved their
-  `UFunction*` from the owning CLASS's index — `GObjObjects()->at(IDX_CLASS_…)`,
-  the same constant `StaticClass()` uses — so every one handed `ProcessEvent` a
-  `UClass`; off, they emit `UFunction::FindFunction("Function Pkg.Class.Name")`,
-  which also survives a game patch), `m_removeNativeFlags` (clearing
-  `FUNC_Native` around the call is actively wrong here: a native's `Script` array
-  is a 2-byte STUB, not a body — `XComEngine.IsAnyMoviePlaying` has
-  `Script.Count` 2 against 1663 for `UIPauseMenu.OnChildClicked` — so clearing it
-  runs the stub and returns a ZEROED param block indistinguishable from a real
-  answer), and `m_removeNativeIndex` (same family). Natives dispatch correctly
-  through plain `ProcessEvent` with the flags left alone;
-  `X2FiraxisLiveClient.IsLoggedIn` is `FUNC_Native` and has always worked that
-  way here. With those off there is no `SdkConstants.hpp` any more — it existed
-  only to feed the index-based wrappers, and the GNames/GObjects offsets we
-  actually use live in `GameDefines.hpp`.
-  The generator is also patched to emit valid C++ rather than leaving it to a
-  repair pass: `.` `<` `>` `~` and space added to `m_unsafeChars` (UnrealScript
-  names really do carry dots — `OverriddenTangentVector.X`),
-  `UniquifyFunctionNames()` applied in all three emission passes (one class can
-  declare the same function once per STATE — `XComInputBase` declares `Key` ten
-  times — which collapsed into ten identical declarations and ten identical
-  `_Params` structs), and the `GameDefines.hpp` pack region emitted
-  automatically. `tools/fix_generated_sdk.py` now repairs exactly one thing
-  (undefined suffixed enum references) and doubles as the regression check: any
+  `deps/CodeRed-Generator/Engine/XCOM2/Configuration.cpp`, each having cost real debugging:
+  `m_useConstants` (with it on, all 29388 wrappers resolved their `UFunction*` from the owning
+  CLASS's index — the same constant `StaticClass()` uses — so every one handed `ProcessEvent` a
+  `UClass`; off, they emit `UFunction::FindFunction("Function Pkg.Class.Name")`, which also survives
+  a game patch), `m_removeNativeFlags` (clearing `FUNC_Native` around the call is actively wrong
+  here: a native's `Script` array is a 2-byte STUB, not a body — `XComEngine.IsAnyMoviePlaying` has
+  `Script.Count` 2 against 1663 for `UIPauseMenu.OnChildClicked` — so clearing it runs the stub and
+  returns a ZEROED param block indistinguishable from a real answer), and `m_removeNativeIndex`
+  (same family). With those off there is no `SdkConstants.hpp` any more — it existed only to feed the
+  index-based wrappers, and the GNames/GObjects offsets we use live in `GameDefines.hpp`.
+  The generator is also patched to emit valid C++ rather than leaving it to a repair pass: `.` `<`
+  `>` `~` and space added to `m_unsafeChars` (UnrealScript names really do carry dots —
+  `OverriddenTangentVector.X`), `UniquifyFunctionNames()` applied in all three emission passes (one
+  class can declare the same function once per STATE — `XComInputBase` declares `Key` ten times —
+  which collapsed into ten identical declarations and ten identical `_Params` structs), and the
+  `GameDefines.hpp` pack region emitted automatically. `tools/fix_generated_sdk.py` now repairs
+  exactly one thing (undefined suffixed enum references) and doubles as the regression check: any
   other line in its output means a generator fix broke.
-- **Anything in `GameDefines.hpp` must be included inside `#pragma pack(4)`.**
-  Every `SDK_HEADERS/*.hpp` opens its own pack region; GameDefines does not, so
-  its types (FNameEntry, TArray, FName, FString) silently take the including
-  TU's pack. Mixed packs across TUs is an ODR violation that moved
-  `FNameEntry::Name` from 0x14 to 0x18 and broke GNames lookup entirely. The
-  The generator now emits the region itself, so a regeneration keeps it;
-  `sdk_layout_checks.cpp` pins the result either way, so a lost pack region is a
-  build error rather than a silent runtime failure.
-- **SEH-guard every read into engine memory** (`__try` around reflection and
-  hook dispatch), and keep the ProcessEvent hot path cheap: bail on FName
-  index before doing anything else.
-- **A widget's declared `Type` does not tell you what the widget IS; the
-  visible child does.** Every Second Wave (Advanced Options) row reads
-  `UIMechaListItem.Type` = `Description` while showing a live, visible
+- **Anything in `GameDefines.hpp` must be included inside `#pragma pack(4)`.** Every
+  `SDK_HEADERS/*.hpp` opens its own pack region; GameDefines does not, so its types (FNameEntry,
+  TArray, FName, FString) silently take the including TU's pack. Mixed packs across TUs is an ODR
+  violation that moved `FNameEntry::Name` from 0x14 to 0x18 and broke GNames lookup entirely. The
+  generator now emits the region itself; `sdk_layout_checks.cpp` pins the result either way.
+- **SEH-guard every read into engine memory** (`__try` around reflection and hook dispatch), and keep
+  the ProcessEvent hot path cheap: bail on FName index before doing anything else.
+- **A widget's declared `Type` does not tell you what the widget IS; the visible child does.** Every
+  Second Wave row reads `UIMechaListItem.Type` = `Description` while showing a live, visible
   `UICheckbox` — the same object whose `bChecked` the campaign start reads in
-  `GetSelectedSecondWaveOptionNames`. `ReadOptionRowRaw` only looked at the
-  checkbox inside its `Type == Checkbox` branch, so those rows reported
-  "unchecked" forever. Read state from the widget POINTER, and take a row's
-  kind from a widget that is VISIBLE (`SetWidgetType` hides the widgets it
-  switches away from but leaves their pointers behind, so presence alone is not
-  enough — visibility is). The difficulty screen's own bottom rows do read
-  `Type` = Checkbox, so a screen can hold both kinds at once and "it works on
-  the other rows" proves nothing.
-- **A readout that never sounds wrong can still always be wrong — audit its
-  DISTRIBUTION, not its lines.** The tile cursor called every covered edge "high
-  cover" for two months. Every individual line was well-formed, correctly
-  directed and fog-gated; nothing in a log read as a defect. What exposed it was
-  counting: **260 "High cover", zero "Low cover"** in one Gatecrasher run, on a
-  map made of cars and sandbags. A field whose values are enumerable and whose
-  observed range collapses to one value is broken, whatever the lines sound like.
-  So after any live run, shape-count the speech ring — `grep -oP 'TTS!?: "\K[^"]*'
-  X2Access.log | sed 's/[0-9]\+/N/g' | sort | uniq -c | sort -rn` — which in the
-  same pass named the three noisiest wording defects in the build by frequency.
-  A cheap corollary: **when two of our own surfaces answer the same question,
-  make them agree or find out why they don't.** The shot HUD's
-  `DescribeTargetCover` said "in half cover" in that very run while the tile
-  cursor said "High cover"; the two disagreeing was the whole diagnosis, and it
-  is the reason `X2AccessHelper` exists as a shared oracle.
-- ⛔ **Size the buffer from the data, never the data to the buffer — and a cap
-  that drops the tail must be LOUD.** `UE3Reflect::ReadStringProperty` is the
-  single choke point every companion payload passes through — the tile cursor,
-  the shot HUD, the object scanner, the hacking pad, every graph recipe's wire
-  records, and `X2AccessNarrator`'s 24-line combat drain — and it read all of
-  them into a fixed `wchar_t[2048]`, clipping anything longer and saying
-  nothing. Measured live 2026-08-21: the XCOM archives' 39 entry titles came to
-  **2051 characters** against the 2047 that fit, and those four characters over
-  the line took the LAST record with them, which was the item card. The rows all
-  read perfectly and Tab found no card stop, so the bug presented as *the recipe
-  never built that stop* — a whole session's worth of wrong hypotheses about
-  `bIsVisible`, `SelectedIndex` and script errors, every one of them cleared by
-  `/props` before the buffer was even suspected. Note the failure MODE, which is
-  the reason this is a hard rule: truncating the tail of a screen reads to a
-  blind player as *the screen has nothing more*, which is indistinguishable from
-  the truth and therefore never gets reported as a bug. The length is now read
-  first (`FStringLengthRaw`), the buffer sized to it, and an implausible count
-  refused with a log line rather than silently trimmed. **Any fixed-size read of
-  something whose length the GAME decides is this bug waiting to happen** — the
-  remaining `wchar_t[256]`/`[512]` buffers in `game_ui.cpp` are per-WIDGET
-  fields (a row label, a button caption) and are bounded by what fits on screen;
-  the payload paths are not, and must never go back to a fixed buffer.
-- **When a control seems not to respond, prove which HALF is broken before
-  fixing either.** The above cost a full debugging cycle spent on the write
-  path — reading the game's source for `OnSecondWaveOptionClicked`, ruling out
-  the param layout against the SDK dump, regenerating the whole SDK, adding a
-  verify-and-fall-back that set the checkbox itself — because the readback said
-  "unchecked" and the readback was the broken thing. The toggle had been
-  landing correctly the entire time. **One screenshot settled it in seconds**:
-  the boxes were visibly ticked, exactly the rows the player had pressed. Our
-  own readout is never evidence about the game's state; when the two disagree,
-  ask the sighted user what the screen shows (or read the widgets live with
-  Frida) BEFORE theorizing about the call.
-- **Escaping a UIList to sibling buttons** needs
-  `Navigator.CheckForOwnerHandling` plus deferred (0.01 s timer) focus — never
-  mutate Navigator state inside its own `Next()`.
-- **Sighted parity decides what gets a tab stop.** The stop list mirrors what is
-  actually ON SCREEN; anything past that is a separately-labelled scan/aid
-  surface and must never hand the player information a sighted player cannot
-  get. Both halves have already bitten during tactical design: the WOTC
-  initiative order looks like an obvious stop and is CHEAT-GATED in retail
-  (`UITurnOverlay.ShowOrHideInitiative` shows it only when
-  `CHEATMGR.bShowInitiative`), so narrating it would leak enemy turn order;
-  and the standard HUD carries no turn counter — the only counters are
-  `UISpecialMissionHUD`'s pair, and that screen (always pushed) shows them only
-  while a `UiTimer.ShouldShow`, so an untimed mission reads `Timers = 0` and
-  displays nothing. The game's own answer to "what does this HUD offer" is
-  `UITacticalHUD_MouseControls` — prev/next soldier, end turn, rotate camera,
-  call Skyranger, Chosen info, cancel shot, shot info, soldier info — and on
-  mouse/keyboard that panel IS the command surface: `CharInfoButton` /
-  `EndTurnButton` / `SkyrangerButton` are spawned only in the CONTROLLER branch
-  of `UITacticalHUD.OnInit` and read null live. Build stops from that list,
-  never from a sketch of what a HUD "should" have. Aids that genuinely
-  compensate for lost vision (the tile cursor; distance and bearing on the
-  enemy strip; a speech scrollback,
-  because speech is serial where flyovers are simultaneous and persist ~5 s)
-  stay — labelled as aids, not sold as parity.
+  `GetSelectedSecondWaveOptionNames`. `ReadOptionRowRaw` only looked at the checkbox inside its
+  `Type == Checkbox` branch, so those rows reported "unchecked" forever. Read state from the widget
+  POINTER, and take a row's kind from a widget that is VISIBLE (`SetWidgetType` hides the widgets it
+  switches away from but leaves their pointers behind, so presence alone is not enough). The
+  difficulty screen's own bottom rows do read `Type` = Checkbox, so a screen can hold both kinds at
+  once and "it works on the other rows" proves nothing.
+- **A readout that never sounds wrong can still always be wrong — audit its DISTRIBUTION, not its
+  lines.** The tile cursor called every covered edge "high cover" for two months. Every line was
+  well-formed, correctly directed and fog-gated; nothing in a log read as a defect. Counting exposed
+  it: **260 "High cover", zero "Low cover"** in one Gatecrasher run, on a map made of cars and
+  sandbags. A field whose values are enumerable and whose observed range collapses to one value is
+  broken, whatever the lines sound like. So after any live run, shape-count the speech ring —
+  `grep -oP 'TTS!?: "\K[^"]*' X2Access.log | sed 's/[0-9]\+/N/g' | sort | uniq -c | sort -rn` — which
+  in the same pass named the three noisiest wording defects by frequency. A cheap corollary: **when
+  two of our own surfaces answer the same question, make them agree or find out why they don't.** The
+  shot HUD said "in half cover" in that very run while the tile cursor said "High cover"; the two
+  disagreeing was the whole diagnosis, and it is why `X2AccessHelper` exists as a shared oracle.
+- ⛔ **Size the buffer from the data, never the data to the buffer — and a cap that drops the tail
+  must be LOUD.** `UE3Reflect::ReadStringProperty` is the single choke point every companion payload
+  passes through — tile cursor, shot HUD, object scanner, hacking pad, every recipe's wire records,
+  and `X2AccessNarrator`'s 24-line drain — and it read all of them into a fixed `wchar_t[2048]`,
+  clipping anything longer and saying nothing. The XCOM archives' 39 entry titles came to **2051
+  characters** against the 2047 that fit, and those four characters took the LAST record with them —
+  the item card. The rows all read perfectly and Tab found no card stop, so the bug presented as *the
+  recipe never built that stop*. Note the failure MODE, which is why this is a hard rule: truncating
+  the tail of a screen reads to a blind player as *the screen has nothing more*, indistinguishable
+  from the truth and therefore never reported as a bug. The length is now read first
+  (`FStringLengthRaw`), the buffer sized to it, and an implausible count refused with a log line.
+  **Any fixed-size read of something whose length the GAME decides is this bug waiting to happen** —
+  the remaining `wchar_t[256]`/`[512]` buffers in `game_ui.cpp` are per-WIDGET fields bounded by what
+  fits on screen; the payload paths are not, and must never go back to a fixed buffer.
+- **When a control seems not to respond, prove which HALF is broken before fixing either.** The
+  Second Wave bug cost a full cycle spent on the write path — reading the game's source for
+  `OnSecondWaveOptionClicked`, ruling out the param layout, regenerating the whole SDK, adding a
+  verify-and-fall-back — because the readback said "unchecked" and the readback was the broken thing.
+  The toggle had been landing correctly all along. **One screenshot settled it in seconds.** Our own
+  readout is never evidence about the game's state; when the two disagree, ask the sighted user what
+  the screen shows (or read the widgets live) BEFORE theorizing about the call.
+- **Escaping a UIList to sibling buttons** needs `Navigator.CheckForOwnerHandling` plus deferred
+  (0.01 s timer) focus — never mutate Navigator state inside its own `Next()`.
+- **Sighted parity decides what gets a tab stop.** The stop list mirrors what is actually ON SCREEN;
+  anything past that is a separately-labelled scan/aid surface and must never hand the player
+  information a sighted player cannot get. Both halves have bitten: the WOTC initiative order looks
+  like an obvious stop and is CHEAT-GATED in retail (`UITurnOverlay.ShowOrHideInitiative` shows it
+  only when `CHEATMGR.bShowInitiative`), so narrating it would leak enemy turn order; and the
+  standard HUD carries no turn counter — the only counters are `UISpecialMissionHUD`'s pair, and that
+  screen shows them only while a `UiTimer.ShouldShow`, so an untimed mission reads `Timers = 0`. The
+  game's own answer to "what does this HUD offer" is `UITacticalHUD_MouseControls` — prev/next
+  soldier, end turn, rotate camera, call Skyranger, Chosen info, cancel shot, shot info, soldier info
+  — and on mouse/keyboard that panel IS the command surface: `CharInfoButton` / `EndTurnButton` /
+  `SkyrangerButton` are spawned only in the CONTROLLER branch of `UITacticalHUD.OnInit` and read null
+  live. Build stops from that list, never from a sketch of what a HUD "should" have. Aids that
+  genuinely compensate for lost vision (the tile cursor; distance and bearing on the enemy strip; a
+  speech scrollback, because speech is serial where flyovers are simultaneous and persist ~5 s) stay
+  — labelled as aids, not sold as parity.
+- **A recipe is the RULE; game-native narrate-only is the EXCEPTION, and the test is
+  destruction.** Recipes buy focus tracking, a stable reading order, and stops on panels the game
+  makes unfocusable. *Narrate-only is justified only when taking the arrows would destroy
+  information we cannot reproduce* — the Avenger ant farm passes (the room NAME is set inside
+  `if( bIsFocused )`, so our own focus model would leave every room nameless, plus the camera swoop
+  and the highlight box); a room's interior does not, and taking the arrows there bought a stop on
+  a crew line no keyboard in the game can reach. Answer this before writing either kind.
+- **A gate is only as good as its other half.** When a surface has a native gate AND a script gate,
+  changing one is changing half a rule: `ReadAvengerGate` learned to tolerate `UIBuildFacilities`
+  while the companion's own `GetGrid` did not, so native said *go ahead* ten times a second while
+  script said *not on the grid* — silence on the exact screen the mode exists for. Change both, or
+  neither.
+- ⛔ **The screen's accept handler reads its OWN selection index and ignores the control it is
+  handed — so set the selection FIRST, then send the key.** `UISaveGame.OnAccept`/`OnDelete` act on
+  `m_iCurrentSelection`, `UIPersonnel.OnButtonCallback` on `m_kList.selectedIndex`,
+  `UIChooseFacility.OnAccept` on the screen's own `SelectedIndex`, and `UIList.OnUnrealCommand`
+  fires `OnItemClicked(self, SelectedIndex)` whatever row the caller had in mind. A click sent
+  while the two disagreed would overwrite or delete the WRONG SAVE. Prefer the game's own path
+  (`AcceptButton.Click()`, `SendRowCommand`) over poking state, and send it only once the selection
+  has landed.
+- ⛔ **An empty answer is indistinguishable from "the game is not showing this", so a wire format
+  that drops empties must never carry positional data.** A field looked up in the wrong place
+  answers `""`, the build skips an unlabelled node, and a whole control silently ceases to exist —
+  four of squad select's five first-run defects were that one bug in different clothes. Two
+  corollaries: a REPEATING field (`util`, a table's `cell=`) is emitted **including its empty
+  values**, because dropping one shifts every value after it; and screen-wide labels that are class
+  defaults belong on the screen's own record, not asked of each row.
+- **Join after cleaning, never before** — a nickname that `CleanText` reduces to nothing leaves its
+  separator behind, so composed readouts stay as separate fields until each part is clean, then go
+  through `AppendPhrase`. Same family as the never-join-with-a-bare-comma rule in the kernel.
+- **An icon in its unlit state gets no words.** A sighted eye passes straight over an unlit bond
+  icon; speaking its title because the widget still holds one makes every card end in a phrase that
+  means nothing. Read the state the icon is IN, not the string it was built with.
 - `src/Graph/` stays STL-only. UE3/host concerns go in adapters outside it.
 
 ## Build & deploy
 
+- **`just` is the interface** (`justfile` at the root; `just` alone lists every recipe). One-shot
+  loops: `just go` = kill + rebuild + install the ASI + relaunch (no SDK needed); `just go-full` =
+  the same including the companion. Individually: `configure`, `build`, `uscript`, `install`,
+  `deploy`, `test`, `run`, `kill`, `log`, `gamelog`, `status`.
+- ⛔ **`-review` is mandatory when launching.** Without it the game boots the DEVELOPER shell
+  (`UIShell`) instead of the retail main menu (`UIFinalShell`), so every `UIFinalShell` recipe finds
+  nothing and the mod reads as dead. It is in the justfile's `launch_flags` (with `-noRedScreens
+  -noStartUpMovies`); a hand-rolled or Steam launch must add it too.
 - ⛔ The MSVC runtime is pinned **`MultiThreaded` (/MT), cache-`FORCE`d**, before
-  `add_subdirectory(deps/prism)`. Not optional and not cosmetic: Prism sets
-  `CMAKE_MSVC_RUNTIME_LIBRARY` itself off `CMAKE_BUILD_TYPE`, which is EMPTY
-  under the Visual Studio multi-config generator we configure with, so an
-  unpinned cache silently links a `/MT` Prism into a `/MTd` X2Access in Debug.
-  `BUILD_SHARED_LIBS OFF` must also be in the cache before that line — the static
-  path is what makes Prism define `PRISM_STATIC`, so `<prism.h>` stops saying
-  `dllimport`. The upside of /MT is that the `.asi` imports OS libraries only:
-  no VC++ redistributable on the player's machine.
-- Configure: `cmake -B build -A x64` (game/SDK paths default to
-  `D:/SteamLibrary/...`; override with `-DXCOM2_GAME_PATH=` /
-  `-DXCOM2_SDK_PATH=`).
-- C++ ASI: `cmake --build build --config Release` →
-  `build/bin/Release/X2Access.asi`.
-- Everything + deploy to game: `cmake --build build --config Release --target
-  deploy` (copies the ASI to `Binaries/Win64/scripts/` and chains
-  `build_uscript`, which compiles the mod via X2ModBuildCommon and
-  self-deploys to `XComGame/Mods/`).
-- ⛔ **`build_uscript` HANGS FOREVER if the game is running** (measured
-  2026-08-20: >10 min against 15 s normally). The running game holds
-  `XComGame/Mods/X2AccessCompanion/Script/X2AccessCompanion.u` open, the copy
-  step gets a sharing violation, and X2ModBuildCommon has no retry and no
-  timeout — it spins in `Start-Sleep` and never returns, so it looks like a slow
-  compile rather than a lock. Diagnose it by the SDK-side artifact: if
-  `<SDK>/XComGame/Script/X2AccessCompanion.u` has a FRESH timestamp while the
-  copy under the game's `Mods/` still has the old one, the compile succeeded and
-  only the deploy is stuck. `just kill` first, then rebuild. The `.asi` is locked
-  by the running game too, but that half FAILS FAST with a plain sharing
-  violation — it is only `build_uscript` that turns the same lock into a
-  silent hang, which is what makes it worth a rule.
-- Kernel tests (no game needed): `ctest --test-dir build -C Release`.
-- Loading: Ultimate ASI Loader's `version-x64.dll` sits in
-  `Binaries/Win64/`; the ASI logs to `X2Access.log` next to itself, rotating
-  the previous three sessions to `X2Access.1/2/3.log` on every start — so a
-  relaunch no longer destroys the evidence for whatever you were chasing.
-  Timestamps carry milliseconds; screen-transition latency is unreadable
-  without them.
+  `add_subdirectory(deps/prism)`. Not cosmetic: Prism sets `CMAKE_MSVC_RUNTIME_LIBRARY` itself off
+  `CMAKE_BUILD_TYPE`, which is EMPTY under the Visual Studio multi-config generator we configure
+  with, so an unpinned cache silently links a `/MT` Prism into a `/MTd` X2Access in Debug.
+  `BUILD_SHARED_LIBS OFF` must also be in the cache before that line — the static path is what makes
+  Prism define `PRISM_STATIC`, so `<prism.h>` stops saying `dllimport`. The upside of /MT is that the
+  `.asi` imports OS libraries only: no VC++ redistributable on the player's machine.
+- Configure: `just configure` (or `cmake -B build -A x64`). Game/SDK paths default to
+  `C:/Program Files (x86)/Steam/steamapps/common/...`; override with `-DXCOM2_GAME_PATH=` /
+  `-DXCOM2_SDK_PATH=`, or `just game_path=... configure`. ⛔ Keep every path in this tree
+  overridable — hardcoding the current machine's layout had to be undone across CMakeLists, the
+  justfile and the dev server (Documents is not `$HOME/Documents` under OneDrive and is not
+  necessarily spelled in English; ask Windows via `SHGetKnownFolderPath(FOLDERID_Documents)`).
+- C++ ASI: `cmake --build build --config Release` → `build/bin/Release/X2Access.asi`. Everything +
+  deploy: `--target deploy` (copies the ASI to `Binaries/Win64/scripts/` and chains `build_uscript`,
+  which compiles the mod via X2ModBuildCommon and self-deploys to `XComGame/Mods/`).
+- ⛔ **`build_uscript` HANGS FOREVER if the game is running** (>10 min against 15 s normally). The
+  running game holds `XComGame/Mods/X2AccessCompanion/Script/X2AccessCompanion.u` open, the copy step
+  gets a sharing violation, and X2ModBuildCommon has no retry and no timeout — it spins in
+  `Start-Sleep` and never returns, so it looks like a slow compile rather than a lock. Diagnose by
+  the SDK-side artifact: if `<SDK>/XComGame/Script/X2AccessCompanion.u` is FRESH while the copy under
+  the game's `Mods/` is not, the compile succeeded and only the deploy is stuck. `just kill` first.
+  The `.asi` is locked by the running game too, but that half FAILS FAST.
+- Kernel tests (no game needed): `ctest --test-dir build -C Release` (`just test`).
+- Loading: Ultimate ASI Loader's `version-x64.dll` sits in `Binaries/Win64/`; the ASI logs to
+  `X2Access.log` next to itself, rotating the previous three sessions to `X2Access.1/2/3.log` on
+  every start. Timestamps carry milliseconds; screen-transition latency is unreadable without them.
 
 ## Dev harness (dev builds only)
 
-Loopback HTTP server for observing and driving the live game — sibling of the
-RTAccess (8772) and CyberAccess (8773) harnesses; this one owns **8774**, so
-all three can be armed at once. Source: `src/dev_server.cpp`.
+Loopback HTTP server for observing and driving the live game — sibling of the RTAccess (8772) and
+CyberAccess (8773) harnesses; this one owns **8774**. Source: `src/dev_server.cpp`.
 
-**Double-gated.** Compile: `-DX2ACCESS_DEVSERVER=ON` (the justfile's
-`devserver` variable, ON for the local tree; OFF means the TU is not built and
-a release `.asi` holds no socket code at all). Runtime: a marker FILE,
-`Binaries/Win64/scripts/X2Access.devserver` (optional first line = port
-override) — a file rather than an env var because neither Steam nor
-`just run` inherits our environment, and the marker survives a relaunch.
-`just arm` / `just disarm` write it.
+**Double-gated.** Compile: `-DX2ACCESS_DEVSERVER=ON` (the justfile's `devserver` variable, ON for the
+local tree; OFF means the TU is not built and a release `.asi` holds no socket code). Runtime: a
+marker FILE, `Binaries/Win64/scripts/X2Access.devserver` (optional first line = port override) — a
+file rather than an env var because neither Steam nor `just run` inherits our environment, and it
+survives a relaunch. `just arm` / `just disarm` write it.
 
-**Threading.** The accept thread owns the socket and never touches engine
-memory. Engine-facing endpoints queue a job that `DevServer::Pump()` drains on
-the GAME thread, first statement of the `EventDispatch::SetFramePump` lambda —
-the same rule as outbound ProcessEvent calls, extended to reads. `/health`,
-`/speech` and `/log` answer **off-thread** from process-memory rings, which is
-what makes them useful when the game thread is the broken thing. That is not
-hypothetical: a launch that fell into a `GetQueryData - Timed out while waiting
-for GPU to catch up` loop 14 s after boot left every game-thread endpoint
-timing out for minutes while `/health` kept answering with a rising
-`pump-age-ms` and `/log` + the game's own `Launch.log` named the cause. A
-game-thread timeout therefore means "the game is not running frames", NOT "the
-harness is broken" — check `pump-age-ms` before suspecting anything else, and
-remember the pump rides ProcessEvent traffic, so it is only as alive as the
-game is. `Stop()` runs from
-`DllMain(DLL_PROCESS_DETACH)`, i.e. under the loader lock, so it does a
-**bounded** 1 s wait on the accept thread and detaches rather than `join()`ing
-— an unbounded join there can deadlock the game's shutdown.
+**Threading.** The accept thread owns the socket and never touches engine memory. Engine-facing
+endpoints queue a job that `DevServer::Pump()` drains on the GAME thread, first statement of the
+`EventDispatch::SetFramePump` lambda — the same rule as outbound ProcessEvent calls, extended to
+reads. `/health`, `/speech` and `/log` answer **off-thread** from process-memory rings, which is what
+makes them useful when the game thread is the broken thing: a launch that fell into a `GetQueryData -
+Timed out while waiting for GPU to catch up` loop left every game-thread endpoint timing out for
+minutes while `/health` kept answering with a rising `pump-age-ms` and `/log` named the cause. A
+game-thread timeout therefore means "the game is not running frames", NOT "the harness is broken" —
+check `pump-age-ms` first, and remember the pump rides ProcessEvent traffic, so it is only as alive
+as the game is. `Stop()` runs under the loader lock, so it does a **bounded** 1 s wait on the accept
+thread and detaches rather than `join()`ing.
 
 Endpoints:
 
 - `/health` — build stamp and `pump-age-ms`.
 - `/speech?since=N` — every line `TTS::Speak` was handed, cursor-paged.
 - `/log?since=N&tail=N` — the ASI log ring, cursor-paged.
-- `/status` — movie + load screen, the screen stack's gate flags, the attached
-  recipe, the tile-reader gate, and a top-first dump of `UIScreenStack.Screens`
-  with each entry's flags decoded (the not-inited and removed entries the
-  finders skip are shown too — the point is to answer "what is on screen" for a
-  screen that has no recipe yet).
-- `/tutorial` — the tutorial reader's state: replay frame, whether the player or
-  the replay owns controls, the on-rails rejection count, the modal, and every
-  active world message with its RAW text beside what the reader would SPEAK.
-  That last pair is the point — markup translation is the half of this feature
-  a screenshot cannot check.
-- `/exec` — a console command (POST body, or `?cmd=`). See below.
-- `/input?keys=Down,Down,Enter` — synthetic keys. Default tier is **SendInput
-  scancodes** after raising the game window, which drives the WHOLE game (UE3
-  reads Raw Input, so a VK-only synthetic press is ignored — scancodes are not
-  optional). `&mode=kernel` instead injects into the arbiter's own queue via
-  `InputArbiter::InjectSynthetic`, driving ONLY our layer, working with the
-  game backgrounded, and reporting per key whether a claim took it. `&hold=`
-  and `&gap=` are milliseconds.
-- `/screenshot[?path=&foreground=0&output=N]` — PNG of the monitor the game is
-  on, via DXGI Desktop Duplication (`src/screen_capture.cpp`).
-- `/gui[?depth=N]` — the widget tree under a screen: one line per `UIPanel`
-  with its class, address, state bits and the text it carries.
-- `/props[?filter=<substring>]` — every property the object's class chain
-  declares: **offset, type, name and live value**, grouped by declaring class.
-- `/call?fn=<Function>` — invoke a **zero-parameter** script function on the
-  selected object. Built for the recurring shape of accessibility bug in this
-  game: not a missing feature but an UNREACHABLE one — the game already has the
-  function and only calls it from a branch a mouse+keyboard player never takes.
-  `UIFacilityGrid.InitializeNavigationGrid` (the ant farm's whole eight-way room
-  adjacency graph) sits behind `ISCONTROLLERACTIVE`; `UIToDoWidget`'s list and
-  notification screen sit behind mouse handlers. This turns "would ungating that
-  work?" into one HTTP call instead of a build-deploy-relaunch per hypothesis.
-  Arguments go in as `&arg=<value>`, repeated once per declared argument in
-  declaration order, and a count mismatch is refused with the signature printed.
-  Passing them is safe for the reason ProcessEvent's parameter semantics give
-  below: parameters are shallow-`memcpy`'d and the destroy pass skips everything
-  under `ParmsSize`, so a buffer the harness owns and keeps alive across the
-  call is all that is required. ⛔ Only values it can actually WRITE are
-  accepted — string, int, float, bool, byte. An object, struct, array, name or
-  delegate argument is refused, because the only thing the endpoint could put
-  there is a zero, and a zeroed object pointer is a null deref inside script in
-  the very session it exists to observe. A declared RETURN value was never a
-  disqualifier: the engine writes it into our block and reads nothing from it.
-  **Arguments are what make the Scaleform side reachable**, and that is the
-  point of them: everything about a live movie is read through
-  `GFxMoviePlayer.GetVariableString` / `GetVariableNumber` / `ActionScriptInt` /
-  `ActionScriptString`, all of which take a path string — so
-  `just dev-flash ActionScriptString "_global.Selection.getFocus"` is now a
-  question one can ask. That is the only route to the half of the UI that is
-  Flash-only: a text field's caret, the key-bindings rows, anything a screen
-  wrote out and did not retain. Parameters are counted REFLECTIVELY
-  (`UFunction`'s own `Children`, filtered on `CPF_Parm`) rather than from
-  `ParmsSize`, which the generated header buries inside `UFunction`'s padding
-  where it could not be `static_assert`ed. Class-scope functions only — a
-  state-scoped one needs `GameUI::FindStateFunction`.
-
-- `/flash?field=<name>` — the same read as `/call` with a path argument, but
-  **panel-relative**: it resolves the SELECTED panel's own `MCPath` and reads
-  `<MCPath>.<field>`. That is Firaxis' own composition —
+- `/status` — movie + load screen, the screen stack's gate flags, the attached recipe, the
+  tile-reader gate, the dropship line, and a top-first dump of `UIScreenStack.Screens` with each
+  entry's flags decoded (not-inited and removed entries shown too — the point is to answer "what is
+  on screen" for a screen that has no recipe yet).
+- `/tutorial` — replay frame, whether the player or the replay owns controls, the on-rails rejection
+  count, the modal, and every active world message with its RAW text beside what the reader would
+  SPEAK. That pair is the point — markup translation is the half a screenshot cannot check.
+- `/exec` — a console command (POST body, or `?cmd=`).
+- `/input?keys=Down,Down,Enter` — synthetic keys. Default tier is **SendInput scancodes** after
+  raising the game window, which drives the WHOLE game (UE3 reads Raw Input, so a VK-only synthetic
+  press is ignored). `&mode=kernel` injects into the arbiter's own queue via
+  `InputArbiter::InjectSynthetic`, driving ONLY our layer, working with the game backgrounded, and
+  reporting per key whether a claim took it. `&hold=` and `&gap=` are milliseconds.
+- `/screenshot[?path=&foreground=0&output=N]` — PNG of the monitor the game is on, via DXGI Desktop
+  Duplication (`src/screen_capture.cpp`).
+- `/gui[?depth=N]` — the widget tree under a screen: one line per `UIPanel` with class, address,
+  state bits and the text it carries.
+- `/props[?filter=<substring>]` — every property the object's class chain declares: **offset, type,
+  name and live value**, grouped by declaring class. `?cdo=<Class>` reaches a class default object
+  (`GameUI::FindDefaultObject`), the only way to see the companion subsystems' model.
+- `/call?fn=<Function>` — invoke a script function on the selected object. Built for the recurring
+  shape of accessibility bug in this game: not a missing feature but an UNREACHABLE one — the game
+  already has the function and only calls it from a branch a mouse+keyboard player never takes
+  (`UIFacilityGrid.InitializeNavigationGrid` behind `ISCONTROLLERACTIVE`; `UIToDoWidget`'s list behind
+  mouse handlers). Turns "would ungating that work?" into one HTTP call instead of a
+  build-deploy-relaunch per hypothesis. Arguments go in as `&arg=<value>`, once per declared argument
+  in declaration order; a count mismatch is refused with the signature printed. Passing them is safe
+  for the reason the parameter semantics below give: parameters are shallow-`memcpy`'d and the
+  destroy pass skips everything under `ParmsSize`, so a buffer the harness owns and keeps alive
+  across the call is all that is required. ⛔ Only values it can actually WRITE are accepted — string,
+  int, float, bool, byte. An object, struct, array, name or delegate argument is refused, because the
+  only thing the endpoint could put there is a zero, and a zeroed object pointer is a null deref
+  inside script in the very session it exists to observe. A declared RETURN value was never a
+  disqualifier: the engine writes it into our block and reads nothing from it. **Arguments are what
+  make the Scaleform side reachable** — every fact about a live movie is read through path-string
+  getters, so `just dev-flash ActionScriptString "_global.Selection.getFocus"` is a question one can
+  ask. Parameters are counted REFLECTIVELY (`UFunction`'s own `Children`, filtered on `CPF_Parm`)
+  rather than from `ParmsSize`, which the generated header buries inside `UFunction`'s padding.
+  Class-scope functions only — a state-scoped one needs `GameUI::FindStateFunction`.
+- `/flash?field=<name>` — the same read, but **panel-relative**: it resolves the SELECTED panel's own
+  `MCPath` and reads `<MCPath>.<field>`. That is Firaxis' own composition —
   `UIMCController.GetString(Field)` is literally
-  `Movie.GetVariableString(Panel.MCPath $ "." $ Field)` — so a child field
-  nests the way their comment says it does
-  (`GetNum("string_of_child_mc.field_string")`). Both handles come out of
-  reflection (`Movie` and `MCPath` by property name), so this verb transcribes
-  no offsets of its own. `&fn=` picks the getter and therefore the return type
-  — `GetVariableString` (default) / `Number` / `Bool`, or
-  `ActionScriptString` / `Int` / `Float` / `Void`; `GetVariable` and `Invoke`
-  are REFUSED by name rather than guessed at, because their parameter blocks
-  differ (an `FASValue` struct, and an array of them) and reading either
-  through the shared block would print half a pointer as a number. Omitting
-  `&field=` asks for the MCPath itself, which is the cheapest test that the
-  panel resolves in the movie at all. **Why it exists**: this is the answer to
-  the hard rule that *our own readout is never evidence about the game's
-  state*. For every screen that pipes its text into Flash and retains none of
-  it — the whole tactical HUD, the save rows, the squad cards, all of which
-  `/gui` prints as wordless — "what does the screen actually say?" had no
-  answer short of asking a sighted person. Flash still holds it. ⚠ Blank is
-  AMBIGUOUS: an unresolved path answers exactly like an empty field (the live
-  probe told them apart only because AS2's real `Selection` accessors answer
-  −1 where an unresolved path answers 0), so the endpoint says so on every
-  blank reading. ⛔ **Verification only, never the speech path** —
-  `UIMCController.uc` labels these getters *"an immediate and blocking
-  operation, doing this is very expensive, use sparingly"*, and the whole
-  shipped game calls one exactly twice (`UISquadSelect_ListItem:716`).
+  `Movie.GetVariableString(Panel.MCPath $ "." $ Field)` — so a child field nests the way their comment
+  says. Both handles come out of reflection, so this verb transcribes no offsets of its own. `&fn=`
+  picks the getter and therefore the return type — `GetVariableString` (default) / `Number` / `Bool`,
+  or `ActionScriptString` / `Int` / `Float` / `Void`; `GetVariable` and `Invoke` are REFUSED by name
+  rather than guessed at, because their parameter blocks differ (an `FASValue` struct, and an array of
+  them) and reading either through the shared block would print half a pointer as a number. Omitting
+  `&field=` asks for the MCPath itself, the cheapest test that the panel resolves in the movie at all.
+  **Why it exists**: this is the answer to the hard rule that *our own readout is never evidence about
+  the game's state*. For every screen that pipes its text into Flash and retains none of it, "what
+  does the screen actually say?" had no answer short of asking a sighted person. ⚠ Blank is
+  AMBIGUOUS: an unresolved path answers exactly like an empty field, so the endpoint says so on every
+  blank reading.
 
-  All four take the same selector — `?screen=<Class>` (the screen stack,
-  topmost when unnamed), `?instance=<Class>` (newest instance anywhere in
-  GObjects, so it reaches objects the stack never holds — `XCom3DCursor`, a
-  cheat manager, a tooltip manager), or `?ptr=0x<addr>` copied out of an earlier
-  dump and re-validated against GObjects before it is walked. So the loop is:
-  `/gui` to see the tree, `?ptr=` from a line of it, `/props` to read that
-  widget out, `/call` to make it do something — and `/flash` to check what it
-  actually put on screen.
+  All four take the same selector — `?screen=<Class>` (the screen stack, topmost when unnamed),
+  `?instance=<Class>` (newest instance anywhere in GObjects, reaching objects the stack never holds —
+  `XCom3DCursor`, a cheat manager, a tooltip manager; falls back to the CDO when nothing live
+  matches), or `?ptr=0x<addr>` copied out of an earlier dump and re-validated against GObjects before
+  it is walked. So the loop is: `/gui` to see the tree, `?ptr=` from a line of it, `/props` to read
+  that widget out, `/call` to make it do something — and `/flash` to check what it actually put on
+  screen.
 
-An unknown path returns the endpoint list. `/speech` and `/log` are
-cursor-paged: poll with the returned `cursor:` value for exactly-once delivery.
+An unknown path returns the endpoint list. `/speech` and `/log` are cursor-paged: poll with the
+returned `cursor:` value for exactly-once delivery.
 
-Driving it: `just arm`, then `just dev-health` / `dev-status` / `dev-speech` /
-`dev-log` / `dev-exec "<cmd>"` / `dev-input <keys> [kernel]` / `dev-shot` /
-`dev-gui [depth] [select]` / `dev-props [select] [filter]` /
-`dev-call <fn> [select]` / `dev-flash <fn> <arg> [select]` /
-`dev-field [select] [field] [fn]`, or
-`just dev '<endpoint>?<query>'` for anything else.
-⛔ Scripts must call curl as `$env:SystemRoot/System32/curl.exe` — bare `curl`
-on PATH resolves to MSYS2's cygwin build, whose path translation mangles URL
-arguments into blanks. The justfile's `curl` variable already does this.
-⛔ **Shared-harness rule** (from RTAccess): do not drive the live game while
-another agent or session is driving it — give the user manual steps instead.
+Driving it: `just arm`, then `just dev-health` / `dev-status` / `dev-speech` / `dev-log` /
+`dev-exec "<cmd>"` / `dev-input <keys> [kernel]` / `dev-shot` / `dev-gui [depth] [select]` /
+`dev-props [select] [filter]` / `dev-call <fn> [select]` / `dev-flash <fn> <arg> [select]` /
+`dev-field [select] [field] [fn]`, or `just dev '<endpoint>?<query>'` for anything else.
+⛔ Scripts must call curl as `$env:SystemRoot/System32/curl.exe` — bare `curl` on PATH resolves to
+MSYS2's cygwin build, whose path translation mangles URL arguments into blanks. The justfile's `curl`
+variable already does this.
+⛔ **Shared-harness rule** (from RTAccess): do not drive the live game while another agent or session
+is driving it — give the user manual steps instead.
 
 ### `/exec` and the console — three facts established live
 
-1. **The retail binary has a CheatManager.** `XComPlayerController.AddCheats`
-   and `XComGameInfo.AllowCheats` both sit inside
-   `` `if(`notdefined(FINAL_RELEASE)) `` blocks, so this was an open question.
-   `obj list class=XComTacticalCheatManager` in a live mission returns
-   `XComTacticalController_0.XComTacticalCheatManager_0` — so retail is NOT a
-   FINAL_RELEASE build and all **1246 `exec function`s** in the SDK sources are
-   reachable by name, cheat managers included. This is the one place XCOM 2 is
-   *easier* than both sibling projects: no CET-Lua bridge, no `Mono.CSharp`.
-2. **`ConsoleCommand`'s return value is useless here** — it comes back empty
-   even for commands that clearly ran (`obj list …` returns nothing and prints
-   its table; an unknown command returns nothing and logs "Command not
-   recognized"). Output goes to the game's `Launch.log`. So `/exec` snapshots
-   that file's size, runs the command, and returns what got appended; an
-   endpoint reporting only the return value would look broken for every command
-   worth running.
-3. **Route: `WorldInfo.GetWorldInfo()` (static native) →
-   `GetALocalPlayerController()` (on Actor) → `ConsoleCommand(cmd, bWriteToLog)`.**
-   No object is cached across frames, which keeps the GC rule intact.
-   The param struct is `#pragma pack(4)`: `ReturnValue` sits at **0x14**,
-   directly after the bool bitfield with no padding, and natural alignment
-   would put it at 0x18 and read garbage. Pinned by `static_assert`.
+1. **The retail binary has a CheatManager.** `XComPlayerController.AddCheats` and
+   `XComGameInfo.AllowCheats` both sit inside `` `if(`notdefined(FINAL_RELEASE)) `` blocks, so this
+   was an open question. `obj list class=XComTacticalCheatManager` in a live mission returns
+   `XComTacticalController_0.XComTacticalCheatManager_0` — so retail is NOT a FINAL_RELEASE build and
+   all **1246 `exec function`s** in the SDK sources are reachable by name. This is the one place
+   XCOM 2 is *easier* than both sibling projects: no CET-Lua bridge, no `Mono.CSharp`.
+2. **`ConsoleCommand`'s return value is useless here** — empty even for commands that clearly ran.
+   Output goes to the game's `Launch.log`, so `/exec` snapshots that file's size, runs the command,
+   and returns what got appended.
+3. **Route: `WorldInfo.GetWorldInfo()` (static native) → `GetALocalPlayerController()` (on Actor) →
+   `ConsoleCommand(cmd, bWriteToLog)`.** No object cached across frames, so the GC rule holds. The
+   param struct is `#pragma pack(4)`: `ReturnValue` sits at **0x14**, directly after the bool
+   bitfield with no padding; natural alignment would put it at 0x18 and read garbage. Pinned by
+   `static_assert`.
 
 ### ProcessEvent's parameter semantics (decompiled, moduleBase+0x143B50)
 
-Needed before any call that passes or returns an `FString`, and true of every
-such call:
+Needed before any call that passes or returns an `FString`:
 
-- Parameters are **shallow-`memcpy`'d** into ProcessEvent's alloca'd frame —
-  not per-property deep-copied. So a buffer we own is passed by pointer.
-- The `ConstructorLink` destroy pass only runs `DestroyValue` on properties
-  whose `Offset >= ParmsSize` — true locals, **never parameters**. So the
-  engine never frees an `FString` buffer we passed in; ours merely has to
-  outlive the call.
+- Parameters are **shallow-`memcpy`'d** into ProcessEvent's alloca'd frame — not per-property
+  deep-copied. So a buffer we own is passed by pointer.
+- The `ConstructorLink` destroy pass only runs `DestroyValue` on properties whose
+  `Offset >= ParmsSize` — true locals, **never parameters**. So the engine never frees an `FString`
+  we passed in; ours merely has to outlive the call.
 - The return value is written **straight into our block**: ProcessEvent passes
-  `Parms + ReturnValueOffset` as the native's result pointer. It arrives in an
-  ENGINE-allocated buffer, so reading it is free and freeing it would need
-  `appFree`. `ConsoleCommand` deliberately leaks it — a few dozen bytes per
-  dev-only call beats calling the wrong deallocator.
+  `Parms + ReturnValueOffset` as the native's result pointer. It arrives in an ENGINE-allocated
+  buffer, so reading it is free and freeing it would need `appFree`. `ConsoleCommand` deliberately
+  leaks it — a few dozen bytes per dev-only call beats calling the wrong deallocator.
 
 ### `/gui` and `/props`: reflection, not transcription
 
-`src/gui_dump.cpp` reads everything through the engine's own reflection spine
-(`UStruct::Children` → `UProperty::Offset`/`ArrayDim`/`ElementSize`, the
-property's CLASS name for its type, `UBoolProperty::BitMask`,
-`UByteProperty::Enum` for enum literals), so it hand-transcribes **no offsets
-of its own** — the four raw primitives it cannot get that way (`FindStackScreen`,
-`FindAnyInstance`, `IsLiveObject`, `ReadChildPanels`) are dev-only exports from
-`game_ui.cpp` built on offsets that are already `static_assert`-pinned.
+`src/gui_dump.cpp` reads everything through the engine's own reflection spine (`UStruct::Children` →
+`UProperty::Offset`/`ArrayDim`/`ElementSize`, the property's CLASS name for its type,
+`UBoolProperty::BitMask`, `UByteProperty::Enum` for enum literals), so it hand-transcribes **no
+offsets of its own** — the four raw primitives it cannot get that way (`FindStackScreen`,
+`FindAnyInstance`, `IsLiveObject`, `ReadChildPanels`) are dev-only exports from `game_ui.cpp` built on
+offsets already `static_assert`-pinned. That is what makes it authoritative where the SDK dump is not:
+the numbers come from the class the running process actually has, under whatever mod set is loaded.
+The Highlander's rebuild of `UIShellSoundtrackPicker` is exactly the case a dump cannot answer and
+this can. It also prints state bits **by name** rather than decoding a flag dword at a fixed offset.
 
-That is what makes it authoritative where the SDK dump is not: the numbers come
-from the class the running process actually has, under whatever mod set is
-loaded. The Highlander's rebuild of `UIShellSoundtrackPicker` (a localized
-`FString` that `SrcOrig` never declared, moving everything after 0x430 down
-0x10) is exactly the case a dump cannot answer and this can. It also means the
-tree prints state bits **by name** — `bIsInited`/`bIsFocused`/`bIsVisible`/
-`bIsRemoved`/`bIsNavigable` — rather than decoding a flag dword at a fixed
-offset, so it stays right across a rebuild that moves them.
+**A screen's `ChildPanels` is not its children.** It is a flat REGISTRY of every panel on that screen,
+itself included at index 0 — `UITacticalHUD` lists all 159 of its panels, among them a `UIStatList`
+that really hangs four levels down inside `UITacticalHUD_ShotHUD`. Panels below the screen do list
+only their own children, so a naive recursive walk *looks* right and quietly reparents everything the
+recursion happens to reach last. The link that means the same thing at every level is
+`UIPanel.ParentPanel` (+0x2E0), and `/gui` filters on it; whatever the walk does not reach is listed
+with its actual parent rather than dropped.
 
-**A screen's `ChildPanels` is not its children.** It is a flat REGISTRY of every
-panel on that screen, itself included at index 0 — verified live 2026-08-19:
-`UITacticalHUD` listed all 159 of its panels, among them a `UIStatList` that
-really hangs four levels down inside `UITacticalHUD_ShotHUD`. Panels below the
-screen do list only their own children, so a naive recursive walk *looks* right
-and quietly reparents everything the recursion happens to reach last. The link
-that means the same thing at every level is `UIPanel.ParentPanel` (+0x2E0), and
-`/gui` filters on it; whatever the walk does not reach is then listed with its
-actual parent rather than dropped.
-
-First live run (2026-08-19, mid-mission) also confirmed every hand-transcribed
-`UIPanel` offset against the running class: `bIsInited` 0x10, `bIsVisible` 0x20,
-`bIsFocused` 0x40, `bIsRemoved` 0x80, `bHasTooltip` 0x100, `bIsNavigable` 0x200
-in the dword at +0x284, `CachedTooltipId` +0x2AC, `Movie` +0x2B8,
-`ChildPanels` +0x2E8. Dumping a screen we already have a recipe for is the
-calibration check worth running after any SDK regeneration.
-
-Steps 1-2 of *Adding a screen recipe* are what this replaces. `/tile` (the tile
-reader's state as structured data) is still open.
+Confirmed `UIPanel` offsets against the running class: `bIsInited` 0x10, `bIsVisible` 0x20,
+`bIsFocused` 0x40, `bIsRemoved` 0x80, `bHasTooltip` 0x100, `bIsNavigable` 0x200 in the dword at
++0x284, `CachedTooltipId` +0x2AC, `Movie` +0x2B8, `ChildPanels` +0x2E8. Dumping a screen we already
+have a recipe for is the calibration check worth running after any SDK regeneration.
 
 ## Live testing without eyes or hands in the game
 
-The dev server (`src/dev_server.cpp`, loopback :8774, armed by the
-`X2Access.devserver` marker) makes a session drivable end to end from outside:
-`/speech` is exactly what the screen reader was handed (poll with the cursor),
-`/status` is the gate + screen stack, and `tools/send-game-keys.ps1` injects
-scancode-level keys (SendInput with KEYEVENTF_SCANCODE — WScript SendKeys
-silently drops arrow keys for this game, and the INPUT struct must be 40 bytes
-or SendInput injects nothing). Screenshot via PowerShell CopyFromScreen, then
-read the image. This loop found and fixed the compass 180° rotation in one
-session without the player touching the keyboard.
+The dev server makes a session drivable end to end from outside: `/speech` is exactly what the screen
+reader was handed (poll with the cursor), `/status` is the gate + screen stack, and
+`tools/send-game-keys.ps1` injects scancode-level keys (SendInput with KEYEVENTF_SCANCODE — WScript
+SendKeys silently drops arrow keys for this game, and the INPUT struct must be 40 bytes or SendInput
+injects nothing). Screenshot via `/screenshot`, then read the image. This loop found and fixed the
+compass 180° rotation in one session without the player touching the keyboard.
 
 ## Reverse engineering workflow
 
-Two complementary tools; the ASI itself is the third and durable one.
-
-- **Ghidra** (MCP) for static analysis — the source of the `0x143B50`
-  ProcessEvent offset and the class layout. ImageBase is `0x140000000`, so a
-  Ghidra VA maps to `base + (VA − 0x140000000)` at runtime.
-- **Frida** for live probing — `tools/frida-run.py` (a direct-Python runner
-  that deliberately does NOT use any `frida-mcp` server) plus the `frida` skill
-  (`.claude/skills/frida/SKILL.md`), which carries the hard-won gotchas: a hook
-  only fires while the script is loaded (arm with `--stay`), never hook the
-  Windows message-pump primitives (we subclass the WNDPROC — hook that entry
-  instead), a zero-hit hook usually means a cold target, and bound every
-  `Memory.scanSync`. The project's UE3 offsets were originally discovered this
-  way; use it for offset confirmation and recipe-testing, then fold durable
-  findings into the ASI (a handler, a log line, an `event_dispatch` watch).
-- **Precedence**: prefer the ASI log + Ghidra; reach for Frida only when the
-  answer needs the running process. Anything needed more than once belongs in
-  the ASI, not in a Frida script.
-
-### Hooking libraries
-
-We ship two interception points and neither needs a hooking library: the
-ProcessEvent hook is a vtable pointer swap and input is a WNDPROC subclass.
-If we ever need an inline hook on a non-virtual native function, use
-**MinHook** (small, CMake-friendly, the game-modding standard) — not MS
-Detours. We deliberately do **not** vendor a runtime assembler (AsmJit /
-Xbyak): MinHook generates its own trampolines, so an assembler is only
-warranted for a bespoke register-capturing stub MinHook can't express, which
-we have no need for. The game ships Firaxis' own `EasyHook64.dll` but nothing
-loads it — it is vestigial; do not use it.
+- **Ghidra** (MCP) for static analysis — the source of the `0x143B50` ProcessEvent offset and the
+  class layout. ImageBase is `0x140000000`, so a Ghidra VA maps to `base + (VA − 0x140000000)` at
+  runtime.
+- **Frida** for live probing — `tools/frida-run.py` (a direct-Python runner that deliberately does NOT
+  use any `frida-mcp` server) plus the `frida` skill (`.claude/skills/frida/SKILL.md`), which carries
+  the gotchas: a hook only fires while the script is loaded (arm with `--stay`), never hook the
+  Windows message-pump primitives (we subclass the WNDPROC — hook that entry instead), a zero-hit hook
+  usually means a cold target, and bound every `Memory.scanSync`.
+- **Precedence**: prefer the ASI log + Ghidra; reach for Frida only when the answer needs the running
+  process. Anything needed more than once belongs in the ASI, not in a Frida script.
+- **Hooking libraries**: we ship two interception points and neither needs one — the ProcessEvent hook
+  is a vtable pointer swap and input is a WNDPROC subclass. If an inline hook on a non-virtual native
+  is ever needed, use **MinHook** (small, CMake-friendly, the game-modding standard), not MS Detours.
+  We deliberately do **not** vendor a runtime assembler (AsmJit / Xbyak): MinHook generates its own
+  trampolines. The game ships Firaxis' own `EasyHook64.dll` but nothing loads it — vestigial; do not
+  use it.
 
 ## Dependencies
 
-- `deps/prism` (submodule, pinned to `v0.17.3`) — speech output, linked static,
-  ⛔ **MPL-2.0, not MIT** (file-level copyleft: we vendor it unmodified and the
-  README says where the source is). Its deps are bundled under its own
-  `third_party/`, so the build is offline; it needs the Windows SDK's `midl.exe`
-  to generate the NVDA RPC client stubs, which is why no `nvdaControllerClient.dll`
-  ships beside the game any more. Replaced `deps/SRAL` on 2026-08-20.
+- `deps/prism` (submodule, pinned to `v0.17.3`) — speech output, linked static, ⛔ **MPL-2.0, not
+  MIT** (file-level copyleft: we vendor it unmodified and the README says where the source is). Its
+  deps are bundled under its own `third_party/`, so the build is offline; it needs the Windows SDK's
+  `midl.exe` to generate the NVDA RPC client stubs, which is why no `nvdaControllerClient.dll` ships
+  beside the game.
 - `deps/X2ModBuildCommon` (submodule) — UnrealScript build pipeline.
-- `deps/X2WOTCCommunityHighlander` (submodule, pinned to `v1.31.0-release`) —
-  pure UnrealScript, no native code. Compile-time include for the companion mod
-  and the source of narration event hooks; declared as a runtime requirement in
-  the README, the mod's ReadMe.txt and the .XComMod description. The pin was
-  chosen by DIFFING, not by trusting a tag: the workshop build installed here
-  (1134256495, what the game actually loads) ships its full `Src/`, and
-  `v1.31.0-release` is the tag whose tree matches it with ZERO differing files
-  (the checkout had silently drifted to `v1.31.1-beta`, 35 files ahead of the
-  runtime). When bumping the pin, re-run that check: workshop stable lags
-  master by months, and compiling against a newer CHL than the game loads
-  means layouts and hooks that don't exist at runtime.
-  Note what "pure UnrealScript" means for us: the mod ships **replacement
-  `XComGame.upk`, `Engine.upk` and `Core.upk`** (9.8 MB of recompiled script),
-  so with it enabled every class layout comes from the Highlander's build, not
-  the stock one. **Regenerate the SDK from a game running the same mod set the
-  players will run**; a dump is Highlander-derived if `UIScreenStack` carries
-  `OnInputSubscribers` (issue #198) and vanilla if it does not.
-  Two ways that build differs, both found by regenerating on 2026-08-19:
-  - Its added vars are APPENDED, so `UIScreenStack.Screens` (0x6C) and the gate
-    flags (0x60) sit where the vanilla dump put them — the subscriber arrays
-    land at 0x8C and after.
-  - It recompiles the whole package from the SDK's `SrcOrig`, and **`SrcOrig`
-    is not the retail package**: `UIShellSoundtrackPicker` there never declared
-    the localized `m_chooseSoundtrack`, so under the Highlander that FString is
-    gone and everything after 0x430 moves down 0x10. A field can therefore
-    exist in one build and not the other — the layout asserts are what turns
-    that into a build error, and they caught exactly this one.
-- `deps/CodeRed-Generator` (submodule of the `alex19EP/CodeRed-Generator`
-  fork, branch `xcom2`) — the SDK dumper. The fork branch carries the XCOM2
-  adaptation on top of upstream: `Engine/XCOM2/` config plus the generator
-  fixes documented above (`m_unsafeChars`, `UniquifyFunctionNames`, the
-  `GameDefines.hpp` pack region). The generic fixes are separable from the
-  XCOM2 config and are upstream-PR candidates. It produced `generated_sdk/X2SDK/`,
-  which IS a build input but is **not in git** (113 MB, `.gitignore`d): if that
-  folder is lost the build dies and the only recovery is a regeneration run.
-  `just sdk-build` / `sdk-gen` / `sdk-adopt` / `sdk-revert` drive that; the
-  generator dumps from a LIVE process, so `sdk-gen` injects it into the running
-  game with Frida. Do NOT drop it into `Binaries/Win64/scripts/` as a second
-  `.asi` — the ASI loader scans subdirectories, so two plugins load and two
-  copies of X2Access patching 1610 vtables each kills the game on launch.
+- `deps/X2WOTCCommunityHighlander` (submodule, pinned to `v1.31.0-release`) — pure UnrealScript, no
+  native code. Compile-time include for the companion and the source of narration event hooks;
+  declared as a runtime requirement in the README, the mod's ReadMe.txt and the .XComMod description.
+  The pin was chosen by DIFFING, not by trusting a tag: the workshop build installed here
+  (1134256495, what the game actually loads) ships its full `Src/`, and `v1.31.0-release` is the tag
+  whose tree matches it with ZERO differing files (the checkout had silently drifted 35 files ahead of
+  the runtime). When bumping the pin, re-run that check: workshop stable lags master by months, and
+  compiling against a newer CHL than the game loads means layouts and hooks that don't exist at
+  runtime.
+  Note what "pure UnrealScript" means for us: the mod ships **replacement `XComGame.upk`, `Engine.upk`
+  and `Core.upk`** (9.8 MB of recompiled script), so with it enabled every class layout comes from the
+  Highlander's build. **Regenerate the SDK from a game running the same mod set the players will
+  run**; a dump is Highlander-derived if `UIScreenStack` carries `OnInputSubscribers` (issue #198) and
+  vanilla if it does not. Two ways that build differs:
+  - Its added vars are APPENDED, so `UIScreenStack.Screens` (0x6C) and the gate flags (0x60) sit where
+    the vanilla dump put them — the subscriber arrays land at 0x8C and after.
+  - It recompiles the whole package from the SDK's `SrcOrig`, and **`SrcOrig` is not the retail
+    package**: `UIShellSoundtrackPicker` there never declared the localized `m_chooseSoundtrack`, so
+    under the Highlander that FString is gone and everything after 0x430 moves down 0x10. A field can
+    exist in one build and not the other — the layout asserts turn that into a build error, and they
+    caught exactly this one.
+- `deps/CodeRed-Generator` (submodule of the `alex19EP/CodeRed-Generator` fork, branch `xcom2`) — the
+  SDK dumper, carrying the XCOM2 adaptation on top of upstream: `Engine/XCOM2/` config plus the
+  generator fixes above. The generic fixes are separable and are upstream-PR candidates. It produced
+  `generated_sdk/X2SDK/`, which IS a build input but is **not in git** (113 MB, `.gitignore`d): if
+  that folder is lost the build dies and the only recovery is a regeneration run. `just sdk-build` /
+  `sdk-gen` / `sdk-adopt` / `sdk-revert` drive it; the generator dumps from a LIVE process, so
+  `sdk-gen` injects into the running game with Frida. ⛔ Do NOT drop it into
+  `Binaries/Win64/scripts/` as a second `.asi` — the ASI loader scans subdirectories, so two plugins
+  load and two copies of X2Access patching 1610 vtables each kills the game on launch.
 
 ## Adding a screen recipe
 
-The pattern, end to end (see the new-game recipes for a worked set):
-
-0. With the game on that screen and the harness armed, `just dev-gui` prints
-   its widget tree and `just dev-props "screen=<Class>"` prints every field
-   with its LIVE offset, type and value. That is steps 1-2 below done from
-   facts; read `SrcOrig` for the *why* (delegates, disabled navigation), not to
+0. With the game on that screen and the harness armed, `just dev-gui` prints its widget tree and
+   `just dev-props "screen=<Class>"` prints every field with its LIVE offset, type and value. That is
+   steps 1-2 done from facts; read `SrcOrig` for the *why* (delegates, disabled navigation), not to
    guess layout.
-1. Read the screen's UnrealScript in the SDK's `Development/SrcOrig/XComGame/
-   Classes/` — it is the ground truth for what the widgets are, which delegate
-   activation must go through, and what a sighted player can actually reach.
-   Watch for controls the game reaches only by mouse (its own keyboard path may
-   be a dead end) and for `DisableNavigation()`, which means focus write-back
-   there would be pushing focus somewhere the game refuses to keep it.
-2. Transcribe field offsets from the generated SDK's dump comments into
-   `game_ui.cpp`, add a matching `static_assert` per offset to
-   `sdk_layout_checks.cpp`, and expose a `Read<Screen>` view struct.
-3. Add the recipe to `menu_navigator.cpp` and list it in `kRecipes`, TOPMOST
-   SCREEN FIRST — probe order is what resolves a stacked screen.
-4. Prefer the game's own handlers over poking state: feed a row
-   `OnUnrealCommand`, click a button through `Click()`, call the screen's own
-   delegate target. That keeps every side effect the game expects.
+1. Read the screen's UnrealScript in the SDK's `Development/SrcOrig/XComGame/Classes/` — ground truth
+   for what the widgets are, which delegate activation must go through, and what a sighted player can
+   actually reach. Watch for controls the game reaches only by mouse (its own keyboard path may be a
+   dead end) and for `DisableNavigation()`, which means focus write-back there would be pushing focus
+   somewhere the game refuses to keep it.
+2. Transcribe field offsets from the generated SDK's dump comments into `game_ui.cpp`, add a matching
+   `static_assert` per offset to `sdk_layout_checks.cpp`, and expose a `Read<Screen>` view struct.
+3. Add the recipe to `menu_navigator.cpp` and list it in `kRecipes`, TOPMOST SCREEN FIRST — probe
+   order is what resolves a stacked screen.
+4. Prefer the game's own handlers over poking state: feed a row `OnUnrealCommand`, click a button
+   through `Click()`, call the screen's own delegate target. That keeps every side effect the game
+   expects.
 
-Screen lookup goes through the game's OWN screen stack
-(`UIScreenStack::Screens` at 0x6C, index 0 = the top: Push inserts at 0).
-`FindStackScreenRaw` matches by class name over a few dozen entries. A popped
-screen leaves the stack immediately, whereas as an OBJECT it lingers with every
-state bit intact until GC — which is exactly how a corpse got cached as the live
-pause menu. GObjects scanning survives only as a fallback: for screens the stack
-does not manage (`UIDialogueBox` is permanent and never pushed) and for the
-window while the stack itself is being rebuilt. The first fallback per class is
+Screen lookup goes through the game's OWN screen stack (`UIScreenStack::Screens` at 0x6C, index 0 =
+the top: Push inserts at 0). `FindStackScreenRaw` matches by class name over a few dozen entries. A
+popped screen leaves the stack immediately, whereas as an OBJECT it lingers with every state bit
+intact until GC — which is how a corpse got cached as the live pause menu. GObjects scanning survives
+only as a fallback: for screens the stack does not manage (`UIDialogueBox` is permanent and never
+pushed) and for the window while the stack itself is being rebuilt. The first fallback per class is
 logged, so "not stack-managed" is a fact in the log rather than an assumption.
 
 ## The tactical layer: input ownership
 
 Three modes, and the layer must always know which one it is in:
 
-- **World mode** (default) — arrows drive the tile cursor (`src/tile_reader.cpp`).
+- **World mode** (default) — arrows drive the tile cursor.
 - **HUD mode** — the tactical recipe is FOCUSED; arrows navigate it.
-- **Targeting mode** (`UITacticalHUD.m_isMenuRaised`) — the GAME owns the
-  arrows, Tab and F1-F8. We narrate and read there; we claim nothing that
-  steers. ⚠ **Narrowed 2026-08-20 to targeting with a TARGET LIST.** In free aim
-  (`docs/free-aim-recon.md`) the arrows steer nothing: the controller aiming
-  branch is dead code on mouse+keyboard, so a bare arrow lands in
-  `CycleAbilitySelection` and abandons the ability the player just chose. There
-  the rule inverts and the arrows are ours — the principle was "do not take a key
+- **Targeting mode** (`UITacticalHUD.m_isMenuRaised`) — the GAME owns the arrows, Tab and F1-F8. We
+  narrate and read there; we claim nothing that steers. ⚠ **Narrowed to targeting with a TARGET
+  LIST.** In free aim the arrows steer nothing: the controller aiming branch is dead code on
+  mouse+keyboard, so a bare arrow lands in `CycleAbilitySelection` and abandons the ability the player
+  just chose. There the rule inverts and the arrows are ours — the principle was "do not take a key
   the game is using to steer", and here it is not.
 
-So the recipe must be ATTACHED BUT UNFOCUSED while the cursor keeps the arrows.
-`TileReader::ComputeActive` currently stands down on
-`MenuNavigator::IsAttached()` — right for menus, wrong here: the navigator needs
-an explicit focused state and the tile reader has to gate on that instead.
+So the recipe must be ATTACHED BUT UNFOCUSED while the cursor keeps the arrows. ⚠
+`TileReader::ComputeActive` still stands down on `MenuNavigator::IsAttached()` — right for menus,
+wrong here: the navigator needs an explicit focused state and the tile reader has to gate on that
+instead.
 
-**Tab is taken, twice**: `eTBC_NextUnit` in world mode
-(`UIUtilities_Input.uc:451`) and `NextTarget` while the shot HUD is raised
-(`UITacticalHUD.uc:459`). **Ctrl+Tab works only because WE claim it** — UE3
-matches modifiers **LENIENTLY** (verified live 2026-08-20, and this reverses what
-this file said before). A `KeyBind`'s `Control`/`Shift`/`Alt` are modifiers the
-chord REQUIRES; modifiers the player merely happens to hold are NOT checked.
-`bIgnoreCtrl`/`bIgnoreShift`/`bIgnoreAlt` are the opt-in SUPPRESSORS — `Input.uc`:
-*"if true, the bind will not be activated if the corresponding key is held down"*
-— and the entire game config uses them exactly twice: on `R`, so `Shift+R` reaches
-ErrorReport without also reloading, and on `F4`, so Alt+F4 does not also fire the
-game action. (Those two entries are what the old "strict" reading got backwards:
-they exist to SUPPRESS a bare bind, which is only necessary because matching is
-lenient.) So a bare binding fires under ANY modifier, and `Ctrl+Tab` reaches
-`eTBC_NextUnit` unless the arbiter swallows it first. **Every modifier chord we
-advertise on a key that carries a vanilla bare binding MUST be claimed, or it
-double-fires.** Ctrl+Tab therefore enters/exits the HUD layer and plain Tab is
-claimed ONLY while the layer is focused.
+**UE3 matches modifiers LENIENTLY.** A `KeyBind`'s `Control`/`Shift`/`Alt` are modifiers the chord
+REQUIRES; modifiers the player merely happens to hold are NOT checked.
+`bIgnoreCtrl`/`bIgnoreShift`/`bIgnoreAlt` are the opt-in SUPPRESSORS — `Input.uc`: *"if true, the bind
+will not be activated if the corresponding key is held down"* — and the entire game config uses them
+exactly twice: on `R`, so `Shift+R` reaches ErrorReport without also reloading, and on `F4`, so Alt+F4
+does not also fire the game action. (Those exist to SUPPRESS a bare bind, which is only necessary
+because matching is lenient.) So a bare binding fires under ANY modifier. **Every modifier chord we
+advertise on a key that carries a vanilla bare binding MUST be claimed, or it double-fires.** Ctrl+Tab
+therefore enters/exits the HUD layer and plain Tab is claimed ONLY while the layer is focused.
 
-**The accessibility verbs outrank the vanilla bindings** (decided 2026-08-20) —
-and taking a bare letter turns out to cost **nothing: no config snippet, no
-rebind at all** (settled live 2026-08-20; the planned
-`mods/X2AccessCompanion/Config/XComInput.ini` was deleted unused). Because
-matching is lenient, every vanilla bare-key action is ALREADY reachable at
-`Ctrl+key`: the arbiter claims the bare key and swallows it, the Ctrl chord is
-not claimed so it passes through untouched, and the engine matches the vanilla
-binding with Ctrl held. Proven end to end in a live mission — bare `Left` drove
-the tile cursor with no camera movement, `Ctrl+Left` scrolled the camera: same
-key, one binding, no config file in play. The object scanner needs the bare
-letters, and of RT's keymap only `, . / ' ; H I` are free in XCOM tactical
-(`V M N P L K O U X Y Z T G J B` all carry vanilla actions) — all of those vacate
-onto Ctrl+letter for free. This LEAVES the old "we do NOT rebind the player's
-config" rule intact instead of superseding it. ⛔ Still do NOT poke
-`PlayerInput.Bindings` at runtime: `UIKeybindingsPCScreen.ReadBindings()` reads
-the live array, so a runtime edit shows up in the Controls screen and is baked
-into the player's profile permanently the moment they press Save and Exit there.
-⚠ The one thing leniency does NOT hand us is a free `Shift` — **so we take it,
-2026-08-21**. `LeftShift` is bound in `[XComGame.XComTacticalInput]` and
-`Key_Left_Shift`'s RELEASE calls `PrevUnit()` UNCONDITIONALLY
-(`XComTacticalInput.uc:2147`, state `ActiveUnit_Moving`), so every `Shift+` chord
-cycled the soldier when the player let go — including the tile reader's
-already-shipped `Shift+,`/`Shift+.` floor keys, for the whole time they shipped.
-It never showed up in testing because the tutorial runs `InReplayPlayback`, whose
-copy of the same function (`:587`) is a bare `return false` — the one place being
-a replay HID a bug instead of causing one.
-**The fix is a SWALLOW of the modifier itself**, not of the function: the arbiter
-now accepts a claim on a modifier key (`{VK_LSHIFT, ModNone}`, side-resolved from
-lParam's scan code because WM_KEYDOWN reports the generic `VK_SHIFT`), so while
-our tactical layer owns input the engine never sees LeftShift go down or up and
-the bound command never runs. **Our own chord matching is untouched**, and that is
-the linchpin: `GetKeyState` reflects the state the OS updated when the message
-was pulled off the queue, not what the window procedure then did with it. `Shift`
-is therefore the reverse-cycle modifier the scanner keymap always wanted, matching
-every sibling scanner in this lineage.
-⛔ **`docs/object-scanner-recon.md` §4.6's Option B is WRONG and must not be
-tried**: the mouse-gate trick does not apply verbatim to `Key_Left_Shift`, which
-takes an `int ActionMask` and returns a bool. `MouseGate`'s thunk consumes a lone
-`EX_EndFunctionParms`; here it would meet a parameter expression instead, leave
-the VM's `Code` pointer mid-expression, and hand the caller an unwritten return
-value. Doing it properly needs `UStruct::Script`, an offset this project has never
-measured — and the swallow needs no engine offset at all.
-Two consequences to keep straight. `RightShift` is deliberately NOT claimed (it
-carries no binding in the tactical section, so it was never the problem). And the
-swallow costs `PressedKeys` its `LeftShift` entry, which is what `Key_Tab`'s
+**The accessibility verbs outrank the vanilla bindings**, and taking a bare letter costs **nothing: no
+config snippet, no rebind at all**. Because matching is lenient, every vanilla bare-key action is
+ALREADY reachable at `Ctrl+key`: the arbiter claims the bare key and swallows it, the Ctrl chord is
+not claimed so it passes through, and the engine matches the vanilla binding with Ctrl held. Proven
+live — bare `Left` drove the tile cursor with no camera movement, `Ctrl+Left` scrolled the camera. Of
+RT's keymap only `, . / ' ; H I` are free in XCOM tactical (`V M N P L K O U X Y Z T G J B` all carry
+vanilla actions), and all of those vacate onto Ctrl+letter for free. ⛔ Still do NOT poke
+`PlayerInput.Bindings` at runtime: `UIKeybindingsPCScreen.ReadBindings()` reads the live array, so a
+runtime edit shows up in the Controls screen and is baked into the player's profile permanently the
+moment they press Save and Exit there.
+
+⚠ **The one thing leniency does NOT hand us is a free `Shift` — so we take it.** `LeftShift` is bound
+in `[XComGame.XComTacticalInput]` and `Key_Left_Shift`'s RELEASE calls `PrevUnit()` UNCONDITIONALLY
+(`XComTacticalInput.uc:2147`, state `ActiveUnit_Moving`), so every `Shift+` chord cycled the soldier
+when the player let go. It never showed up in testing because the tutorial runs `InReplayPlayback`,
+whose copy of the same function (`:587`) is a bare `return false` — the one place being a replay HID a
+bug instead of causing one. **The fix is a SWALLOW of the modifier itself**, not of the function: the
+arbiter accepts a claim on a modifier key (`{VK_LSHIFT, ModNone}`, side-resolved from lParam's scan
+code because WM_KEYDOWN reports the generic `VK_SHIFT`), so while our tactical layer owns input the
+engine never sees LeftShift go down or up. **Our own chord matching is untouched**, and that is the
+linchpin: `GetKeyState` reflects the state the OS updated when the message was pulled off the queue,
+not what the window procedure then did with it.
+⛔ **`docs/object-scanner-recon.md` §4.6's Option B is WRONG and must not be tried**: the mouse-gate
+trick does not apply verbatim to `Key_Left_Shift`, which takes an `int ActionMask` and returns a bool.
+`MouseGate`'s thunk consumes a lone `EX_EndFunctionParms`; here it would meet a parameter expression
+instead, leave the VM's `Code` pointer mid-expression, and hand the caller an unwritten return value.
+Doing it properly needs `UStruct::Script`, an offset this project has never measured — and the swallow
+needs no engine offset at all.
+Two consequences: `RightShift` is deliberately NOT claimed (it carries no binding in the tactical
+section). And the swallow costs `PressedKeys` its `LeftShift` entry, which is what `Key_Tab`'s
 prev-soldier branch reads — so `Shift+Tab` is claimed and re-provided by
-`X2AccessObjectScanner.PrevSoldier`, reproducing
-`XComTacticalInput.IsManualUnitSwitchAllowed`'s guard rule for rule. `Ctrl`
-remains the safe modifier for anything that does NOT want to displace a vanilla
-key: `Key_Left_Control` merely toggles the pathing pawn's waypoint mode on press
-and untoggles it on release.
+`X2AccessObjectScanner.PrevSoldier`, reproducing `XComTacticalInput.IsManualUnitSwitchAllowed`'s guard
+rule for rule. `Ctrl` remains the safe modifier for anything that does NOT want to displace a vanilla
+key: `Key_Left_Control` merely toggles the pathing pawn's waypoint mode on press and untoggles it on
+release.
 
-**Exactly two letter keys are free: H and I.** Measured across every input
-section of `DefaultInput.ini` 2026-08-20 — and it must be measured across ALL of
-them, not just `[XComGame.XComTacticalInput]`. Two traps. First, most letter
+⛔ **Tab stays the game's, in both of its meanings.** `eTBC_NextUnit` in world mode
+(`UIUtilities_Input.uc:451`) and `NextTarget` while the shot HUD is raised (`UITacticalHUD.uc:459`)
+are the player's own bindings and the layer does not take them: switching soldiers is narrated by
+POLLING the controller instead, which leaves the binding untouched AND catches the mouse click, the
+turn start and the death-driven re-select that a key claim never could. The one exception is
+`Shift+Tab`, claimed and re-provided only because the Shift swallow costs `Key_Tab`'s prev-soldier
+branch the `PressedKeys` entry it reads — a debt the swallow created, not a verb the layer wanted.
+
+**Exactly two letter keys are free: H and I.** Measured across every input section of
+`DefaultInput.ini` — and it must be measured across ALL of them. Two traps. First, most letter
 bindings are generic `X_Key_Press | onrelease X_Key_Release` forwarders into
-`XComInputBase.InputEvent`: they look empty and are not (`Y` is Overwatch's
-default ability hotkey via `Template.DefaultKeyBinding`, and `T`, `V`, `B`, `N`
-are live the same way). Second, **`U` is bound in `[Engine.PlayerInput]`, not in
-the tactical block** (`ClearAllWaypoints`), so a tactical-section-only grep
-reports it free and is wrong. Claimed so far: `H` = shot breakdown (targeting
-only), `I` = re-read the tutorial message (tutorial only). That is the whole
-supply of bare letters; anything further needs a modifier — and the vanilla
-action it displaces stays reachable at Ctrl+letter for free, no config required
-(see the leniency paragraph above).
+`XComInputBase.InputEvent`: they look empty and are not (`Y` is Overwatch's default ability hotkey via
+`Template.DefaultKeyBinding`, and `T`, `V`, `B`, `N` are live the same way). Second, **`U` is bound in
+`[Engine.PlayerInput]`, not in the tactical block** (`ClearAllWaypoints`), so a tactical-section-only
+grep reports it free and is wrong. Claimed: `H` = shot breakdown (targeting only), `I` = re-read the
+tutorial message (tutorial only). That is the whole supply of bare letters.
 
-**Punctuation is where the budget actually is**, and it costs even less than a
-bare letter: `;` and `'` carry NO `Bindings=` entry in any input section, so they
-displace nothing at all and need no leniency argument (the only two lines in
-`DefaultInput.ini` mentioning `Semicolon` are `WidgetInputAliases` character
-lists for the editor's edit boxes, which bind no command). `;` is now the
-selected-unit readout (see **Selected unit** above); `'` remains free and is
-earmarked for the vantage read.
-
-**⛔ Tab stays the game's, in both of its meanings.** `eTBC_NextUnit` in world
-mode and `NextTarget` while the shot HUD is raised are the player's own bindings
-and the layer does not take them: switching soldiers is narrated by POLLING the
-controller instead, which leaves the binding untouched AND catches the mouse
-click, the turn start and the death-driven re-select that a key claim never
-could. The one exception is `Shift+Tab`, which the object scanner claims and
-re-provides only because the Shift SWALLOW costs `Key_Tab`'s prev-soldier branch
-the `PressedKeys` entry it reads — a debt the swallow created, not a verb the
-layer wanted.
-
-**Targeting mode is covered** (`src/tactical_hud.cpp` + companion
-`X2AccessTacticalReader.uc`, built AND VERIFIED LIVE 2026-08-20 — a live shot read
-`Выстрел, 1 of 5. Офицер "Адвента", hit 49 percent, damage 3 to 5, in half cover, 6 of 6 health`,
-so ability slot, localized name, target, odds, damage band, cover and health all resolved). It
-watches
-only `m_isMenuRaised` — the flag `GameUI::ReadTacticalGate` already reports for
-the tile cursor — and calls `PollTargeting()` on the companion CDO every 150 ms
-while the tactical HUD is usable; the companion reads `m_iCurrentIndex` and the
-targeting method's target index from script and answers with text ONLY when the
-selection moved. **That is why Phase 1 added no offsets and no
-`static_assert` entries**: change detection sits next to the data, so a
-regenerated SDK or a Highlander bump cannot silently break it. Resolution
-mirrors `UITacticalHUD_InfoPanel.Update` and
-`UITacticalHUD_ShotWings.RefreshData` exactly — the targeting method owns the
-target INDEX and the index is into the SELECTED ACTION's own target list, and
-`LookupShotBreakdown` gets an EXPLICIT `UseAbility` because the empty-ability
-branch is the one that `RedScreen`s. Claims, live only while raised and neither
-of them steering: `Delete` re-announces the shot (it never contends with the
-tile cursor's `Delete` — that stands down exactly when the shot HUD is up) and
-`H` reads the per-modifier breakdown, the spoken form of the shot wings a mouse
-player opens by clicking. `H` was chosen because the
-`[XComGame.XComTacticalInput]` block of `DefaultInput.ini` binds no command to
-it at all.
+**Punctuation is where the budget actually is**, and it costs even less: `;` and `'` carry NO
+`Bindings=` entry in any input section, so they displace nothing and need no leniency argument (the
+only two lines in `DefaultInput.ini` mentioning `Semicolon` are `WidgetInputAliases` character lists
+for the editor's edit boxes, which bind no command). `;` is the selected-unit readout; `'` remains
+free, earmarked for the vantage read.
 
 ## Current state / next steps
 
-The Graph kernel is wired and driving real screens (see **UI reading** above).
-Remaining:
-
-1. `ScriptCall` module (generic find-function-by-name + game-thread call).
-   `game_ui.cpp` already hand-rolls this per call site — and now exports the
-   first pieces (`FindCompanionCDO`, `CallScriptFunction`); the module is the
-   generalization, not a prerequisite.
-2. Continue migrating screens to native recipes. Save/load is DONE and verified
-   (2026-08-21, see **Save / load** above); the strategy layer and the tactical
-   HUD remain. What the save/load run did NOT cover, and the next session
-   should: the SAVE screen itself (only the LOAD screen was exercised — its
-   new-save row, the overwrite confirmation, and a save actually completing),
-   and the text-entry reader end to end (the probe proved every read it makes,
-   but the module's own announcements have not been heard yet — `just dev-log`
-   should carry `TextInput: dialog up (... caret N, selection A..B)`).
-3. Tile cursor: VERIFIED LIVE 2026-08-19 (autonomously: `tools/send-game-keys.ps1`
-   scancode injection + dev-server speech ring + screenshots): compass steps
-   (world-absolute, engine north = +Y, east = -X, calibrated against two crate
-   faces — cover flags are the oracle: a tile adjacent to an impassable crate
-   names its crate-facing edge), offsets exact per step, per-edge cover words,
-   fog parity, reachability, floor jumps, shot-HUD/pause stand-down, lazy
-   plant, state-first stepping (never read the cursor pawn back — it sits at
-   body-center heights and is repositioned natively every frame).
-   ROOT CAUSE FOUND LIVE 2026-08-19 — the physical cursor does not follow our
-   pushes because **the game re-drives it from the mouse EVERY FRAME**:
-   `XComTacticalInput`'s active-state `PostProcessCheckGameLogic` (`:2978`)
-   unconditionally calls `Mouse_CheckForPathing` (`:3204`), which — while
-   `Get2DMovie().IsMouseActive()` — deprojects the mouse and calls
-   `CursorSetLocation(kPickPoint, false)`. So our push LANDS and is overwritten
-   in the same frame. Proof: after three arrow steps the reader's own state
-   advanced correctly (it spoke three different tiles, naming the right allies)
-   while `XCom3DCursorMouse_0.Location` stayed bit-identical — and
-   `m_bPathingNeedsUpdate` read TRUE on that same object, which only
-   `CursorSetLocation` sets, so the call reached the right instance and did run.
-   This RETIRES the earlier Ghidra conclusion that "mouse tracking is
-   event-driven and a landed push sticks": the re-trace is not in the pawn
-   physics (`physFlying`/`CalcVelocity` really are plain integration) — it is in
-   SCRIPT, one layer up, which is why decompiling the pawn found nothing. The
-   rest of that pass still holds: `ProcessChainedDistance` (VA 0x140b616e0)
-   clamps only while `ChainedPawn != none` AND a chain distance is > 0, and the
-   live cursor reads `m_fMaxChainedDistance`/`m_fMinChainedDistance` = 0 with
-   `ChainedPawn` kept, exactly as `SetCursorTile` intends — that part of the fix
-   landed and is not the problem. `CursorSetLocation` is
-   `(newLoc, bResetSpeedCurveRampUp=true, bSnapToValidPosition=true)`, so our
-   `false` is the RAMP-UP flag and snap is already defaulting on.
-   The fix is `src/mouse_gate.cpp` — RESOLVED, VERIFIED LIVE 2026-08-20: it
-   swallows that ONE script function by setting `FUNC_Native` on its
-   `UFunction` and pointing `Func` (+0xF0) at a thunk that consumes the
-   `EX_EndFunctionParms` byte and returns, restoring both fields exactly on
-   release (targeting raised, recipe attached, tactical over, DLL detach).
-   Fully wired: CMake, `TileReader::Call` engages it on first use per mission,
-   `OnTick` tracks the active gate, `DllMain` force-restores,
-   `sdk_layout_checks.cpp` pins `FunctionFlags` (0xD0 — the generated header
-   mis-declares it uint64, so only that one field can be offsetof'd; Func 0xF0
-   is dump-comment + live-verified). The full chain ran live: plant landed and
-   STUCK at the tile center, each arrow moved the pawn exactly 96 units on the
-   right axis, `LastDestinationTile` previewed OUR tile, and the two-press
-   Backspace move-to committed through `ClickToPath` — unit walked to the
-   spoken tile (screenshot-verified). The swallow was preferred over the blunt
-   lever — `UIMovie.DeactivateMouse()` also stops `Mouse_CheckForPathing`, but
-   mouse-inactive mode changes which HUD the game builds (`UITacticalHUD.OnInit`
-   spawns `UITacticalHUD_MouseControls` in the mouse branch and the
-   `CharInfoButton`/`EndTurnButton`/`SkyrangerButton` hotlinks in the other) and
-   stops `UITacticalHUD_Ability.UpdateData` refreshing `m_strAntennaText`, which
-   is where ability names come from. The swallow keeps clicks, free-aim, camera
-   scroll and every other mouse feature untouched; a mouse click while gated
-   commits to the pawn's preview of OUR tile — the same two-press semantics as
-   Backspace. With the gate in, `SetCursorTile` passes bSnapToValidPosition
-   EXPLICITLY false: every historical "push never lands" was the mouse re-push
-   (snap was never the culprit), and snap ON slid a floor-up push two tiles
-   sideways (`GetClosestValidCursorPosition`, measured 2026-08-20) where the
-   guard needs byte-exact pawn/reader agreement. Also noted:
-   `XCom3DCursorMouse.CursorSnapToFloor` is overridden to a no-op (floor keys
-   must keep setting exact Z, which they do), and `XComPathingPawn.Tick` hides
-   everything while `UIReplay` is on the stack (it is, permanently, in some
-   sessions — though the 2026-08-19 mission's stack was
-   UISpecialMissionHUD/UITurnOverlay/UITacticalHUD/UIUnitFlagManager/
-   UIEventNotices, with no UIReplay). Then: object scanner (comma/period +
-   PageUp/Dn reserved), vantage read (V), interact-at-cursor.
-4. Tactical narration and bridge v2 are BUILT (2026-08-20) and **VERIFIED LIVE
-   2026-08-21 on Gatecrasher**, together with the targeting layer, the tile
-   cursor, the object scanner and the shot HUD — see **Bridge v2** and
-   **Tactical combat narration** above. The run also found the ordering defect
-   that fix split across the two visualization windows. Three follow-ups still
-   open: three of the nine events (panic, shields, evac) went unexercised; the
-   menu navigator, the tile reader and the `X2Access_Speak` handler still call
-   `TTS` directly rather than `Narrator::Say`, so the scrollback ring holds
-   narration only (harmless today — a recipe attaching drops the tactical queue
-   via `TacticalHUD::OnTick`); and `/tactical`, the dev endpoint that would show
-   mode, gate reasons and the last narration lines, is not built. `just
-   dev-speech` covers most of it already, since it marks interrupting lines
-   with `!`.
-   Three wording defects the same run exposed, all visible by shape-counting the
-   speech ring (`grep -oP 'TTS!?: "\K[^"]*' | sed 's/[0-9]\+/N/g' | sort |
-   uniq -c` — the cheapest audit this project has). ✅ The noisiest is FIXED: an
-   impassable tile reported reachability too, *"Impassable. Out of range. 3 south,
-   1 west"*, meaningless about a tile nobody can stand on (~99×, against 23 actual
-   moves); the reachability clause is now gated on the tile being enterable, and
-   2026-08-21 the word itself got better — an open-air tile reads *"Ledge, 3 down"*
-   rather than describing a railing exactly like a wall (see the tile-cursor
-   section). Still open: the no-target readout says *"Выстрел, 1 of 5. Нет
-   доступных целей.. No target"* — a doubled full stop and the same fact in two
-   languages, because the localized string already ends in a period and carries
-   the meaning (12×); and recentering says the unit's name three times, *"Shreya
-   Bose. Ally: Shreya Bose. High cover south. Your tile. At Shreya Bose"*.
-5. Events NOT yet narrated, in rough value order: reinforcement drops, the
-   Chosen arriving, objective completion, will/panic thresholds, loot. Each is
-   one more `AddCHEvent` line; the cost is judgement about spam, not code.
-   `UnitMoveFinished` was deliberately dropped — the shipped sources trigger it
+1. `ScriptCall` module (generic find-function-by-name + game-thread call). `game_ui.cpp` hand-rolls
+   this per call site and exports the first pieces (`FindCompanionCDO`, `CallScriptFunction`); the
+   module is the generalization, not a prerequisite.
+2. **Not yet run live** (builds clean, unexercised): geoscape tray, Skyranger briefing, modal/popup
+   recipe, commlink transient reader, armory loadout, personnel roster, commodity list, inside-a-room
+   recipe, selected-unit readout. Each needs a first pass against `just dev-speech` and a shape-count
+   of the speech ring afterwards.
+3. Unexercised paths inside surfaces that HAVE run: tactical narration's panic / shields / evac
+   events; the hacking screen's cancel line and any hack whose slot 0 is `bBadThing`; the ant farm's
+   countdown path (`Status` is empty unless something is building) and its `Delete` re-announce; the
+   SAVE screen (only LOAD was exercised — new-save row, overwrite confirmation, a save completing);
+   the text-entry reader's own announcements (`just dev-log` should carry `TextInput: dialog up (...
+   caret N, selection A..B)`).
+4. Two known wording defects: the no-target readout doubles a full stop and repeats the same fact in
+   two languages (the localized string already ends in a period and carries the meaning); recentering
+   says the unit's name three times.
+5. `Narrator::Say` adoption: the menu navigator, the tile reader and the `X2Access_Speak` handler
+   still call `TTS` directly, so the scrollback ring holds narration only. Harmless today — a recipe
+   attaching drops the tactical queue via `TacticalHUD::OnTick`.
+6. Events NOT yet narrated, in rough value order: reinforcement drops, the Chosen arriving, objective
+   completion, will/panic thresholds, loot. Each is one more `AddCHEvent` line; the cost is judgement
+   about spam, not code. `UnitMoveFinished` was deliberately dropped — the shipped sources trigger it
    only from `DLC_2`'s Alien Ruler code, so it is not a base-game event.
-6. The dialog recipe attaches wherever a `UIDialogueBox` shows, including in
-   the strategy and tactical layers — deliberate (a modal must be readable),
-   but it means the layer takes over input there before those screens have
-   recipes of their own. Its screen lookup caches the newest box, which a
-   presentation-layer change could leave stale; covering dialogs outside the
-   shell should switch that to a screen-stack walk.
-7. Dev harness: `/gui` and `/props` are in (see **Dev harness** above) — built
-   2026-08-19, NOT yet run against a live game. `/tutorial` joined them
-   2026-08-20. `/tile` (the tile reader's state as structured data) is the
-   remainder of phase 3.
-8. The tutorial reader is BUILT and VERIFIED LIVE (2026-08-20, see **Tutorial
-   message reader** above). First run, `Tutorial_01` frame 150, all three text
-   surfaces in one burst: the world flyover "Без сознания", the anchored blade
-   `IWBTest` read out of `m_arrMsgs` **slot 8** (the element the old
-   `kMaxArrayElems = 8` truncated away) with `<img src='rmb_icon' …>` spoken as
-   "right mouse button", and the Flash-only HUD blade recovered through the
-   companion's history walk carrying `[ПРАВАЯ КНОПКА МЫШИ]` — the binding-aware
-   name `%KEY:RMB%` resolves to. Still unobserved: the modal `UITutorialBox`
-   (none had fired yet) and a rejection announcement. Three things it
-   deliberately does not do. It announces that a submission was REFUSED (`InvalidSubmissionCnt` rose)
-   but never where the tutorial wanted the player to go: that reads
-   `XComTutorialMgr.NextPlayerAbilityContext`, which is the 3D marker's data and
-   belongs to the object scanner — two surfaces speaking the same thing would be
-   worse than one. It leaves `X2AccessTileReader.CursorMoveTo` alone, which still
-   says "Moving" for a move the tutorial then vetoes: `ClickToPath` returns
-   `true` before the submission is even attempted (`GameStateMoveUnit` ends in a
-   bare `return true` and `LatentSubmitGameStateContext` is asynchronous), so
-   "Moving" can only ever mean *submitted* — anywhere, not just in the tutorial.
-   And it reads plain world messages only INSIDE the tutorial; turning that on
-   generally needs the overlap with `X2AccessTacticalEvents` measured live first
-   (`/tutorial` prints exactly what would be spoken, which is how to measure it).
-9. Hacking screen phases 1-3 are BUILT and VERIFIED LIVE (recon and phasing in
-   `docs/hacking-screen-recon.md`): phases 1-2 on the tutorial door 2026-08-20 —
-   card 3 reading back "Selected" proves the D-pad write landed on the game's
-   own field — and phase 3 on a REAL mission 2026-08-21, which spoke
-   *"РАЗБЛОКИРОВАНО: Обезвредить детонатор, Вражеский протокол. Нажмите любую
-   клавишу"* after a 4 percent gamble landed. That run also retired the open
-   inference, in the direction that made the shipped code wrong:
-   `m_rewardsTaken` does not index the awarded cards, it counts LIT panels, and
-   the two coincide only when the player selected card 2 — which is what the run
-   happened to do. See **Hacking screen** above for the rule that replaced it.
-   Still unexercised: the cancel line (`Escape` out of the pad) and any hack
-   whose slot 0 is `bBadThing`, where a miss has to name the penalty. ⚠ Three
-   voices can land on the hack outcome — the reveal line
-   (everywhere), the `UIWorldMessageMgr` flyover poll (tutorial only today) and
-   `X2AccessTacticalEvents` / `X2AccessReplayNarration` — and they do not all
-   fire on the same mission, so check each where it actually fires. Phase 4 is
-   the remaining work: a pre-commit odds read via
-   `XComGameState_Ability.GetUISummary_HackingBreakdown`, the spoken form of the
-   mouse-hover-only `UITacticalHUD_HackingTooltip`, so a player can judge a hack
-   before spending the action point.
-10. The Avenger's ant farm is BUILT and VERIFIED LIVE (2026-08-21, see **Avenger
-    ant farm** above; `docs/avenger-view-recon.md` §11 is the design, §12 the
-    run). Three bugs were found and fixed the same day — markup reaching speech,
-    English condition words the widget already owned localized, and one position
-    phrase that contradicted the graph. What is still unexercised, in order of
-    how much it costs a player:
-    ✅ **Inside a room is BUILT** (2026-08-21, the `avenger room` recipe — see
-    **Inside a room** above and recon §13) and answers the silence §12 recorded:
-    `UIFacility`'s navigator is empty because NO FIXED ROOM HAS STAFF SLOTS, and
-    the room's real menu was one screen down in `UIAvengerHUD.Shortcuts` all
-    along. Not yet run live. **The countdown path has never run**: `Status` was empty on
-    every single read because nothing on the ship was building, so construction
-    time, "PAUSED" and clearing are all unproven. **`Delete` was never pressed**
-    (no `vk 0x2E` in the log), so the re-announce key is untested.
-    One measurement is already instrumented and needs no setup: `LogRoomGeometry`
-    dumps every overlay's own `m_RoomLocation` plus `RoomMapIndex` once per grid
-    install, so the NEXT run hands over the real coordinates. Use them to replace
-    the seven hand-written position phrases for the fixed rooms with measured
-    ones (the buildable core's `row R, column C` is already exact, straight from
-    the graph) — and to check, for the first time, that `FacilityOverlays` really
-    is sorted into MapIndex order, which the whole index scheme assumes.
-    ✅ **The commodity list — the big one — is BUILT** (2026-08-21, see **The
-    commodity list** above and recon §14): `UIChooseResearch` and the twelve
-    other `UIInventory` screens, the card included. NOT yet run live, and §14.7
-    lists what the first pass has to answer — chiefly that Tab reaches a card
-    carrying cost, days and the write-up; that the card is never one row stale;
-    that `UIItemCard`'s two cost captions are not EMPTY at runtime (the §13.7
-    localized-var trap, whose tell is a double space in the ring); and that the
-    post-mission loot screen still closes on Enter, which is §14.4's reasoned fix
-    rather than a measured one.
-    ✅ **The personnel roster is BUILT** (2026-08-21, the `personnel roster`
-    recipe — see **The personnel roster** above and recon §15), together with the
-    fix that makes it reachable at all: the Bar's *"Nothing to do here"* was the
-    room reader never looking at `UIFacility.m_kRoomContainer`, and the Bar's
-    button is the door to the memorial roster. Neither has run live. What the
-    first pass has to answer: that the bottom-bar button SPEAKS its localized
-    label and that `FXS_BUTTON_A` actually presses it (Enter reaches nothing
-    there); that the roster's rows read a soldier's rank, name, class and status
-    rather than falling back to *"Soldier"*; that focus LANDS on the list rather
-    than on the tab strip; that pressing a sort column re-sorts and the
-    re-announcement says the new direction; and that the memorial's four numeric
-    columns arrive with their captions instead of as bare numbers.
-    After that, in value order: the staff drop-down (`UIPersonnel_DropDown`,
-    which is a `UIPanel` and NOT part of this family), the room's Flash-only
-    status panels via the companion, then the resource strip, the to-do widget
-    and the event queue — §2 of the recon, and note §2.5 was CORRECTED: the event
-    queue IS retained (`UIEventQueue_ListItem.Title` / `DaysValue`, read live).
-11. The selected-unit readout is BUILT (2026-08-21, see **Selected unit** above)
-    and **not yet run live**. What the first Gatecrasher run has to establish, in
-    order: that the switch line fires on plain Tab and does NOT fire twice or
-    stutter during the enemy turn (the `ControllingUnitVisualizer` follow is the
-    thing to watch, and `just dev-speech` marks the interrupting lines); that the
-    `;` block reads a soldier's CLASS and its buff/debuff names localized rather
-    than blank; that `NumAllActionPoints()` tracks the pips as the soldier
-    spends, moves and goes on overwatch; and that the per-mission reset really
-    does fire once — shape-count the speech ring afterwards
-    (`grep -oP 'TTS!?: "\K[^"]*' X2Access.log | sed 's/[0-9]\+/N/g' | sort |
-    uniq -c | sort -rn`), where a healthy run shows one switch line per Tab and a
-    "No actions left" clause that actually appears. Two clauses have never been
-    exercised at all: the mind-controlled-ADVENT case, which is the only way a
-    non-soldier reaches the readout, and "No unit selected".
+7. The dialog recipe attaches wherever a `UIDialogueBox` shows, including in the strategy and tactical
+   layers — deliberate (a modal must be readable), but it means the layer takes over input there
+   before those screens have recipes of their own. Its screen lookup caches the newest box, which a
+   presentation-layer change could leave stale; covering dialogs outside the shell should switch that
+   to a screen-stack walk.
+8. Dev harness: `/tile` (the tile reader's state as structured data) and `/tactical` (mode, gate
+   reasons, last narration lines) are the remaining endpoints. `just dev-speech` covers most of the
+   latter already, since it marks interrupting lines with `!`.
+9. Hacking phase 4: a pre-commit odds read via
+   `XComGameState_Ability.GetUISummary_HackingBreakdown`, the spoken form of the mouse-hover-only
+   `UITacticalHUD_HackingTooltip`, so a player can judge a hack before spending the action point.
+   ⚠ Three voices can land on the hack outcome — the reveal line (everywhere), the `UIWorldMessageMgr`
+   flyover poll (tutorial only today) and `X2AccessTacticalEvents`/`X2AccessReplayNarration` — and
+   they do not all fire on the same mission, so check each where it actually fires.
+10. Strategy-layer surfaces still unread, in value order: the staff drop-down (`UIPersonnel_DropDown`,
+    a `UIPanel` and NOT part of the personnel family), the room's Flash-only status panels via the
+    companion, the resource strip, the to-do widget and the event queue (`avenger-view-recon.md` §2 —
+    note §2.5 was CORRECTED: the event queue IS retained, `UIEventQueue_ListItem.Title` /
+    `DaysValue`). Then the tactical HUD recipe itself.
 
-When researching for this project, focus on engine/native/UE3 technicals.
-Do not survey the accessibility-mod landscape — the author knows it better
-than web research can capture (see memory).
+When researching for this project, focus on engine/native/UE3 technicals. Do not survey the
+accessibility-mod landscape — the author knows it better than web research can capture (see memory).
