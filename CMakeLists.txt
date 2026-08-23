@@ -171,13 +171,24 @@ if(MSVC)
     # warning there is worth seeing. Only the generated FString::ToString wchar->char narrowing
     # is silenced; nothing in our own code warns at /W3.
     set_source_files_properties(src/gui_dump.cpp PROPERTIES COMPILE_FLAGS "/wd4244")
-    # TUs including the full generated SDK — huge headers need /bigobj, and the generated
-    # code is not warning-clean
+    # The one TU that really does include the full generated SDK (SdkHeaders.hpp): huge headers
+    # need /bigobj, and the generated code is not warning-clean.
     set_source_files_properties(
-        src/game_ui.cpp
         src/sdk_layout_checks.cpp
         PROPERTIES COMPILE_FLAGS "/w /bigobj"
     )
+    # game_ui.cpp is NOT that TU and never was — it takes GameDefines + Core_structs + Core_classes
+    # and stops there, on purpose (see its own header comment). It shared the /w line above purely
+    # by proximity, which silenced every warning in the file where EVERY engine read in the mod
+    # lives: explicit offsets, hand-rolled length arithmetic, the guarded FString copies. C4018
+    # (signed/unsigned compare), C4267 and C4244 (narrowing) in a bounds check are precisely the
+    # bug that truncates a payload and reads to a blind player as "this screen has nothing more"
+    # — the failure mode the size-the-buffer-from-the-data rule in CLAUDE.md was written for. So
+    # it keeps default warnings, for the same reason stated for gui_dump.cpp above. If a generated
+    # header genuinely warns here, silence it BY NUMBER (/wd####) as line ~173 does; never with a
+    # blanket /w. /bigobj stays: it costs nothing and this TU is large enough not to gamble on the
+    # section limit.
+    set_source_files_properties(src/game_ui.cpp PROPERTIES COMPILE_FLAGS "/bigobj")
 endif()
 
 # Output as .asi for Ultimate ASI Loader compatibility
