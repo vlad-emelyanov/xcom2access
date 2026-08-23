@@ -235,10 +235,14 @@ void Say(Channel channel, const std::string& text, Source source)
     // audible and shows up in the speech ring's shape count, while a line dropped is
     // indistinguishable from nothing having happened, and is therefore never reported.
     //
-    // A genuinely DOUBLED DELIVERY of one event is the producer's job, and both cases this used
-    // to stand in for are handled there: X2AccessTacticalEvents.BuildAbilityLine skips the
-    // interrupt pass (AbilityActivated re-triggers per interrupt step) and BuildDamageLine SUMS
-    // the DamageResults entries stamped with this context instead of emitting one line each.
+    // A genuinely DOUBLED DELIVERY of one event is the producer's job, because only the producer
+    // can see the ObjectID that tells two identical lines apart — the very fact whose absence here
+    // makes the double-kill case legitimate. Both cases this used to stand in for are guarded
+    // there, in X2AccessTacticalEvents: BuildAbilityLine skips the interrupt pass (AbilityActivated
+    // re-triggers per interrupt step), and OnUnitTakeEffectDamage claims (game state, unit) through
+    // ClaimDamageNarration before it speaks, because one grenade landing as several DamageResults
+    // entries fires the event once per entry. ⚠ BuildDamageLine's summing does NOT cover that: it
+    // makes each line's CONTENT right and leaves every one of those deliveries re-computing it.
     //
     // The one suppression that survives is DIRECTED, which is exactly what makes it safe: the
     // game already put these words on screen itself. See Source in narrator.h for why it runs

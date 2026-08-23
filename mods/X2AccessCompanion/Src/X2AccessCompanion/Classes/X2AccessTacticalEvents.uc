@@ -27,7 +27,23 @@
 //
 // All output goes through X2AccessNarrator, which owns channel and queueing.
 
-class X2AccessTacticalEvents extends X2EventListener;
+// `config(Game)` is not a preference, it is the only route to per-class storage: a static function
+// has nowhere else to remember anything, and the compiler rejects `default.X = ...` outright unless
+// X is a config property ("Can't change default values of non-config properties") — the same reason
+// X2AccessNarrator carries the specifier. No XComGame.ini section is shipped for this class, so the
+// values below start at their declared defaults every launch and nothing is ever written back
+// (SaveConfig is never called).
+//
+// GC rule: this class's default object holds VALUE-TYPED state only. The damage memo is an int and
+// a string of ints precisely so it never has to hold a unit or a game state.
+class X2AccessTacticalEvents extends X2EventListener config(Game);
+
+// The damage memo. NarratedDamageFrame is the HistoryIndex the claimed set belongs to — unique per
+// game state and assigned long before visualization runs — and NarratedDamageUnits holds the
+// ObjectIDs already spoken for it, each wrapped in pipes so a search for |3| cannot match |37|.
+// Read only through ClaimDamageNarration, which is where the reasoning lives.
+var config int NarratedDamageFrame;
+var config string NarratedDamageUnits;
 
 static function array<X2DataTemplate> CreateTemplates()
 {
@@ -199,16 +215,68 @@ static function string BuildAbilityLine(XComGameState_Ability AbilityState, XCom
 
 static function EventListenerReturn OnUnitTakeEffectDamage(Object EventData, Object EventSource, XComGameState GameState, Name Event, Object CallbackData)
 {
+	local XComGameState_Unit Unit;
 	local string Line;
 
 	if (GameState == none)
 		return ELR_NoInterrupt;
 
-	Line = BuildDamageLine(XComGameState_Unit(EventData), GameState.GetContext());
+	Unit = XComGameState_Unit(EventData);
+	if (Unit == none)
+		return ELR_NoInterrupt;
+
+	// ⛔ ONE line per (unit, game state), and only REMEMBERED state can enforce that — which is the
+	// whole reason the memo exists. XComGameState_Unit.TakeDamage appends exactly one DamageResults
+	// entry and fires exactly one 'UnitTakeEffectDamage' (:5844, :5874), so a grenade that lands as
+	// three entries against one unit delivers three events. We take them on
+	// ELD_OnVisualizationBlockCompleted, by which point all three are queued against the SAME unit
+	// state object with its array already complete — so every argument this function receives is
+	// identical on all three passes, and BuildDamageLine, a pure function of (unit, context),
+	// re-sums the same totals into the same sentence three times. Nothing stateless can pick one of
+	// three indistinguishable calls: in particular a "was I handed the LAST entry?" test is true on
+	// all three and so selects none of them.
+	//
+	// Claiming BEFORE building is deliberate. The answer cannot differ between the passes, so a
+	// claim means "this pair is decided" whether that decision turned out to be a line or silence.
+	if (!ClaimDamageNarration(GameState.HistoryIndex, Unit.ObjectID))
+		return ELR_NoInterrupt;
+
+	Line = BuildDamageLine(Unit, GameState.GetContext());
 	if (Line != "")
 		class'X2AccessNarrator'.static.Combat(Line);
 
 	return ELR_NoInterrupt;
+}
+
+// True the first time this unit is claimed within this game state, false on every later pass.
+//
+// ⛔ The key is (state, unit) and never the TEXT, which is exactly what makes it safe where a text
+// dedup is not: two different ADVENT Troopers produce byte-identical lines and BOTH must be spoken,
+// and they are told apart here because their ObjectIDs differ. The same unit hit again later in the
+// mission is a different game state and claims afresh.
+//
+// A SET per state rather than one last-claimed slot, because nothing promises the deferred queue
+// hands a state's events to us grouped by unit. A delivery order of A, B, A is enough to defeat a
+// single slot: B evicts A's claim, and A's second event then reads as a first one and speaks the
+// duplicate this function exists to stop. The set costs nothing to be right instead — it holds only
+// the units one game state damaged, a handful even for a big AoE, and is retired whole the moment
+// the frame changes.
+static function bool ClaimDamageNarration(int HistoryIndex, int UnitID)
+{
+	local string Key;
+
+	if (default.NarratedDamageFrame != HistoryIndex)
+	{
+		default.NarratedDamageFrame = HistoryIndex;
+		default.NarratedDamageUnits = "";
+	}
+
+	Key = "|" $ string(UnitID) $ "|";
+	if (InStr(default.NarratedDamageUnits, Key) != INDEX_NONE)
+		return false;
+
+	default.NarratedDamageUnits = default.NarratedDamageUnits $ Key;
+	return true;
 }
 
 // What one unit took from ONE game state, or "" when that state did nothing to it. Shared with the
@@ -227,6 +295,11 @@ static function string BuildDamageLine(XComGameState_Unit Unit, XComGameStateCon
 	// this hit. The game stamps every entry with the context that caused it (XComGameState_Unit
 	// .TakeEffectDamage), which is what makes summing this state's entries exact — and summing
 	// matters: one grenade can land as several entries against the same unit.
+	//
+	// ⚠ Summing fixes what a line SAYS, never how many times it is said. Those same several entries
+	// are several events, and each of them re-sums this identical total; the COUNT is a separate
+	// bug with a separate fix, and it lives in OnUnitTakeEffectDamage's ClaimDamageNarration. The
+	// replay narrator needs no such guard — it visits each unit of a frame once by construction.
 	for (i = Unit.DamageResults.Length - 1; i >= 0; i--)
 	{
 		if (Unit.DamageResults[i].Context != Context)
@@ -430,4 +503,11 @@ static function string HitResultWord(EAbilityHitResult Result)
 		return Word;
 
 	return string(Result);
+}
+
+defaultproperties
+{
+	// -1 is not a real HistoryIndex, so the first damage of a session always resets the claimed set
+	// rather than starting out sharing a frame with state 0.
+	NarratedDamageFrame=-1
 }
