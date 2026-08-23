@@ -20,7 +20,7 @@
 
 #include "transient_reader.h"
 
-#include "game_ui.h"
+#include "script_call.h"
 #include "log.h"
 #include "narrator.h"
 #include "ue3_reflection.h"

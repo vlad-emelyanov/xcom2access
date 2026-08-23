@@ -1,5 +1,5 @@
 #include "free_aim.h"
-#include "game_ui.h"
+#include "script_call.h"
 #include "input_arbiter.h"
 #include "mouse_gate.h"
 #include "narrator.h"

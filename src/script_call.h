@@ -1,0 +1,61 @@
+#pragma once
+
+// The companion bridge: calling UnrealScript from native, and cleaning what it hands back.
+//
+// This is the half of `game_ui.h` that has nothing to do with widgets. A tactical reader talks
+// to SCRIPT — it asks `X2AccessTileReader` what is on a tile, it asks `X2AccessUnitReader` about
+// the selected soldier — and it has no business reaching for `StrategyMapView` or `TrayIcon`.
+// Six TUs (free_aim, narrator, object_scanner, unit_info, mouse_gate, transient_reader) used
+// between two and three of the declarations below and were including all ~1460 lines of the UI
+// interface to get them; now the include graph says what each layer is allowed to know.
+//
+// CLAUDE.md's "Current state / next steps" §1 names the eventual module ("generic
+// find-function-by-name + game-thread call"). This header is its interface; the implementation
+// still lives in game_ui.cpp, where the SEH-guarded reflection primitives it is built on are.
+// Splitting the .cpp is a separate move and needs the raw primitives extracted first.
+//
+// ⛔ EVERYTHING HERE IS GAME THREAD ONLY — outbound ProcessEvent from the Tick drain, never from
+// the WNDPROC or the init thread (CLAUDE.md, Hard rules).
+
+#include <string>
+
+namespace GameUI {
+
+// ---- outbound calls into companion-mod script ----
+
+/// The class default object of a script class, found by its "Default__<ClassName>" object
+/// name. Cached; revalidated by re-reading the object's name each call; a full GObjects scan
+/// runs at most once a second while the object is genuinely missing. Game thread only.
+void* FindCompanionCDO(const char* className);
+
+/// Resolve `funcName` on the object's class chain (cached per class) and ProcessEvent it.
+/// `params` must match the UFunction's parameter layout. Game thread only.
+bool CallScriptFunction(void* obj, const char* funcName, void* params);
+
+/// The UFunction object for `className.funcName`, resolved through the class object's field
+/// chain (supers included) — for callers that need the function OBJECT rather than a call
+/// (the mouse gate rewrites its dispatch fields). Cached; a missing class is retried at most
+/// once a second. Returns null until resolvable. Game thread only.
+void* FindScriptFunction(const char* className, const char* funcName);
+
+/// The UFunction object for a function declared inside a `state`, which lives one level deeper
+/// than FindScriptFunction looks: the state is itself a UStruct on the class's field chain, and
+/// its functions hang off that. Needed because the same function name can be declared once per
+/// state (XComTacticalInput declares Mouse_CheckForFreeAim in both targeting states), so the
+/// state must be named to pick one. Cached per triple; returns null until resolvable.
+/// Game thread only.
+void* FindStateFunction(const char* className, const char* stateName, const char* funcName);
+
+// ---- and the cleaning every payload that comes back needs ----
+
+/// Minimal P10 text cleaning: strip markup tags, collapse whitespace.
+///
+/// It rides in this header rather than the UI one because that is where its callers are: every
+/// string a companion function returns is a GAME string, coloured and marked up exactly like the
+/// ones on a widget, and all three script-bridge consumers outside game_ui.cpp (avenger.cpp,
+/// dropship.cpp, transient_reader.cpp) apply it to a payload rather than to a widget read. The
+/// wire parser takes it as a function POINTER for the same reason — one implementation of "strip
+/// the markup", kept outside the parser so the parser stays engine-free.
+std::string CleanText(const std::string& text);
+
+} // namespace GameUI

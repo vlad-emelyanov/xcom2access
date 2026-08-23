@@ -1,5 +1,5 @@
 #include "mouse_gate.h"
-#include "game_ui.h"
+#include "script_call.h"
 #include "log.h"
 
 #define WIN32_LEAN_AND_MEAN

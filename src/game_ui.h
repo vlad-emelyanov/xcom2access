@@ -9,6 +9,12 @@
 // immediately after the read that produced them, on the game thread — never stored across
 // frames (store them in ControlId::Reference only as comparison tokens, per the kernel's rule).
 
+// The companion bridge (FindCompanionCDO / CallScriptFunction / Find*Function / CleanText) used
+// to be declared here too. It moved to its own header because it is not a UI interface and six
+// TUs wanted only it; this include keeps every existing consumer of game_ui.h seeing the same
+// set of names it always did.
+#include "script_call.h"
+
 #include <string>
 #include <vector>
 
@@ -146,8 +152,8 @@ bool ClickButton(void* button);
 /// bypass — so kernel-driven moves must plumb it explicitly. Game thread only.
 bool PlayNavSound();
 
-/// Minimal P10 text cleaning: strip markup tags, collapse whitespace.
-std::string CleanText(const std::string& text);
+// CleanText is declared in script_call.h, included above — the recipes here call it on widget
+// text just as the bridge's consumers call it on payloads.
 
 // ---- UIMechaListItem rows (shared: settings AND the new-game flow screens) ----
 //
@@ -1370,29 +1376,11 @@ bool ActivateHudVerb(const StrategyMapView& view, const HudVerb& verb);
 bool ActivateTraySelection(const StrategyMapView& view);
 
 // ---- outbound calls into companion-mod script ----
-
-/// The class default object of a script class, found by its "Default__<ClassName>" object
-/// name. Cached; revalidated by re-reading the object's name each call; a full GObjects scan
-/// runs at most once a second while the object is genuinely missing. Game thread only.
-void* FindCompanionCDO(const char* className);
-
-/// Resolve `funcName` on the object's class chain (cached per class) and ProcessEvent it.
-/// `params` must match the UFunction's parameter layout. Game thread only.
-bool CallScriptFunction(void* obj, const char* funcName, void* params);
-
-/// The UFunction object for `className.funcName`, resolved through the class object's field
-/// chain (supers included) — for callers that need the function OBJECT rather than a call
-/// (the mouse gate rewrites its dispatch fields). Cached; a missing class is retried at most
-/// once a second. Returns null until resolvable. Game thread only.
-void* FindScriptFunction(const char* className, const char* funcName);
-
-/// The UFunction object for a function declared inside a `state`, which lives one level deeper
-/// than FindScriptFunction looks: the state is itself a UStruct on the class's field chain, and
-/// its functions hang off that. Needed because the same function name can be declared once per
-/// state (XComTacticalInput declares Mouse_CheckForFreeAim in both targeting states), so the
-/// state must be named to pick one. Cached per triple; returns null until resolvable.
-/// Game thread only.
-void* FindStateFunction(const char* className, const char* stateName, const char* funcName);
+//
+// Declared in script_call.h (included at the top), because they are not a UI interface: the six
+// TUs that want FindCompanionCDO / CallScriptFunction / FindScriptFunction / FindStateFunction
+// and nothing else here should not be reading this file to find them. The implementation is
+// still in game_ui.cpp, next to the reflection primitives it is built on.
 
 // ---- dev harness only: raw object access for the /gui and /props dumps ----
 //

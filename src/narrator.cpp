@@ -1,5 +1,5 @@
 #include "narrator.h"
-#include "game_ui.h"
+#include "script_call.h"
 #include "tts.h"
 #include "ue3_reflection.h"
 #include "log.h"

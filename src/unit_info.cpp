@@ -1,5 +1,5 @@
 #include "unit_info.h"
-#include "game_ui.h"
+#include "script_call.h"
 #include "input_arbiter.h"
 #include "narrator.h"
 #include "tactical_hud.h"
