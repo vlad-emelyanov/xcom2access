@@ -1,4 +1,5 @@
 #include "tutorial_reader.h"
+#include "Graph/GraphAnnouncer.hpp"
 #include "game_ui.h"
 #include "input_arbiter.h"
 #include "narrator.h"
@@ -355,19 +356,14 @@ std::string AnchorName(int objectId)
 // own punctuation and sometimes does not (a title never does), so neither "always add a period"
 // nor "never add one" is right — the first produced "...одно действие.. Press Enter to close." live, and a screen
 // reader gives that stutter its own pause.
+//
+// ⛔ That rule is the kernel's AppendPhrase and is not re-derived here. This used to carry its own
+// copy of the terminator set; three hand-written copies across the project is how the same game
+// string came to be voiced two ways depending on which surface read it. `". "` rather than the
+// default `", "` because these parts are whole sentences.
 void AppendSentence(std::string& text, const std::string& next)
 {
-    if (next.empty())
-        return;
-    if (text.empty()) {
-        text = next;
-        return;
-    }
-    const char last = text.back();
-    if (!strchr(".!?:;", last))
-        text += '.';
-    text += ' ';
-    text += next;
+    X2Access::Graph::AppendPhrase(text, next, ". ");
 }
 
 std::string ModalSpeech(const GameUI::TutorialBoxView& view)

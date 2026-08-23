@@ -1,5 +1,6 @@
 #include "dropship.h"
 
+#include "Graph/GraphAnnouncer.hpp"
 #include "game_ui.h"
 #include "input_arbiter.h"
 #include "log.h"
@@ -78,17 +79,15 @@ std::string ReadBriefingWords()
 /// the game ends plenty of them with ':' or '.' — "LOCATION:" and "OBJECTIVE:" are literally two
 /// of them — so a bare ", " join would voice "ЗАДАЧА:," at the player. A self-punctuated part
 /// takes a plain space; everything else takes the separator.
+///
+/// ⛔ The rule itself is NOT re-derived here. This used to spell the terminator set out by hand,
+/// which is how the project ended up voicing one game string two ways depending on which surface
+/// read it. `". "` rather than the default `", "` because the parts are whole SENTENCES the game
+/// wrote — and a self-punctuated tail still takes a plain space, which is why this cannot just
+/// append a period of its own.
 void AppendPart(std::string& out, const std::string& part)
 {
-    if (part.empty())
-        return;
-    if (!out.empty()) {
-        const char last = out.back();
-        const bool selfPunctuated
-            = last == '.' || last == '!' || last == '?' || last == ':' || last == ';';
-        out += selfPunctuated ? " " : ". ";
-    }
-    out += part;
+    X2Access::Graph::AppendPhrase(out, part, ". ");
 }
 
 /// The screen's own status line: the loading text, or the launch prompt once the map is there.
