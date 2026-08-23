@@ -1097,9 +1097,20 @@ bool ReadOptionRowRaw(void* item, RawOptionRow* out)
     // the very bit the campaign start reads (GetSelectedSecondWaveOptionNames) — verified live
     // 2026-08-19 with the box ticked on screen. Reading state only in the Type branch made those
     // rows report "unchecked" forever, which looked exactly like a toggle that would not take.
-    // The VISIBLE widget is the honest answer, and preferring it is safe: SetWidgetType hides
-    // the widgets it switches away from, so a visible checkbox means the row is showing one.
-    // State comes from the checkbox whenever there is one; only the row's KIND needs it visible.
+    //
+    // ⚠ WHERE THAT Description COMES FROM, since it would not reproduce for anyone reading
+    // SrcOrig: the GAME types those rows Checkbox (UIShellDifficulty.uc:472, and again inside
+    // UpdateDataCheckbox at UIMechaListItem.uc:549). OUR OWN companion rewrites them —
+    // UIScreenListener_Difficulty.FixSecondWaveItems, once per Second Wave panel open, so that
+    // Enter stops being eaten by a bReadOnly checkbox. So on this screen the Type tag is a field
+    // two of our layers touch, and it must never be read as evidence about the engine.
+    //
+    // The rule survives that correction, because the reason to prefer the VISIBLE widget is the
+    // GAME's: SetWidgetType hides the widgets it switches away from and leaves their pointers
+    // behind, so presence alone means nothing while visibility means the row is showing one.
+    // Reading the widget POINTER rather than the tag is also what makes this immune to a Type a
+    // mod — ours included — has rewritten. State comes from the checkbox whenever there is one;
+    // only the row's KIND needs it visible.
     void* checkbox = ReadPtrRaw(item, kMechaCheckboxOffset);
     if (checkbox) {
         out->checked = (ReadU32Raw(checkbox, kCheckboxFlagsOffset) & kCheckboxChecked) != 0;
