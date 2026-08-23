@@ -20,6 +20,27 @@ own hover tooltip.
 - ⛔ **Hover is moved as a symmetric IN/OUT pair**, because IN saves the camera location and OUT
   restores it — an unmatched IN overwrites the saved location with a site the player never asked
   to return to.
+- ⛔ **Focus write-back is THREE calls, not two, and the missing one cost the layer its only verb.**
+  `UINavigator.SetSelected(Control)` does NOT fire `OnSelectedIndexChanged` (`UINavigator.uc:677` —
+  it assigns `SelectedIndex`, calls `OnReceiveFocus()`, returns); `Next()`/`Prev()`/
+  `SelectFirstAvailable*` do. So claiming Left/Right replaced the game's only route into
+  `UIStrategyMap.OnNavigationChanged`, and `SelectedMapItem` froze on whatever `OnInit`'s one-shot
+  `OnNavigationChanged(0)` had left there — tray icon 0, for the whole session. `Enter` acts on
+  `SelectedMapItem` and not on the icon it is handed, so it flew nowhere; and when icon 0 happened
+  to be the Haven the Avenger was parked on, the screen's Haven case answered `ToggleScan()` — the
+  player pressed *fly here* and heard the scan start, indistinguishable from `Space`. The fix is
+  `SetSelectedMapItem(pin, NavigationSelect: true)` called directly, NOT the delegate: the delegate
+  drags in an icon-focus loop that is the game's other route into the camera save/restore pair the
+  hover already owns, and it carries a `CanBeScanned()` filter that would leave the selection on
+  the previous pin.
+- ⛔ **Activation is the mouse's own click on the ICON — `OnMouseEvent(FXS_L_MOUSE_UP_DELAYED)`,
+  400, never 391.** `OnClickedDelegate` was bound by `SetScanSite`/`SetMissionSite` to that icon's
+  own site, so the target is decided by which icon gets the event and by nothing else. The
+  screen-level `FXS_BUTTON_A` route is the one that reads `SelectedMapItem` and ignores what it is
+  handed — the screen-accept trap in `CLAUDE.md` — and guarding that dependency is worse than not
+  having it. ⚠ The icon's OWN `FXS_BUTTON_A` handler (`UIStrategyMap_MissionIcon.uc:228`) is a trap
+  too: its else branch sends 391, which `UIIcon.OnMouseEvent` has no case for, so it would give you
+  travel that works only on the site you are already parked on.
 - Claiming the arrows costs nothing back (Ctrl+arrow still pans, by the leniency rule) and buys
   correctness: panning scrolls a pin off screen, `UpdateVisuals` gates on `bOnScreen`, and the
   reader would otherwise describe class defaults.
@@ -50,6 +71,23 @@ speech is serial.
   before dispatching (`eAlert_Contact` refuses when contact is unaffordable,
   `eAlert_TrainingComplete` routes Enter to cancel), so sending the key keeps every branch a poke
   would lose.
+- ⛔ **`UIAlert`'s WORDS come from the Flash command-queue capture** (`src/flash_shadow.cpp`), not
+  from the screen and not from a Flash path read. All 106 `Build*Alert` functions push their text
+  through `LibraryPanel.MC.BeginFunctionOp("Update…")` + `QueueString` and retain none of it, so
+  the capture — which records that argument list in flight — is the only reading that is both
+  complete and in display order. The two older paths remain as fallbacks in trustworthiness order:
+  the screen's `m_str<Stem><Suffix>` localized vars (right for the 81 of 118 names that follow the
+  convention, but blind to which suffixes the panel actually SHOWS, so it over-reads), then the
+  per-symbol Flash field sweep (blind to any `XComScrollingTextField`, whose text sits behind an
+  AS2 getter `GetVariableString` cannot run). `just dev-flashqueue` prints what was captured.
+  - The captured argument list is NOT all speech: `BuildGOpsAlert` queues title, subtitle, body,
+    **image path**, confirm, ignore. Two filters clean it, and both are exact rather than clever
+    where they can be — **button labels are matched out by string equality** against the labels
+    already read off `ButtonGroup.Button0/1` (which is why the buttons are read FIRST), and asset
+    references are dropped by a deliberately narrow test (no whitespace at all, plus a URL scheme
+    or a `Package.Asset` dot in the ASCII path alphabet — so a one-word title survives, and so does
+    any title in a non-Latin script). **Every asset drop is logged**, so a live run enumerates what
+    the filter rejected instead of a line going silently missing.
 - The transient half is the unglamorous file with the highest value in it: `UINarrativeCommLink`
   is how essentially ALL story dialogue in XCOM 2 is delivered, and without it a blind player gets
   the voice acting and nothing else — nothing at all in a language whose VO they do not have.

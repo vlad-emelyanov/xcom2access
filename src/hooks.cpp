@@ -16,6 +16,7 @@
 #include "tutorial_reader.h"
 #include "narrator.h"
 #include "process_event_hook.h"
+#include "flash_shadow.h"
 #include "ue3_reflection.h"
 #include "tts.h"
 #include "log.h"
@@ -75,6 +76,11 @@ static void RegisterEventHandlers() {
             // answers on a frame where a subsystem below is misbehaving — the harness is most
             // useful precisely when the thing it is observing is broken.
             DevServer::Pump();
+            // The Flash command-queue capture installs itself the first frame UIMovie
+            // resolves, then costs one bool. It has to be early and unconditional: a panel's
+            // words go past exactly once, on the frame it paints, which for a popup is well
+            // before any recipe attaches to read them.
+            FlashShadow::OnTick();
             // Deferred FName resolution scans GNames — once a second is plenty, and hammering
             // it every pump while GNames is still growing during load is asking for faults.
             static uint64_t sLastRetryMs = 0;

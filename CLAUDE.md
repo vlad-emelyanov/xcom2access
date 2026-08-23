@@ -125,7 +125,8 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
 
 One row per screen or subsystem the mod reads. **Check this table before building
 anything that sounds like one of these** — a second reader for a covered screen is
-the failure mode it exists to prevent.
+the failure mode it exists to prevent. The full census of every `UIScreen` class in
+the game — covered, TODO with priority, or out of scope — is `docs/ui-inventory.md`.
 
 ⛔ **Read a surface's own rules before editing it.** `docs/surfaces/*.md` holds them,
 each earned by a live bug: which widget retains the words, which handler activation
@@ -156,7 +157,7 @@ in **Hard rules** below instead.
 | Choose facility | `game_ui.cpp` | `X2AccessBuildFacilityReader.uc`, `choose facility` | surfaces/avenger.md | `avenger-view-recon.md` §16 |
 | Geoscape tray | `geo_scanner.cpp` | `X2AccessGeoScanner.uc`, `geoscape tray` | surfaces/strategy.md | `geoscape-recon.md` |
 | Skyranger briefing | `dropship.cpp` | `X2AccessDropshipReader.uc` | surfaces/strategy.md | `dropship-briefing-recon.md` |
-| Modals / alerts | — | `X2AccessPopupReader.uc`, `popup` | surfaces/strategy.md | `popup-inventory.md` |
+| Modals / alerts | `flash_shadow.cpp` (UIAlert words) | `X2AccessPopupReader.uc`, `popup` | surfaces/strategy.md | `popup-inventory.md` |
 | Commlink / toasts | `transient_reader.cpp` | `X2AccessTransientReader.uc` | surfaces/strategy.md | `popup-inventory.md` |
 | Squad select | — | `X2AccessSquadReader.uc`, `squad select` | surfaces/strategy.md | `squad-select-recon.md` |
 | Armory loadout | — | `X2AccessLoadoutReader.uc`, `armory loadout` | surfaces/strategy.md | `loadout-recon.md` |
@@ -315,6 +316,19 @@ in **Hard rules** below instead.
     cursor-help strings and the tutorial's anchored blades are readable after all. Only the
     *unanchored* HUD blade is genuinely lost to Flash. `UIEventNotices` and
     `UITacticalHUDMessageBanner` retain nothing.
+  - ✅ **A NATIVE function CAN be hooked individually, and it needs no hooking library**: its
+    `UFunction::Func` (+0xF0) already holds its exec thunk, and that one field is what BOTH
+    dispatch paths call — `CallFunction` for a `FUNC_Native` callee, and ProcessEvent itself
+    (`pcVar3 = *(code **)(param_2 + 0xf0)`, decompiled at moduleBase+0x143B50). So chaining one is
+    a POINTER WRITE — save the original, write ours, call theirs — the same mechanism
+    `mouse_gate.cpp` already uses to SUPPRESS, used instead to OBSERVE. `src/flash_shadow.cpp` is
+    the worked example. ⛔ Two limits keep this from being the general answer: the thunk receives
+    the frame with parameters STILL UNEVALUATED (`Code` points at bytecode, so reading an argument
+    means replaying the VM's param pass — the trap `docs/object-scanner-recon.md` §4.6 names), so
+    it is only worth it when the payload is reachable from `this` or from engine state; and the
+    per-function trick does not transfer to SCRIPT functions, whose `Func` is the single shared
+    `ProcessInternal` (pointing that at a thunk is the whole-call-graph hook below, not a targeted
+    one).
   - Reaching script→script traffic would need a second hook on `ProcessInternal`, which would hand
     us the whole script call graph and is the one thing that would change this calculus. It is **not
     virtual** — the UObject vtable block around slot 72 matches UE3's declaration order exactly with
@@ -352,6 +366,22 @@ in **Hard rules** below instead.
   `UIChooseFacility.PopulateList` and `UIButton.SetText`-based upgrade buttons. Check which kind a
   row is before planning the read; do not read a delegate's FName as a label — it would say
   *"OnShowObituaries"* to a Russian player.
+  - ✅ **THERE IS NOW A THIRD OPTION, and for a screen whose words cannot be re-derived it is the
+    right one: catch them IN FLIGHT.** `src/flash_shadow.cpp` chains `UIMovie.CopyCommandQueue`
+    (native `Func` swap, see the hooking fact above) and decodes the movie-wide
+    `UIMovie.CommandQueue` (0x270, `TArray<FASValue>`) at the one instant it is whole — inside
+    that call, which `ProcessQueuedCommands` makes once a frame immediately BEFORE clearing the
+    array and invoking into Flash. ⛔ This is why POLLING that queue never worked and the failed
+    attempt is recorded in `game_ui.cpp`: by the time anything else looks, it is empty. Batches
+    are keyed by `UIMCController.CacheIndex` (via `UIPanel.MC`, 0x2D0), so a surface asks for its
+    own panel's words by cache index; `just dev-flashqueue` prints the lot. Three rules it was
+    built with: only batches carrying a non-empty STRING are kept (the per-frame stream is mostly
+    `_x`/`_y`/`_alpha` churn, and dropping it is what makes an always-on capture affordable);
+    `CLEANUP_OP` evicts, which is both the recycled-cache-index guard and — because
+    `UIMCController.Remove` queues it with NO `EndOp` and therefore NO null delimiter — a batch
+    that MUST be special-cased or the decoder swallows the next panel's text whole; and it
+    captures the PUSH, so it knows the words and nothing about selection, disabled state, or
+    anything an `.as` computed after receiving them. `UIAlert` is the first consumer.
 - Some screens are Flash-driven with no UIList (e.g. key bindings): neither layer can enumerate
   rows, and the same is true of anything a screen wrote into Flash and did not retain — a text
   field's caret and selection above all. The route in is `GFxMoviePlayer`'s own path-string API, ALL
@@ -368,7 +398,11 @@ in **Hard rules** below instead.
   shipped game takes its own advice: two call sites in the whole of `XComGame`. Flash also holds
   only the rendered TEXT, never the semantics (which row is selected, what a number means, whether a
   button is disabled), and no field name in it can be `static_assert`ed — so the companion CDO stays
-  the way words are read at runtime.
+  the way words are read at runtime. It also cannot read an `XComScrollingTextField` AT ALL: its
+  text is exposed through an AS2 `addProperty` getter, which `GetVariableString` cannot run, and
+  the backing storage is not reachable by path either (measured live on `descriptionText`). **When
+  the question is "what words did this panel get", the capture above answers it and this does
+  not**; keep the path API for caret, selection and focus, which the capture cannot see.
 - ⛔ **No gameplay event fires in the TUTORIAL — it replays history, it never submits it.**
   `X2GameRuleset.SubmitGameStateContext` (`:292`, `:401`) routes every context to
   `XComTutorialMgr.HandleSubmittedGameStateContext` instead of `SubmitGameStateContext_Internal`
@@ -667,6 +701,13 @@ Endpoints:
   press is ignored). `&mode=kernel` injects into the arbiter's own queue via
   `InputArbiter::InjectSynthetic`, driving ONLY our layer, working with the game backgrounded, and
   reporting per key whether a claim took it. `&hold=` and `&gap=` are milliseconds.
+- `/flashqueue[?index=N]` — what panels PUSHED into Scaleform, captured in flight by
+  `src/flash_shadow.cpp`. For the whole retains-nothing family this is the only place the words
+  ever existed, so it is the endpoint that answers "what does this screen actually say" for a
+  screen `/gui` prints as wordless. Bare it lists every tracked panel with its cache index; with
+  `?index=` it dumps one panel's recorded calls, operands typed and in order. Answers **off the
+  game thread** (it is our own map, not engine memory), so it still reports when the game thread
+  is the broken thing.
 - `/screenshot[?path=&foreground=0&output=N]` — PNG of the monitor the game is on, via DXGI Desktop
   Duplication (`src/screen_capture.cpp`).
 - `/gui[?depth=N]` — the widget tree under a screen: one line per `UIPanel` with class, address,
@@ -723,7 +764,8 @@ returned `cursor:` value for exactly-once delivery.
 Driving it: `just arm`, then `just dev-health` / `dev-status` / `dev-speech` / `dev-log` /
 `dev-exec "<cmd>"` / `dev-input <keys> [kernel]` / `dev-shot` / `dev-gui [depth] [select]` /
 `dev-props [select] [filter]` / `dev-call <fn> [select]` / `dev-flash <fn> <arg> [select]` /
-`dev-field [select] [field] [fn]`, or `just dev '<endpoint>?<query>'` for anything else.
+`dev-field [select] [field] [fn]` / `dev-flashqueue [index]`, or `just dev '<endpoint>?<query>'`
+for anything else.
 ⛔ Scripts must call curl as `$env:SystemRoot/System32/curl.exe` — bare `curl` on PATH resolves to
 MSYS2's cygwin build, whose path translation mangles URL arguments into blanks. The justfile's `curl`
 variable already does this.
@@ -974,13 +1016,29 @@ free, earmarked for the vantage read.
 1. `ScriptCall` module (generic find-function-by-name + game-thread call). `game_ui.cpp` hand-rolls
    this per call site and exports the first pieces (`FindCompanionCDO`, `CallScriptFunction`); the
    module is the generalization, not a prerequisite.
-2. **Not yet run live** (builds clean, unexercised): geoscape tray, Skyranger briefing, modal/popup
+2. ⛔ **The geoscape's `Enter` fix is UNVERIFIED and its predecessor was wrong twice**
+   (`geoscape-recon.md` §15). Focus write-back moved the game's navigator but not
+   `SelectedMapItem` — `UINavigator.SetSelected` fires no delegate — so `Enter` acted on tray icon
+   0 for the whole session, which read to the player as *"Enter just starts the scan where I am"*.
+   Activation no longer consults that state at all: it is now the mouse's own click on the ICON
+   (`OnMouseEvent(FXS_L_MOUSE_UP_DELAYED)` — 400, and 391 is a silent no-op), whose
+   `OnClickedDelegate` the game bound to that icon's own site. `SetTraySelection` also calls
+   `SetSelectedMapItem` now, but only for the 3D cursor and nav-help. The pass that closes this
+   must actually fly the Avenger to a POI.
+   **Not yet run live** (builds clean, unexercised): Skyranger briefing, modal/popup
    recipe, commlink transient reader, armory loadout, personnel roster, commodity list, inside-a-room
    recipe, selected-unit readout, objectives readout (`Ctrl+X`). Each needs a first pass against
    `just dev-speech` and a shape-count of the speech ring afterwards. For the objectives readout the
    OFFSETS are already confirmed live (2026-08-23, `LostAndAbandonedB`) and the `static_assert`s
    pass — what is unexercised is the spoken COMPOSITION, plus the Avenger/dark-event and
    counter-row branches, which need the ship and a Retaliation-style mission respectively.
+   ⚠ The popup recipe has a NEW first-pass question on top of the usual one: `UIAlert`'s words now
+   come from the Flash command-queue capture, so the pass must check `just dev-flashqueue` against
+   `just dev-speech` for the same alert, and grep the log for `dropped asset-looking operand` —
+   that line is the asset filter reporting exactly what it removed, and it is the only place a
+   wrongly-dropped LINE would show up. Alerts worth hitting: an image-carrying splash
+   (`BuildGOpsAlert` / retaliation / supply raid, which push an image path mid-list) and any alert
+   whose confirm label should be matched out of the prose by the button filter.
 3. Unexercised paths inside surfaces that HAVE run: tactical narration's panic / shields / evac
    events; the hacking screen's cancel line and any hack whose slot 0 is `bBadThing`; the ant farm's
    countdown path (`Status` is empty unless something is building) and its `Delete` re-announce; the

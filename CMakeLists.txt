@@ -123,6 +123,9 @@ add_library(X2Access SHARED
     # decode it are not — menu_navigator.cpp includes windows.h, so tests/ cannot compile it.
     src/wire_record.cpp
     src/mouse_gate.cpp
+    # The Flash command-queue capture: what panels PUSH into Scaleform, recorded in flight. Same
+    # UFunction::Func pointer-swap mouse_gate.cpp uses, so it vendors no hooking library.
+    src/flash_shadow.cpp
     src/tile_reader.cpp
     src/free_aim.cpp
     src/object_scanner.cpp

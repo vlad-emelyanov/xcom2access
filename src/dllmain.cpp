@@ -4,6 +4,7 @@
 #include "input.h"
 #include "menu_navigator.h"
 #include "mouse_gate.h"
+#include "flash_shadow.h"
 #include "object_scanner.h"
 #include "geo_scanner.h"
 #include "free_aim.h"
@@ -131,7 +132,10 @@ static void InitThread() {
 
 static void ShutdownAll() {
     LOG_INFO("X2Access shutting down");
-    MouseGate::ForceRestore(); // first: no game code may keep dispatching into this module
+    // First, both of them: no game code may keep dispatching into this module. Each is a plain
+    // pointer write into a UFunction, which is what makes them legal under the loader lock.
+    MouseGate::ForceRestore();
+    FlashShadow::ForceRestore();
     DevServer::Stop(); // before the hooks: the pump it depends on goes away with them
     Hooks::Shutdown();
     Input::Shutdown();

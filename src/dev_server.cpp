@@ -21,6 +21,7 @@
 
 #include "dev_server.h"
 
+#include "flash_shadow.h"
 #include "game_ui.h"
 #include "gui_dump.h"
 #include "input_arbiter.h"
@@ -215,6 +216,82 @@ std::string HealthText()
         out += "pump: never (the game thread has not ticked yet)\n";
     else
         out += "pump-age-ms: " + std::to_string(GetTickCount64() - last) + "\n";
+    return out;
+}
+
+// The Flash command-queue capture, off-thread (it is our own map, not engine memory).
+//
+// The `push:` lines are the point of the whole endpoint: for a screen that retains nothing, this
+// is the text, quoted exactly as the panel handed it over. Operand TYPE is printed for every
+// entry, including the non-strings, because position within the list is what a positional
+// consumer reads by, and an operand list with its empties silently dropped shifts everything
+// after them (CLAUDE.md's wire-format rule).
+std::string FlashQueueText(int32_t index)
+{
+    const FlashShadow::Stats stats = FlashShadow::GetStats();
+
+    std::string out;
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+        "installed: %s\nflushes: %llu\nops-seen: %llu\nops-kept: %llu\nevictions: %llu\n"
+        "panels: %zu\n",
+        stats.installed ? "yes" : "NO (capture is not running)",
+        static_cast<unsigned long long>(stats.flushes),
+        static_cast<unsigned long long>(stats.opsSeen),
+        static_cast<unsigned long long>(stats.opsKept),
+        static_cast<unsigned long long>(stats.evictions), stats.panels);
+    out += buf;
+
+    if (!stats.installed) {
+        out += "\nThe capture installs on the first frame UIMovie resolves. If this stays NO, the\n"
+               "UFunction lookup failed — check the ASI log for a FlashShadow line.\n";
+        return out;
+    }
+
+    std::vector<int32_t> indices;
+    if (index >= 0)
+        indices.push_back(index);
+    else
+        indices = FlashShadow::TrackedIndices();
+
+    if (indices.empty()) {
+        out += "\nNo panel has pushed text yet. Only batches carrying a non-empty string are\n"
+               "recorded, so a screen of pure numeric churn legitimately shows nothing here.\n";
+        return out;
+    }
+
+    for (const int32_t idx : indices) {
+        const std::vector<FlashShadow::Call> calls = FlashShadow::GetCalls(idx);
+        if (calls.empty())
+            continue;
+        snprintf(buf, sizeof(buf), "\n--- cache index %d (%zu call%s) ---\n", idx, calls.size(),
+            calls.size() == 1 ? "" : "s");
+        out += buf;
+        for (const FlashShadow::Call& call : calls) {
+            out += std::string("  ") + (call.isField ? "field" : "call") + " ";
+            if (!call.child.empty())
+                out += call.child + ".";
+            out += call.name + "\n";
+            for (size_t i = 0; i < call.args.size(); i++) {
+                const FlashShadow::Value& v = call.args[i];
+                switch (v.type) {
+                case FlashShadow::ValueType::String:
+                    snprintf(buf, sizeof(buf), "    [%zu] push: \"%s\"\n", i, v.s.c_str());
+                    break;
+                case FlashShadow::ValueType::Number:
+                    snprintf(buf, sizeof(buf), "    [%zu] num:  %g\n", i, v.n);
+                    break;
+                case FlashShadow::ValueType::Boolean:
+                    snprintf(buf, sizeof(buf), "    [%zu] bool: %s\n", i, v.b ? "true" : "false");
+                    break;
+                default:
+                    snprintf(buf, sizeof(buf), "    [%zu] (null/undefined)\n", i);
+                    break;
+                }
+                out += buf;
+            }
+        }
+    }
     return out;
 }
 
@@ -852,6 +929,16 @@ std::string Route(const Request& req, int& status)
         return OnGameThread([sel, field, fn] { return GuiDump::Flash(sel, field, fn); });
     }
 
+    // The Flash command-queue capture: what panels PUSHED into Scaleform, which for the whole
+    // retains-nothing family (UIAlert, every list row, the tactical HUD) is the only place the
+    // words ever existed. `?index=N` dumps one cache index; bare, it lists every tracked panel
+    // with its most recent text so a screen can be identified without knowing its index first.
+    //
+    // ⛔ Answers OFF the game thread on purpose: the capture is a plain in-process map, and a
+    // frozen game thread is exactly when "what did the UI last say?" is worth asking.
+    if (req.path == "/flashqueue")
+        return FlashQueueText(static_cast<int32_t>(QueryInt(req.query, "index", -1)));
+
     status = 404;
     return "unknown endpoint\n"
            "  GET  /health              liveness + build stamp + game-thread pump age\n"
@@ -873,6 +960,10 @@ std::string Route(const Request& req, int& status)
            "                            (GetVariableString default; Number/Bool, ActionScript\n"
            "                            String/Int/Float/Void). This reaches the text a screen\n"
            "                            pushed into Flash and retained nowhere\n"
+           "  GET  /flashqueue[?index=] what panels PUSHED into Scaleform, captured in flight at\n"
+           "                            UIMovie.CopyCommandQueue. This is where the words are for\n"
+           "                            every screen that retains none (UIAlert, list rows, the\n"
+           "                            tactical HUD). Bare: every tracked panel. Off-thread\n"
            "  GET  /screenshot[?path=]  PNG of the monitor the game is on\n"
            "\n"
            "  /gui, /props, /call and /flash all select with ?screen=<Class> (the screen\n"

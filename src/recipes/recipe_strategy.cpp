@@ -830,19 +830,26 @@ std::unique_ptr<GraphRender> BuildGeoscape()
             // supplying a route the game already built and never wired to a key.
             //
             // ⚠ It acts on the game's SelectedMapItem, which our focus write-back has already
-            // moved onto this icon — so it is re-read here only to confirm the screen is still
-            // there, not to identify the target.
-            vt.OnActivate = []() {
+            // moved onto this icon — so the icon is re-read live and handed over so the call can
+            // CHECK that, not so it can send to it. When the two disagree the Avenger flies
+            // somewhere the player never chose, which is the failure that has to be impossible.
+            vt.OnActivate = [handle = icon.handle]() {
                 GameUI::StrategyMapView live = GameUI::ReadStrategyMap(gScreen);
-                GameUI::ActivateTraySelection(live);
+                for (const GameUI::TrayIcon& t : live.icons)
+                    if (t.handle == handle) {
+                        GameUI::ActivateTraySelection(live, t);
+                        return;
+                    }
             };
         }
 
         // Focus write-back, two INDEPENDENT halves. Conflating them was the first version's bug.
         //
-        //  1. Move the game's own navigator, so SelectedMapItem follows what was just spoken.
-        //     This applies to placeholders TOO — measured live, an unmet faction's slot IS in
-        //     NavigableControls — and SetTraySelection no-ops on the navIndex < 0 case by itself.
+        //  1. Move the game's own navigator AND its SelectedMapItem, so both follow what was just
+        //     spoken. Those are two calls, not one — UINavigator.SetSelected fires no delegate;
+        //     see SetTraySelection, which owns the pair. This applies to placeholders TOO —
+        //     measured live, an unmet faction's slot IS in NavigableControls — and
+        //     SetTraySelection no-ops on the navIndex < 0 case by itself.
         //  2. Hand the icon the mouse hover, for the camera fly-to and the tooltip refresh. NOT
         //     for a placeholder: OnMouseEvent early-returns on an unmet faction before reaching
         //     any of that, so the game would not move the camera either, and pretending to would
@@ -853,7 +860,7 @@ std::unique_ptr<GraphRender> BuildGeoscape()
             for (const GameUI::TrayIcon& t : live.icons) {
                 if (t.handle != handle)
                     continue;
-                GameUI::SetTraySelection(live, t.navIndex);
+                GameUI::SetTraySelection(live, t);
                 if (t.placeholder) {
                     ClearGeoscapeHover();
                     return;

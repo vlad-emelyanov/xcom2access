@@ -3,6 +3,7 @@
 // For UIAlert's message text: its words live in the screen's own `localized` vars, reachable only
 // by NAME — which is what reflection does and UnrealScript cannot. See ReadAlertLocalized.
 #include "ue3_reflection.h"
+#include "flash_shadow.h"
 #include "Graph/GraphAnnouncer.hpp"
 
 #define WIN32_LEAN_AND_MEAN
@@ -4340,6 +4341,95 @@ const char* const kAlertTextSuffixes[] = {
     "Title", "Header", "Label", "Body", "Description", "Desc",
 };
 
+// UIAlert::LibraryPanel — the panel every Build*Alert pushes its words through, and therefore the
+// cache index the Flash capture keys those words by. Pinned in sdk_layout_checks.cpp.
+constexpr int32_t kAlertLibraryPanelOffset = 0x1EE8;
+
+// An operand that is an ASSET REFERENCE rather than something to say.
+//
+// UIAlert pushes image paths down the very same QueueString stream as its prose —
+// BuildGOpsAlert queues title, subtitle, body, m_strGOpsImage, confirm, ignore — so the capture
+// sees them and speech must not. The test is deliberately NARROW: a path token carries no
+// whitespace at all AND either a URL scheme or a `Package.Asset` dot, with nothing outside the
+// ASCII path alphabet. A one-word title ("RETALIATION") has no dot and survives; a localized
+// title in any non-Latin script fails the alphabet test and survives. Every drop is logged, so a
+// live run enumerates what this rejected instead of it going silently missing — the failure mode
+// a blind player cannot report, because a dropped line reads exactly like a screen with nothing
+// more to say.
+bool LooksLikeAssetPath(const std::string& s)
+{
+    if (s.empty())
+        return false;
+    for (unsigned char c : s) {
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r')
+            return false; // prose
+    }
+    if (s.find("://") != std::string::npos)
+        return true;
+    if (s.find('.') == std::string::npos)
+        return false;
+    for (unsigned char c : s) {
+        const bool pathish = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+            || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '/' || c == '-';
+        if (!pathish)
+            return false;
+    }
+    return true;
+}
+
+// The words UIAlert actually handed Scaleform, in the order it handed them over.
+//
+// ⛔ THIS IS THE SOURCE OF TRUTH for the alert family, and it replaces two weaker readings. The
+// localized-var convention below covers only 81 of 118 alert names and cannot tell which of a
+// stem's six suffixes the panel actually DISPLAYS, so it over-reads (eAlert_LostAndAbandoned
+// shows Title and Body, and the convention also speaks its Label). The Flash path read cannot
+// reach an XComScrollingTextField at all. The capture has neither problem: it is exactly the
+// argument list of the Update* call that painted this panel, so it covers every variant, in
+// display order, with nothing the panel did not receive.
+//
+// `buttons` are matched out by EXACT STRING. A confirm/ignore label rides in the same argument
+// list as the prose, and the button read already speaks it — without this they would be said
+// twice.
+std::vector<std::string> ReadAlertCaptured(
+    void* screen, const std::vector<std::string>& buttons, const std::string& alertName)
+{
+    std::vector<std::string> lines;
+    void* panel = ReadPtrRaw(screen, kAlertLibraryPanelOffset);
+    if (!panel)
+        return lines;
+    const int32_t index = FlashShadow::PanelCacheIndex(panel);
+    if (index < 0)
+        return lines;
+
+    FlashShadow::Call call;
+    if (!FlashShadow::GetTextCall(index, call))
+        return lines;
+
+    for (const FlashShadow::Value& arg : call.args) {
+        if (arg.type != FlashShadow::ValueType::String || arg.s.empty())
+            continue;
+        std::string text = CleanText(arg.s);
+        if (text.empty())
+            continue;
+        if (LooksLikeAssetPath(text)) {
+            LOG_INFO("Popup: dropped asset-looking operand '%s' from %s.%s",
+                text.c_str(), alertName.c_str(), call.name.c_str());
+            continue;
+        }
+        if (std::find(buttons.begin(), buttons.end(), text) != buttons.end())
+            continue; // a button label; the button stop already says it
+        if (std::find(lines.begin(), lines.end(), text) != lines.end())
+            continue; // several panels push the same string into two fields
+        lines.push_back(std::move(text));
+    }
+
+    if (!lines.empty()) {
+        LOG_INFO("Popup: %s read %zu line(s) from the Flash capture (%s, cache index %d)",
+            alertName.c_str(), lines.size(), call.name.c_str(), index);
+    }
+    return lines;
+}
+
 std::vector<std::string> ReadAlertLocalized(void* screen, const std::string& alertName)
 {
     std::vector<std::string> lines;
@@ -4413,30 +4503,12 @@ AlertView ReadAlertText(
     const AlertField* fields = panel ? panel->fields : kUnionFields;
     const int count = panel ? panel->fieldCount : kUnionFieldsCount;
 
-    // The screen's own localized vars FIRST — they are the authoritative source (see the long
-    // comment above) and cost no Flash calls at all. Flash is the fallback, not the lead.
-    v.lines = ReadAlertLocalized(screen, alertName);
-
-    if (v.lines.empty()) {
-        if (!panel) {
-            // An alert name outside the convention AND a symbol the table does not know. Log
-            // both so a live run enumerates the gap rather than hiding it behind a sweep.
-            LOG_INFO("Popup: no localized text for '%s' and unknown symbol '%s' — field sweep",
-                alertName.c_str(), symbol.c_str());
-        } else {
-            LOG_INFO("Popup: no localized text for '%s' — falling back to Flash on '%s'",
-                alertName.c_str(), symbol.c_str());
-        }
-        for (int i = 0; i < count; i++) {
-            std::string text = ReadAlertField(movie, mcPath, fields[i]);
-            if (!text.empty())
-                v.lines.push_back(std::move(text));
-        }
-    }
-
-    // The buttons. Almost every panel puts them in a ButtonGroup and Flash names them 0 and 1
-    // (while the UnrealScript vars are Button1/Button2). A hidden button answers blank, which is
-    // exactly the "no cancel option" case BuildCompleteAlert produces when strCarryOn is empty.
+    // ⛔ THE BUTTONS ARE READ FIRST, and that ordering is load-bearing: their labels ride in the
+    // same argument list as the prose, so the capture below needs them in hand to match them out.
+    //
+    // Almost every panel puts them in a ButtonGroup and Flash names them 0 and 1 (while the
+    // UnrealScript vars are Button1/Button2). A hidden button answers blank, which is exactly the
+    // "no cancel option" case BuildCompleteAlert produces when strCarryOn is empty.
     // ⚠ Alert_Breakthrough is the exception the decompile turned up: it has NO ButtonGroup and
     // names its two buttons outright, so the confirm/cancel pair is looked for at both places.
     // Order matters — the first hit becomes the Enter action and the second the Escape action.
@@ -4453,6 +4525,36 @@ AlertView ReadAlertText(
         std::string label = CleanText(WcharToUtf8(w.c_str(), static_cast<int>(w.size())));
         if (!label.empty())
             v.buttons.push_back(std::move(label));
+    }
+
+    // The capture LEADS: it is the argument list of the Update* call that actually painted this
+    // panel, so it covers all 118 variants in display order. The two older readings stay as
+    // fallbacks, in the order they are trustworthy — the screen's own localized vars (right for
+    // the 81 names that follow the stem convention, over-reading by a suffix or two), then the
+    // Flash field sweep (right where a field is a plain TextField rather than a scrolling one).
+    v.lines = ReadAlertCaptured(screen, v.buttons, alertName);
+
+    if (v.lines.empty()) {
+        LOG_INFO("Popup: nothing captured for '%s' — falling back to the localized vars",
+            alertName.c_str());
+        v.lines = ReadAlertLocalized(screen, alertName);
+    }
+
+    if (v.lines.empty()) {
+        if (!panel) {
+            // An alert name outside the convention AND a symbol the table does not know. Log
+            // both so a live run enumerates the gap rather than hiding it behind a sweep.
+            LOG_INFO("Popup: no localized text for '%s' and unknown symbol '%s' — field sweep",
+                alertName.c_str(), symbol.c_str());
+        } else {
+            LOG_INFO("Popup: no localized text for '%s' — falling back to Flash on '%s'",
+                alertName.c_str(), symbol.c_str());
+        }
+        for (int i = 0; i < count; i++) {
+            std::string text = ReadAlertField(movie, mcPath, fields[i]);
+            if (!text.empty())
+                v.lines.push_back(std::move(text));
+        }
     }
 
     gAlertText.symbol = symbol;
@@ -5263,6 +5365,11 @@ constexpr int kMaxNavControls = 32;
 constexpr int32_t kFxsLMouseUp = 391;
 constexpr int32_t kFxsLMouseIn = 392;
 constexpr int32_t kFxsLMouseOut = 393;
+// ⛔ 400, NOT 391, is a CLICK. UIIcon.OnMouseEvent fires OnClickedDelegate on
+// FXS_L_MOUSE_UP_DELAYED and ignores FXS_L_MOUSE_UP entirely (UIIcon.uc:280) — which is a live
+// Firaxis bug in UIStrategyMap_MissionIcon.OnUnrealCommand, whose FXS_BUTTON_A branch sends 391
+// and therefore does nothing but play a click sound. Getting this constant wrong is silent.
+constexpr int32_t kFxsLMouseUpDelayed = 400;
 
 // A child widget's visible bit IS meaningful (unlike a screen's) — the game toggles it
 // deliberately, which is exactly how it answers "is this verb on screen right now".
@@ -5272,6 +5379,41 @@ bool WidgetShowing(void* panel)
         return false;
     uint32_t flags = ReadU32Raw(panel, kPanelFlagsOffset);
     return (flags & kPanelVisible) && !(flags & kPanelRemoved);
+}
+
+// UIPanel.OnMouseEvent(int cmd, array<string> args).
+//
+// The args array is passed by pointer into ProcessEvent's frame (parameters are shallow-memcpy'd)
+// and the destroy pass skips everything below ParmsSize, so a zeroed empty TArray we own is both
+// safe and never freed by the engine. No handler this is used for reads it.
+bool SendIconMouseEvent(void* icon, int32_t cmd)
+{
+    if (!icon)
+        return false;
+    struct {
+        int32_t Cmd;
+        void* ArgsData;
+        int32_t ArgsCount;
+        int32_t ArgsMax;
+    } params{cmd, nullptr, 0, 0};
+    return CallNamedFunction(icon, "OnMouseEvent", &params);
+}
+
+// UIStrategyMap.SetSelectedMapItem(UIStrategyMapItem Selection, optional bool NavigationSelect).
+//
+// The one line UIStrategyMap.OnNavigationChanged exists to reach, called directly — the header's
+// note on SetTraySelection says why the delegate itself is the wrong door. NavigationSelect=true
+// is load-bearing: the false branch ends in Navigator.OnLoseFocus() + a no-argument
+// Navigator.SetSelected(), i.e. a DESELECT of the control we just selected.
+bool SetSelectedMapItemRaw(void* screen, void* mapItem)
+{
+    if (!screen || !mapItem)
+        return false;
+    struct {
+        void* Selection;
+        uint32_t bNavigationSelect;
+    } params{mapItem, 1};
+    return CallNamedFunction(screen, "SetSelectedMapItem", &params);
 }
 
 } // namespace
@@ -5461,13 +5603,25 @@ StrategyMapView ReadStrategyMap(void* screen)
     return v;
 }
 
-bool ActivateTraySelection(const StrategyMapView& view)
+bool ActivateTraySelection(const StrategyMapView& view, const TrayIcon& icon)
 {
-    if (!view.screen)
+    if (!view.screen || !icon.handle || icon.placeholder)
         return false;
-    // SendRowCommand already sends everything that is not a direction key on the RELEASE phase,
-    // which is what CheckInputIsReleaseOrDirectionRepeat demands at both levels of this chain.
-    return SendRowCommand(view.screen, kCmdButtonA);
+
+    // Best effort, and cosmetic ONLY — nothing below depends on it. The 3D selection cursor, the
+    // pin highlight and the nav-help prompts all read SelectedMapItem, so a screen whose
+    // activation we are about to trigger should be looking at the thing we are activating.
+    if (icon.mapItem && ReadPtrRaw(view.screen, kStratMapSelectedItemOffset) != icon.mapItem)
+        SetSelectedMapItemRaw(view.screen, icon.mapItem);
+
+    // The click itself, sent to the ICON. This is the mouse's own path and the whole reason the
+    // hazard above is only cosmetic: OnClickedDelegate was bound by SetScanSite/SetMissionSite to
+    // THIS icon's own site (`OnClickedDelegate = ScanSite.AttemptSelectionCheckInterruption`), so
+    // the target is decided by which icon we hand the event to and by nothing else. Every gate
+    // stays the game's — CanInteract, the interruption popup, the mission briefing prompt — and
+    // AS_SetLock is a Flash-only call that never touches IsDisabled, so a "locked" pin is refused
+    // by CanInteract inside the delegate rather than by the widget, exactly as it is for a mouse.
+    return SendIconMouseEvent(icon.handle, kFxsLMouseUpDelayed);
 }
 
 bool ActivateHudVerb(const StrategyMapView& view, const HudVerb& verb)
@@ -5508,46 +5662,41 @@ bool ActivateHudVerb(const StrategyMapView& view, const HudVerb& verb)
     return false;
 }
 
-bool SetTraySelection(const StrategyMapView& view, int navIndex)
+bool SetTraySelection(const StrategyMapView& view, const TrayIcon& icon)
 {
     // ⛔ A placeholder must leave the game's navigator alone. Moving it would put
     // SelectedMapItem on an icon other than the one just spoken, and nothing on screen would
     // ever show the disagreement.
-    if (!view.navigator || navIndex < 0)
+    if (!view.navigator || icon.navIndex < 0)
         return false;
 
     void* controls[kMaxNavControls] = {};
     int count = TakeArrayRaw("StrategyMap: NavigableControls", view.navigator, kNavControlsOffset,
         controls, kMaxNavControls);
-    if (navIndex >= count || !controls[navIndex])
+    if (icon.navIndex >= count || !controls[icon.navIndex])
         return false;
 
-    // UINavigator.SetSelected(UIPanel optionalSelectedControl) — the game's own mover, so
-    // OnSelectedIndexChanged fires and OnNavigationChanged runs SetSelectedMapItem for us.
-    // Passing the CONTROL rather than writing SelectedIndex is what keeps that delegate in the
-    // loop; a poked index would move the number and nothing else.
+    // UINavigator.SetSelected(UIPanel optionalSelectedControl). Passing the CONTROL rather than
+    // writing SelectedIndex is what gets the game's own bookkeeping — but that is ALL it gets:
+    // this mover is the one that does not fire OnSelectedIndexChanged, so the screen's
+    // OnNavigationChanged does not run and SelectedMapItem does not follow. See the header.
     struct {
         void* Control;
-    } params{controls[navIndex]};
-    return CallNamedFunction(view.navigator, "SetSelected", &params);
+    } params{controls[icon.navIndex]};
+    if (!CallNamedFunction(view.navigator, "SetSelected", &params))
+        return false;
+
+    // The half SetSelected leaves undone, and the one that matters: the 3D selection cursor, the
+    // pin highlight, the nav-help prompts and — the reason the geoscape has an activation verb at
+    // all — what Enter will act on.
+    return SetSelectedMapItemRaw(view.screen, icon.mapItem);
 }
 
 bool MoveTrayHover(const TrayIcon& icon, bool entering)
 {
     if (!icon.handle || icon.placeholder)
         return false;
-
-    // OnMouseEvent(int cmd, array<string> args). The args array is passed by pointer into
-    // ProcessEvent's frame (parameters are shallow-memcpy'd) and the destroy pass skips
-    // everything below ParmsSize, so a zeroed empty TArray we own is both safe and never freed
-    // by the engine. Nothing on either branch reads it.
-    struct {
-        int32_t Cmd;
-        void* ArgsData;
-        int32_t ArgsCount;
-        int32_t ArgsMax;
-    } params{entering ? kFxsLMouseIn : kFxsLMouseOut, nullptr, 0, 0};
-    return CallNamedFunction(icon.handle, "OnMouseEvent", &params);
+    return SendIconMouseEvent(icon.handle, entering ? kFxsLMouseIn : kFxsLMouseOut);
 }
 
 // ---- dev harness only: raw object access for the /gui and /props dumps -------------------------

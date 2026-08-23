@@ -81,20 +81,25 @@ const KEY_HAZARD = -200;    // minus the hazard type index — see HazardWord
 // hundreds of thousands on a big grid.
 const KEY_CONNECTOR = -300000000;
 
-// Categories. Each has its own cycle key on the native side and its own remembered position, so
-// checking an enemy and then checking a marker does not lose your place in either.
+// Categories. Each has its own remembered position, so checking an enemy and then checking a
+// marker does not lose your place in either.
+//
+// ⛔ THE FIRST THREE INDICES ARE MIRRORED IN NATIVE. object_scanner.cpp hardcodes kCatMarkers 0,
+// kCatEnemies 1 and kCatSquad 2 for its three cycle keys; every other category is reached only
+// through StepCategory, which is relative and index-agnostic. So renumbering at index 3 or above
+// is free — as removing CAT_EVAC was — and renumbering 0..2 is a two-file change or a silent
+// wrong-ring bug. Change both halves or neither.
 const CAT_MARKERS = 0;
 const CAT_ENEMIES = 1;
 const CAT_SQUAD = 2;
 const CAT_LOOT = 3;
 const CAT_REINFORCEMENTS = 4;
-const CAT_EVAC = 5;
-const CAT_CIVILIANS = 6;
-const CAT_HAZARDS = 7;
-const CAT_INTERACT = 8;
-const CAT_TOWERS = 9;
-const CAT_CONNECTORS = 10;
-const CAT_COUNT = 11;       // how many are REAL — what the category ring wraps around
+const CAT_CIVILIANS = 5;
+const CAT_HAZARDS = 6;
+const CAT_INTERACT = 7;
+const CAT_TOWERS = 8;
+const CAT_CONNECTORS = 9;
+const CAT_COUNT = 10;       // how many are REAL — what the category ring wraps around
 const NUM_CATEGORIES = 16;  // headroom for the rest; a static array, so the slack costs nothing
 
 // Hazard types, in the order HazardWord/HazardClass/TileHasHazard agree on.
@@ -314,6 +319,18 @@ private function BuildCategory(int Category, TTile Origin, out array<AccessMarke
 	case CAT_MARKERS:
 		AddTutorialMarker(Origin, Entries);
 		AddObjectiveMarkers(Origin, Entries);
+		// The evac zone rides the MARKERS ring as well as its own, on exactly the Lost's
+		// reasoning below: the markers key is where a player looks for "where do I have to
+		// GO", and a destination that lives only in a ring you must STEP to is one you find
+		// by accident or never. Confirmed live 2026-08-23 on LostAndAbandonedB, whose
+		// "move the squad to the fallback route" stage IS an evac zone — AddEvac had been
+		// reading it correctly all along and the answer simply never reached the player,
+		// while the objective anchor beside it could only say "Objective: object".
+		// Sharing is safe for the same reason AddLost's is: ONE entry, however big the zone.
+		// The separate CAT_EVAC ring is GONE rather than kept beside this: it had no key of
+		// its own, it is empty on most missions, and the Lost comment's rule applies whole —
+		// a category empty on most missions costs a ring step on all of them.
+		AddEvac(Origin, Entries);
 		break;
 	case CAT_ENEMIES:
 		AddEnemies(Origin, Entries);
@@ -331,9 +348,6 @@ private function BuildCategory(int Category, TTile Origin, out array<AccessMarke
 		break;
 	case CAT_REINFORCEMENTS:
 		AddReinforcements(Origin, Entries);
-		break;
-	case CAT_EVAC:
-		AddEvac(Origin, Entries);
 		break;
 	case CAT_CIVILIANS:
 		AddCivilians(Origin, Entries);
@@ -367,7 +381,6 @@ private function string EmptyText(int Category)
 	// Worth saying out loud rather than staying silent: "none pending" is the answer a player
 	// checks for every turn, and silence would be indistinguishable from a dead key.
 	case CAT_REINFORCEMENTS: return "No reinforcements incoming";
-	case CAT_EVAC: return "No evac zone";
 	case CAT_CIVILIANS: return "No civilians visible";
 	case CAT_HAZARDS: return "No hazards";
 	case CAT_INTERACT: return "Nothing to interact with";
@@ -391,7 +404,6 @@ private function string CategoryName(int Category)
 	case CAT_SQUAD: return "Squad";
 	case CAT_LOOT: return "Loot";
 	case CAT_REINFORCEMENTS: return "Reinforcements";
-	case CAT_EVAC: return "Evac";
 	case CAT_CIVILIANS: return "Civilians";
 	case CAT_HAZARDS: return "Hazards";
 	case CAT_INTERACT: return "Objects";

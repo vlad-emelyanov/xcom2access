@@ -1493,11 +1493,35 @@ void* FindStrategyMapScreen();
 
 StrategyMapView ReadStrategyMap(void* screen);
 
-/// P11 write-back: move the game's own tray navigator onto `navIndex` via UINavigator.SetSelected,
-/// so OnNavigationChanged fires and SelectedMapItem follows our cursor rather than drifting from
-/// it. Refuses navIndex < 0 — that is a placeholder, and the caller must leave the game's
-/// navigator where it was. Game thread only.
-bool SetTraySelection(const StrategyMapView& view, int navIndex);
+/// P11 write-back: move the game's own tray navigator onto `icon`, AND put SelectedMapItem on its
+/// pin. Refuses an icon with navIndex < 0 — that is a placeholder, and the caller must leave the
+/// game's navigator where it was. Game thread only.
+///
+/// ⛔ THE TWO HALVES ARE SEPARATE CALLS, and believing otherwise is what left the geoscape unable
+/// to send the Avenger anywhere for two sessions. `UINavigator.SetSelected(Control)` does NOT fire
+/// `OnSelectedIndexChanged` — read it (`UINavigator.uc:677`): it assigns `SelectedIndex`, calls
+/// `NavigableControls[Index].OnReceiveFocus()`, and returns. The delegate is fired by `Next()`
+/// (`:508`), `Prev()` (`:631`), `SelectFirstAvailable*` (`:719`, `:751`) and the navigation-target
+/// route (`:206`) — every mover EXCEPT this one. So the moment our layer claimed Left/Right and
+/// replaced the game's `Navigator.Next()/Prev()` with a `SetSelected`, `UIStrategyMap`'s
+/// `OnNavigationChanged` stopped running and `SelectedMapItem` froze on whatever `OnInit`'s
+/// one-shot `OnNavigationChanged(0)` had put there — tray icon 0, for the rest of the session.
+///
+/// ⚠ And it is `SetSelectedMapItem`, not `OnNavigationChanged`, deliberately. Calling the delegate
+/// would drag in its icon-focus loop — `OnLoseFocus()` on all twenty slots, `OnReceiveFocus()` on
+/// the match — and those are the game's route into `UIStrategyMap_MissionIcon.OnMouseEvent`, which
+/// is where CAMSaveCurrentLocation/CAMRestoreSavedLocation live and which MoveTrayHover already
+/// owns. Two owners of that pair is exactly the unmatched-IN hazard MoveTrayHover documents. The
+/// one line the delegate exists to reach is this one, so reach it directly.
+///
+/// `NavigationSelect = true` matters too: the false branch ends in `Navigator.OnLoseFocus()` +
+/// `Navigator.SetSelected()` (no argument — a DESELECT), which would undo the half above it.
+///
+/// Skipping the delegate also skips its `CanBeScanned()` filter (`UIStrategyMap.uc:466`, a
+/// bsg-jneal gamepad-stutter guard), which leaves the selection on the PREVIOUS pin when the new
+/// one is a scan site that cannot currently be scanned. For a controller that is a cosmetic
+/// stutter; for us it would be a stale travel target, so not inheriting it is the point.
+bool SetTraySelection(const StrategyMapView& view, const TrayIcon& icon);
 
 /// Hand an icon the mouse-hover event the game itself uses, which is where the camera fly-to,
 /// the pin highlight and the tooltip refresh all live:
@@ -1542,31 +1566,41 @@ bool ActivateHudVerb(const StrategyMapView& view, const HudVerb& verb);
 
 /// Activate whatever the tray cursor is on — for a site, "send the Avenger there".
 ///
-/// ⛔ Vanilla offers NO keyboard route to this. The only entry is `FXS_BUTTON_A`, the controller
-/// accept button, and the whole chain hangs off it:
+/// ⛔ THIS SENDS THE MOUSE'S OWN CLICK TO THE ICON, and the constant is the whole subtlety:
+/// `FXS_L_MOUSE_UP_DELAYED` (400), never `FXS_L_MOUSE_UP` (391). `UIIcon.OnMouseEvent:280` fires
+/// `OnClickedDelegate` on 400 and has no case for 391 at all.
 ///
-///   UIStrategyMap.OnUnrealCommand(FXS_BUTTON_A)
-///     -> the Haven special case: ToggleScan when this IS the site the Avenger sits on
-///     -> SelectedMapItem.OnUnrealCommand(FXS_BUTTON_A)
-///          -> GeoscapeEntity.AttemptSelectionCheckInterruption()
+///   icon.OnMouseEvent(FXS_L_MOUSE_UP_DELAYED)
+///     -> UIIcon.OnMouseEvent -> OnClickedDelegate()          // bound by SetScanSite/SetMissionSite
+///          -> <this icon's site>.AttemptSelectionCheckInterruption()
 ///               -> CanInteract() && !DisplayInterruptionPopup()
 ///                    -> AttemptSelection -> ConfirmSelection
 ///                         -> XComHQ.SetPendingPointOfTravel(entity)   // the Avenger flies
 ///
-/// So this sends the command to the SCREEN, not to the pin: going straight to the pin would skip
-/// the Haven scan-toggle case, and UIStrategyMapItem_Region's own override — which picks between
-/// Make Contact, Build Outpost, Scan and plain selection in the game's own priority order — is
-/// reached either way. Every gate along the chain stays the game's, including the confirmation
-/// popups; nothing here decides whether the action is legal.
+/// ⛔ The obvious-looking alternatives are both traps, and one of them shipped in this file:
 ///
-/// ⚠ It acts on `SelectedMapItem`, NOT on any icon passed in — which is precisely why focus
-/// write-back must have moved the game's navigator first. That is also what makes it safe on an
-/// unmet faction's placeholder: the selection lands on that faction's Haven, whose CanInteract()
-/// refuses, exactly as it would for a controller player pressing A there.
+///  - `FXS_BUTTON_A` **to the screen** was the first attempt. `UIStrategyMap.OnUnrealCommand`
+///    acts on its own `SelectedMapItem` and ignores everything the caller passes, so it is only
+///    ever as right as the focus write-back — and the write-back was silently doing nothing (see
+///    SetTraySelection). `Enter` on a POI therefore fired at tray icon 0, which when the Avenger
+///    was parked on it answered `ToggleScan()`: the player pressed *fly here* and heard the scan
+///    start, indistinguishable from Space. Depending on a mutable selection to name the target is
+///    the defect; sending to the icon removes the dependency rather than guarding it.
+///  - `FXS_BUTTON_A` **to the icon** looks better still — `UIStrategyMap_MissionIcon` has its own
+///    handler at `:228` with a parked-here `ToggleScan` case more general than the screen's. But
+///    its else branch sends `OnMouseEvent(FXS_L_MOUSE_UP)`, i.e. 391, so the branch that should
+///    reach `AttemptSelectionCheckInterruption` does nothing but play a click sound. It is dead
+///    code in the shipped game, unnoticed because the screen's block returns first on a
+///    controller. **Do not resurrect it; go through the click.**
 ///
-/// The action phase must be RELEASE — both the screen's and the pin's handlers open with
-/// CheckInputIsReleaseOrDirectionRepeat and drop anything else. Game thread only.
-bool ActivateTraySelection(const StrategyMapView& view);
+/// `AS_SetLock` is a Flash-only `MC.FunctionBool` and never touches `IsDisabled`, so a visibly
+/// locked pin still reaches the delegate and is refused by the game's own `CanInteract()` — the
+/// same answer a mouse click gets. Every gate along the chain stays the game's.
+///
+/// It also nudges `SelectedMapItem` onto this icon's pin first, but that is COSMETIC — the 3D
+/// cursor, the pin highlight and the nav-help read it. Nothing about which site gets activated
+/// depends on it. Game thread only.
+bool ActivateTraySelection(const StrategyMapView& view, const TrayIcon& icon);
 
 // ---- outbound calls into companion-mod script ----
 //

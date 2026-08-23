@@ -44,6 +44,25 @@ static_assert(offsetof(AUIPanel, Movie) == 0x2B8, "UIPanel::Movie");
 
 // ---- UIMovie / presentation / tooltip chain ----
 static_assert(offsetof(UUIMovie, PRES) == 0x204, "UIMovie::PRES");
+
+// ---- the Flash command-queue capture (src/flash_shadow.cpp) ----
+//
+// The movie-wide queue every panel's MC.QueueString lands in, read at the one instant it is
+// whole: inside UIMovie.CopyCommandQueue, before ProcessQueuedCommands clears it. The panel
+// identity a batch is keyed by is UIMCController::CacheIndex, reached through UIPanel::MC.
+static_assert(offsetof(UUIMovie, CommandQueue) == 0x270, "UIMovie::CommandQueue");
+static_assert(offsetof(AUIPanel, MC) == 0x2D0, "UIPanel::MC");
+static_assert(offsetof(UUIMCController, CacheIndex) == 0x68, "UIMCController::CacheIndex");
+// FASValue is the queue's element, and the decoder strides over it by hand. Type is a byte, B a
+// one-bit field in the dword at 0x04, N a float, S an FString — pinned here because a stride or
+// a member that moved would make the decoder read one operand as another's type.
+static_assert(sizeof(FASValue) == 0x1C, "FASValue stride");
+static_assert(offsetof(FASValue, Type) == 0x00, "FASValue::Type");
+static_assert(offsetof(FASValue, N) == 0x08, "FASValue::N");
+static_assert(offsetof(FASValue, S) == 0x0C, "FASValue::S");
+// The panel every Build*Alert pushes its words through, so also the cache index those words are
+// keyed by in the capture (game_ui.cpp's ReadAlertCaptured).
+static_assert(offsetof(AUIAlert, LibraryPanel) == 0x1EE8, "UIAlert::LibraryPanel");
 static_assert(offsetof(AXComPresentationLayerBase, m_kTooltipMgr) == 0x55C,
     "XComPresentationLayerBase::m_kTooltipMgr");
 static_assert(offsetof(AUITooltipMgr, TextTooltip) == 0x414, "UITooltipMgr::TextTooltip");

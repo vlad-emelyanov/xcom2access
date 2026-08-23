@@ -1080,6 +1080,11 @@ stop that is somewhere else — i.e. most of them, and all the ones you would wa
 to travel to — `Enter` was a dead key. **The tray was read-only and the layer
 could not send the Avenger anywhere.**
 
+⛔ **THIS FIX DID NOT WORK — see §15.** `Enter` was claimed and routed exactly as
+described below, and still acted on the wrong pin, because the focus write-back it
+depends on never moved `SelectedMapItem` at all. Read §15 before trusting anything
+in this section. The chain itself, quoted below, is correct.
+
 ✅ **Fixed by taking `Enter`, at no cost.** The chain the game already has, and
 never wired to a key on mouse+keyboard:
 
@@ -1172,3 +1177,144 @@ pans (the arbiter's down-claim latch should already guarantee the release reache
 `m_fKeyPanX = 0`, so a stuck spin would mean that latch is wrong); that `Enter`
 still scans and `Tab` still exits; and that leaving the screen does not park the
 camera on the last site read.
+
+---
+
+## 15. ⛔ THIRD PASS (2026-08-23) — the `Enter` fix of §14 never worked, and why
+
+Reported again by the player: *"we still can't move the Avenger between POIs on the
+globe; Space and Enter just start the scan at the current location."* §14 called
+`Enter` fixed. It was claimed correctly, routed correctly, and acted on the wrong
+thing — the log is unambiguous (`X2Access.log`, 17:05:20 and 17:05:21, two
+`swallowed vk 0x0D -> claim "menu: activate"` lines with nothing after them, and
+`Space` at 17:05:28 passed to the game and immediately followed by the scan).
+
+### The false belief
+
+`SetTraySelection`'s comment said `UINavigator.SetSelected` is *"the game's own mover,
+so OnSelectedIndexChanged fires and OnNavigationChanged runs SetSelectedMapItem for
+us."* Read the function (`UINavigator.uc:677`):
+
+```unrealscript
+public function SetSelected( optional UIPanel SelectedControl = none )
+{
+	SelectedIndex = -1;
+	if( SelectedControl != none )
+	{
+		Index = GetIndexOf(SelectedControl);
+		if( IsValid(Index) )
+		{
+			SelectedIndex = Index;
+			NavigableControls[Index].OnReceiveFocus();
+		}
+	}
+}
+```
+
+No delegate. `OnSelectedIndexChanged` is fired by `Next()` (`:508`), `Prev()` (`:631`),
+`SelectFirstAvailableIfNoCurrentSelection` (`:719`), `SelectFirstAvailable` (`:751`)
+and the navigation-target route (`:206`) — **every mover except this one.**
+
+`UIStrategyMap` wires `Navigator.OnSelectedIndexChanged = OnNavigationChanged` at
+`:165` and calls `OnNavigationChanged(0)` once at `:167`. That one-shot is the only
+time it ever ran for us: claiming Left/Right took away the game's `Navigator.Next()/
+Prev()`, which was the sole remaining caller. So `SelectedMapItem` was pinned to tray
+icon 0 for the entire session, while our cursor walked the tray.
+
+### Why that presents as "Enter starts the scan"
+
+`UIStrategyMap.OnUnrealCommand`'s `FXS_BUTTON_A` path acts on `SelectedMapItem` and on
+nothing the caller passes:
+
+- If icon 0 is a Haven **and** it is the site the Avenger is parked on **and**
+  scanning is allowed → the Haven special case (`:1640`) answers `ToggleScan()`.
+  That is the player's report exactly: `Enter` and `Space` do the same thing.
+- Otherwise → `SelectedMapItem.OnUnrealCommand(FXS_BUTTON_A)` on icon 0's pin, i.e.
+  *travel to a site nobody selected*. Silent when icon 0's `CanInteract()` refuses,
+  which is what the 17:05 log caught.
+
+Both are worse than a dead key, and the second is the dangerous one.
+
+### The fix — activation must not depend on a selection at all
+
+The first attempt at this (same session) kept the `FXS_BUTTON_A`-to-the-screen route
+and repaired `SelectedMapItem` around it. That is a guard on a dependency, not a
+removal of one, and the dependency is the defect: `UIStrategyMap.OnUnrealCommand`
+names its target by reading mutable screen state, so every future change to focus
+write-back can silently re-break travel in the same invisible way. What landed
+instead removes it.
+
+**`ActivateTraySelection` sends the mouse's own click to the ICON** (`src/game_ui.cpp`):
+
+```
+icon.OnMouseEvent(FXS_L_MOUSE_UP_DELAYED)
+  -> UIIcon.OnMouseEvent:280 -> OnClickedDelegate()
+       -> <this icon's site>.AttemptSelectionCheckInterruption()
+            -> ... -> XComHQ.SetPendingPointOfTravel(entity)
+```
+
+`OnClickedDelegate` was bound by `SetScanSite` / `SetMissionSite` to **that icon's own
+site**, so the target is decided by which icon receives the event and by nothing else.
+Every gate stays the game's — `CanInteract`, the interruption popup, the mission
+briefing prompt. ⛔ **The constant is the whole subtlety: 400, not 391.**
+`UIIcon.OnMouseEvent` fires the delegate on `FXS_L_MOUSE_UP_DELAYED` and has no case
+for `FXS_L_MOUSE_UP`; sending 391 plays a click sound and does nothing, silently.
+
+⚠ `AS_SetLock` is a Flash-only `MC.FunctionBool` and never touches `IsDisabled`, so a
+visibly locked pin still reaches the delegate and is refused by `CanInteract()` — the
+same answer a mouse click gets, which is the definition of parity here.
+
+**`SetTraySelection` still gained `SetSelectedMapItem(pin, NavigationSelect: true)`**,
+because the frozen selection is a real defect on its own: the 3D selection cursor, the
+pin highlight and `UpdateButtonHelp`'s prompts all read `SelectedMapItem`, and all
+three were stuck on tray icon 0. It is now COSMETIC rather than load-bearing —
+activation no longer consults it.
+
+⛔ Directly, NOT through `OnNavigationChanged`. The delegate's body is an icon-focus
+loop — `OnLoseFocus()` over all twenty slots, `OnReceiveFocus()` on the match — and
+those are the game's other route into `UIStrategyMap_MissionIcon.OnMouseEvent`, where
+`CAMSaveCurrentLocation`/`CAMRestoreSavedLocation` live and which `MoveTrayHover`
+already owns; two owners of that pair is the unmatched-IN hazard §13.6 documents. The
+delegate also carries a `CanBeScanned()` filter (`:466`, a bsg-jneal gamepad-stutter
+guard) that leaves the selection on the PREVIOUS pin when the new one is a scan site
+that cannot currently be scanned.
+
+⚠ `NavigationSelect = true` is load-bearing: the false branch ends in
+`Navigator.OnLoseFocus()` + a no-argument `Navigator.SetSelected()`, which is a
+DESELECT of the control just selected.
+
+### ⚠ Two things found on the way that are NOT the fix
+
+- ⛔ **`UIStrategyMap_MissionIcon.OnUnrealCommand` handles `FXS_BUTTON_A` itself**
+  (`:228`) — contradicting §14's *"vanilla cannot activate a tray icon from the
+  keyboard either"* — **and it is broken in the shipped game. Do not use it.** Its
+  parked-here → `ToggleScan` case works and looks like a better door than the click,
+  but the else branch sends `OnMouseEvent(FXS_L_MOUSE_UP)` (391) while
+  `UIIcon.OnMouseEvent` fires `OnClickedDelegate` on `FXS_L_MOUSE_UP_DELAYED` (400),
+  so the branch that should reach `AttemptSelectionCheckInterruption` plays a click
+  sound and returns. Dead code nobody noticed, because on a controller the screen's
+  `SelectedMapItem` block runs first and returns `true` before the icon is reached.
+  The cost of adopting it would have been travel working *only* on the site you are
+  already parked on — which is indistinguishable from the bug this section is about.
+- **The §13.6 note that a placeholder IS in `NavigableControls` disagrees with the
+  source.** `UpdateMissions` (`:1194`) skips `Navigator.AddControl` when
+  `FactionHQ != none && !FactionHQ.IsResistanceFactionMet()`. The live measurement
+  and the source cannot both be right; nothing depends on it today (the recipe keys
+  off `navIndex` either way) but it should be re-measured, because "placeholder" and
+  "not navigable" being the same fact is what the art test exists to work around.
+
+### Still not run
+
+Everything §14 listed, plus this fix itself: the game was not running when it was
+written. The first live pass must check, in order — that `Left`/`Right` still read
+the tray; that `Enter` on a POI now sends the Avenger there rather than toggling the
+scan; that `Space` still toggles the scan; that `Enter` on a mission opens the
+briefing; and that `Enter` on the site the Avenger is already parked on does something
+defensible (it takes the travel path, not `ToggleScan` — the same thing a mouse click
+on that tray icon does, and `Space` remains the scan key).
+
+⚠ There is no log line to grep for any more, and that is deliberate: the click either
+reaches `OnClickedDelegate` or it does not, and there is no selection left to disagree
+with. If `Enter` is still inert, the next thing to check is whether the ProcessEvent
+call lands at all — `just dev-call` `OnMouseEvent` against the icon's `?ptr=` from
+`just dev-gui` answers that without a rebuild.

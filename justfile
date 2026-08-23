@@ -198,6 +198,19 @@ dev-flash fn arg select="instance=UIMovie_2D":
 dev-field select="" field="" fn="":
     @& "{{ curl }}" -s --max-time 30 -G --data-urlencode "field={{ field }}" "http://127.0.0.1:{{ devserver_port }}/flash?fn={{ fn }}&{{ select }}"
 
+# What panels PUSHED into Scaleform, captured in flight — the other half of dev-field, and the
+# one that is not verification-only. dev-field asks Flash what it currently HOLDS (blocking, and
+# blind to any XComScrollingTextField, whose text sits behind an AS2 getter GFx cannot run); this
+# reads the words on their way OUT, at UIMovie.CopyCommandQueue, before the queue is cleared.
+#
+# For every screen in the retains-nothing family — UIAlert's 118 variants, every list row, all of
+# UITacticalHUD — this is where the text actually is:
+#   just dev-flashqueue           # every panel that has pushed words, with its cache index
+#   just dev-flashqueue 42        # just that cache index, all recorded calls in order
+# Answers off the game thread, so it still works when the game thread is the broken thing.
+dev-flashqueue index="":
+    @& "{{ curl }}" -s --max-time 30 "http://127.0.0.1:{{ devserver_port }}/flashqueue?index={{ index }}"
+
 # PNG of the monitor the game is on (Desktop Duplication). Defaults beside the .asi.
 dev-shot path="":
     @& "{{ curl }}" -s --max-time 60 "http://127.0.0.1:{{ devserver_port }}/screenshot?path={{ path }}"

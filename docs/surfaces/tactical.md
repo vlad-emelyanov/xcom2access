@@ -364,19 +364,24 @@ cannot: the list says what the goals ARE, the counter says how far through the c
   mission with the counter live and populated. A stage counter is not the same thing as a turn
   timer.
 
-⚠ **What this surface still does NOT answer: WHERE to go.** On a mission whose stage is "get the
-squad to a zone", the only other indicator is a line drawn on the ground, which carries no text and
-(so far) no reachable state object. The counter gives the count and never the destination. The
-machinery for the right answer already exists — `X2AccessObjectScanner.AddEvac` clamps the scan
-origin into the zone's bounds to speak the nearest point INSIDE it, plus "N of M inside" — which is
-exactly the shape a "get the squad to a zone" stage needs.
+⚠ **This surface does not answer WHERE to go — and the thing that does was hiding in another
+ring.** The counter gives the count and never the destination. `X2AccessObjectScanner.AddEvac`
+already gives the destination properly: it clamps the scan origin into the zone's bounds so the
+distance and bearing describe the walk you would actually make, and adds "N of M inside".
 
-**First thing to check, and it is cheap**: whether such a stage is implemented as an evac zone at
-all. `AddEvac` lives in `CAT_EVAC`, NOT in the `B` markers ring, so a session that only pressed `B`
-has proven nothing about it either way. Step the category ring to evac before assuming the zone is
-exotic. If `GetEvacZone(eTeam_XCom)` does return none, the next candidates are the level's
-`TriggerVolume`s (19 on this map) or whatever actor draws the boundary line — and that is the open
-work.
+⛔ **A "move the squad to a zone" stage IS an evac zone** — confirmed live 2026-08-23 on
+`LostAndAbandonedB`, whose «Приведите солдат на запасной маршрут» is exactly that. So the readout
+was correct the entire time and simply never reached the player: `AddEvac` lived only in `CAT_EVAC`,
+which has no key of its own and is reachable only by STEPPING the category ring. Meanwhile the `B`
+markers ring — the one a player actually presses to ask "where do I have to go" — offered only the
+objective anchor, which can say nothing but `"Objective: object"`.
+
+**The lesson is about placement, not about reading.** A correct readout in a ring nobody steps to is
+indistinguishable from a missing feature, and it cost this mission's whole navigation story. The
+evac zone now also rides `CAT_MARKERS` (the Lost's precedent: one entry, shared ring, no extra
+step); `CAT_EVAC` stays for asking about the zone alone. **When adding a contributor, ask which key
+a player will actually press to ask that question** — not which category it taxonomically belongs
+to.
 
 ## Tutorial message reader
 
