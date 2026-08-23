@@ -460,11 +460,19 @@ in **Hard rules** below instead.
   Second Wave row reads `UIMechaListItem.Type` = `Description` while showing a live, visible
   `UICheckbox` — the same object whose `bChecked` the campaign start reads in
   `GetSelectedSecondWaveOptionNames`. `ReadOptionRowRaw` only looked at the checkbox inside its
-  `Type == Checkbox` branch, so those rows reported "unchecked" forever. Read state from the widget
-  POINTER, and take a row's kind from a widget that is VISIBLE (`SetWidgetType` hides the widgets it
-  switches away from but leaves their pointers behind, so presence alone is not enough). The
-  difficulty screen's own bottom rows do read `Type` = Checkbox, so a screen can hold both kinds at
-  once and "it works on the other rows" proves nothing.
+  `Type == Checkbox` branch, so those rows reported "unchecked" forever. ⚠ **That `Description` is
+  OUR OWN companion's write, not the engine's** — the correction matters because the rule was
+  filed as an engine fact and is not one. The GAME types those rows `Checkbox`
+  (`UIShellDifficulty.uc:472` sets it, `UIMechaListItem.UpdateDataCheckbox:549` sets it again);
+  `UIScreenListener_Difficulty.FixSecondWaveItems` retypes them so Enter stops being eaten by the
+  game's own `bReadOnly` checkbox (`UIShellDifficulty.uc:482`, `UIMechaListItem.uc:186-190`). The
+  rows that listener does not loop over — the difficulty screen's own bottom rows — still read
+  `Type` = Checkbox, and that asymmetry was the tell all along. **The durable half is the game's
+  and survives the correction:** read state from the widget POINTER, and take a row's kind from a
+  widget that is VISIBLE (`SetWidgetType` hides the widgets it switches away from but leaves their
+  pointers behind, so presence alone is not enough). A screen can hold both kinds at once, so "it
+  works on the other rows" proves nothing — and the `Type` tag is a field any mod, ours included,
+  may have rewritten under you.
 - **A readout that never sounds wrong can still always be wrong — audit its DISTRIBUTION, not its
   lines.** The tile cursor called every covered edge "high cover" for two months. Every line was
   well-formed, correctly directed and fog-gated; nothing in a log read as a defect. Counting exposed
@@ -946,9 +954,18 @@ free, earmarked for the vantage read.
 4. Two known wording defects: the no-target readout doubles a full stop and repeats the same fact in
    two languages (the localized string already ends in a period and carries the meaning); recentering
    says the unit's name three times.
-5. `Narrator::Say` adoption: the menu navigator, the tile reader and the `X2Access_Speak` handler
-   still call `TTS` directly, so the scrollback ring holds narration only. Harmless today — a recipe
-   attaching drops the tactical queue via `TacticalHUD::OnTick`.
+5. `Narrator::Say` adoption: `menu_navigator.cpp` is the last surface still calling `TTS` directly,
+   and finishing it is a design step rather than a swap — its `TTS::Speak(line, false)` sites mean
+   "queued, non-interrupting, focus-owned", which no current channel expresses (`Focus`/`Aid`
+   interrupt AND clear, `Alert` marks the batch interrupting, `Combat` is named for a producer this
+   is not). Either a fifth neutral queued channel or a rename of `Combat`, then map `SpeakMove`'s
+   `interrupt` flag onto the pair. Four boot lines stay on `TTS` on purpose and say why in place
+   (`dllmain.cpp`, `Hooks::Init`): they run on the init thread, which `Narrator::Say` does not
+   claim, and they report the mod's own state before any producer can have queued a line.
+   ⚠ The old "harmless today" justification was wrong and is why the other surfaces went
+   unmigrated for so long: it rested on `TacticalHUD::OnTick` dropping the queue, which fires only
+   on the tactical layer's FALLING EDGE — nothing dropped it under the tile cursor or the object
+   scanner, and the geoscape is not tactical at all.
 6. Events NOT yet narrated, in rough value order: reinforcement drops, the Chosen arriving, objective
    completion, will/panic thresholds, loot. Each is one more `AddCHEvent` line; the cost is judgement
    about spam, not code. `UnitMoveFinished` was deliberately dropped — the shipped sources trigger it
