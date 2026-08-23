@@ -261,6 +261,20 @@ static function EventListenerReturn OnUnitTakeEffectDamage(Object EventData, Obj
 // duplicate this function exists to stop. The set costs nothing to be right instead — it holds only
 // the units one game state damaged, a handful even for a big AoE, and is retired whole the moment
 // the frame changes.
+//
+// Pipes on BOTH sides of every id, so the accumulated "|3||37|" cannot answer a search for "|7|":
+// each key both opens and closes with the delimiter, so a match can only ever land on a whole one.
+//
+// ⚠ KNOWN HOLE, written down because its failure mode is the SILENT one this project treats as
+// unreportable — a line dropped is indistinguishable from nothing having happened. This memo lives
+// on the CDO, so it lasts as long as the process, while HistoryIndex is restored WITH a save. Load
+// a mid-mission save and repeat the same action and the identical (frame, unit) pair comes round a
+// second time, already claimed, and its damage line is swallowed. The exposure is one frame wide —
+// the set is retired on the first index that differs — so it needs the reloaded action to be the
+// very next damage AND to reproduce the pre-load index, which save-scumming one shot does exactly.
+// Nothing derived from the game state can separate the two, because the replayed state IS the same
+// state; only a fact from outside it (level-session time, a load counter) could, and choosing which
+// wants a live run behind it rather than a guess here.
 static function bool ClaimDamageNarration(int HistoryIndex, int UnitID)
 {
 	local string Key;
@@ -507,7 +521,11 @@ static function string HitResultWord(EAbilityHitResult Result)
 
 defaultproperties
 {
-	// -1 is not a real HistoryIndex, so the first damage of a session always resets the claimed set
-	// rather than starting out sharing a frame with state 0.
+	// -1 is the engine's OWN sentinel for "this state is not part of the history"
+	// (XComGameState.uc:125), which is what makes it usable as the empty marker rather than merely
+	// unlikely: a listener deferred to ELD_OnVisualizationBlockCompleted is handed nothing but
+	// SUBMITTED states, so every index that ever reaches this class is >= 0. The first damage of a
+	// session therefore always resets the claimed set instead of starting out sharing a frame with
+	// state 0.
 	NarratedDamageFrame=-1
 }
