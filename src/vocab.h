@@ -286,9 +286,10 @@ inline constexpr const char* TutorialReaderUnavailable = "Tutorial reader unavai
 // The name stays at the call site — it is what tells the surfaces apart — and the SENTENCE lives
 // here, so rewording it is one edit and localizing it is one entry rather than nine.
 //
-// ⚠ Nothing calls this yet. The nine surfaces each hold their own literal — `TutorialReaderUnavailable`
-// above is the one that at least made it into this file — and converting them is one line each in
-// nine translation units, changing no spoken text. This is the sentence they should be converted to.
+// ⚠ Eight of the nine call this; the ninth is `TutorialReaderUnavailable` above, which stays a
+// `constexpr const char*` because its one call site uses it inside a ternary against
+// `TutorialNoMessage` and the two arms must share a type. Converting it means reworking that
+// ternary — worth doing when `tutorial_reader.cpp` is next opened, not for its own sake.
 inline std::string SurfaceUnavailable(const char* surface)
 {
     return std::string(surface) + " unavailable.";

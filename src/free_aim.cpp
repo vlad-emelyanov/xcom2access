@@ -4,6 +4,7 @@
 #include "mouse_gate.h"
 #include "narrator.h"
 #include "ue3_reflection.h"
+#include "vocab.h"
 #include "log.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -39,7 +40,7 @@ void Call(const char* funcName, void* params)
 {
     void* cdo = GameUI::FindCompanionCDO(kReaderClass);
     if (!cdo) {
-        Narrator::Say(Narrator::Channel::Aid, "Aim reader unavailable.");
+        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable("Aim reader"));
         return;
     }
     if (!GameUI::CallScriptFunction(cdo, funcName, params)) {

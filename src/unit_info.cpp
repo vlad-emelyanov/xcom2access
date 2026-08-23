@@ -4,6 +4,7 @@
 #include "narrator.h"
 #include "tactical_hud.h"
 #include "ue3_reflection.h"
+#include "vocab.h"
 #include "log.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -49,7 +50,7 @@ void Announce()
 {
     std::string line;
     if (!Call("AnnounceUnit", &line)) {
-        Narrator::Say(Narrator::Channel::Aid, "Unit reader unavailable.");
+        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable("Unit reader"));
         return;
     }
     if (!line.empty())

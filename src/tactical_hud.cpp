@@ -5,6 +5,7 @@
 #include "menu_navigator.h"
 #include "narrator.h"
 #include "ue3_reflection.h"
+#include "vocab.h"
 #include "log.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -105,7 +106,7 @@ bool ReadFreeAimFlag()
 void CallOnDemand(const char* funcName)
 {
     if (!GameUI::FindCompanionCDO(kReaderClass)) {
-        Narrator::Say(Narrator::Channel::Aid, "Shot reader unavailable.");
+        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable("Shot reader"));
         return;
     }
     Call(funcName, Narrator::Channel::Aid);

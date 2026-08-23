@@ -5,6 +5,7 @@
 #include "narrator.h"
 #include "tile_reader.h"
 #include "ue3_reflection.h"
+#include "vocab.h"
 #include "log.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -33,7 +34,7 @@ void Call(const char* funcName, void* params)
 {
     void* cdo = GameUI::FindCompanionCDO(kScannerClass);
     if (!cdo) {
-        Narrator::Say(Narrator::Channel::Aid, "Object scanner unavailable.");
+        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable("Object scanner"));
         return;
     }
     if (!GameUI::CallScriptFunction(cdo, funcName, params)) {

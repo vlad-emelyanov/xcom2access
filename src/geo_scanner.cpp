@@ -3,6 +3,7 @@
 #include "input_arbiter.h"
 #include "narrator.h"
 #include "ue3_reflection.h"
+#include "vocab.h"
 #include "log.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -32,7 +33,7 @@ void Call(const char* funcName, void* params)
 {
     void* cdo = GameUI::FindCompanionCDO(kScannerClass);
     if (!cdo) {
-        Narrator::Say(Narrator::Channel::Aid, "Geoscape scanner unavailable.");
+        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable("Geoscape scanner"));
         return;
     }
     if (!GameUI::CallScriptFunction(cdo, funcName, params)) {

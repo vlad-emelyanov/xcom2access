@@ -4,6 +4,7 @@
 #include "menu_navigator.h"
 #include "narrator.h"
 #include "ue3_reflection.h"
+#include "vocab.h"
 #include "log.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -70,7 +71,7 @@ void OnAnnounce(const InputArbiter::KeyEvent& e)
     if (!e.down || e.repeat) // a held key would only stutter the same line over itself
         return;
     if (!GameUI::FindCompanionCDO(kReaderClass)) {
-        Narrator::Say(Narrator::Channel::Aid, "Avenger reader unavailable.");
+        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable("Avenger reader"));
         return;
     }
     Call("AnnounceRoom", Narrator::Channel::Aid);

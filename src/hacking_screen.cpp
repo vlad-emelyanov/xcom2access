@@ -3,6 +3,7 @@
 #include "input_arbiter.h"
 #include "narrator.h"
 #include "ue3_reflection.h"
+#include "vocab.h"
 #include "log.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -84,7 +85,7 @@ bool Call(const char* funcName, Narrator::Channel channel)
 void CallOnDemand(const char* funcName, Narrator::Channel channel)
 {
     if (!GameUI::FindCompanionCDO(kReaderClass)) {
-        Narrator::Say(Narrator::Channel::Aid, "Hacking reader unavailable.");
+        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable("Hacking reader"));
         return;
     }
     Call(funcName, channel);
