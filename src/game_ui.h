@@ -1205,6 +1205,11 @@ struct GeoscapeGate {
     bool mapOnStack = false; // UIStrategyMap is somewhere on the stack
     bool current = false;    // ...and it is the first entry
     char blocker[64] = {};   // what sits on top instead, when it is not; for the log
+    /// The map itself, and ONLY while `current` — the same walk that answered the gate already
+    /// had it in hand, so re-walking to find it again is two answers to one question waiting to
+    /// disagree. ⛔ Use it within the call that produced it and never store it: this is a
+    /// return-by-value convenience, not a cache, and the never-hold-a-UObject rule applies.
+    void* map = nullptr;
 
     bool Active() const { return current; }
 };

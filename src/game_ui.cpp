@@ -914,22 +914,73 @@ bool StackIsLiveRaw(void* stack)
 
 ScreenFinder gStackFinder{"UIScreenStack", StackIsLiveRaw};
 
-// The topmost live screen of `className` on the stack, or null if the stack does not hold one.
-// Matching is by class NAME, so no UClass has to be resolved first — the stack is at most a few
-// dozen entries, which makes the name compares cheaper than the class lookup would be.
-void* FindStackScreenRaw(const char* className)
+// Screens, top first, into `out`; 0 when there is no live stack. Every walker below opens with
+// this — one place to find the stack, one place that says so if the array outgrows the buffer.
+int WalkStackRaw(void** out, int max)
 {
     void* stack = gStackFinder.Find();
     if (!stack)
-        return nullptr;
+        return 0;
+    return TakeArrayRaw("ScreenStack: Screens", stack, kStackScreensOffset, out, max);
+}
 
+// ⛔ THE READINESS PREDICATE FOR A SCREEN ON THE STACK, in one place, because it is spelled out
+// at a dozen walkers and two hard rules are about it.
+//
+// `bIsInited && !bIsRemoved`, and NOT bIsVisible: the game leaves the visible bit false on
+// screens it is plainly showing (a live pause menu reads 0x259), so testing it means silence at
+// a modal the player then answers blind. bIsRemoved is the one flag a corpse does not keep —
+// removal sets it and clears nothing else, so inited/visible/focused all still read true on a
+// dead screen.
+//
+// This deliberately does NOT also require bIsFocused, which IS the right test for a GObjects
+// scan (see IsFocusedRaw) and would be redundant here: position in this array already answers
+// "is it on top", and it is the game's own answer rather than a bit we hope is in step.
+bool StackEntryLiveRaw(void* screen)
+{
+    const uint32_t flags = ReadU32Raw(screen, kPanelFlagsOffset);
+    return (flags & kPanelInited) && !(flags & kPanelRemoved);
+}
+
+// The GetCurrentScreen rule, which five of the finders below share: the TOPMOST non-null entry,
+// and only when it matches and is live. A non-match on top is a REFUSAL, not a reason to keep
+// looking — a screen under another screen has already lost the keys, and answering for it would
+// put our stops in front of the screen the player is actually on.
+//
+// `matches` is handed the entry and its class name, so a matcher may compare either; `nameOut`
+// receives that name when an entry is returned.
+void* TopStackScreenRaw(bool (*matches)(void* screen, const char* className),
+    char* nameOut = nullptr, int nameCap = 0)
+{
     void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    const int count = WalkStackRaw(screens, kMaxStackScreens);
     for (int i = 0; i < count; i++) {
         if (!screens[i])
             continue;
-        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+        char name[64];
+        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
+            return nullptr;
+        if (!matches(screens[i], name) || !StackEntryLiveRaw(screens[i]))
+            return nullptr;
+        if (nameOut && nameCap > 0)
+            strncpy_s(nameOut, static_cast<size_t>(nameCap), name, _TRUNCATE);
+        return screens[i];
+    }
+    return nullptr;
+}
+
+// The topmost live screen of `className` on the stack, or null if the stack does not hold one.
+// Matching is by class NAME, so no UClass has to be resolved first — the stack is at most a few
+// dozen entries, which makes the name compares cheaper than the class lookup would be.
+//
+// Unlike TopStackScreenRaw this keeps LOOKING past a non-match: the caller asked for a specific
+// screen wherever it sits, not for the one on top.
+void* FindStackScreenRaw(const char* className)
+{
+    void* screens[kMaxStackScreens] = {};
+    int count = WalkStackRaw(screens, kMaxStackScreens);
+    for (int i = 0; i < count; i++) {
+        if (!screens[i] || !StackEntryLiveRaw(screens[i]))
             continue;
         char name[64];
         if (ObjClassNameAnsiRaw(screens[i], name, sizeof(name)) && strcmp(name, className) == 0)
@@ -2262,12 +2313,11 @@ std::string DescribeTrackedScreens()
 
 std::string DescribeScreenStack()
 {
-    void* stack = gStackFinder.Find();
-    if (!stack)
+    if (!gStackFinder.Find())
         return "  (no live UIScreenStack)\n";
 
     void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    int count = WalkStackRaw(screens, kMaxStackScreens);
     if (count <= 0)
         return "  (stack is empty)\n";
 
@@ -3050,17 +3100,13 @@ bool IsTacticalPassive(const char* name)
 TacticalGate ReadTacticalGate()
 {
     TacticalGate gate;
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return gate;
-
     void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    int count = WalkStackRaw(screens, kMaxStackScreens);
     for (int i = 0; i < count; i++) {
-        if (!screens[i])
-            continue;
-        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+        // A corpse above us is SKIPPED rather than treated as a blocker: it has already been
+        // popped and is holding no keys. That is this gate's own policy, deliberately not the
+        // one the two GetCurrentScreen gates below use.
+        if (!screens[i] || !StackEntryLiveRaw(screens[i]))
             continue;
         char name[64];
         if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
@@ -3092,12 +3138,8 @@ TacticalGate ReadTacticalGate()
 AvengerGate ReadAvengerGate()
 {
     AvengerGate gate;
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return gate;
-
     void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    int count = WalkStackRaw(screens, kMaxStackScreens);
 
     // GetCurrentScreen is the FIRST non-none entry — it applies no inited/removed filter of its
     // own, so neither do we. Filtering here would let us call the grid "current" on a frame the
@@ -3117,8 +3159,7 @@ AvengerGate ReadAvengerGate()
             // Still refuse a grid that is on the stack but torn down: the game reaches it
             // through GetCurrentScreen either way, but a removed screen's navigator is not
             // something to narrate.
-            uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-            if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+            if (!StackEntryLiveRaw(screens[i]))
                 gate.current = false;
             break;
         }
@@ -3173,17 +3214,12 @@ DropshipView ReadDropship()
     // ONE walk for both classes rather than FindStackScreenRaw twice: this poll runs for the
     // whole session and finds nothing in almost all of it, and taking whichever variant is
     // TOPMOST is also the more honest answer than preferring one by name.
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return v;
-
     void* screens[kMaxStackScreens] = {};
-    const int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    const int count = WalkStackRaw(screens, kMaxStackScreens);
     for (int i = 0; i < count && !v.screen; i++) {
-        if (!screens[i])
-            continue;
-        const uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+        // Skip past anything that is not one of ours — unlike the GetCurrentScreen finders, a
+        // screen over the briefing does not make the briefing the wrong answer.
+        if (!screens[i] || !StackEntryLiveRaw(screens[i]))
             continue;
         char name[64];
         if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
@@ -3301,28 +3337,13 @@ bool IsKindOfRaw(void* obj, const char* baseClass)
 
 void* FindRoomScreen()
 {
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return nullptr;
-
-    void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
-
     // Topmost non-null entry only — the same GetCurrentScreen definition ReadAvengerGate uses.
     // A UIFacility further down the stack is one the player has navigated AWAY from (the
     // facility summary and the choose-research screen both push over it), and narrating that
     // would name the wrong room.
-    for (int i = 0; i < count; i++) {
-        if (!screens[i])
-            continue;
-        if (!IsKindOfRaw(screens[i], "UIFacility"))
-            return nullptr;
-        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
-            return nullptr;
-        return screens[i];
-    }
-    return nullptr;
+    return TopStackScreenRaw([](void* screen, const char*) {
+        return IsKindOfRaw(screen, "UIFacility");
+    });
 }
 
 RoomView ReadRoom(void* screen)
@@ -3488,29 +3509,11 @@ constexpr int kMaxBuildSlots = 8;
 
 void* FindRoomBuildScreen()
 {
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return nullptr;
-
-    void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
-
     // Topmost non-null entry, the GetCurrentScreen rule again — and UIRoom's own OnUnrealCommand
     // is unguarded, so anything above it has already taken the keys.
-    for (int i = 0; i < count; i++) {
-        if (!screens[i])
-            continue;
-        char name[64];
-        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
-            return nullptr;
-        if (strcmp(name, "UIRoom") != 0)
-            return nullptr;
-        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
-            return nullptr;
-        return screens[i];
-    }
-    return nullptr;
+    return TopStackScreenRaw([](void*, const char* className) {
+        return strcmp(className, "UIRoom") == 0;
+    });
 }
 
 RoomBuildView ReadRoomBuild(void* screen)
@@ -3641,31 +3644,14 @@ bool IsPopupClass(const char* className)
 PopupView FindPopupScreen()
 {
     PopupView v;
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return v;
-
-    void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
-
     // TOPMOST only, and a non-popup on top is a refusal rather than a reason to keep looking:
     // a popup under another screen has already lost the keys, and answering for it would put
     // our stops in front of a screen the player is actually on. Same rule as UIRoom's finder.
-    for (int i = 0; i < count; i++) {
-        if (!screens[i])
-            continue;
-        char name[64];
-        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
-            return v;
-        if (!IsPopupClass(name))
-            return v;
-        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
-            return v;
-        v.screen = screens[i];
+    char name[64] = {};
+    v.screen = TopStackScreenRaw([](void*, const char* className) { return IsPopupClass(className); },
+        name, static_cast<int>(sizeof(name)));
+    if (v.screen)
         v.className = name;
-        return v;
-    }
     return v;
 }
 
@@ -4077,28 +4063,13 @@ constexpr int kMaxCommodityRows = 256;
 
 void* FindCommodityScreen()
 {
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return nullptr;
-
-    void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
-
     // Topmost non-null entry only, matching GetCurrentScreen — which is what the companion
     // resolves too. A UIInventory further down is one the player has pushed past (the black
     // market's confirmation and the build-item dialog both land on top of it), and reading that
     // would describe a screen nobody is on.
-    for (int i = 0; i < count; i++) {
-        if (!screens[i])
-            continue;
-        if (!IsKindOfRaw(screens[i], "UIInventory"))
-            return nullptr;
-        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
-            return nullptr;
-        return screens[i];
-    }
-    return nullptr;
+    return TopStackScreenRaw([](void* screen, const char*) {
+        return IsKindOfRaw(screen, "UIInventory");
+    });
 }
 
 CommodityView ReadCommodity(void* screen)
@@ -4223,27 +4194,12 @@ constexpr int kMaxPersonnelRows = 256;
 
 void* FindPersonnelScreen()
 {
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return nullptr;
-
-    void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
-
     // Topmost non-null entry only, matching GetCurrentScreen — which is also what the companion
     // resolves. A UIPersonnel further down is one something else has been pushed over (an armory
     // screen, a confirmation), and its rows are not what the player is looking at.
-    for (int i = 0; i < count; i++) {
-        if (!screens[i])
-            continue;
-        if (!IsKindOfRaw(screens[i], "UIPersonnel"))
-            return nullptr;
-        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
-            return nullptr;
-        return screens[i];
-    }
-    return nullptr;
+    return TopStackScreenRaw([](void* screen, const char*) {
+        return IsKindOfRaw(screen, "UIPersonnel");
+    });
 }
 
 PersonnelView ReadPersonnel(void* screen)
@@ -4696,12 +4652,8 @@ bool WidgetShowing(void* panel)
 GeoscapeGate ReadGeoscapeGate()
 {
     GeoscapeGate gate;
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return gate;
-
     void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    int count = WalkStackRaw(screens, kMaxStackScreens);
 
     // GetCurrentScreen is the FIRST non-none entry and applies no state-bit filter of its own,
     // so neither do we — the same rule ReadAvengerGate follows, and for the same reason: a gate
@@ -4719,9 +4671,14 @@ GeoscapeGate ReadGeoscapeGate()
             gate.current = !sawTop;
             if (!sawTop) {
                 // Still refuse a map that is on the stack but torn down.
-                uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-                if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+                if (!StackEntryLiveRaw(screens[i]))
                     gate.current = false;
+                // Carried out by VALUE, in this same call: the finder below needs exactly the
+                // screen this walk already identified, and walking again to re-answer a question
+                // just answered is how the two would come to disagree. Nothing caches it across
+                // frames, so the never-hold-a-UObject rule is untouched.
+                if (gate.current)
+                    gate.map = screens[i];
             }
             break;
         }
@@ -4735,24 +4692,8 @@ GeoscapeGate ReadGeoscapeGate()
 
 void* FindStrategyMapScreen()
 {
-    GeoscapeGate gate = ReadGeoscapeGate();
-    if (!gate.Active())
-        return nullptr;
-
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return nullptr;
-    void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
-    for (int i = 0; i < count; i++) {
-        if (!screens[i])
-            continue;
-        char name[64];
-        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
-            continue;
-        return strcmp(name, "UIStrategyMap") == 0 ? screens[i] : nullptr;
-    }
-    return nullptr;
+    // One walk, not two: ReadGeoscapeGate has already found the map and validated it.
+    return ReadGeoscapeGate().map;
 }
 
 StrategyMapView ReadStrategyMap(void* screen)
@@ -4995,16 +4936,10 @@ void* FindStackScreen(const char* className)
     // (Push inserts there), but the entry above a live screen can be a corpse the stack has
     // not dropped yet, so skip on the same predicate the finders use rather than taking [0]
     // blind.
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return nullptr;
     void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    int count = WalkStackRaw(screens, kMaxStackScreens);
     for (int i = 0; i < count; i++) {
-        if (!screens[i])
-            continue;
-        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-        if ((flags & kPanelInited) && !(flags & kPanelRemoved))
+        if (screens[i] && StackEntryLiveRaw(screens[i]))
             return screens[i];
     }
     return nullptr;
