@@ -171,36 +171,99 @@ if(X2ACCESS_DEVSERVER)
     message(STATUS "X2Access: dev harness ENABLED (loopback HTTP, marker-gated at runtime)")
 endif()
 
-# Suppress warnings on generated SDK code
+# Warnings. Read this whole block before adding a suppression anywhere in it.
 if(MSVC)
+    # ── The warning LEVEL, which until now nothing in this project set ──────────────────
+    # cl.exe's own default is /W1, and CMake (CMP0092 NEW from cmake_minimum_required 3.25)
+    # deliberately leaves /W3 OUT of CMAKE_CXX_FLAGS, so every TU here compiled at /W1 —
+    # which the tlog confirms: `/nologo /W1 /WX- ...`. That made the per-file /w removals
+    # below FUNCTIONALLY INERT, because the warnings they were removed to expose are all
+    # LEVEL 3 and could never be emitted: C4018 (signed/unsigned compare), C4267 (size_t ->
+    # int truncation) and the narrowing forms of C4244. Those three ARE the bug that
+    # truncates a payload and reads to a blind player as "this screen has nothing more" —
+    # the failure mode the size-the-buffer-from-the-data rule in CLAUDE.md was written for.
+    # /W3 is the line that makes them reachable at all. Measured (single-TU probe, MSVC
+    # 14.51, Release flags, a deliberately narrowing function next to our own includes): at
+    # /W1 it is silent; at /W3 a size_t -> int return emits C4267 and an __int64 -> int
+    # assignment emits C4244. (A signed/unsigned `<` did not fire on 14.51 even at /W3 —
+    # C4018 is documented level 3, so treat it as reachable but do not count on it.)
+    target_compile_options(X2Access PRIVATE /W3)
+
+    # ── Headers we did not write ────────────────────────────────────────────────────────
+    # The generated SDK is dumped wholesale from the live game, so an edit inside it is lost
+    # on the next regeneration — its warnings can only ever be silenced from out here. But a
+    # blanket /w silences a TRANSLATION UNIT, and the SDK headers are #included BY the files
+    # whose warnings we most want. /external: silences a DIRECTORY instead: a warning
+    # reported at a line inside one of these paths is dropped, and every warning in our own
+    # code is untouched, in the very same TU. Measured: it drops C4267 at GameDefines.hpp:930
+    # (FString::assign storing wcslen()+1 into an int32_t) from every TU that instantiates it,
+    # while a size_t -> int truncation written in our own code still warns in those same TUs.
+    # MSVC 16.10 (1929) is the first toolset where /external: needs no /experimental; an
+    # older one ignores the flags with a D9002 and gets the header noise back — a nuisance,
+    # not a break. No spaces in these paths: the VS generator does not quote AdditionalOptions.
+    if(MSVC_VERSION GREATER_EQUAL 1929)
+        target_compile_options(X2Access PRIVATE
+            /external:W0
+            "/external:I${SDK_DIR}"
+            "/external:I${SDK_DIR}/SDK_HEADERS")
+    endif()
+
+    # ── The one warning /external: cannot reach, silenced BY NUMBER ─────────────────────
+    # GameDefines.hpp:951, FString::ToString, is `std::string(wstr.begin(), wstr.end())`. The
+    # C4244 for that wchar_t -> char narrowing is reported inside <xutility>, NOT inside the
+    # SDK directory, so no amount of /external: on the SDK path reaches it (verified, also
+    # with /external:env:INCLUDE and /external:templates-). It is benign as used: the only
+    # caller is UObject::GetName() in src/sdk_impl.cpp:21, and UE3 FName entries are ASCII
+    # identifiers, so no localized string ever passes through it. Do NOT "fix" it in the
+    # generated header — it would come back with the next dump.
+    # ⛔ The cost is real, and it is why this is a NUMBER and not a /w: C4244 is off in these
+    # TUs, our own code in them included. C4018 and C4267 — the truncation pair that actually
+    # bit us — stay on everywhere. If C4244 is ever wanted back in game_ui.cpp, the fix is to
+    # stop the generated header from being instantiated there, not a wider /w.
+    # This list is exactly the set the probe saw instantiate FString::ToString; every other TU
+    # in the target compiles clean at /W3 with nothing suppressed, so do not add to it
+    # speculatively — add a file here only after a build has printed C4244 for it.
+    # sdk_impl.cpp and ue3_reflection.cpp are on this list because they came OFF the blanket
+    # /w below to get here: probed at /W3 they emit this one generated warning and nothing
+    # else, and ue3_reflection.cpp owns ReadStringProperty — the single choke point every
+    # companion payload passes through, and the file the size-the-buffer rule was written
+    # about. Leaving it at /w would have been the same inert gesture this commit is undoing.
     set_source_files_properties(
-        "${SDK_DIR}/GameDefines.cpp"
+        src/hooks.cpp
+        src/sdk_globals.cpp
+        src/event_dispatch.cpp
+        src/process_event_hook.cpp
+        src/gui_dump.cpp
         src/sdk_impl.cpp
         src/ue3_reflection.cpp
+        PROPERTIES COMPILE_FLAGS "/wd4244"
+    )
+    # game_ui.cpp takes the same /wd4244 plus /bigobj — it costs nothing and this TU is large
+    # enough not to gamble on the section limit. It is listed separately because COMPILE_FLAGS
+    # is a plain string property: setting it twice REPLACES rather than appends, so every
+    # per-file flag for one file has to be on a single line.
+    set_source_files_properties(src/game_ui.cpp PROPERTIES COMPILE_FLAGS "/bigobj /wd4244")
+
+    # prism.h:308 declares PRISM_BACKEND_FEATURE_MAX_BIT = (1ULL << 63) in an unscoped enum
+    # MSVC gives an `int` underlying type — C4309, level 2, so also invisible until now. It
+    # is a vendored dependency (MPL-2.0, vendored UNMODIFIED, see CLAUDE.md), and tts.cpp is
+    # the only TU in the mod that includes prism.h. By number, for the same reason as above.
+    set_source_files_properties(src/tts.cpp PROPERTIES COMPILE_FLAGS "/wd4309")
+
+    # ── The two TUs that still take a blanket /w, and why ───────────────────────────────
+    # GameDefines.cpp is generated code compiled AS the primary source file, which /external:
+    # never covers (the file being compiled is by definition not an external header).
+    # sdk_layout_checks.cpp is the one TU that really does include the full generated SDK
+    # (SdkHeaders.hpp): huge headers need /bigobj, and that much generated code is not
+    # warning-clean. Neither contains a line anyone here wrote.
+    set_source_files_properties(
+        "${SDK_DIR}/GameDefines.cpp"
         PROPERTIES COMPILE_FLAGS "/w"
     )
-    # The dumper keeps default warnings on purpose — it walks raw engine memory, so a real
-    # warning there is worth seeing. Only the generated FString::ToString wchar->char narrowing
-    # is silenced; nothing in our own code warns at /W3.
-    set_source_files_properties(src/gui_dump.cpp PROPERTIES COMPILE_FLAGS "/wd4244")
-    # The one TU that really does include the full generated SDK (SdkHeaders.hpp): huge headers
-    # need /bigobj, and the generated code is not warning-clean.
     set_source_files_properties(
         src/sdk_layout_checks.cpp
         PROPERTIES COMPILE_FLAGS "/w /bigobj"
     )
-    # game_ui.cpp is NOT that TU and never was — it takes GameDefines + Core_structs + Core_classes
-    # and stops there, on purpose (see its own header comment). It shared the /w line above purely
-    # by proximity, which silenced every warning in the file where EVERY engine read in the mod
-    # lives: explicit offsets, hand-rolled length arithmetic, the guarded FString copies. C4018
-    # (signed/unsigned compare), C4267 and C4244 (narrowing) in a bounds check are precisely the
-    # bug that truncates a payload and reads to a blind player as "this screen has nothing more"
-    # — the failure mode the size-the-buffer-from-the-data rule in CLAUDE.md was written for. So
-    # it keeps default warnings, for the same reason stated for gui_dump.cpp above. If a generated
-    # header genuinely warns here, silence it BY NUMBER (/wd####) as line ~173 does; never with a
-    # blanket /w. /bigobj stays: it costs nothing and this TU is large enough not to gamble on the
-    # section limit.
-    set_source_files_properties(src/game_ui.cpp PROPERTIES COMPILE_FLAGS "/bigobj")
 endif()
 
 # Output as .asi for Ultimate ASI Loader compatibility

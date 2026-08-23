@@ -6,7 +6,13 @@
 
 // NOMINMAX before anything drags in <windows.h>: its min/max MACROS otherwise eat every
 // std::max/std::min below and the errors point at the STL, not at the include.
+// The build already puts -DNOMINMAX on the command line (prism::prism carries it as an
+// interface definition), so this define is a belt-and-braces one for the day that changes —
+// hence the guard: an unconditional #define of an already-defined macro is C4005, and at the
+// /W3 this target now compiles at, that noise would be on every dev build forever.
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 
 #include <winsock2.h>
 #include <windows.h>
