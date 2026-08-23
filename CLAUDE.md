@@ -82,12 +82,20 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
     across ragged rows. **Reach for a sheet whenever a screen draws column
     headings.**
   - ⛔ **Never join two spoken phrases with a bare `", "`** — the GAME ends plenty
-    of its own strings with `.`, `!`, `?` or `:`, and blind joining voices doubled
-    full stops at the player. `X2Access::Graph::AppendPhrase` is the rule (a
-    self-punctuated part takes a plain space, everything else the comma); both of
-    `GraphAnnouncer`'s join sites route through it, so recipes inherit it. **Any
-    surface that composes speech outside a recipe owes the same call** — the ant
-    farm is narrate-only and had to be given it by hand. Four kernel tests pin it.
+    of its own strings with `.`, `!`, `?`, `:` or `;`, and blind joining voices
+    doubled full stops at the player. `X2Access::Graph::AppendPhrase` is the rule,
+    and ⚠ **it tests the tail of the ACCUMULATED line, never the incoming part**:
+    the separator goes BETWEEN them, so it is the left-hand side that decides
+    whether one is wanted at all, and a reimplementation testing the part instead
+    is a different function wearing this one's name. A line already ending in one
+    of `kPhraseTerminators` (that five-character set, no more and no fewer) takes a
+    plain space; everything else takes the separator — `", "` to build a phrase
+    list, `". "` to build the sentence sequences the dropship briefing and the
+    tutorial modal are made of. Both of `GraphAnnouncer`'s join sites route through
+    it, so recipes inherit it. **Any surface that composes speech outside a recipe
+    owes the same call** — the ant farm is narrate-only and had to be given it by
+    hand; the companion mirrors the same set in `X2AccessHelper.AppendJoined`.
+    Four kernel tests pin it.
 - **UI reading**: `src/game_ui.cpp` reads `UIScreen`/`UIPanel`/`UIList` object
   trees through EXPLICIT field offsets (never the generated class layouts) and
   `src/recipes/` turns them into GraphRenders — one *recipe* per screen
