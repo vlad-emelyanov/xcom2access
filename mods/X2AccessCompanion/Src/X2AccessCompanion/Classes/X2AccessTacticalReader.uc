@@ -529,10 +529,19 @@ static function string DescribeTargetHealth(XComGameState_Unit TargetUnit)
 // would call a door an enemy. The alive/cosmetic pair is the game's own filter from the same
 // function — a cosmetic unit is a Gremlin, and it is on nobody's threat list.
 //
+// ⛔ ZERO IS SILENT UNLESS ASKED FOR. The automatic line rides every soldier switch, and most
+// switches on most missions happen with nothing in sight — so a spoken zero is a clause the
+// player hears far more often than the number they wanted, and it lengthens the one line that
+// exists to be short. Silence there is not the empty-answer trap it would be on a pressed key:
+// the switch line always names the soldier, so the player still hears the readout fire and can
+// tell "nothing to report" from "nothing happened". bSpeakZero is what the on-demand block
+// passes, because a key that was pressed owes an answer to the question it was pressed about.
+//
 // Static and public so the object scanner's enemy ring and this count can never disagree about
 // what "visible to this soldier" means; the ring itself stays on SQUAD visibility, which is a
 // deliberate difference and documented there.
-static function string DescribeVisibleEnemies(XComGameState_Unit UnitState)
+static function string DescribeVisibleEnemies(XComGameState_Unit UnitState,
+	optional bool bSpeakZero)
 {
 	local array<StateObjectReference> Visible, ViaSquadsight;
 	local XComGameState_Unit EnemyUnit;
@@ -565,7 +574,7 @@ static function string DescribeVisibleEnemies(XComGameState_Unit UnitState)
 	}
 
 	if (Count == 0)
-		return "No enemies visible";
+		return bSpeakZero ? "No enemies visible" : "";
 	if (Count == 1)
 		return "1 enemy visible";
 	return string(Count) @ "enemies visible";

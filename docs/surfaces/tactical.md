@@ -252,8 +252,13 @@ concealment, named buffs and debuffs).
   PER-SOLDIER on purpose: the squad's answer is already on the map as unit flags, while the
   strip answers the question the player pressed Tab to ask. ⛔ Filtered to living non-cosmetic
   UNITS — the strip's raw array also carries hackable objects, and counting it whole would
-  call a door an enemy. Zero is spoken ("No enemies visible"), because a dropped clause reads
-  as the readout not firing.
+  call a door an enemy.
+- ⛔ **Zero is SILENT on the switch line**, and explicit ("No enemies visible") only on `;`.
+  Most switches on most missions happen with nothing in sight, so a spoken zero is the clause
+  heard most often and wanted least, on the one line built to be short. This is not the
+  empty-answer trap: that rule is about a readout whose silence cannot be told from its
+  absence, and the switch line always names the soldier, so the player hears it fire either
+  way. A pressed key is the case that does owe an answer, which is what `bSpeakZero` marks.
 
 - ⛔ **Tab is NOT claimed and must not be.** The switch is found by POLLING
   `XComTacticalController` instead, which is the better instrument: selecting a soldier

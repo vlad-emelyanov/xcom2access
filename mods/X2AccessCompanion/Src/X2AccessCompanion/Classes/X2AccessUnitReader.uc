@@ -143,8 +143,10 @@ function AnnounceUnit()
 // The enemy count earns its place on the SHORT line because it is the one value here that
 // changes with the switch rather than describing the soldier: health and actions are facts a
 // player can ask for later, while "does this one see anything?" is the reason they pressed Tab.
-// Zero is spoken too — a silent clause would be indistinguishable from the readout not firing,
-// and an empty strip is exactly what a sighted player sees.
+// ⛔ But ZERO IS SILENT here — most switches on most missions happen with nothing in sight, so a
+// spoken zero would be the clause heard most often and the least often wanted. The usual reason
+// to speak an empty answer does not apply: this line always names the soldier, so the player
+// still hears it fire. `;` passes bSpeakZero and gets the explicit "No enemies visible".
 private function string DescribeSelection(XComGameState_Unit UnitState)
 {
 	local string Result;
@@ -166,7 +168,10 @@ private function string DescribeUnit(XComGameState_Unit UnitState)
 	AppendPart(Result, class'X2AccessTacticalReader'.static.DescribeTargetHealth(UnitState));
 	AppendPart(Result, DescribeActions(UnitState));
 	AppendPart(Result, DescribeConcealment(UnitState));
-	AppendPart(Result, class'X2AccessTacticalReader'.static.DescribeVisibleEnemies(UnitState));
+	// true: this one was ASKED for, so "No enemies visible" is the answer rather than a clause
+	// the player did not want. The switch line takes the silent form — see DescribeSelection.
+	AppendPart(Result,
+		class'X2AccessTacticalReader'.static.DescribeVisibleEnemies(UnitState, true));
 	AppendPart(Result, DescribeEffects(UnitState));
 	return Result;
 }
