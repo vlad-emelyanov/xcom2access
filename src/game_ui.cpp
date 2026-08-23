@@ -4266,8 +4266,18 @@ constexpr int kMaxFacilityChoices = 64;
 
 void* FindChooseFacilityScreen()
 {
+    // Stack first, like every other screen-class finder. UIChooseFacility is PUSHED by the build
+    // flow, so the stack has the answer without a GObjects pass — and the pass is the cost that
+    // was actually being paid, once a second for the whole session in which this screen is not
+    // up. The fallback's one-line report is the other half: it is how "this class is not
+    // stack-managed" becomes a fact in the log rather than something we assumed.
     static ScreenFinder sFinder{"UIChooseFacility"};
-    return sFinder.Find();
+    static bool sReported = false;
+    void* screen = PreferStack("UIChooseFacility", sFinder, sReported);
+    // PreferStack's two halves do not filter alike: the stack half takes inited/not-removed,
+    // the scan half takes ScreenFinder's default IsFocusedRaw. The header promises the CURRENT
+    // screen, so the focus test belongs here rather than in whichever half answered.
+    return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
 }
 
 ChooseFacilityView ReadChooseFacility(void* screen)
