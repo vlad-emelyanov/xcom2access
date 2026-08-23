@@ -315,12 +315,16 @@ private function string FormatEntry(AccessGeoEntry Entry, int Index, int Total)
 }
 
 // ⛔ Never a bare ", ". The game ends plenty of its own strings with '.', '!' or ':' and blind
-// joining voices "5 дн.., " at the player — the same rule the kernel's AppendPhrase enforces on
-// the native side, reproduced here because these strings never pass through it.
+// joining voices "5 дн.., " at the player — the rule X2AccessHelper.EndsPhrase now owns for the
+// whole companion, and the kernel's AppendPhrase for the native side.
+//
+// The one local exception is a trailing COMMA, which the shared test deliberately does not treat
+// as self-punctuation: a geoscape detail line can already end in one (an entry that lists two
+// things), and there the comma IS the separator, so adding a second would stutter. Kept here
+// rather than widened into the shared set, because everywhere else a trailing comma means a part
+// was joined with nothing after it and the next part should still get its own separator.
 private function string Join(string Head, string Tail)
 {
-	local string LastChar;
-
 	if (Tail == "")
 	{
 		return Head;
@@ -330,8 +334,7 @@ private function string Join(string Head, string Tail)
 		return Tail;
 	}
 
-	LastChar = Right(Head, 1);
-	if (LastChar == "." || LastChar == "!" || LastChar == "?" || LastChar == ":" || LastChar == ",")
+	if (class'X2AccessHelper'.static.EndsPhrase(Head) || Right(Head, 1) == ",")
 	{
 		return Head @ Tail;
 	}

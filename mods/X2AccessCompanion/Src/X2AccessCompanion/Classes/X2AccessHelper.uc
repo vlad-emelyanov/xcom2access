@@ -13,6 +13,60 @@ var string NativeResult;
 // Must match kVocabSep in src/tutorial_reader.cpp.
 const VOCAB_SEP = "~|~";
 
+// ---------------------------------------------------------------------------
+// Joining spoken phrases — THE one implementation
+// ---------------------------------------------------------------------------
+//
+// ⛔ NEVER join two spoken phrases with a bare separator. The GAME ends plenty of its own strings
+// with '.', '!', '?', ':' or ';', and blindly adding ours voices a doubled terminator at the
+// player — which most screen readers pause on twice and some read as an ellipsis. This is the
+// same rule X2Access::Graph::AppendPhrase enforces natively (src/Graph/GraphAnnouncer.cpp, four
+// kernel tests) with the SAME terminator set, so a string reads alike whichever layer composed
+// it; CLAUDE.md states it for every surface that composes speech outside a recipe.
+//
+// It lives here, on the shared oracle, because it was rediscovered LIVE three times first —
+// "5 дн.. 1 of 1 staff slots filled" on the ant farm (2026-08-21), "получает маскировку..
+// Неудача" on the hacking pad (2026-08-20) and "ЗАДАЧА:," on the Skyranger briefing — and each
+// time the fix went into one function while its siblings kept the naive body. Every companion
+// copy now delegates here, so the next surface inherits the rule instead of rediscovering it.
+//
+// ⛔ The test is on the ACCUMULATED result's tail, never on the incoming part: the separator goes
+// BETWEEN them, so it is the left-hand side that decides whether one is needed at all.
+static function bool EndsPhrase(string Text)
+{
+	local string Last;
+
+	if (Text == "")
+		return false;
+
+	Last = Right(Text, 1);
+	return Last == "." || Last == "!" || Last == "?" || Last == ":" || Last == ";";
+}
+
+// A self-punctuated part takes a plain SPACE; everything else takes the separator. An empty part
+// is dropped WITHOUT its separator — CLAUDE.md's "join after cleaning, never before": a nickname
+// that CleanText reduces to nothing must not leave a comma standing behind it.
+static function AppendJoined(out string Result, string Part, string Separator)
+{
+	if (Part == "")
+		return;
+	if (Result != "")
+		Result $= EndsPhrase(Result) ? " " : Separator;
+	Result $= Part;
+}
+
+// Sentence join — stacking independent facts into one readout ("Impassable. Full cover north").
+static function AppendPart(out string Result, string Part)
+{
+	AppendJoined(Result, Part, ". ");
+}
+
+// Clause join — parts of ONE sentence ("Sectoid, 4 tiles, 2 north").
+static function AppendComma(out string Result, string Part)
+{
+	AppendJoined(Result, Part, ", ");
+}
+
 // Collect all visible button labels from a UINavigationHelp bar.
 // Returns a period-separated string of button text.
 static function string CollectNavHelp(UINavigationHelp NavHelp)

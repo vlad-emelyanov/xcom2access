@@ -450,14 +450,14 @@ private function AddEnemies(TTile Origin, out array<AccessMarker> Entries)
 		// Without this clause the first unshootable target reads as a bug in US rather than as a
 		// rule of the game: the squad can see it, so it is in the ring, but the soldier holding
 		// the gun cannot.
-		class'X2AccessTacticalReader'.static.AppendComma(M.Detail,
+		class'X2AccessHelper'.static.AppendComma(M.Detail,
 			SightWords(UnitState.ObjectID, ActiveUnit, MineToSee, ViaSquadsight));
 
 		// The same words the shot readout uses, from the same functions — see
 		// X2AccessTacticalReader.DescribeTargetCover.
-		class'X2AccessTacticalReader'.static.AppendComma(M.Detail,
+		class'X2AccessHelper'.static.AppendComma(M.Detail,
 			class'X2AccessTacticalReader'.static.DescribeTargetCover(UnitState, ShooterRef));
-		class'X2AccessTacticalReader'.static.AppendComma(M.Detail,
+		class'X2AccessHelper'.static.AppendComma(M.Detail,
 			class'X2AccessTacticalReader'.static.DescribeTargetHealth(UnitState));
 
 		InsertByDistance(Origin, M, Entries);
@@ -512,14 +512,14 @@ private function AddSquad(TTile Origin, out array<AccessMarker> Entries)
 
 		M.Detail = "";
 		if (UnitState.ObjectID == ActiveID)
-			class'X2AccessTacticalReader'.static.AppendComma(M.Detail, "selected");
-		class'X2AccessTacticalReader'.static.AppendComma(M.Detail, StatusWords(UnitState));
+			class'X2AccessHelper'.static.AppendComma(M.Detail, "selected");
+		class'X2AccessHelper'.static.AppendComma(M.Detail, StatusWords(UnitState));
 
 		// An EMPTY shooter ref on purpose: IsFlanked with no flanker asks "flanked by anything
 		// visible", which is exactly what the cover shield on a soldier's own flag reports.
-		class'X2AccessTacticalReader'.static.AppendComma(M.Detail,
+		class'X2AccessHelper'.static.AppendComma(M.Detail,
 			class'X2AccessTacticalReader'.static.DescribeTargetCover(UnitState, NoShooter));
-		class'X2AccessTacticalReader'.static.AppendComma(M.Detail,
+		class'X2AccessHelper'.static.AppendComma(M.Detail,
 			class'X2AccessTacticalReader'.static.DescribeTargetHealth(UnitState));
 
 		InsertByDistance(Origin, M, Entries);
@@ -579,8 +579,8 @@ private function AddLoot(TTile Origin, out array<AccessMarker> Entries)
 		// Psi loot gets its own marker mesh on screen, so naming it here is parity, not a hint.
 		M.Detail = "";
 		if (Drop.HasPsiLoot())
-			class'X2AccessTacticalReader'.static.AppendComma(M.Detail, "psi loot");
-		class'X2AccessTacticalReader'.static.AppendComma(M.Detail,
+			class'X2AccessHelper'.static.AppendComma(M.Detail, "psi loot");
+		class'X2AccessHelper'.static.AppendComma(M.Detail,
 			"expires" @ TurnWords(Drop.LootExpirationTurnsRemaining));
 
 		InsertByDistance(Origin, M, Entries);
@@ -867,7 +867,7 @@ private function AddEvac(TTile Origin, out array<AccessMarker> Entries)
 	M.Label = "Evac zone";
 	M.Detail = string(MaxT.X - MinT.X + 1) @ "by" @ string(MaxT.Y - MinT.Y + 1) @ "tiles";
 	if (Total > 0)
-		class'X2AccessTacticalReader'.static.AppendComma(M.Detail,
+		class'X2AccessHelper'.static.AppendComma(M.Detail,
 			string(Inside) @ "of" @ string(Total) @ "inside");
 
 	InsertByDistance(Origin, M, Entries);
@@ -901,9 +901,9 @@ private function AddCivilians(TTile Origin, out array<AccessMarker> Entries)
 		M.Label = UnitState.GetName(eNameType_Full);
 
 		M.Detail = "";
-		class'X2AccessTacticalReader'.static.AppendComma(M.Detail, StatusWords(UnitState));
+		class'X2AccessHelper'.static.AppendComma(M.Detail, StatusWords(UnitState));
 		if (UnitState.CanBeCarried() && (UnitState.IsUnconscious() || UnitState.IsBleedingOut()))
-			class'X2AccessTacticalReader'.static.AppendComma(M.Detail, "can be carried");
+			class'X2AccessHelper'.static.AppendComma(M.Detail, "can be carried");
 
 		InsertByDistance(Origin, M, Entries);
 	}
@@ -1087,12 +1087,12 @@ private function AddInteractables(TTile Origin, out array<AccessMarker> Entries)
 
 		M.Detail = "";
 		if (Obj.bHasBeenHacked)
-			class'X2AccessTacticalReader'.static.AppendComma(M.Detail, "hacked");
+			class'X2AccessHelper'.static.AppendComma(M.Detail, "hacked");
 		else if (Obj.LockStrength > 0)
-			class'X2AccessTacticalReader'.static.AppendComma(M.Detail,
+			class'X2AccessHelper'.static.AppendComma(M.Detail,
 				"locked, strength" @ string(Obj.LockStrength));
 		if (Obj.HasLoot())
-			class'X2AccessTacticalReader'.static.AppendComma(M.Detail, "has loot");
+			class'X2AccessHelper'.static.AppendComma(M.Detail, "has loot");
 
 		InsertByDistance(Origin, M, Entries);
 	}
@@ -1500,11 +1500,10 @@ private function int IndexOfKey(out array<AccessMarker> Markers, int Key)
 	return INDEX_NONE;
 }
 
+// Call-site sugar over X2AccessHelper.AppendComma, which owns the ⛔ never-a-bare-separator rule.
+// A marker's label is a localized, designer-authored string (FriendlyDisplayName,
+// LocFriendlyName, "Objective:" @ name), so this join is exactly the one that rule is about.
 private function AppendComma(out string Result, string Part)
 {
-	if (Part == "")
-		return;
-	if (Result != "")
-		Result $= ", ";
-	Result $= Part;
+	class'X2AccessHelper'.static.AppendComma(Result, Part);
 }

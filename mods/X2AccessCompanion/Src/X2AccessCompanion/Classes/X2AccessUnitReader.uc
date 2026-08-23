@@ -212,7 +212,7 @@ private function string DescribeActions(XComGameState_Unit UnitState)
 
 	// The flag's own test (AS_SetOverwatchIcon), not a guess at what a reserve point means.
 	if (UnitState.ReserveActionPoints.Find('Overwatch') > -1)
-		class'X2AccessTileReader'.static.AppendComma(Result, "overwatch");
+		class'X2AccessHelper'.static.AppendComma(Result, "overwatch");
 
 	return Result;
 }
@@ -259,20 +259,16 @@ private function string EffectNames(XComGameState_Unit UnitState, EPerkBuffCateg
 
 	Effects = UnitState.GetUISummary_UnitEffectsByCategory(Category);
 	for (i = 0; i < Effects.Length; i++)
-		class'X2AccessTileReader'.static.AppendComma(Result, Effects[i].Name);
+		class'X2AccessHelper'.static.AppendComma(Result, Effects[i].Name);
 
 	return Result;
 }
 
 // ---------------------------------------------------------------------------
-// Shared plumbing (mirrors X2AccessTacticalReader's)
+// Shared plumbing — X2AccessHelper owns the join rule; this is call-site sugar
 // ---------------------------------------------------------------------------
 
 private function AppendPart(out string Result, string Part)
 {
-	if (Part == "")
-		return;
-	if (Result != "")
-		Result $= class'X2AccessTileReader'.static.EndsSentence(Result) ? " " : ". ";
-	Result $= Part;
+	class'X2AccessHelper'.static.AppendPart(Result, Part);
 }

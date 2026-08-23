@@ -747,33 +747,18 @@ static function bool SameTile(TTile A, TTile B)
 	return A.X == B.X && A.Y == B.Y && A.Z == B.Z;
 }
 
-private function AppendPart(out string Result, string Part)
-{
-	if (Part == "")
-		return;
-	if (Result != "")
-		Result $= EndsSentence(Result) ? " " : ". ";
-	Result $= Part;
-}
-
 // Localized game strings routinely arrive with their own terminator ("Нет доступных целей."), and
 // blindly adding ours produced ".." — which some screen readers pause on twice and others read as
-// an ellipsis. Public and static so every surface that joins game text to ours punctuates alike.
-static function bool EndsSentence(string Text)
+// an ellipsis. The rule and its terminator set live on X2AccessHelper, the shared oracle, so every
+// surface that joins game text to ours punctuates alike; these two are call-site sugar over it.
+private function AppendPart(out string Result, string Part)
 {
-	local string Last;
-
-	if (Text == "")
-		return false;
-	Last = Right(Text, 1);
-	return Last == "." || Last == "!" || Last == "?";
+	class'X2AccessHelper'.static.AppendPart(Result, Part);
 }
 
-static function AppendComma(out string Result, string Part)
+// private: OffsetWords is the only caller in this class, and anything outside it wants
+// X2AccessHelper.AppendComma directly rather than routing through a surface class.
+private static function AppendComma(out string Result, string Part)
 {
-	if (Part == "")
-		return;
-	if (Result != "")
-		Result $= ", ";
-	Result $= Part;
+	class'X2AccessHelper'.static.AppendComma(Result, Part);
 }
