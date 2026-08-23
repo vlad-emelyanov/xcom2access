@@ -275,6 +275,25 @@ inline constexpr const char* TutorialNoMessage = "No tutorial message.";
 // pressed key — never from the poll, which must not talk about its own failures.
 inline constexpr const char* TutorialReaderUnavailable = "Tutorial reader unavailable.";
 
+// "<Surface> unavailable." — what a surface says when `FindCompanionCDO` misses, i.e. when the
+// companion `.u` did not load. That is this project's single most common deployment failure (see
+// the memory note on XCOM 2 rewriting ModRootDirs and ActiveMods), so this one sentence is the
+// mod's whole voice about it, and nine surfaces say it with their own name in front:
+//
+//   "Tile reader", "Object scanner", "Geoscape scanner", "Aim reader", "Shot reader",
+//   "Unit reader", "Hacking reader", "Avenger reader", "Tutorial reader"
+//
+// The name stays at the call site — it is what tells the surfaces apart — and the SENTENCE lives
+// here, so rewording it is one edit and localizing it is one entry rather than nine.
+//
+// ⚠ Nothing calls this yet. The nine surfaces each hold their own literal — `TutorialReaderUnavailable`
+// above is the one that at least made it into this file — and converting them is one line each in
+// nine translation units, changing no spoken text. This is the sentence they should be converted to.
+inline std::string SurfaceUnavailable(const char* surface)
+{
+    return std::string(surface) + " unavailable.";
+}
+
 inline std::string Position(int index, int count)
 {
     return std::to_string(index) + " of " + std::to_string(count);
