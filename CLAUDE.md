@@ -145,6 +145,7 @@ in **Hard rules** below instead.
 | Targeting / shot HUD | `tactical_hud.cpp` | `X2AccessTacticalReader.uc` | surfaces/tactical.md | — |
 | Free aim / AoE | `free_aim.cpp` | `X2AccessTacticalReader.uc` | surfaces/tactical.md | `free-aim-recon.md` |
 | Selected unit | `unit_info.cpp` | `X2AccessUnitReader.uc` | surfaces/tactical.md | — |
+| Objectives list | `objective_reader.cpp` | — (native reads the widget) | surfaces/tactical.md | — |
 | Tutorial messages | `tutorial_reader.cpp` | `X2AccessTutorial.uc` | surfaces/tactical.md | — |
 | Hacking screen | `hacking_screen.cpp` | `X2AccessHackingReader.uc` | surfaces/tactical.md | `hacking-screen-recon.md` |
 | Avenger ant farm | `avenger.cpp` | `X2AccessAvengerReader.uc` | surfaces/avenger.md | `avenger-view-recon.md` §11 |
@@ -617,7 +618,11 @@ in **Hard rules** below instead.
   the game's `Mods/` is not, the compile succeeded and only the deploy is stuck. `just kill` first.
   The `.asi` is locked by the running game too, but that half FAILS FAST.
 - Kernel tests (no game needed): `ctest --test-dir build -C Release` (`just test`).
-- Loading: Ultimate ASI Loader's `version-x64.dll` sits in `Binaries/Win64/`; the ASI logs to
+- Loading: Ultimate ASI Loader sits in `Binaries/Win64/` under one of the several host DLL names it
+  can impersonate — **this install uses `dinput8.dll`, not `version-x64.dll`**, so do not treat a
+  missing `version.dll` as a broken install (`just status` checked exactly that one name and
+  reported the loader MISSING on a perfectly working setup; it now probes the whole candidate
+  list). The ASI logs to
   `X2Access.log` next to itself, rotating the previous three sessions to `X2Access.1/2/3.log` on
   every start. Timestamps carry milliseconds; screen-transition latency is unreadable without them.
 
@@ -971,8 +976,11 @@ free, earmarked for the vantage read.
    module is the generalization, not a prerequisite.
 2. **Not yet run live** (builds clean, unexercised): geoscape tray, Skyranger briefing, modal/popup
    recipe, commlink transient reader, armory loadout, personnel roster, commodity list, inside-a-room
-   recipe, selected-unit readout. Each needs a first pass against `just dev-speech` and a shape-count
-   of the speech ring afterwards.
+   recipe, selected-unit readout, objectives readout (`Ctrl+X`). Each needs a first pass against
+   `just dev-speech` and a shape-count of the speech ring afterwards. For the objectives readout the
+   OFFSETS are already confirmed live (2026-08-23, `LostAndAbandonedB`) and the `static_assert`s
+   pass — what is unexercised is the spoken COMPOSITION, plus the Avenger/dark-event and
+   counter-row branches, which need the ship and a Retaliation-style mission respectively.
 3. Unexercised paths inside surfaces that HAVE run: tactical narration's panic / shields / evac
    events; the hacking screen's cancel line and any hack whose slot 0 is `bBadThing`; the ant farm's
    countdown path (`Status` is empty unless something is building) and its `Delete` re-announce; the

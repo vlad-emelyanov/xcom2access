@@ -164,6 +164,20 @@ std::function<void()> PanelTooltipAction(void* handle)
     };
 }
 
+// The same for a UIListItemString row, whose tooltip hangs off a DIFFERENT child (ButtonBG) —
+// see ReadListItemTooltip. Wired on every list-row recipe so Space means one thing everywhere a
+// list is on screen, and stays silent where the game registered nothing; SetDisabled(bDisabled,
+// Reason) is the engine's standard why-greyed channel, so a row that grows a reason starts
+// speaking it with no further change here.
+std::function<void()> ListItemTooltipAction(void* handle)
+{
+    return [handle]() {
+        std::string tip = GameUI::ReadListItemTooltip(handle);
+        if (!tip.empty())
+            TTS::SpeakInterrupt(tip);
+    };
+}
+
 } // namespace Recipes
 
 namespace {
@@ -403,7 +417,8 @@ void SpeakStateAfterChange()
 // Each recipe's own definition in src/recipes/ carries the rest of its ordering argument.
 const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kNarrativeRecipe, &kIronManRecipe,
     &kSoundtrackRecipe, &kOptionsRecipe, &kDifficultyRecipe, &kSaveLoadRecipe, &kPauseMenuRecipe,
-    &kPersonnelRecipe, &kChooseFacilityRecipe, &kArmoryLoadoutRecipe, &kSquadSelectRecipe,
+    &kPersonnelRecipe, &kChooseFacilityRecipe, &kPromotionRecipe, &kArmoryLoadoutRecipe,
+    &kSquadSelectRecipe,
     &kCommodityRecipe,
     &kRoomBuildRecipe, &kRoomRecipe, &kGeoscapeRecipe, &kMainMenuRecipe};
 static_assert(sizeof(kRecipes) / sizeof(kRecipes[0]) == Recipes::kRecipeCount,

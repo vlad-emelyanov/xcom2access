@@ -181,6 +181,7 @@ std::unique_ptr<GraphRender> BuildRoom()
         vt.Type = &ButtonType();
         vt.Announcements.emplace_back(NodeAnnouncement::Static(action.label));
         vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.OnTooltip = ListItemTooltipAction(action.handle);
 
         if (action.disabled) {
             vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
@@ -1038,6 +1039,11 @@ std::unique_ptr<GraphRender> BuildPersonnel()
             };
         }
 
+        // The one hover fact on this screen, and it is on the ROW rather than a child:
+        // UIPersonnel_SoldierListItem derives from UIButton and calls SetTooltipText on itself
+        // to name the bondmate ("%SOLDIERNAME" expanded) or announce that a bond is available.
+        // GraphSheet passes it down to every cell, so it answers from any column of the row.
+        primary.OnTooltip = PanelTooltipAction(row.handle);
         // A sheet is raw mode underneath, so the builder stamps no automatic positions — and on
         // a roster "4 of 20" is one of the facts a blind player most wants, so it is added
         // explicitly. Position-kind, so the user's per-kind filter still governs it.
@@ -1238,6 +1244,7 @@ std::unique_ptr<GraphRender> BuildChooseFacility()
         vt.OnActivate = [index]() {
             GameUI::ActivateChooseFacility(GameUI::ReadChooseFacility(gScreen), index);
         };
+        vt.OnTooltip = ListItemTooltipAction(choice.handle);
         b.AddItem(std::move(id), std::move(vt));
     }
 

@@ -147,6 +147,7 @@ private:
     const void* _rowRef = nullptr;
     std::function<void()> _rowActivate;  // the primary's Enter, inherited by the row's cells
     std::function<void()> _rowSecondary; // and its Backspace
+    std::function<void()> _rowTooltip;   // and its tooltip, which describes the whole row
 };
 
 } // namespace X2Access::Graph

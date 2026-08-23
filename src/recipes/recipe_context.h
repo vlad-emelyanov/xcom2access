@@ -104,6 +104,7 @@ void OnActivate();
 
 // The Space action for a control backed by a game panel: speak its hover tooltip.
 std::function<void()> PanelTooltipAction(void* handle);
+std::function<void()> ListItemTooltipAction(void* handle);
 
 // ---- what the navigator calls back into a recipe TU for ----
 

@@ -146,9 +146,11 @@ void GraphSheet::BeginRow(const NodeVtable& primary, const void* rowRef)
 
     // The row IS its associated element: remember the primary's activations so every cell answers
     // Enter and Backspace like the element itself, and acting never requires walking back to
-    // column 0 first.
+    // column 0 first. The tooltip rides along for the same reason — it describes the ROW, so
+    // asking for it from the column you happen to be standing in must not send you home first.
     _rowActivate = primary.OnActivate;
     _rowSecondary = primary.OnSecondary;
+    _rowTooltip = primary.OnTooltip;
 }
 
 void GraphSheet::EmitCell(NodeVtable vtable, int col)
@@ -159,6 +161,8 @@ void GraphSheet::EmitCell(NodeVtable vtable, int col)
             vtable.OnActivate = _rowActivate;
         if (!vtable.OnSecondary)
             vtable.OnSecondary = _rowSecondary;
+        if (!vtable.OnTooltip)
+            vtable.OnTooltip = _rowTooltip;
     }
     vtable.Column = col;
 

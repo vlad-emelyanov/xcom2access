@@ -1101,5 +1101,365 @@ const Recipe kGeoscapeRecipe{"geoscape tray", ProbeGeoscape, BuildGeoscape, Geos
 
 const Recipe kPopupRecipe{"popup", ProbePopup, BuildPopup, PopupName};
 
+// ---- promotion recipe (UIArmory_Promotion, UIArmory_PromotionHero, UIArmory_PromotionPsiOp) ----
+//
+// THE TREE IS A TABLE, so it is emitted as one — ranks down, branches across, which is the
+// GraphSheet case more squarely than the personnel roster was. Column 0 is the RANK and carries
+// the whole row as extra parts, so arrowing down reads the tree the way a flat list would;
+// stepping Right lands on one ability at a time under its branch heading; Up/Down then reads
+// ONE BRANCH down the ranks, which is the question a player actually asks ("what does the
+// Shadow path give me?") and the one no flattened list can answer.
+//
+// ⛔ THIS ORIENTATION IS A TRANSPOSE OF THE HERO SCREEN, which draws ranks as COLUMNS. Taken
+// deliberately: rank is the ordinal spine on both screens, so Up/Down means "later" in both, and
+// the classic and hero trees then speak identically. The sheet hands us the other axis for free,
+// so nothing is lost by choosing.
+//
+// ⛔ THE HERO SCREEN HAS NO KEYBOARD AT ALL (see the note over ReadPromotion), so this recipe is
+// not a reading aid there — it is the only way in. That also means focus write-back is not a
+// nicety: SetPromotionSelection drives the screen's own cursor and calls PreviewAbility, so the
+// description panel repaints and a sighted person can follow what the player is hearing.
+//
+// ⚠ DO NOT "RESTORE" TAB HERE. UIArmory_Promotion.OnUnrealCommand declares FXS_KEY_TAB TWICE:
+// once inside `if(`notdefined(FINAL_RELEASE))` where it calls RankUpSoldier outright, and again
+// below it for soldier cycling. The first label wins, and retail is NOT a FINAL_RELEASE build —
+// that is the same fact the dev harness leans on for the cheat manager (`obj list
+// class=XComTacticalCheatManager` answers in a live retail mission). So the layer's Tab claim
+// (next stop) is standing between the player and a free promotion, and giving Tab back to the
+// screen to recover soldier cycling would hand it to them. Unverified live; check before acting.
+constexpr const char* kPromotionReaderClass = "X2AccessPromotionReader";
+
+// Keyed on the row widgets plus the screen, exactly like the roster's. The SELECTION is not part
+// of the key: nothing here is the selection's shadow — the description panel is the game's own
+// repaint, not something we read — so re-asking on every arrow press would walk the whole tree
+// through the template manager once per keystroke for no new words.
+struct PromotionWords {
+    std::vector<WireRecord> records;
+    std::vector<void*> key;
+};
+
+PromotionWords gPromotionWords;
+
+const std::vector<WireRecord>& FetchPromotionWords(const GameUI::PromotionView& view)
+{
+    std::vector<void*> key;
+    key.reserve(view.rows.size() + 1);
+    for (const GameUI::PromotionRow& row : view.rows)
+        key.push_back(row.handle);
+    key.push_back(view.screen);
+
+    if (key != gPromotionWords.key) {
+        gPromotionWords.records
+            = FetchCompanionRecords(kPromotionReaderClass, "DescribePromotion");
+        gPromotionWords.key = std::move(key);
+    }
+    return gPromotionWords.records;
+}
+
+// The companion addresses every cell by (rank, branch) rather than by position, so a slot the
+// tree does not fill is simply absent and the ones after it keep their branch numbers.
+const WireRecord* FindPromotionCell(const std::vector<WireRecord>& records, int rank, int branch)
+{
+    for (const WireRecord& rec : records) {
+        if (RecField(rec, "kind") == "cell" && atoi(RecField(rec, "rank").c_str()) == rank
+            && atoi(RecField(rec, "branch").c_str()) == branch)
+            return &rec;
+    }
+    return nullptr;
+}
+
+const WireRecord* FindPromotionRowRec(const std::vector<WireRecord>& records, int rank)
+{
+    for (const WireRecord& rec : records) {
+        if (RecField(rec, "kind") == "row" && atoi(RecField(rec, "rank").c_str()) == rank)
+            return &rec;
+    }
+    return nullptr;
+}
+
+// Our own word for a state the screen carries as ICON COLOUR alone. "available" and
+// "unaffordable" are BOTH eUIPromotionState_Normal on screen and differ only in the foreground
+// colour, which is precisely the channel speech loses.
+std::string PromotionStateWord(const std::string& state)
+{
+    if (state == "owned")
+        return Vocab::PromoOwned;
+    if (state == "available")
+        return Vocab::PromoAvailable;
+    if (state == "unaffordable")
+        return Vocab::PromoUnaffordable;
+    if (state == "prereq")
+        return Vocab::PromoPrereq;
+    if (state == "spent")
+        return Vocab::PromoSpent;
+    return std::string(); // locked — the game's own placeholder title already says so
+}
+
+// A row's index in the LIVE view, matched on the game's own rank rather than on our position:
+// the handler runs from the input drain a frame or more after the render, and PopulateData
+// respawns every widget whenever an ability is bought.
+int PromotionRowByRank(const GameUI::PromotionView& view, int rank)
+{
+    for (size_t i = 0; i < view.rows.size(); i++) {
+        if (view.rows[i].rank == rank)
+            return static_cast<int>(i);
+    }
+    return -1;
+}
+
+SheetConfig PromotionSheetConfig()
+{
+    return SheetConfig{Vocab::TableBlank, Vocab::RoleTable, &TextType()};
+}
+
+std::unique_ptr<GraphRender> BuildPromotion()
+{
+    gFocus.clear();
+
+    GameUI::PromotionView view = GameUI::ReadPromotion(gScreen);
+    if (!view.valid)
+        return nullptr; // InitPromotion has not run PopulateData yet — treated as "closed"
+
+    const std::vector<WireRecord>& words = FetchPromotionWords(view);
+    static const WireRecord kEmptyRecord;
+    const WireRecord* screenRec = nullptr;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") == "screen") {
+            screenRec = &rec;
+            break;
+        }
+    }
+    if (!screenRec)
+        screenRec = &kEmptyRecord;
+
+    const std::string apLabel = RecField(*screenRec, "aplabel");
+
+    GraphBuilder b;
+
+    // ---- the lead lines: who this is, and what they have to spend ----
+    b.BeginStop("tree");
+
+    {
+        // The soldier and their class, which every armory screen draws in the header and which
+        // is the context for everything below it.
+        std::string line = RecField(*screenRec, "unit");
+        AppendPhrase(line, RecField(*screenRec, "class"));
+        AppendPhrase(line, RecField(*screenRec, "header"));
+        if (!line.empty())
+            b.AddLabel(ControlId::Structural("promo/who"), [line]() { return line; });
+    }
+
+    // The AP wallet. Hero screens only — the classic rank pick is free, so there is no wallet on
+    // screen and inventing one would be information a sighted player does not have.
+    if (!RecField(*screenRec, "sharedap").empty()) {
+        std::string line = RecField(*screenRec, "sharedlabel");
+        AppendPhrase(line, RecField(*screenRec, "sharedap"));
+        std::string soldier = RecField(*screenRec, "soldierlabel");
+        AppendPhrase(soldier, RecField(*screenRec, "soldierap"));
+        AppendPhrase(line, soldier);
+        AppendPhrase(line, RecField(*screenRec, "combatintel"));
+        b.AddLabel(ControlId::Structural("promo/ap"), [line]() { return line; });
+    }
+
+    // ---- the tree ----
+    std::vector<std::string> columns;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") == "cols") {
+            columns = RecFieldAll(rec, "col");
+            break;
+        }
+    }
+
+    GraphSheet sheet(b, "promo/", PromotionSheetConfig());
+    sheet.Region("", columns);
+
+    ControlId start;
+    bool haveStart = false;
+    const int rowCount = static_cast<int>(view.rows.size());
+    int position = 0;
+    int rowIndex = -1;
+
+    for (const GameUI::PromotionRow& row : view.rows) {
+        const int rank = row.rank;
+        const WireRecord* rowRec = FindPromotionRowRec(words, rank);
+        position++;
+        rowIndex++;
+
+        NodeVtable primary;
+        primary.Type = &ButtonType();
+        std::string rankName = rowRec ? RecField(*rowRec, "name") : std::string();
+        if (rankName.empty())
+            rankName = Vocab::PromoRankFallback;
+        primary.Announcements.emplace_back(NodeAnnouncement::Static(rankName));
+        primary.Announcements.back().Kind = AnnouncementKinds::Label;
+
+        // The whole-row readout, carried on the PRIMARY as extra parts — this is what keeps the
+        // flat reading and the tabular one the same graph.
+        std::vector<std::pair<int, NodeVtable>> cells;
+        int lockedCells = 0;
+        int realCells = 0;
+        std::string lockedTitle;
+        std::vector<std::string> rowParts;
+
+        for (const GameUI::PromotionCell& cell : row.cells) {
+            const WireRecord* cellRec = FindPromotionCell(words, rank, cell.branch);
+            // A hidden icon and a missing record are the same thing said twice: the tree has no
+            // ability at this branch. Left as a GAP so the branches after it keep their numbers.
+            if (!cellRec || !cell.visible)
+                continue;
+            realCells++;
+
+            const std::string name = RecField(*cellRec, "name");
+            const std::string state = RecField(*cellRec, "state");
+            const std::string stateWord = PromotionStateWord(state);
+            const std::string cost = RecField(*cellRec, "cost");
+            const std::string desc = RecField(*cellRec, "desc");
+            const std::string prereq = RecField(*cellRec, "prereq");
+            const std::string exclusive = RecField(*cellRec, "exclusive");
+            if (state == "locked") {
+                lockedCells++;
+                if (lockedTitle.empty())
+                    lockedTitle = name;
+            }
+
+            NodeVtable vt;
+            vt.Type = &ButtonType();
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(name));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+            if (!stateWord.empty()) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(stateWord));
+                vt.Announcements.back().Kind = AnnouncementKinds::Value;
+            }
+            if (!cost.empty()) {
+                // The game's own label for the unit, so this is not a bare number in a sentence
+                // that never says what it counts.
+                std::string costLine = cost;
+                AppendPhrase(costLine, apLabel);
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(costLine));
+                vt.Announcements.back().Kind = AnnouncementKinds::Value;
+            }
+            for (const std::string& warning : {prereq, exclusive}) {
+                if (warning.empty())
+                    continue;
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(warning));
+                vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+            }
+
+            // Space: the long description. It is the one thing on this screen that would make
+            // every arrow press a paragraph, so it stays behind the tooltip key like every other
+            // description in the layer.
+            if (!desc.empty())
+                vt.OnTooltip = [desc]() { TTS::SpeakInterrupt(desc); };
+
+            const int branch = cell.branch;
+            vt.OnActivate = [rank, branch]() {
+                GameUI::PromotionView live = GameUI::ReadPromotion(gScreen);
+                int r = PromotionRowByRank(live, rank);
+                if (r >= 0)
+                    GameUI::ActivatePromotionCell(live, r, branch);
+            };
+
+            // Each cell's own line in the row summary: the name plus its state, which is what a
+            // sighted player takes from the icon at a glance.
+            std::string part = name;
+            AppendPhrase(part, stateWord);
+            rowParts.push_back(part);
+
+            cells.emplace_back(cell.branch + 1, std::move(vt));
+        }
+
+        // A rank the soldier has not reached draws the same placeholder in every slot. Saying it
+        // once is what the row LOOKS like; saying it four times is an artefact of reading cells.
+        if (realCells > 0 && lockedCells == realCells) {
+            if (!lockedTitle.empty()) {
+                primary.Announcements.emplace_back(NodeAnnouncement::Static(lockedTitle));
+                primary.Announcements.back().Kind = AnnouncementKinds::Value;
+            }
+        } else {
+            for (const std::string& part : rowParts) {
+                primary.Announcements.emplace_back(NodeAnnouncement::Static(part));
+                primary.Announcements.back().Kind = AnnouncementKinds::Value;
+            }
+        }
+
+        // The screen highlights this rank and banners m_strNewRank over it — a whole affordance
+        // carried by a colour and a badge.
+        if (rowRec && !RecField(*rowRec, "promote").empty()) {
+            primary.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::PersonnelPromote));
+            primary.Announcements.back().Kind = kKindAttention;
+        }
+
+        primary.Announcements.emplace_back(
+            NodeAnnouncement::Static(Vocab::Position(position, rowCount)));
+        primary.Announcements.back().Kind = AnnouncementKinds::Position;
+
+        sheet.RowAt(std::move(primary), row.handle, std::move(cells));
+
+        // Focus write-back, per cell: landing anywhere in the row must move the GAME's cursor to
+        // that exact (rank, branch), because the row's own SelectAbility reads it back.
+        for (int col = 0; col <= static_cast<int>(row.cells.size()); col++) {
+            const int branch = col == 0 ? 0 : col - 1;
+            std::string key = GraphSheet::RowKey("promo/", row.handle, col);
+            gFocus[key] = FocusTarget{-1, nullptr, false, [rank, branch]() {
+                GameUI::PromotionView live = GameUI::ReadPromotion(gScreen);
+                int r = PromotionRowByRank(live, rank);
+                if (r >= 0)
+                    GameUI::SetPromotionSelection(live, r, branch);
+            }};
+            if (col == 0 && !haveStart && (rowIndex == view.selectedRow || position == 1)) {
+                start = ControlId::Referenced(row.handle, key);
+                haveStart = rowIndex == view.selectedRow;
+            }
+        }
+    }
+    sheet.Finish();
+
+    // ---- the ability-summary strip ----
+    //
+    // Everything the soldier already has, drawn along the bottom. Its own stop rather than part
+    // of the tree: it is a different question ("what can this soldier do?") and it does not
+    // share the tree's columns.
+    bool anyPerk = false;
+    int perkIndex = 0;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "perk")
+            continue;
+        if (!anyPerk) {
+            b.BeginStop("perks");
+            b.SetRegion("perks");
+            anyPerk = true;
+        }
+        const std::string name = RecField(rec, "name");
+        const std::string desc = RecField(rec, "desc");
+        NodeVtable vt;
+        vt.Type = &TextType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(name));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (!desc.empty())
+            vt.OnTooltip = [desc]() { TTS::SpeakInterrupt(desc); };
+        // Indexed, not named: two abilities really can share a display name, and a duplicate
+        // structural key would silently merge them into one node.
+        b.AddItem(
+            ControlId::Structural("promo/perk/" + std::to_string(perkIndex++)), std::move(vt));
+    }
+
+    if (start.IsValid())
+        b.SetStart(std::move(start));
+    return b.Build();
+}
+
+void* ProbePromotion()
+{
+    void* screen = GameUI::FindPromotionScreen();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+std::string PromotionName()
+{
+    return Vocab::ScreenPromotion;
+}
+
+const Recipe kPromotionRecipe{"promotion", ProbePromotion, BuildPromotion, PromotionName};
+
 } // namespace Recipes
 } // namespace MenuNavigator

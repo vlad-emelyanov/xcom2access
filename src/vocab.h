@@ -150,6 +150,20 @@ inline constexpr const char* ScreenPersonnelFallback = "Personnel";
 inline constexpr const char* PersonnelEmpty = "Nobody here";
 // The row's promotion badge — an icon, and therefore a whole affordance speech loses by default.
 inline constexpr const char* PersonnelPromote = "promotion available";
+
+// ---- promotion / level-up ----
+inline constexpr const char* ScreenPromotion = "Promotion";
+// A rank the companion could not name. It still gets a row: an unnamed stop a player can move
+// through beats a rank that is silently not there.
+inline constexpr const char* PromoRankFallback = "rank";
+// The four states an ability slot can be in. The screen carries every one of them as ICON
+// COLOUR alone — "available" and "unaffordable" are BOTH eUIPromotionState_Normal and differ
+// only in the foreground colour — so these words exist because that channel has no sound.
+inline constexpr const char* PromoOwned = "learned";
+inline constexpr const char* PromoAvailable = "available";
+inline constexpr const char* PromoUnaffordable = "not enough ability points";
+inline constexpr const char* PromoPrereq = "needs an earlier ability";
+inline constexpr const char* PromoSpent = "no choice left at this rank";
 inline constexpr const char* PersonnelSortBy = "sort by";
 inline constexpr const char* SortAscending = "ascending";
 inline constexpr const char* SortDescending = "descending";

@@ -290,6 +290,94 @@ concealment, named buffs and debuffs).
   would re-announce the same soldier each time one closed; never resetting is wrong too,
   because object IDs live in the campaign history and a soldier keeps hers across missions.
 
+## Objectives list
+
+`Ctrl+X` reads the mission's objective panel — the heading, then every row in the order the
+panel draws it, with completed/failed state and any timer or counter. Native end to end
+(`objective_reader.cpp` + `GameUI::ReadObjectives`); no companion call.
+
+- ⛔ **This panel is the exception to "the tactical HUD holds no text".** Every other
+  `UITacticalHUD` panel is a write-only pipe into Flash, but `UIObjectiveListItem.RefreshDisplay`
+  ends EVERY one of its `Set*Row` branches with `Data = NewData`, so the `ObjectiveDisplayInfo`
+  the row was built from survives in the widget. Verified live 2026-08-23 on
+  `LostAndAbandonedB`: three rows, real `DisplayLabel`s, one with `ShowCompleted=true`.
+- That retention is also why the readout works in the **tutorial**. The objective list is driven
+  by `UIObjectiveList.OnVisualizationBlockComplete`, which a replay fires exactly as a live
+  mission does — so unlike anything sourced from a submitted context or the event bus, this is
+  not silently dead on the mission a new blind player starts with.
+- **One class, both layers.** `UITacticalHUD.m_kObjectivesControl` (0x444) in a mission and
+  `UIAvengerHUD.Objectives` (0x44C) on the ship are the same `UIObjectiveList`, so the Avenger's
+  objectives and its dark-events block come out of the same reader. The gate is simply "is a list
+  reachable", not a tactical gate.
+- **The headings are localized and genuinely populated** — `m_strObjectivesListTitle`
+  ("ЗАДАЧИ"), `m_strDarkEventsListTitle`, `m_strInProgress` all held real values on the running
+  class. That is worth stating because it is the opposite of the `UITacticalHUD_InfoPanel` trap,
+  where a `localized` var is declared on two classes and populated on only one; here the check
+  was run and passed.
+- ⛔ **The title rows carry no words of their own.** `UIObjectiveList.RefreshObjectivesDisplay`
+  synthesizes a row with `MissionType = "TITLE"` (or `"DARKEVENTTITLE"`), `GroupID = -1` and an
+  EMPTY `DisplayLabel`; `SetTitle` then pushes a class default into Flash. So a reader that trusts
+  `DisplayLabel` alone emits a blank row where the heading is. Skip by `MissionType`, take the
+  heading from the class.
+- `Items` order IS the drawn order (`RefreshDisplay` fills `Items[i]` from `Data[i]` and
+  `OnItemChanged` lays them out top to bottom in that order), so it is also the right reading
+  order. Do not re-sort — `SortObjectives` has already run.
+- **Completed and failed are OUR words, and have to be.** The game distinguishes them with a
+  checkbox tick and a colour and no text at all, so there is nothing localized to borrow. Same
+  for a counter row, which draws three icons and three numbers: the noun is parsed out of the
+  asset token (`...objectives_civilian_rescued` → "civilian" / "rescued") rather than tabled, so
+  a counter we have never seen still gets a real word.
+- `Data.Timer` and the four counter amounts are **-1 when unset** (the struct's own
+  `structdefaultproperties`), and `0` is a real value — a timer of 0 means this is the last turn.
+  Test `>= 0`, never truthiness.
+- An invisible row is skipped (`ToggleVisibility` hides the members of a collapsed group, and the
+  documented child-widget exception makes `bIsVisible` meaningful on a ROW) — but the count is
+  LOGGED, because a list that silently shrank reads to a blind player as "the mission has fewer
+  objectives" and would never be reported as a bug.
+- ⛔ **The key stands down while a text-entry dialog is up.** `Ctrl+X` is CUT in a Flash text
+  field and the claim would swallow it before the field saw it. The objectives list stays
+  reachable under that dialog (`UIAvengerHUD` remains on the stack), so presence alone is not a
+  sufficient gate — `FindTextInputScreen()` is the other half.
+- **Why `Ctrl+X` and not bare `X`.** Bare `X` is live: `[XComGame.XComTacticalInput]` binds it to
+  the generic `X_Key_Press | onrelease X_Key_Release` forwarder into `XComInputBase.InputEvent`
+  (the ability-hotkey path). And because UE3 matches modifiers leniently, an UNCLAIMED `Ctrl+X`
+  would fire that vanilla action alongside ours — claiming the chord is what stops the
+  double-fire, and the player keeps the vanilla action on bare `X`.
+
+### Stage counters (`UISpecialMissionHUD_TurnCounter`)
+
+`Ctrl+X` also reads the top-right counter panel, after the objectives. It answers what the list
+cannot: the list says what the goals ARE, the counter says how far through the current one you are
+(«Приведите солдат на запасной маршрут / Осталось солдат / 3»).
+
+- `m_sLabel`, `m_sSubLabel` and `m_sCounter` are all RETAINED — every `Set*` assigns its field
+  whether or not the panel was inited, so the strings are authoritative. `m_iState`, `m_bExpired`,
+  `m_bInfinity` and `m_bLocked` come along too.
+- ⛔ **`bIsVisible` is REQUIRED on the counter panel.** Every `AS_Set*` ends in `Show()` — Firaxis'
+  comment is *"don't show panel unless data is pumped into it"* — so an unfed counter is hidden,
+  and the second of the two slots is routinely inited-and-hidden. Reading a hidden one invents a
+  counter the player cannot see.
+- The sub-label and the number are joined as ONE phrase, not two: "Осталось солдат" and "3" only
+  mean anything together, and a comma between them would offer the number as a separate fact.
+- ⚠ CLAUDE.md used to say these counters appear "only while a `UiTimer.ShouldShow`, so an untimed
+  mission reads `Timers = 0`". That is too narrow — measured live 2026-08-23 on an **untimed**
+  mission with the counter live and populated. A stage counter is not the same thing as a turn
+  timer.
+
+⚠ **What this surface still does NOT answer: WHERE to go.** On a mission whose stage is "get the
+squad to a zone", the only other indicator is a line drawn on the ground, which carries no text and
+(so far) no reachable state object. The counter gives the count and never the destination. The
+machinery for the right answer already exists — `X2AccessObjectScanner.AddEvac` clamps the scan
+origin into the zone's bounds to speak the nearest point INSIDE it, plus "N of M inside" — which is
+exactly the shape a "get the squad to a zone" stage needs.
+
+**First thing to check, and it is cheap**: whether such a stage is implemented as an evac zone at
+all. `AddEvac` lives in `CAT_EVAC`, NOT in the `B` markers ring, so a session that only pressed `B`
+has proven nothing about it either way. Step the category ring to evac before assuming the zone is
+exotic. If `GetEvacZone(eTeam_XCom)` does return none, the next candidates are the level's
+`TriggerVolume`s (19 on this map) or whatever actor draws the boundary line — and that is the open
+work.
+
 ## Tutorial message reader
 
 The tutorial is a REPLAY (`XComTutorialMgr extends XComReplayMgr`): it plays a recording

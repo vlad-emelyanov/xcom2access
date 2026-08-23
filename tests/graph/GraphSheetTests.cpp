@@ -102,6 +102,70 @@ TEST(Sheet_RightIntoMetadataCellAnnouncesItsColumnHeader)
     CHECK_EQ(std::string("Ranger"), LabelOf(r.To));
 }
 
+// ---- row verbs reach every cell ----
+
+TEST(Sheet_CellsInheritTheRowsTooltip)
+{
+    // A tooltip describes the ROW, not the cell you happen to be standing in, so asking for it
+    // from column 2 must answer rather than making the player walk back to column 0 first —
+    // the same rule Enter and Backspace already follow.
+    int calls = 0;
+    auto build = [&calls]() {
+        GraphBuilder b;
+        b.BeginStop("list");
+        GraphSheet sheet(b, "roster/", Config());
+        sheet.Region("Soldiers", {"rank", "class"});
+        NodeVtable primary = Primary("Kelly");
+        primary.OnTooltip = [&calls]() { calls++; };
+        sheet.Row(std::move(primary), RowRef(0), {Cell("Squaddie"), Cell("Ranger")});
+        sheet.Finish();
+        return b.Build();
+    };
+
+    GraphState state;
+    KeyGraph g(build, &state);
+    CHECK(g.Rerender());
+
+    CHECK(g.Tooltip()); // on the primary
+    CHECK_EQ(1, calls);
+
+    CHECK(g.Move(GraphDir::Right).Moved);
+    CHECK(g.Move(GraphDir::Right).Moved);
+    CHECK_EQ(std::string("Ranger"), LabelOf(g.CurrentNode()));
+    CHECK(g.Tooltip()); // and from the far cell of the same row
+    CHECK_EQ(2, calls);
+}
+
+TEST(Sheet_CellKeepsItsOwnTooltipOverTheRows)
+{
+    // Inheritance only fills a gap: a cell that declares its own tooltip keeps it.
+    int rowCalls = 0;
+    int cellCalls = 0;
+    auto build = [&rowCalls, &cellCalls]() {
+        GraphBuilder b;
+        b.BeginStop("list");
+        GraphSheet sheet(b, "roster/", Config());
+        sheet.Region("Soldiers", {"rank"});
+        NodeVtable primary = Primary("Kelly");
+        primary.OnTooltip = [&rowCalls]() { rowCalls++; };
+        NodeVtable cell;
+        cell.Type = &CellType();
+        cell.Announcements = {NodeAnnouncement::Static("Squaddie")};
+        cell.OnTooltip = [&cellCalls]() { cellCalls++; };
+        sheet.RowAt(std::move(primary), RowRef(0), {{1, std::move(cell)}});
+        sheet.Finish();
+        return b.Build();
+    };
+
+    GraphState state;
+    KeyGraph g(build, &state);
+    CHECK(g.Rerender());
+    CHECK(g.Move(GraphDir::Right).Moved);
+    CHECK(g.Tooltip());
+    CHECK_EQ(0, rowCalls);
+    CHECK_EQ(1, cellCalls);
+}
+
 TEST(Sheet_LeftBackOntoThePrimaryIsUnlabelled)
 {
     Roster roster;

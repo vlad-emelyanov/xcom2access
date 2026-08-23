@@ -10,6 +10,7 @@
 #include "text_input.h"
 #include "tactical_hud.h"
 #include "unit_info.h"
+#include "objective_reader.h"
 #include "hacking_screen.h"
 #include "transient_reader.h"
 #include "tutorial_reader.h"
@@ -96,6 +97,9 @@ static void RegisterEventHandlers() {
             // TacticalHUD, whose two gates it reads: this must see THIS frame's answer, not
             // last frame's, or the first poll of a mission runs against a stale mission flag.
             UnitInfo::OnTick();
+            // The objectives key's gate. Reads only (a stack walk and one pointer), and it is
+            // the whole cost this surface pays when nobody presses the key.
+            ObjectiveReader::OnTick();
             // The hacking overlay's announce-once poll. Same family, same gate: while the pad
             // is up the tile cursor's gate reports it as the blocker, so this is the one
             // surface claiming keys.

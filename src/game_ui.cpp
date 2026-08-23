@@ -3,6 +3,7 @@
 // For UIAlert's message text: its words live in the screen's own `localized` vars, reachable only
 // by NAME — which is what reflection does and UnrealScript cannot. See ReadAlertLocalized.
 #include "ue3_reflection.h"
+#include "Graph/GraphAnnouncer.hpp"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -110,7 +111,23 @@ constexpr int32_t kTTDataStride = 0xAC;           // sizeof(FTTextTooltipData)
 constexpr int32_t kTTDataIdOffset = 0x00;         // FTTextTooltipData::Id
 constexpr int32_t kTTDataTitleOffset = 0x44;      // FTTextTooltipData::sTitle (FString)
 constexpr int32_t kTTDataBodyOffset = 0x54;       // FTTextTooltipData::sBody (FString)
+
+// ⛔ A tooltip's id is not always retained ON a panel. `AddNewTooltipTextBox` can be called
+// STRAIGHT on the manager, in which case nothing sets bHasTooltip or CachedTooltipId and the
+// only link back is `targetPath` — the Flash path the tooltip was registered against.
+// UIUtilities_Strategy.AddAbilitySummaryTooltip is the pattern: every ability in an armory
+// screen's summary strip gets its full description that way, against
+// `<screen MCPath>.abilitySummaryList.theObject.AbilitySummaryItem<N>`, and there is no UIPanel
+// for those items at all. So a panel-keyed read finds nothing and the text is nevertheless
+// sitting in the same array. Matching on the path is the way in.
+constexpr int32_t kTTDataTargetPathOffset = 0x1C; // FTTextTooltipData::targetPath (FString)
+
 constexpr int32_t kMechaBGOffset = 0x40C;         // UIMechaListItem::BG (UIPanel*)
+// ⛔ UIListItemString OVERRIDES SetTooltipText to forward to its ButtonBG child ("Set tooltip on
+// BG since that's where our mouse events originate from"), and SetDisabled(bDisabled, Reason)
+// parks the why-disabled text there too. So a list row's tooltip is never on the row.
+constexpr int32_t kListItemBGOffset = 0x454;      // UIListItemString::ButtonBG (UIButton*)
+constexpr int32_t kPanelMCPathOffset = 0x2B0;     // UIPanel::MCPath (FName)
 
 // ---- new game flow: UIShellDifficulty ----
 constexpr int32_t kDiffSelectTitleOffset = 0x410;   // m_strSelectDifficulty (FString)
@@ -160,6 +177,54 @@ constexpr int32_t kSndStartButtonOffset = 0x418;    // m_StartButton (UILargeBut
 // ---- tactical HUD (UITacticalHUD) ----
 constexpr int32_t kTacHudFlagsOffset = 0x410;       // flag dword holding m_isMenuRaised
 constexpr uint32_t kTacHudMenuRaised = 0x02;        // m_isMenuRaised (shot HUD up)
+constexpr int32_t kTacHudObjectivesOffset = 0x444;  // m_kObjectivesControl (UIObjectiveList*)
+
+// ---- the objectives list (UIObjectiveList / UIObjectiveListItem) ----
+// Verified live 2026-08-23 against the running class on LostAndAbandonedB: m_kObjectivesControl
+// 0x444, Items 0x3D8 (4 entries), Data 0x3DC. The Avenger's owner offset is from the dump only —
+// the ship was not reachable in that session (see docs/surfaces/tactical.md).
+constexpr int32_t kAvengerHudObjectivesOffset = 0x44C; // UIAvengerHUD::Objectives
+constexpr int32_t kObjListItemsOffset = 0x3D8;        // UIObjectiveList::Items
+constexpr int32_t kObjItemDataOffset = 0x3DC;         // UIObjectiveListItem::Data
+// Localized, and CONFIRMED populated on the running class (unlike UITacticalHUD_InfoPanel's
+// copies) — so the heading is spoken in the player's language rather than ours.
+constexpr int32_t kObjItemListTitleOffset = 0x47C;    // ::m_strObjectivesListTitle
+constexpr int32_t kObjItemDarkTitleOffset = 0x48C;    // ::m_strDarkEventsListTitle
+constexpr int32_t kObjItemInProgressOffset = 0x4AC;   // ::m_strInProgress
+// FObjectiveDisplayInfo, RELATIVE to Data.
+constexpr int32_t kObjInfoMissionType = 0x0C;    // FString
+constexpr int32_t kObjInfoDisplayLabel = 0x1C;   // FString
+constexpr int32_t kObjInfoFlags = 0x2C;          // bitfield dword
+constexpr uint32_t kObjInfoCompleted = 0x01;
+constexpr uint32_t kObjInfoFailed = 0x02;
+constexpr uint32_t kObjInfoCheckBox = 0x04;
+constexpr uint32_t kObjInfoWarning = 0x08;
+constexpr uint32_t kObjInfoHeader = 0x10;
+constexpr uint32_t kObjInfoDarkEvent = 0x20;
+constexpr int32_t kObjInfoTimer = 0x30;          // int, -1 = no timer
+constexpr int32_t kObjInfoHaveImage = 0x34;      // FString
+constexpr int32_t kObjInfoAvailImage = 0x44;     // FString
+constexpr int32_t kObjInfoLostImage = 0x54;      // FString
+constexpr int32_t kObjInfoHaveAmount = 0x64;     // int, -1 = not a counter row
+constexpr int32_t kObjInfoHaveMin = 0x68;
+constexpr int32_t kObjInfoAvailAmount = 0x6C;
+constexpr int32_t kObjInfoLostAmount = 0x70;
+// The list is short by construction (one row per objective plus a heading); 64 is a runaway
+// guard, not an expected bound, and a list that hit it would be logged by the caller.
+constexpr int kMaxObjectiveItems = 64;
+
+// ---- the mission stage counters (UISpecialMissionHUD / _TurnCounter) ----
+// Verified live 2026-08-23 on LostAndAbandonedB: counter 1 visible carrying
+// "Приведите солдат на запасной маршрут" / "Осталось солдат" / "3", counter 2 inited and hidden.
+constexpr int32_t kSpecHudCounter1Offset = 0x418; // UISpecialMissionHUD::m_kGenericTurnCounter
+constexpr int32_t kSpecHudCounter2Offset = 0x420; // ::m_kTurnCounter2
+constexpr int32_t kTurnCounterLabelOffset = 0x3FC;    // ::m_sLabel
+constexpr int32_t kTurnCounterSubLabelOffset = 0x40C; // ::m_sSubLabel
+constexpr int32_t kTurnCounterCounterOffset = 0x41C;  // ::m_sCounter
+constexpr int32_t kTurnCounterFlagsOffset = 0x42C;    // bitfield dword
+constexpr uint32_t kTurnCounterLocked = 0x01;
+constexpr uint32_t kTurnCounterExpired = 0x02;
+constexpr uint32_t kTurnCounterInfinity = 0x04;
 
 // ---- tutorial mission: the modal popup (UITutorialBox) ----
 constexpr int32_t kTutBoxTitleOffset = 0x410;      // Title (FString)
@@ -346,6 +411,17 @@ constexpr int32_t kActionPress = 1;
 constexpr int32_t kActionRelease = 32;
 
 // ---- raw, SEH-safe primitives (no C++ objects with destructors inside __try) ----
+
+// The only WRITE primitive into engine memory. Everything else here reads; a write is reserved
+// for a field the GAME itself treats as a plain cursor (the hero promotion screen's column and
+// panel indices), never for state the engine derives or reference-counts.
+void WriteI32Raw(void* obj, int32_t offset, int32_t value)
+{
+    __try {
+        *reinterpret_cast<int32_t*>(reinterpret_cast<uint8_t*>(obj) + offset) = value;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
 
 uint32_t ReadU32Raw(const void* obj, int32_t offset)
 {
@@ -1031,6 +1107,84 @@ const uint8_t* FindTextTooltipDataRaw(void* mgr, int32_t id)
     return nullptr;
 }
 
+// SEH-safe: the ANSI text of the FName stored AT `addr` (entry id, then instance number), the
+// way the engine prints it — instance N shows as "_N-1", which is what makes a live panel's
+// MCPath read "UIFinalShell_0". Distinct from ObjNameAnsiRaw, which reads an OBJECT's own name.
+bool FNameAtAnsiRaw(const void* addr, char* buf, int bufLen)
+{
+    __try {
+        const int32_t id = *reinterpret_cast<const int32_t*>(addr);
+        const int32_t instance = *(reinterpret_cast<const int32_t*>(addr) + 1);
+        TArray<FNameEntry*>* names = FName::Names();
+        if (!names || id < 0 || id >= names->size())
+            return false;
+        FNameEntry* entry = names->at(id);
+        if (!entry)
+            return false;
+        const char* ansi = entry->GetAnsiName();
+        if (!ansi)
+            return false;
+        int i = 0;
+        for (; i < bufLen - 1 && ansi[i]; i++)
+            buf[i] = ansi[i];
+        buf[i] = '\0';
+        if (instance > 0 && i < bufLen - 1)
+            snprintf(buf + i, static_cast<size_t>(bufLen - i), "_%d", instance - 1);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// ⛔ RAW, not ReadFStringField: that one runs CleanText, which strips <...> and collapses
+// whitespace. A Flash path is an identifier being COMPARED, not a phrase being spoken, and a
+// cleaned-vs-raw mismatch would fail silently — which reads to the player as "this has no
+// tooltip", indistinguishable from the truth.
+std::string ReadFStringFieldRaw(const void* obj, int32_t offset); // defined with the readers below
+
+// The bounds of the manager's shared tooltip-data array, PODs only. Split out from the search
+// below because an SEH __try cannot live in a frame that needs object unwinding (C2712), and
+// matching a path means building std::strings.
+bool TextTooltipDataSpanRaw(void* mgr, const uint8_t** outData, int32_t* outCount)
+{
+    __try {
+        void* shared = *reinterpret_cast<void* const*>(
+            reinterpret_cast<const uint8_t*>(mgr) + kMgrTextTooltipOffset);
+        if (!shared)
+            return false;
+        auto* arr = reinterpret_cast<const uint8_t*>(shared) + kTextTooltipDataOffset;
+        auto* data = *reinterpret_cast<const uint8_t* const*>(arr);
+        int32_t n = *reinterpret_cast<const int32_t*>(arr + 8);
+        if (!data || n <= 0 || n > 4096)
+            return false;
+        *outData = data;
+        *outCount = n;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// The TTextTooltipData element registered against exactly this Flash path, or null. Exact match
+// rather than a suffix: the caller composes the whole path from a live panel's own MCPath, and a
+// suffix test would happily answer with another screen's row of the same name.
+const uint8_t* FindTextTooltipDataByPathRaw(void* mgr, const std::string& path)
+{
+    const uint8_t* data = nullptr;
+    int32_t n = 0;
+    if (!TextTooltipDataSpanRaw(mgr, &data, &n))
+        return nullptr;
+    // Newest LAST is how the array grows, so search backwards: a screen that re-populates
+    // registers a second entry against the same path without removing the first, and the one
+    // the player is actually hovering is the one added most recently.
+    for (int32_t i = n - 1; i >= 0; i--) {
+        const uint8_t* el = data + static_cast<size_t>(i) * kTTDataStride;
+        if (ReadFStringFieldRaw(el, kTTDataTargetPathOffset) == path)
+            return el;
+    }
+    return nullptr;
+}
+
 // The tooltip with this id in the manager's Tooltips array (preformed tooltips only), or null.
 void* FindTooltipByIdRaw(void* mgr, int32_t id)
 {
@@ -1439,6 +1593,16 @@ std::string ReadFStringField(const void* obj, int32_t offset)
     wchar_t buf[1024];
     int len = CopyFStringRaw(reinterpret_cast<const uint8_t*>(obj) + offset, buf, 1024);
     return len > 0 ? CleanText(WcharToUtf8(buf, len)) : std::string();
+}
+
+// The same read with NO cleaning, for a field that is an identifier rather than a phrase — a
+// Flash path being matched. CleanText would strip <...> and collapse whitespace, so a cleaned
+// value can never be compared against a raw one.
+std::string ReadFStringFieldRaw(const void* obj, int32_t offset)
+{
+    wchar_t buf[1024];
+    int len = CopyFStringRaw(reinterpret_cast<const uint8_t*>(obj) + offset, buf, 1024);
+    return len > 0 ? WcharToUtf8(buf, len) : std::string();
 }
 
 // The My2K link state, queried the way the game's own UpdateMy2KButtonStatus does (offline /
@@ -1873,28 +2037,43 @@ bool SendRowCommand(void* rowItem, int cmd)
     return CallNamedFunction(rowItem, "OnUnrealCommand", &params);
 }
 
+namespace {
+
+// Title and body are two spoken phrases, so they take the kernel's join rule rather than a bare
+// ". " — the game punctuates plenty of these itself ("НАГРАДА:" is a tooltip title) and a blind
+// concatenation voiced the doubled stop at the player.
+std::string JoinTooltip(const std::string& title, const std::string& body)
+{
+    std::string out = title;
+    X2Access::Graph::AppendPhrase(out, body);
+    return out;
+}
+
+// The tooltip manager that owns `panel`'s movie. Never a global scan: two managers can be alive
+// at once (2D HUD + 3D strategy movie) with independently-counted ids.
+void* TooltipMgrFor(void* panel)
+{
+    void* movie = panel ? ReadPtrRaw(panel, kPanelMovieOffset) : nullptr;
+    void* pres = movie ? ReadPtrRaw(movie, kMoviePresOffset) : nullptr;
+    return pres ? ReadPtrRaw(pres, kPresTooltipMgrOffset) : nullptr;
+}
+
+} // namespace
+
 std::string ReadPanelTooltip(void* panel)
 {
     if (!panel || !(ReadU32Raw(panel, kPanelFlagsOffset) & kPanelHasTooltip))
         return {};
     int32_t id = ReadI32Raw(panel, kPanelTooltipIdOffset);
 
-    void* movie = ReadPtrRaw(panel, kPanelMovieOffset);
-    void* pres = movie ? ReadPtrRaw(movie, kMoviePresOffset) : nullptr;
-    void* mgr = pres ? ReadPtrRaw(pres, kPresTooltipMgrOffset) : nullptr;
+    void* mgr = TooltipMgrFor(panel);
     if (!mgr)
         return {};
 
     // SetTooltipText path: a data element in the manager's shared TextTooltip.
-    if (const uint8_t* el = FindTextTooltipDataRaw(mgr, id)) {
-        std::string body = ReadFStringField(el, kTTDataBodyOffset);
-        std::string title = ReadFStringField(el, kTTDataTitleOffset);
-        if (title.empty())
-            return body;
-        if (body.empty())
-            return title;
-        return title + ". " + body;
-    }
+    if (const uint8_t* el = FindTextTooltipDataRaw(mgr, id))
+        return JoinTooltip(
+            ReadFStringField(el, kTTDataTitleOffset), ReadFStringField(el, kTTDataBodyOffset));
 
     // Preformed path: a real UITextTooltip object in the Tooltips array. Only text tooltips
     // carry sTitle/sBody at these offsets; other subclasses (ability tooltips) would read
@@ -1903,13 +2082,8 @@ std::string ReadPanelTooltip(void* panel)
     if (!tip || !ObjectClassNamedRaw(tip, "UITextTooltip"))
         return {};
 
-    std::string body = ReadFStringField(tip, kTextTooltipBodyOffset);
-    std::string title = ReadFStringField(tip, kTextTooltipTitleOffset);
-    if (title.empty())
-        return body;
-    if (body.empty())
-        return title;
-    return title + ". " + body;
+    return JoinTooltip(ReadFStringField(tip, kTextTooltipTitleOffset),
+        ReadFStringField(tip, kTextTooltipBodyOffset));
 }
 
 std::string ReadRowTooltip(void* rowItem)
@@ -1922,6 +2096,43 @@ std::string ReadRowTooltip(void* rowItem)
     if (tip.empty())
         tip = ReadPanelTooltip(rowItem);
     return tip;
+}
+
+std::string ReadListItemTooltip(void* rowItem)
+{
+    if (!rowItem)
+        return {};
+    // Same shape as ReadRowTooltip but a different child: UIListItemString forwards
+    // SetTooltipText — and the why-disabled reason SetDisabled(bDisabled, Reason) parks there —
+    // to ButtonBG. The fallback to the row itself covers a subclass that set one on itself.
+    std::string tip = ReadPanelTooltip(ReadPtrRaw(rowItem, kListItemBGOffset));
+    if (tip.empty())
+        tip = ReadPanelTooltip(rowItem);
+    return tip;
+}
+
+std::string ReadTooltipByPath(void* panel, const char* childPath)
+{
+    if (!panel || !childPath)
+        return {};
+    void* mgr = TooltipMgrFor(panel);
+    if (!mgr)
+        return {};
+
+    // The panel's own path into the movie, which the game composed as ONE FName
+    // (`name(ParentPanel.MCPath $ "." $ MCName)`).
+    char base[256] = "";
+    if (!FNameAtAnsiRaw(reinterpret_cast<const uint8_t*>(panel) + kPanelMCPathOffset, base,
+            sizeof(base)))
+        return {};
+    if (!base[0] || strcmp(base, "None") == 0)
+        return {}; // not inited, or a pure UnrealScript container — it has no path to match
+
+    const uint8_t* el = FindTextTooltipDataByPathRaw(mgr, std::string(base) + childPath);
+    if (!el)
+        return {};
+    return JoinTooltip(
+        ReadFStringField(el, kTTDataTitleOffset), ReadFStringField(el, kTTDataBodyOffset));
 }
 
 bool AdjustDropdown(void* rowItem, int delta)
@@ -3010,6 +3221,199 @@ void* FindTacticalHUD()
 bool TacticalHUDMenuRaised(void* screen)
 {
     return screen && (ReadU32Raw(screen, kTacHudFlagsOffset) & kTacHudMenuRaised) != 0;
+}
+
+// ---- the objectives list (UIObjectiveList) ----
+
+namespace {
+
+// The owning screen differs per layer and nothing else does, so the walk answers both at once.
+// Stack order decides: in a mission UITacticalHUD is the one that matters even if an Avenger HUD
+// corpse is still allocated, and the stack is the only structure that knows which is live.
+void* FindObjectiveListPanel(bool* tacticalOut)
+{
+    void* stack = gStackFinder.Find();
+    if (!stack)
+        return nullptr;
+
+    void* screens[kMaxStackScreens] = {};
+    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    for (int i = 0; i < count; i++) {
+        if (!screens[i])
+            continue;
+        // Same readiness rule the tactical gate uses, and for the same reason: a removed screen
+        // keeps every state bit it had, so bIsRemoved is the only bit that settles it.
+        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
+        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+            continue;
+        char name[64];
+        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
+            continue;
+
+        bool tactical = strcmp(name, "UITacticalHUD") == 0;
+        if (!tactical && strcmp(name, "UIAvengerHUD") != 0)
+            continue;
+
+        void* panel = ReadPtrRaw(screens[i],
+            tactical ? kTacHudObjectivesOffset : kAvengerHudObjectivesOffset);
+        if (!panel)
+            continue;
+        if (tacticalOut)
+            *tacticalOut = tactical;
+        return panel;
+    }
+    return nullptr;
+}
+
+} // namespace
+
+bool HasObjectiveList()
+{
+    return FindObjectiveListPanel(nullptr) != nullptr;
+}
+
+ObjectiveListView ReadObjectives()
+{
+    ObjectiveListView v;
+    bool tactical = false;
+    void* panel = FindObjectiveListPanel(&tactical);
+    if (!panel)
+        return v;
+    v.found = true;
+    v.tactical = tactical;
+
+    void* items[kMaxObjectiveItems] = {};
+    int count = ReadPtrArrayRaw(panel, kObjListItemsOffset, items, kMaxObjectiveItems);
+    int hidden = 0;
+    for (int i = 0; i < count; i++) {
+        if (!items[i])
+            continue;
+
+        uint32_t flags = ReadU32Raw(items[i], kPanelFlagsOffset);
+        if (flags & kPanelRemoved)
+            continue;
+        // The documented child-widget exception: on a ROW the visible bit is toggled
+        // deliberately — UIObjectiveListItem.ToggleVisibility hides the members of a collapsed
+        // group — so an invisible row is one a sighted player cannot read either. Counted rather
+        // than swallowed, because a list that silently shrank is the failure mode that reads as
+        // "the mission has fewer objectives" and never gets reported as a bug.
+        if (!(flags & kPanelVisible)) {
+            hidden++;
+            continue;
+        }
+
+        const int32_t data = kObjItemDataOffset;
+        ObjectiveLine line;
+        // RAW for MissionType: it is matched against the game's own literals, and CleanText
+        // would be free to alter a token we are about to strcmp.
+        line.missionType = ReadFStringFieldRaw(items[i], data + kObjInfoMissionType);
+        line.title = line.missionType == "TITLE" || line.missionType == "DARKEVENTTITLE";
+        line.label = ReadFStringField(items[i], data + kObjInfoDisplayLabel);
+
+        uint32_t f = ReadU32Raw(items[i], data + kObjInfoFlags);
+        line.completed = (f & kObjInfoCompleted) != 0;
+        line.failed = (f & kObjInfoFailed) != 0;
+        line.checkbox = (f & kObjInfoCheckBox) != 0;
+        line.warning = (f & kObjInfoWarning) != 0;
+        line.header = (f & kObjInfoHeader) != 0;
+        line.darkEvent = (f & kObjInfoDarkEvent) != 0;
+
+        line.timer = ReadI32Raw(items[i], data + kObjInfoTimer);
+        line.haveAmount = ReadI32Raw(items[i], data + kObjInfoHaveAmount);
+        line.haveMin = ReadI32Raw(items[i], data + kObjInfoHaveMin);
+        line.availableAmount = ReadI32Raw(items[i], data + kObjInfoAvailAmount);
+        line.lostAmount = ReadI32Raw(items[i], data + kObjInfoLostAmount);
+        if (line.haveAmount >= 0) {
+            line.haveImage = ReadFStringFieldRaw(items[i], data + kObjInfoHaveImage);
+            line.availableImage = ReadFStringFieldRaw(items[i], data + kObjInfoAvailImage);
+            line.lostImage = ReadFStringFieldRaw(items[i], data + kObjInfoLostImage);
+        }
+
+        // The heading words live on the ITEM class, not in Data — the title row pushes
+        // m_strObjectivesListTitle straight into Flash. Any row can supply them (they are class
+        // defaults), so take them from the first row that answers rather than requiring the
+        // title row to be present.
+        if (v.heading.empty())
+            v.heading = ReadFStringField(items[i], kObjItemListTitleOffset);
+        if (v.darkHeading.empty())
+            v.darkHeading = ReadFStringField(items[i], kObjItemDarkTitleOffset);
+        if (v.inProgress.empty())
+            v.inProgress = ReadFStringField(items[i], kObjItemInProgressOffset);
+
+        v.lines.push_back(std::move(line));
+    }
+
+    if (hidden > 0)
+        LOG_DEBUG("Objectives: %d row(s) hidden by a collapsed group, not spoken", hidden);
+    if (count >= kMaxObjectiveItems)
+        LOG_WARN("Objectives: list hit the %d-row cap — rows beyond it were NOT read",
+            kMaxObjectiveItems);
+    return v;
+}
+
+// ---- the mission stage counters (UISpecialMissionHUD) ----
+
+namespace {
+
+// One counter, or false when this slot is empty / hidden / wordless.
+bool ReadCounterPanel(void* panel, MissionCounter* out)
+{
+    if (!panel)
+        return false;
+    uint32_t flags = ReadU32Raw(panel, kPanelFlagsOffset);
+    // ⛔ Visible is REQUIRED, not optional: the panel shows itself only when data is pumped in
+    // (every AS_Set* ends in Show()), so a hidden counter is one the player is not being shown.
+    // The second slot is routinely inited-and-hidden, and reading it would invent a counter.
+    if (!(flags & kPanelInited) || (flags & kPanelRemoved) || !(flags & kPanelVisible))
+        return false;
+
+    out->label = ReadFStringField(panel, kTurnCounterLabelOffset);
+    out->subLabel = ReadFStringField(panel, kTurnCounterSubLabelOffset);
+    out->counter = ReadFStringField(panel, kTurnCounterCounterOffset);
+
+    uint32_t f = ReadU32Raw(panel, kTurnCounterFlagsOffset);
+    out->locked = (f & kTurnCounterLocked) != 0;
+    out->expired = (f & kTurnCounterExpired) != 0;
+    out->infinity = (f & kTurnCounterInfinity) != 0;
+
+    // A visible panel with nothing in any of the three fields has no readout to give. Not an
+    // error — the MP turn-timer path blanks the sub-label to a single space.
+    return !out->label.empty() || !out->subLabel.empty() || !out->counter.empty();
+}
+
+} // namespace
+
+std::vector<MissionCounter> ReadMissionCounters()
+{
+    std::vector<MissionCounter> counters;
+    void* stack = gStackFinder.Find();
+    if (!stack)
+        return counters;
+
+    void* screens[kMaxStackScreens] = {};
+    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    for (int i = 0; i < count; i++) {
+        if (!screens[i])
+            continue;
+        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
+        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+            continue;
+        char name[64];
+        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
+            continue;
+        if (strcmp(name, "UISpecialMissionHUD") != 0)
+            continue;
+
+        // Screen order, so the readout matches the column the player sees.
+        const int32_t slots[] = {kSpecHudCounter1Offset, kSpecHudCounter2Offset};
+        for (int32_t slot : slots) {
+            MissionCounter c;
+            if (ReadCounterPanel(ReadPtrRaw(screens[i], slot), &c))
+                counters.push_back(std::move(c));
+        }
+        return counters; // only one such HUD is ever up
+    }
+    return counters;
 }
 
 // ---- outbound calls into companion-mod script ----
@@ -4343,6 +4747,263 @@ bool ActivateChooseFacility(const ChooseFacilityView& view, int index)
     // why (supplies, power, or staffing).
     SetListIndex(view.list, index);
     return SendRowCommand(view.screen, kCmdEnter);
+}
+
+// ---- promotion / level-up (UIArmory_Promotion + subclasses) ----
+
+namespace {
+
+constexpr int32_t kArmoryUnitRefOffset = 0x450;      // UIArmory::UnitReference (ObjectID first)
+
+// UIArmory_Promotion (the classic list screen; UIArmory_PromotionPsiOp reuses it unchanged).
+constexpr int32_t kPromoClassRowOffset = 0x53C;       // ClassRowItem (UIArmory_PromotionItem*)
+constexpr int32_t kPromoSelectedBranchOffset = 0x614; // SelectedAbilityIndex (int)
+constexpr int32_t kPromoListOffset = 0x618;           // List (UIList*)
+
+// UIArmory_PromotionItem — one rank row of the classic screen.
+constexpr int32_t kPromoItemRankOffset = 0x3D8;     // Rank (int) — an ABILITY TREE index
+constexpr int32_t kPromoItemIcon1Offset = 0x404;    // AbilityIcon1 (UIIcon*)
+constexpr int32_t kPromoItemIcon2Offset = 0x40C;    // AbilityIcon2 (UIIcon*)
+constexpr int32_t kPromoItemSelectedOffset = 0x41C; // SelectedAbility (int)
+constexpr int32_t kPromoItemFlagsOffset = 0x420;    // bIsDisabled | bEligibleForPromotion
+constexpr uint32_t kPromoItemDisabled = 0x1;
+constexpr uint32_t kPromoItemEligible = 0x2;
+
+// UIArmory_PromotionHero and its columns.
+constexpr int32_t kPromoHeroColumnsOffset = 0x624; // Columns (TArray<UIArmory_PromotionHeroColumn*>)
+constexpr int32_t kPromoHeroSelectedColOffset = 0x6E4; // m_iCurrentlySelectedColumn (int)
+constexpr int32_t kPromoColRankOffset = 0x3D8;         // Rank (int)
+constexpr int32_t kPromoColIconsOffset = 0x3FC;        // AbilityIcons (TArray<UIIcon*>)
+constexpr int32_t kPromoColFlagsOffset = 0x40C;        // bIsDisabled | bEligibleForPurchase
+constexpr uint32_t kPromoColDisabled = 0x1;
+constexpr uint32_t kPromoColEligible = 0x2;
+constexpr int32_t kPromoColPanelIndexOffset = 0x420; // m_iPanelIndex (int)
+
+// UIArmory_PromotionHero spawns exactly seven columns and NUM_ABILITIES_PER_COLUMN is 4; the
+// classic screen's list is one row per rank. Both bounded well above what the game draws.
+constexpr int kMaxPromotionRows = 32;
+constexpr int kMaxPromotionBranches = 4;
+
+// Probe order is the class hierarchy's, most-derived first — FindStackScreenRaw and
+// IsInstanceRaw both match the EXACT class name, so a hero screen would never answer to
+// "UIArmory_Promotion" and the three can be told apart cleanly.
+struct PromotionClass {
+    const char* name;
+    PromotionKind kind;
+};
+constexpr PromotionClass kPromotionClasses[] = {
+    {"UIArmory_PromotionHero", PromotionKind::Hero},
+    {"UIArmory_PromotionPsiOp", PromotionKind::PsiOp},
+    {"UIArmory_Promotion", PromotionKind::Classic},
+};
+
+ScreenFinder gPromoHeroFinder{"UIArmory_PromotionHero"};
+ScreenFinder gPromoPsiFinder{"UIArmory_PromotionPsiOp"};
+ScreenFinder gPromoClassicFinder{"UIArmory_Promotion"};
+ScreenFinder* const kPromotionFinders[]
+    = {&gPromoHeroFinder, &gPromoPsiFinder, &gPromoClassicFinder};
+bool gPromoFallbackReported[3] = {};
+
+// Which of the three classes `screen` is, or false when it is none of them.
+bool PromotionKindOf(void* screen, PromotionKind* out)
+{
+    for (const PromotionClass& c : kPromotionClasses) {
+        if (ObjectClassNamedRaw(screen, c.name)) {
+            *out = c.kind;
+            return true;
+        }
+    }
+    return false;
+}
+
+// The ability slots of one row, in branch order. `icons` are the row's own UIIcon pointers; a
+// HIDDEN one is the game saying the tree has no ability at that branch, which is what makes a
+// ragged tree readable — the cell keeps its branch NUMBER while being unlandable.
+void ReadPromotionCells(void* const* icons, int count, std::vector<PromotionCell>& out)
+{
+    for (int i = 0; i < count; i++) {
+        PromotionCell cell;
+        cell.branch = i;
+        cell.icon = icons[i];
+        cell.visible = cell.icon && (ReadU32Raw(cell.icon, kPanelFlagsOffset) & kPanelVisible) != 0;
+        out.push_back(cell);
+    }
+}
+
+} // namespace
+
+void* FindPromotionScreen()
+{
+    for (int i = 0; i < 3; i++) {
+        if (void* onStack = FindStackScreenRaw(kPromotionClasses[i].name))
+            return onStack;
+    }
+    // The stack is the authority; this only covers the window in which it is being rebuilt.
+    for (int i = 0; i < 3; i++) {
+        void* found = kPromotionFinders[i]->Find();
+        if (found) {
+            if (!gPromoFallbackReported[i]) {
+                gPromoFallbackReported[i] = true;
+                LOG_INFO("GameUI: %s is not on the screen stack — falling back to an object scan",
+                    kPromotionClasses[i].name);
+            }
+            return found;
+        }
+    }
+    return nullptr;
+}
+
+PromotionView ReadPromotion(void* screen)
+{
+    PromotionView v;
+    if (!screen || !PromotionKindOf(screen, &v.kind))
+        return v;
+    v.screen = screen;
+    v.unitId = ReadI32Raw(screen, kArmoryUnitRefOffset);
+
+    if (v.kind == PromotionKind::Hero) {
+        void* columns[kMaxPromotionRows] = {};
+        int n = ReadPtrArrayRaw(screen, kPromoHeroColumnsOffset, columns, kMaxPromotionRows);
+        for (int i = 0; i < n; i++) {
+            if (!columns[i])
+                continue;
+            PromotionRow row;
+            row.handle = columns[i];
+            row.rank = ReadI32Raw(columns[i], kPromoColRankOffset);
+            uint32_t flags = ReadU32Raw(columns[i], kPromoColFlagsOffset);
+            row.disabled = (flags & kPromoColDisabled) != 0;
+            row.eligible = (flags & kPromoColEligible) != 0;
+            row.selectedBranch = ReadI32Raw(columns[i], kPromoColPanelIndexOffset);
+
+            void* icons[kMaxPromotionBranches] = {};
+            int iconCount
+                = ReadPtrArrayRaw(columns[i], kPromoColIconsOffset, icons, kMaxPromotionBranches);
+            ReadPromotionCells(icons, iconCount, row.cells);
+            v.rows.push_back(std::move(row));
+        }
+        // The hero screen navigates itself through its own pair of ints, so they ARE the cursor.
+        int col = ReadI32Raw(screen, kPromoHeroSelectedColOffset);
+        if (col >= 0 && col < static_cast<int>(v.rows.size())) {
+            v.selectedRow = col;
+            v.selectedBranch = v.rows[static_cast<size_t>(col)].selectedBranch;
+        }
+        v.valid = !v.rows.empty();
+        return v;
+    }
+
+    // Classic / PsiOp. The class row is a SEPARATE widget from the list and it is rank 0 — the
+    // list starts at rank 1. Reading it first is what puts the rows in tree order.
+    if (void* classRow = ReadPtrRaw(screen, kPromoClassRowOffset)) {
+        PromotionRow row;
+        row.handle = classRow;
+        row.rank = ReadI32Raw(classRow, kPromoItemRankOffset);
+        uint32_t flags = ReadU32Raw(classRow, kPromoItemFlagsOffset);
+        row.disabled = (flags & kPromoItemDisabled) != 0;
+        row.eligible = (flags & kPromoItemEligible) != 0;
+        row.selectedBranch = ReadI32Raw(classRow, kPromoItemSelectedOffset);
+        void* icons[2] = {ReadPtrRaw(classRow, kPromoItemIcon1Offset),
+            ReadPtrRaw(classRow, kPromoItemIcon2Offset)};
+        ReadPromotionCells(icons, 2, row.cells);
+        v.rows.push_back(std::move(row));
+    }
+
+    void* list = ReadPtrRaw(screen, kPromoListOffset);
+    void* items[kMaxPromotionRows] = {};
+    int n = ReadListItemsRaw(list, items, kMaxPromotionRows);
+    for (int i = 0; i < n; i++) {
+        if (!items[i])
+            continue;
+        PromotionRow row;
+        row.handle = items[i];
+        row.rank = ReadI32Raw(items[i], kPromoItemRankOffset);
+        uint32_t flags = ReadU32Raw(items[i], kPromoItemFlagsOffset);
+        row.disabled = (flags & kPromoItemDisabled) != 0;
+        row.eligible = (flags & kPromoItemEligible) != 0;
+        row.selectedBranch = ReadI32Raw(items[i], kPromoItemSelectedOffset);
+        void* icons[2] = {ReadPtrRaw(items[i], kPromoItemIcon1Offset),
+            ReadPtrRaw(items[i], kPromoItemIcon2Offset)};
+        ReadPromotionCells(icons, 2, row.cells);
+        v.rows.push_back(std::move(row));
+    }
+
+    // The list index is one behind ours, whose slot 0 is the class row. A NEGATIVE index is not
+    // "nothing selected" here: UpdateClassRowSelection reads exactly that to mean the class row
+    // has focus, which is where InitPromotion parks a rank-1 soldier.
+    const bool haveClassRow = !v.rows.empty() && v.rows.front().rank == 0;
+    int listIndex = list ? ReadI32Raw(list, kListSelectedIndexOffset) : -1;
+    if (listIndex >= 0)
+        v.selectedRow = haveClassRow ? listIndex + 1 : listIndex;
+    else if (haveClassRow)
+        v.selectedRow = 0;
+    if (v.selectedRow >= static_cast<int>(v.rows.size()))
+        v.selectedRow = -1;
+    v.selectedBranch = ReadI32Raw(screen, kPromoSelectedBranchOffset);
+
+    v.valid = !v.rows.empty();
+    return v;
+}
+
+bool SetPromotionSelection(const PromotionView& view, int row, int branch)
+{
+    if (!view.valid || row < 0 || row >= static_cast<int>(view.rows.size()))
+        return false;
+    const PromotionRow& r = view.rows[static_cast<size_t>(row)];
+
+    if (view.kind == PromotionKind::Hero) {
+        // The hero screen navigates itself through two plain ints, so writing them IS its model
+        // rather than a fight with it, and OnReceiveFocus does the highlight the same way its
+        // controller branch does.
+        WriteI32Raw(view.screen, kPromoHeroSelectedColOffset, row);
+        WriteI32Raw(r.handle, kPromoColPanelIndexOffset, branch);
+        CallNamedFunction(r.handle, "OnReceiveFocus", nullptr);
+        // PreviewAbility repaints the description panel — the one thing that makes the SCREEN
+        // show what the player is hearing. The game reaches it only from a mouse hover or the
+        // controller path, which is exactly the already-written-but-unreachable shape this layer
+        // exists to call.
+        struct {
+            int32_t Rank;
+            int32_t Branch;
+        } params{r.rank, branch};
+        CallNamedFunction(view.screen, "PreviewAbility", &params);
+        return true;
+    }
+
+    // Classic: drive the LIST, which fires OnSelectionChanged = PreviewRow and repaints the
+    // description panel for free. The class row is not IN the list, so landing on it means
+    // leaving the list where UpdateClassRowSelection expects it.
+    void* list = ReadPtrRaw(view.screen, kPromoListOffset);
+    const bool haveClassRow = view.rows.front().rank == 0;
+    if (!(haveClassRow && row == 0))
+        SetListIndex(list, haveClassRow ? row - 1 : row);
+    // The row's own within-row cursor, and the screen's copy of it that PreviewRow reads back.
+    WriteI32Raw(view.screen, kPromoSelectedBranchOffset, branch);
+    struct {
+        int32_t AbilityIndex;
+    } params{branch};
+    CallNamedFunction(r.handle, "SetSelectedAbility", &params);
+    return true;
+}
+
+bool ActivatePromotionCell(const PromotionView& view, int row, int branch)
+{
+    if (!view.valid || row < 0 || row >= static_cast<int>(view.rows.size()))
+        return false;
+    const PromotionRow& r = view.rows[static_cast<size_t>(row)];
+    if (branch < 0 || branch >= static_cast<int>(r.cells.size()))
+        return false;
+
+    // Selection first. Both row classes read their OWN Rank inside SelectAbility and the classic
+    // one hands the screen (Rank, idx) — so a call made while the widgets still pointed at
+    // another cell would buy a different ability from the one just spoken.
+    SetPromotionSelection(view, row, branch);
+
+    // SelectAbility(int) is declared on BOTH row classes with the same name and signature, and
+    // is already the three-way verb the game wrote: owned opens the info popup, purchasable
+    // raises the confirm dialog (which the dialog recipe reads), locked plays the refusal sound.
+    struct {
+        int32_t Idx;
+    } params{branch};
+    return CallNamedFunction(r.handle, "SelectAbility", &params);
 }
 
 // ---- tutorial mission (Tutorial_01) ----

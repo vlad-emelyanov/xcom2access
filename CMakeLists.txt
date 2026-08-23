@@ -129,6 +129,7 @@ add_library(X2Access SHARED
     src/geo_scanner.cpp
     src/tactical_hud.cpp
     src/unit_info.cpp
+    src/objective_reader.cpp
     src/avenger.cpp
     src/dropship.cpp
     src/text_input.cpp

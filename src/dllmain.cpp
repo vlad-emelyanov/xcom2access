@@ -13,6 +13,7 @@
 #include "text_input.h"
 #include "tactical_hud.h"
 #include "unit_info.h"
+#include "objective_reader.h"
 #include "hacking_screen.h"
 #include "tutorial_reader.h"
 #include "hooks.h"
@@ -87,6 +88,11 @@ static void InitThread() {
     // 9. Selected-unit readout (claims — same; one key, and the gate is TacticalHUD's, so it
     // must come after it)
     UnitInfo::Init();
+
+    // 9b. Objectives readout (claims — same; one Ctrl chord). Gates on its own panel being
+    // present rather than on a tactical gate, because the same UIObjectiveList serves the
+    // Avenger, so this is live in both layers and contends with neither.
+    ObjectiveReader::Init();
 
     // 10. Hacking overlay (claims — same; arrows and Delete, live only while the pad is up)
     HackingScreen::Init();

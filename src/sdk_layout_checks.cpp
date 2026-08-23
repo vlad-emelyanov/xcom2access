@@ -39,6 +39,7 @@ static_assert(offsetof(UFunction, FunctionFlags) == 0xD0, "UFunction::FunctionFl
 // ---- UIPanel (flag dword at 0x284 is bitfields; MCName pins the layout up to it) ----
 static_assert(offsetof(AUIPanel, MCName) == 0x27C, "UIPanel::MCName");
 static_assert(offsetof(AUIPanel, CachedTooltipId) == 0x2AC, "UIPanel::CachedTooltipId");
+static_assert(offsetof(AUIPanel, MCPath) == 0x2B0, "UIPanel::MCPath");
 static_assert(offsetof(AUIPanel, Movie) == 0x2B8, "UIPanel::Movie");
 
 // ---- UIMovie / presentation / tooltip chain ----
@@ -54,6 +55,34 @@ static_assert(sizeof(FTTextTooltipData) == 0xAC, "TTextTooltipData stride");
 static_assert(offsetof(FTTextTooltipData, Id) == 0x00, "TTextTooltipData::Id");
 static_assert(offsetof(FTTextTooltipData, sTitle) == 0x44, "TTextTooltipData::sTitle");
 static_assert(offsetof(FTTextTooltipData, sBody) == 0x54, "TTextTooltipData::sBody");
+// The only link back to a tooltip registered straight on the manager, with no panel to key on.
+static_assert(offsetof(FTTextTooltipData, targetPath) == 0x1C, "TTextTooltipData::targetPath");
+// UIListItemString forwards SetTooltipText (and SetDisabled's reason) to this child.
+static_assert(offsetof(AUIListItemString, ButtonBG) == 0x454, "UIListItemString::ButtonBG");
+
+// ---- promotion / level-up (UIArmory_Promotion + subclasses) ----
+//
+// The flag dwords (UIArmory_PromotionItem at 0x420, UIArmory_PromotionHeroColumn at 0x40C) are
+// bitfields and cannot be offsetof'd, so they are pinned by BRACKETING: the field immediately
+// before and the one immediately after. If the dword moves, one of those four fails.
+static_assert(offsetof(AUIArmory, UnitReference) == 0x450, "UIArmory::UnitReference");
+static_assert(offsetof(AUIArmory_Promotion, ClassRowItem) == 0x53C, "promotion class row");
+static_assert(offsetof(AUIArmory_Promotion, SelectedAbilityIndex) == 0x614, "promotion branch");
+static_assert(offsetof(AUIArmory_Promotion, List) == 0x618, "promotion list");
+static_assert(offsetof(AUIArmory_PromotionItem, Rank) == 0x3D8, "promotion row rank");
+static_assert(offsetof(AUIArmory_PromotionItem, AbilityIcon1) == 0x404, "promotion row icon 1");
+static_assert(offsetof(AUIArmory_PromotionItem, AbilityIcon2) == 0x40C, "promotion row icon 2");
+static_assert(offsetof(AUIArmory_PromotionItem, SelectedAbility) == 0x41C, "promotion row cursor");
+static_assert(offsetof(AUIArmory_PromotionItem, m_strNewRank) == 0x424, "promotion row flags end");
+static_assert(offsetof(AUIArmory_PromotionHero, Columns) == 0x624, "hero promotion columns");
+static_assert(offsetof(AUIArmory_PromotionHero, m_iCurrentlySelectedColumn) == 0x6E4,
+    "hero promotion column cursor");
+static_assert(offsetof(AUIArmory_PromotionHeroColumn, Rank) == 0x3D8, "hero column rank");
+static_assert(offsetof(AUIArmory_PromotionHeroColumn, AbilityIcons) == 0x3FC, "hero column icons");
+static_assert(offsetof(AUIArmory_PromotionHeroColumn, m_strNewRank) == 0x410,
+    "hero column flags end");
+static_assert(offsetof(AUIArmory_PromotionHeroColumn, m_iPanelIndex) == 0x420,
+    "hero column panel cursor");
 
 // ---- buttons / text widgets ----
 static_assert(offsetof(AUIButton, Text) == 0x3D8, "UIButton::Text");
@@ -243,6 +272,57 @@ static_assert(offsetof(FTHUDMsg, m_kFollowObject) == 0x30, "THUDMsg::m_kFollowOb
 static_assert(offsetof(FTHUDMsg, m_eBehavior) == 0x38,
     "THUDMsg flag dword precedes m_eBehavior at 0x34");
 static_assert(offsetof(FTHUDMsg, m_eType) == 0x74, "THUDMsg::m_eType");
+
+// ---- the objectives list (UIObjectiveList / UIObjectiveListItem) ----
+// The owning field on each layer's HUD, then the list, the row, and the struct the row retains.
+static_assert(offsetof(AUITacticalHUD, m_kObjectivesControl) == 0x444,
+    "UITacticalHUD::m_kObjectivesControl");
+static_assert(offsetof(AUIAvengerHUD, Objectives) == 0x44C, "UIAvengerHUD::Objectives");
+static_assert(offsetof(AUIObjectiveList, Items) == 0x3D8, "UIObjectiveList::Items");
+static_assert(offsetof(AUIObjectiveListItem, Data) == 0x3DC, "UIObjectiveListItem::Data");
+static_assert(offsetof(AUIObjectiveListItem, m_strObjectivesListTitle) == 0x47C,
+    "UIObjectiveListItem::m_strObjectivesListTitle");
+static_assert(offsetof(AUIObjectiveListItem, m_strInProgress) == 0x4AC,
+    "UIObjectiveListItem::m_strInProgress");
+// FObjectiveDisplayInfo, read at offsets RELATIVE to Data — so these pin the whole row payload.
+static_assert(offsetof(FObjectiveDisplayInfo, MissionType) == 0x0C,
+    "ObjectiveDisplayInfo::MissionType");
+static_assert(offsetof(FObjectiveDisplayInfo, DisplayLabel) == 0x1C,
+    "ObjectiveDisplayInfo::DisplayLabel");
+// ShowCompleted/Failed/CheckBox/Warning/Header/bIsDarkEvent are bitfields in the dword at 0x2C;
+// the plain member after them pins it.
+static_assert(offsetof(FObjectiveDisplayInfo, Timer) == 0x30,
+    "ObjectiveDisplayInfo flag dword precedes Timer at 0x2C");
+static_assert(offsetof(FObjectiveDisplayInfo, CounterHaveImage) == 0x34,
+    "ObjectiveDisplayInfo::CounterHaveImage");
+static_assert(offsetof(FObjectiveDisplayInfo, CounterAvailableImage) == 0x44,
+    "ObjectiveDisplayInfo::CounterAvailableImage");
+static_assert(offsetof(FObjectiveDisplayInfo, CounterLostImage) == 0x54,
+    "ObjectiveDisplayInfo::CounterLostImage");
+static_assert(offsetof(FObjectiveDisplayInfo, CounterHaveAmount) == 0x64,
+    "ObjectiveDisplayInfo::CounterHaveAmount");
+static_assert(offsetof(FObjectiveDisplayInfo, CounterHaveMin) == 0x68,
+    "ObjectiveDisplayInfo::CounterHaveMin");
+static_assert(offsetof(FObjectiveDisplayInfo, CounterAvailableAmount) == 0x6C,
+    "ObjectiveDisplayInfo::CounterAvailableAmount");
+static_assert(offsetof(FObjectiveDisplayInfo, CounterLostAmount) == 0x70,
+    "ObjectiveDisplayInfo::CounterLostAmount");
+
+// ---- the mission stage counters (UISpecialMissionHUD / _TurnCounter) ----
+static_assert(offsetof(AUISpecialMissionHUD, m_kGenericTurnCounter) == 0x418,
+    "UISpecialMissionHUD::m_kGenericTurnCounter");
+static_assert(offsetof(AUISpecialMissionHUD, m_kTurnCounter2) == 0x420,
+    "UISpecialMissionHUD::m_kTurnCounter2");
+static_assert(offsetof(AUISpecialMissionHUD_TurnCounter, m_sLabel) == 0x3FC,
+    "UISpecialMissionHUD_TurnCounter::m_sLabel");
+static_assert(offsetof(AUISpecialMissionHUD_TurnCounter, m_sSubLabel) == 0x40C,
+    "UISpecialMissionHUD_TurnCounter::m_sSubLabel");
+static_assert(offsetof(AUISpecialMissionHUD_TurnCounter, m_sCounter) == 0x41C,
+    "UISpecialMissionHUD_TurnCounter::m_sCounter");
+// m_bLocked/m_bExpired/m_bInfinity are bitfields in the dword at 0x42C; the plain member after
+// them pins it.
+static_assert(offsetof(AUISpecialMissionHUD_TurnCounter, m_fLastUpdateTime) == 0x430,
+    "TurnCounter flag dword precedes m_fLastUpdateTime at 0x42C");
 
 // ---- tutorial mission: the replay manager ----
 static_assert(offsetof(AXComReplayMgr, CurrentHistoryFrame) == 0x274,

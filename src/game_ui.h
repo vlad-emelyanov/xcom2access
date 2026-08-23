@@ -245,6 +245,18 @@ std::string ReadPanelTooltip(void* panel);
 /// A settings row's tooltip: the BG child panel carries it (falls back to the row panel).
 std::string ReadRowTooltip(void* rowItem);
 
+/// A UIListItemString row's tooltip. That class OVERRIDES SetTooltipText to forward to its
+/// ButtonBG child, and SetDisabled(bDisabled, Reason) parks the why-disabled text there too, so
+/// a panel-keyed read of the row itself always comes back empty. Falls back to the row.
+std::string ReadListItemTooltip(void* rowItem);
+
+/// A tooltip registered STRAIGHT on the manager against a Flash path, for elements that have no
+/// UIPanel of their own and so carry neither bHasTooltip nor CachedTooltipId — an armory
+/// screen's ability-summary strip is the pattern. `childPath` is appended to `panel`'s own
+/// MCPath (so it starts with a dot) and matched exactly. Empty when nothing is registered there,
+/// which is indistinguishable from an empty tooltip. Game thread only.
+std::string ReadTooltipByPath(void* panel, const char* childPath);
+
 // ---- New game flow ----
 //
 // Main menu CAMPAIGN opens UIShellDifficulty; its start button leads either straight to
@@ -665,6 +677,89 @@ struct TacticalGate {
 
 /// Game thread only.
 TacticalGate ReadTacticalGate();
+
+// ---- the objectives list (UIObjectiveList) ----
+//
+// The panel that draws "ЗАДАЧИ / OBJECTIVES" and the mission's objective lines under it. Unlike
+// every other tactical panel, this one RETAINS its words: UIObjectiveListItem.RefreshDisplay
+// ends each of its Set*Row branches with `Data = NewData`, so the ObjectiveDisplayInfo struct the
+// row was built from is still there to read. That is what lets native answer this without a
+// companion call, and it is why the readout survives the TUTORIAL — the objective list is driven
+// by UIObjectiveList.OnVisualizationBlockComplete, which a replay fires exactly as a live mission
+// does (see the read-it-from-the-screen hard rule).
+//
+// ONE class serves both layers: UITacticalHUD.m_kObjectivesControl in a mission and
+// UIAvengerHUD.Objectives on the ship. Only the owning screen and its offset differ.
+
+/// One row of the list. The flags are the game's own, so `completed` here means exactly what the
+/// ticked checkbox means on screen.
+struct ObjectiveLine {
+    std::string label;       // Data.DisplayLabel, cleaned. Empty on a title row.
+    std::string missionType; // Data.MissionType — "TITLE"/"DARKEVENTTITLE" mark the headings
+    bool title = false;      // the synthesized heading row, which carries no label of its own
+    bool completed = false;
+    bool failed = false;
+    bool checkbox = false;
+    bool warning = false;
+    bool header = false;    // a clickable group header
+    bool darkEvent = false;
+    int timer = -1;         // Data.Timer — turns remaining; -1 when this row has no timer
+
+    // Counter row (evidence recovered, civilians rescued, ...). All -1 when this is not one; the
+    // images are the game's asset tokens, which is where the NOUN comes from — see the reader.
+    int haveAmount = -1, haveMin = -1, availableAmount = -1, lostAmount = -1;
+    std::string haveImage, availableImage, lostImage;
+
+    /// Does this row carry anything worth speaking? A title row's words live on the class, not in
+    /// Data, and an unlabelled non-counter row is a spacer.
+    bool Speakable() const { return !label.empty() || haveAmount >= 0; }
+};
+
+struct ObjectiveListView {
+    bool found = false;    // a UIObjectiveList was located and walked
+    bool tactical = false; // ...off UITacticalHUD (false = UIAvengerHUD)
+    std::string heading;     // UIObjectiveListItem.m_strObjectivesListTitle ("ЗАДАЧИ")
+    std::string darkHeading; // ::m_strDarkEventsListTitle ("АКТИВНЫЕ СОБЫТИЯ")
+    std::string inProgress;  // ::m_strInProgress ("- В ПРОЦЕССЕ")
+    std::vector<ObjectiveLine> lines;
+};
+
+/// Cheap presence test for a key claim's gate: is an objectives list reachable right now? Walks
+/// the screen stack and reads one pointer — no string reads, nothing allocated. Game thread only.
+bool HasObjectiveList();
+
+// ---- the mission stage counters (UISpecialMissionHUD_TurnCounter) ----
+//
+// The panel in the top-right corner that reads e.g. "Приведите солдат на запасной маршрут /
+// Осталось солдат / 3". It answers a question the objectives list CANNOT: the list says what the
+// goals are, this says how far through the current one you are. On a mission whose stage is a
+// zone the squad must cross, the only other indicator is a line drawn on the ground — which
+// carries no text and no state object, so this counter is the sole readable form of it.
+//
+// It retains everything: SetLabel/SetSubLabel/SetCounter each end by assigning m_sLabel /
+// m_sSubLabel / m_sCounter whether or not the panel was inited, so the strings are authoritative.
+//
+// ⛔ `bIsVisible` is load-bearing here and must be honoured. Every AS_Set* calls Show() — Firaxis'
+// own comment is *"don't show panel unless data is pumped into it"* — so an unfed counter is
+// hidden, and the second of the two is routinely inited-but-hidden. Reading a hidden one would
+// invent a counter the player cannot see.
+struct MissionCounter {
+    std::string label;    // m_sLabel    — what the stage is
+    std::string subLabel; // m_sSubLabel — what the number counts
+    std::string counter;  // m_sCounter  — the number, as the screen shows it
+    bool expired = false; // m_bExpired
+    bool infinity = false; // m_bInfinity — shows ∞ instead of a number
+    bool locked = false;  // m_bLocked — control-point missions only
+};
+
+/// The stage counters this mission is showing, in screen order. Empty on a mission with none,
+/// which is most of them. Game thread only.
+std::vector<MissionCounter> ReadMissionCounters();
+
+/// Read whichever objectives list is currently on the screen stack — tactical first, then the
+/// Avenger. Game thread only. `found` is false when neither HUD is up, which is the honest
+/// answer for the shell and for a loading screen.
+ObjectiveListView ReadObjectives();
 
 // ---- the Avenger's ant farm (UIFacilityGrid) ----
 
@@ -1093,6 +1188,96 @@ bool SetChooseFacilitySelection(const ChooseFacilityView& view, int index);
 /// ⛔ Selecting first is load-bearing — OnAccept reads the screen's own SelectedIndex, which only
 /// UpdateSelection ever writes. Game thread only.
 bool ActivateChooseFacility(const ChooseFacilityView& view, int index);
+
+// ---- promotion / level-up (UIArmory_Promotion + its two subclasses) ----
+//
+// THREE SCREENS, ONE ENTRY POINT. XComHQPresentationLayer.ShowPromotionUI picks the class, and
+// the choice is not simply "hero or not":
+//
+//   UIArmory_PromotionHero   IsResistanceHero() OR the Training Center is in the stack
+//   UIArmory_PromotionPsiOp  class is 'PsiOperative'
+//   UIArmory_Promotion       everything else
+//
+// That Training Center clause is why the hero screen matters far beyond three faction classes:
+// it is the screen ANY soldier gets whenever abilities are bought with AP, which in WOTC is the
+// majority of promotion traffic.
+//
+// ⛔ THE HERO SCREEN IS A KEYBOARD DEAD END. UIArmory_PromotionHero.OnUnrealCommand and
+// UIArmory_PromotionHeroColumn.OnUnrealCommand handle FXS_DPAD_* and FXS_VIRTUAL_LSTICK_* only —
+// there is not one FXS_ARROW_* in either file — and activation is GetAdvanceButtonInputCode(),
+// i.e. FXS_BUTTON_A, never Enter or Space. InitPromotion then calls DisableNavigation() on the
+// screen and every column, so nothing falls through to a navigator either, and the inherited
+// UIArmory_Promotion.OnUnrealCommand walks a null List. Mouse works; keyboard does nothing at
+// all. So unlike the save/load recipe, this layer cannot lean on the game's own key handling —
+// it must supply navigation AND activation. The classic screen is fine by contrast
+// (UIArmory_PromotionItem.OnUnrealCommand takes all four arrows plus Enter/Space); its only gap
+// is the ability-info popup, which is bound to FXS_BUTTON_L3 alone.
+//
+// ⛔ RANK HERE IS AN ABILITY-TREE INDEX, NOT A DISPLAYED RANK. Both screens set row.Rank = i and
+// then draw GetRankName(i + 1): ClassRowItem.Rank is 0 while showing "Squaddie", and hero
+// Columns[i].Rank is i while showing rank i+1. GetRankAbilities() takes the tree index. Every
+// `rank` below is the tree index; the companion does the +1 when it names the row.
+//
+// WHAT NATIVE READS: which rows exist, which slots inside them are real, which row and branch
+// hold focus, and the two state bits the game itself gates on. The WORDS — ability names,
+// descriptions, AP costs, owned/locked/affordable, rank and branch headings — are all the
+// companion's, because they live in templates and unit state rather than on the widgets.
+//
+// ⛔ A LOCKED RANK'S ABILITY NAMES MUST NOT BE SPOKEN. The rows retain the real FNames at every
+// rank, including ranks above the soldier's, but PopulateData deliberately substitutes
+// UnknownAbilityIcon and m_strAbilityLockedTitle for anything at `Rank >= Unit.GetRank()`. A
+// sighted player cannot read those names, so neither may we — the companion applies the gate,
+// which is why the names are resolved there and never here.
+
+enum class PromotionKind { Classic, Hero, PsiOp };
+
+/// One ability slot in a rank row. The ICON is the game's own answer to "does this slot exist":
+/// both screens spawn every icon up front and Hide() the ones the tree has no ability for.
+struct PromotionCell {
+    void* icon = nullptr; // UIIcon
+    int branch = 0;       // index into the rank's ability tree (0-1 classic, 0-3 hero)
+    bool visible = false; // bIsVisible — a hidden icon is a slot the tree does not fill
+};
+
+/// One rank: a UIArmory_PromotionItem row on the classic screen, a UIArmory_PromotionHeroColumn
+/// on the hero one. Both retain the same shape, which is what lets one view serve both.
+struct PromotionRow {
+    void* handle = nullptr;
+    int rank = 0;             // ability-tree index; the drawn rank name is rank + 1
+    bool disabled = false;    // bIsDisabled — the game greys it and refuses the click
+    bool eligible = false;    // bEligibleForPromotion / bEligibleForPurchase
+    int selectedBranch = -1;  // SelectedAbility / m_iPanelIndex, the game's own within-row cursor
+    std::vector<PromotionCell> cells;
+};
+
+struct PromotionView {
+    bool valid = false;
+    void* screen = nullptr;
+    PromotionKind kind = PromotionKind::Classic;
+    int unitId = 0;          // UIArmory::UnitReference.ObjectID
+    std::vector<PromotionRow> rows; // tree order, rank 0 first
+    int selectedRow = -1;    // index INTO rows
+    int selectedBranch = -1; // the screen's own SelectedAbilityIndex (classic) / column cursor
+};
+
+/// The focused promotion screen of any of the three classes, or null. Game thread only.
+void* FindPromotionScreen();
+
+PromotionView ReadPromotion(void* screen);
+
+/// Move the game's own selection to (row, branch) so the screen shows what the player is hearing
+/// and its handlers act on the right cell. Classic: the list index plus the row's own
+/// SetSelectedAbility. Hero: m_iCurrentlySelectedColumn and the column's m_iPanelIndex, then
+/// PreviewAbility — the repaint the game only reaches from its controller branch. Game thread
+/// only.
+bool SetPromotionSelection(const PromotionView& view, int row, int branch);
+
+/// Buy (or explain) one ability through the row's OWN SelectAbility(int) — the same name on both
+/// row classes. It is a three-way verb the game already wrote: owned opens the info popup,
+/// purchasable raises the confirm dialog, locked plays the refusal. ⛔ Select first: the classic
+/// row reads its own Rank and the hero column its own, so the pair must agree before the call.
+/// Game thread only.
+bool ActivatePromotionCell(const PromotionView& view, int row, int branch);
 
 // ---- tutorial mission (Tutorial_01) — the text surfaces and the replay state ----
 //

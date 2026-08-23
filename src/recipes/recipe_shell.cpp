@@ -653,6 +653,7 @@ std::unique_ptr<GraphRender> BuildPauseMenu()
         // Read gScreen at activation rather than capturing it: the handler runs from the input
         // drain, a frame or more after this render, and the screen may have been rebuilt.
         vt.OnActivate = [index]() { GameUI::ActivatePauseMenuItem(gScreen, index); };
+        vt.OnTooltip = ListItemTooltipAction(opt.handle);
         b.AddItem(std::move(id), std::move(vt));
     }
     return b.Build();
