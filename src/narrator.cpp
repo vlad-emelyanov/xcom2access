@@ -225,12 +225,24 @@ void Say(Channel channel, const std::string& text, Source source)
 
     std::lock_guard<std::mutex> lock(sMutex);
 
-    // The same event can reach us twice (an effect that damages a unit once per source, a
-    // re-triggered listener); saying it twice in a row is always wrong.
-    if (!sPending.empty() && sPending.back().text == text)
-        return;
-
-    // The game already said it on screen. See Source in narrator.h for why this is one-way.
+    // ⛔ There is deliberately NO dedup on text alone, however adjacent and however identical.
+    // Two ADVENT Troopers really are both called "ADVENT Trooper", so one grenade killing both
+    // pushes "ADVENT Trooper killed." twice inside a single visualization block — adjacent, in
+    // one drain — and swallowing the second loses a kill the player has no other way to learn
+    // about. The flyover side has the same shape: the game queues a world message PER UNIT, so a
+    // whole squad going concealed publishes the identical word once per soldier
+    // (docs/surfaces/tactical.md). Note which way the failure modes point: a line said twice is
+    // audible and shows up in the speech ring's shape count, while a line dropped is
+    // indistinguishable from nothing having happened, and is therefore never reported.
+    //
+    // A genuinely DOUBLED DELIVERY of one event is the producer's job, and both cases this used
+    // to stand in for are handled there: X2AccessTacticalEvents.BuildAbilityLine skips the
+    // interrupt pass (AbilityActivated re-triggers per interrupt step) and BuildDamageLine SUMS
+    // the DamageResults entries stamped with this context instead of emitting one line each.
+    //
+    // The one suppression that survives is DIRECTED, which is exactly what makes it safe: the
+    // game already put these words on screen itself. See Source in narrator.h for why it runs
+    // one way only, and never State against State.
     if (source == Source::State && FlyoverAlreadySaid(text, GetTickCount64())) {
         LOG_DEBUG("Narrator: \"%s\" already shown as a flyover, not restating it", text.c_str());
         return;
