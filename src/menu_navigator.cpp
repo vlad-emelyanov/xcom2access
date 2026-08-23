@@ -4,6 +4,7 @@
 #include "tts.h"
 #include "ue3_reflection.h"
 #include "vocab.h"
+#include "wire_record.hpp"
 #include "log.h"
 
 #include "Graph/GraphAnnouncer.hpp"
@@ -29,6 +30,7 @@ namespace MenuNavigator {
 namespace {
 
 using namespace X2Access::Graph;
+using namespace X2Access::Wire;
 
 // Host-local announcement kind for the game's "!" badge (custom kinds are part of the kernel
 // contract: they order wherever the type's Order places them and key user settings like the
@@ -290,6 +292,10 @@ void SpeakMove(const GraphNode* from, const GraphNode* to, const std::string& tr
 // hover state and leaves the camera parked on whatever site the player was last reading.
 void ClearGeoscapeHover();
 
+// Defined with the wire plumbing below: drops every recipe's cached companion words. See the
+// WireCache comment for why a pointer key alone cannot be trusted across a screen change.
+void InvalidateWireCaches();
+
 void Detach()
 {
     const char* name = gActive ? gActive->logName : "?";
@@ -298,6 +304,12 @@ void Detach()
     // REPLACED alert — but a second alert of the same kind, raised after the first closed,
     // reuses all three, so without this it would be answered from the first one's reading.
     GameUI::ResetAlertTextCache();
+    // Same argument one layer up: the companion-word caches are keyed on widget POINTERS, and
+    // the screen those pointers named is exactly what has just gone away. UE3 reuses freed
+    // addresses, so a warm cache is one recycled pointer set away from speaking the previous
+    // screen's words at a player who cannot see that they are wrong. Costs at most one outbound
+    // call per screen entry, which the first render was going to make anyway.
+    InvalidateWireCaches();
     gAttached = false;
     gActive = nullptr;
     gPending = nullptr;
@@ -320,7 +332,17 @@ void Attach()
     gState = GraphState{};
     gLastSpoken = {};
     gLiveBase.clear();
-    gGraph = std::make_unique<KeyGraph>([]() { return gActive->Build(); }, &gState);
+    // ⛔ The focus map is reset HERE, not by each builder. gFocus holds raw widget pointers that
+    // are only valid for the render that produced them, and Build() is reached from far more
+    // places than this file — KeyGraph::Move, Activate, MoveStop and a dozen others all call
+    // Rerender() themselves. Every builder used to open with its own gFocus.clear(), which made
+    // the invariant something eighteen functions had to remember; the one that forgot would leak
+    // stale FocusTarget::button pointers into the next render's write-back. This lambda is the
+    // single entry into Build(), so it is the only place the reset cannot be forgotten.
+    gGraph = std::make_unique<KeyGraph>([]() {
+        gFocus.clear();
+        return gActive->Build();
+    }, &gState);
     if (!gGraph->Rerender()) {
         gGraph.reset();
         gAttached = false;
@@ -385,7 +407,6 @@ void SpeakStateAfterChange()
 
 std::unique_ptr<GraphRender> BuildMainMenu()
 {
-    gFocus.clear();
     std::vector<GameUI::MenuItem> items = GameUI::ReadMainMenu(gScreen);
     if (items.empty())
         return nullptr; // treated as "closed" — focus state survives for the next good render
@@ -477,7 +498,6 @@ std::string MainMenuName()
 // Discard, Credits, GPU auto-detect). Tab cycles the stops; arrows never leave one.
 std::unique_ptr<GraphRender> BuildOptions()
 {
-    gFocus.clear();
     GameUI::OptionsView view = GameUI::ReadOptions(gScreen);
     if (view.rows.empty() && view.buttons.empty())
         return nullptr;
@@ -762,7 +782,6 @@ std::function<void()> RowTooltipAction(void* handle)
 // panel, so those are the only controls a sighted player can reach either.
 std::unique_ptr<GraphRender> BuildDifficulty()
 {
-    gFocus.clear();
     GameUI::DifficultyView view = GameUI::ReadDifficulty(gScreen);
 
     GraphBuilder b;
@@ -868,7 +887,6 @@ std::string DifficultyName()
 // The Ironman choice: a warning and two buttons, nothing else on the screen.
 std::unique_ptr<GraphRender> BuildIronMan()
 {
-    gFocus.clear();
     GameUI::IronManView view = GameUI::ReadIronMan(gScreen);
     if (view.buttons.empty())
         return nullptr;
@@ -903,7 +921,6 @@ std::string IronManName()
 // (they read as one column on screen), then the button that actually starts the campaign.
 std::unique_ptr<GraphRender> BuildNarrative()
 {
-    gFocus.clear();
     GameUI::NarrativeView view = GameUI::ReadNarrative(gScreen);
     if (!view.xpack.handle && view.rows.empty())
         return nullptr;
@@ -947,7 +964,6 @@ std::string NarrativeName()
 // only). Same shape as the narrative screen: a choice list, then the confirm button.
 std::unique_ptr<GraphRender> BuildSoundtrack()
 {
-    gFocus.clear();
     GameUI::SoundtrackView view = GameUI::ReadSoundtrack(gScreen);
     if (view.rows.empty())
         return nullptr;
@@ -986,7 +1002,6 @@ std::string SoundtrackName()
 // is positional; the list is read as it stands and activation goes back through its index.
 std::unique_ptr<GraphRender> BuildPauseMenu()
 {
-    gFocus.clear();
     GameUI::PauseMenuView view = GameUI::ReadPauseMenu(gScreen);
     if (view.options.empty())
         return nullptr;
@@ -1041,8 +1056,7 @@ std::string PauseMenuName()
 // still reports itself focused underneath.
 std::unique_ptr<GraphRender> BuildDialog()
 {
-    gFocus.clear(); // Flash-driven: no panels to drive the game's own focus onto
-
+    // Nothing joins gFocus here — Flash-driven: no panels to drive the game's own focus onto.
     GameUI::DialogView view = GameUI::ReadDialog(gScreen);
 
     // Identity has to carry the dialog's text: one dialog can be replaced by another between
@@ -1146,100 +1160,130 @@ const Recipe kMainMenuRecipe{"main menu", ProbeMainMenu, BuildMainMenu, MainMenu
 // greyed ИЗМЕНИТЬ. See docs/squad-select-recon.md §4 and §7.
 
 constexpr const char* kSquadReaderClass = "X2AccessSquadReader";
-constexpr const char* kWireRecordSep = "~|~";
-constexpr const char* kSquadFieldSep = "~:~";
 
-// One record of a companion's wire format, as ordered key/value pairs — ordered because some
-// keys REPEAT (squad select's `util`, once per slot) and the order is the row order. Shared by
-// every recipe whose words come from a companion CDO.
-using WireRecord = std::vector<std::pair<std::string, std::string>>;
-
-std::string RecField(const WireRecord& rec, const char* key)
-{
-    for (const auto& kv : rec) {
-        if (kv.first == key)
-            return kv.second;
-    }
-    return std::string();
-}
-
-std::vector<std::string> RecFieldAll(const WireRecord& rec, const char* key)
-{
-    std::vector<std::string> out;
-    for (const auto& kv : rec) {
-        if (kv.first == key)
-            out.push_back(kv.second);
-    }
-    return out;
-}
-
-std::vector<std::string> SplitOn(const std::string& text, const char* sep)
-{
-    std::vector<std::string> parts;
-    const size_t sepLen = strlen(sep);
-    size_t start = 0;
-    for (;;) {
-        const size_t hit = text.find(sep, start);
-        if (hit == std::string::npos) {
-            parts.push_back(text.substr(start));
-            return parts;
-        }
-        parts.push_back(text.substr(start, hit - start));
-        start = hit + sepLen;
-    }
-}
+// The record grammar, the parse and the field readers live in src/wire_record.hpp — STL-only, so
+// `tests/` can compile them without a game and pin the empty-value rule the format turns on.
+// Nothing here is squad-specific despite where the section sits; every wire-backed recipe uses it.
 
 // ONE outbound call per render, which is one per keypress — the same budget the tile cursor
 // spends. Used wherever the widget tree cannot answer: squad select retains no words at all, and
 // the loadout retains its rows but not the four things it computes and throws away.
 std::vector<WireRecord> FetchCompanionRecords(const char* className, const char* funcName)
 {
-    std::vector<WireRecord> records;
     void* cdo = GameUI::FindCompanionCDO(className);
     if (!cdo)
-        return records; // FindCompanionCDO logs the miss (companion mod not loaded)
+        return {}; // FindCompanionCDO logs the miss (companion mod not loaded)
 
     int64_t zeros[2] = {};
     if (!GameUI::CallScriptFunction(cdo, funcName, zeros)) {
         LOG_WARN("MenuNavigator: %s.%s failed", className, funcName);
-        return records;
+        return {};
     }
     const std::string raw
         = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
-    if (raw.empty())
-        return records;
+    // CleanText is handed in rather than called inside the parser: one implementation of "strip
+    // the markup the game colours its text with", shared with every other screen, and keeping it
+    // out is what lets the parser stay engine-free.
+    return ParseRecords(raw, &GameUI::CleanText);
+}
 
-    for (const std::string& recText : SplitOn(raw, kWireRecordSep)) {
-        WireRecord rec;
-        for (const std::string& field : SplitOn(recText, kSquadFieldSep)) {
-            const size_t eq = field.find('=');
-            if (eq == std::string::npos || eq == 0)
-                continue;
-            // CleanText here rather than in script: one implementation of "strip the markup the
-            // game colours its text with", shared with every other screen.
-            rec.emplace_back(field.substr(0, eq), GameUI::CleanText(field.substr(eq + 1)));
-        }
-        if (!rec.empty())
-            records.push_back(std::move(rec));
+// One recipe's companion words, held between renders and keyed on the widget pointers they
+// describe. Five recipes need this and had five hand-written copies of it, which is how they came
+// to disagree about the hazard below.
+//
+// Why cache at all: the navigator re-renders about ten times a second, so an uncached fetch is an
+// outbound ProcessEvent per poll for words that usually cannot have changed. The game respawns a
+// screen's rows whenever their content changes (ClearItems + a fresh panel per item), so a changed
+// pointer set is an exact, self-invalidating key for almost everything.
+//
+// ⛔ Almost. The key is COMPARED and never dereferenced, so the never-cache-a-UObject-pointer rule
+// is satisfied by construction — but a key that MATCHES is not proof the screen is the same one.
+// UE3 reuses freed addresses, so an in-place repopulation can land the new widgets on the old
+// ones' addresses and produce a matching key over stale words. That is not hypothetical: it is
+// what `InvalidatePersonnelWords` was written for, and the reasoning is a property of the engine
+// rather than of the personnel screen. So the rule is now uniform — every verb this layer fires
+// that repopulates a screen calls `Invalidate()`, and `Detach()` calls `InvalidateWireCaches()`.
+//
+// `extra` is a second discriminator for a payload that also depends on something that is not a
+// pointer (the commodity list's selected row — the card is the selection's shadow); `alwaysStale`
+// is the debris room's deliberate unconditional re-ask while its picker is open.
+class WireCache {
+public:
+    WireCache(const char* className, const char* funcName) : mClass(className), mFunc(funcName)
+    {
+        All().push_back(this);
     }
-    return records;
+
+    const std::vector<WireRecord>& Get(std::vector<void*> key, long long extra = 0,
+        bool alwaysStale = false)
+    {
+        if (!mWarm || alwaysStale || extra != mExtra || key != mKey) {
+            mRecords = FetchCompanionRecords(mClass, mFunc);
+            mKey = std::move(key);
+            mExtra = extra;
+            mWarm = true;
+            mGeneration++;
+        }
+        return mRecords;
+    }
+
+    /// Bumped on every actual re-ask, so a caller that DERIVES something from the records (the
+    /// save screen indexes them) can tell "the cache answered" from "the cache refetched"
+    /// without keeping a second copy of the key.
+    unsigned Generation() const { return mGeneration; }
+
+    /// Drop the cache so the next Get re-asks, whatever the key says.
+    void Invalidate() { mWarm = false; }
+
+    static void InvalidateAll()
+    {
+        for (WireCache* cache : All())
+            cache->Invalidate();
+    }
+
+private:
+    // Function-local so the registry is alive before the first cache's constructor runs, whatever
+    // order this TU's file-scope objects are built in.
+    static std::vector<WireCache*>& All()
+    {
+        static std::vector<WireCache*> caches;
+        return caches;
+    }
+
+    const char* mClass;
+    const char* mFunc;
+    std::vector<WireRecord> mRecords;
+    std::vector<void*> mKey;
+    long long mExtra = 0;
+    unsigned mGeneration = 0;
+    bool mWarm = false;
+};
+
+void InvalidateWireCaches()
+{
+    WireCache::InvalidateAll();
 }
 
 // Join the parts a card names, dropping the ones the game is not showing. The companion sends
 // identity as four SEPARATE fields for exactly this: joining them there meant a value that
 // CleanText later reduced to nothing still left its comma behind, and every rookie read
-// "Новобранец, Sokolova,," live 2026-08-21.
+// "Новобранец, Sokolova,," live 2026-08-21. The join itself is AppendPhrase's, not ours — these
+// are the game's own strings and it ends plenty of them in '.' or ':' (⛔ never a bare ", ").
 std::string JoinParts(const WireRecord& rec, std::initializer_list<const char*> keys)
 {
     std::string line;
-    for (const char* key : keys) {
-        const std::string part = RecField(rec, key);
-        if (part.empty())
-            continue;
-        if (!line.empty())
-            line += ", ";
-        line += part;
-    }
+    for (const char* key : keys)
+        AppendPhrase(line, RecField(rec, key));
+    return line;
+}
+
+// The same join for two parts held in hand rather than looked up — the label-then-value shape
+// these recipes compose all over ("ОСНОВНОЕ ОРУЖИЕ" + the weapon, a mission caption + its text).
+// Either half may be absent, and neither leaves a separator behind when it is.
+std::string JoinPhrases(const std::string& first, const std::string& second)
+{
+    std::string line = first;
+    AppendPhrase(line, second);
     return line;
 }
 
@@ -1281,18 +1325,10 @@ std::string SquadControlLabel(const WireRecord& card, const WireRecord& mission,
         return RecField(mission, "edit");
     case GameUI::SquadButton::Dismiss:
         return RecField(mission, "dismiss");
-    case GameUI::SquadButton::WeaponPrime: {
-        const std::string label = RecField(card, "weaponlabel");
-        const std::string name = RecField(card, "weapon");
-        if (name.empty())
-            return label;
-        return label.empty() ? name : label + ", " + name;
-    }
-    case GameUI::SquadButton::WeaponHeavy: {
-        const std::string label = RecField(card, "heavylabel");
-        const std::string name = RecField(card, "heavy");
-        return label.empty() ? name : label + ", " + name;
-    }
+    case GameUI::SquadButton::WeaponPrime:
+        return JoinPhrases(RecField(card, "weaponlabel"), RecField(card, "weapon"));
+    case GameUI::SquadButton::WeaponHeavy:
+        return JoinPhrases(RecField(card, "heavylabel"), RecField(card, "heavy"));
     case GameUI::SquadButton::Utility: {
         // Positional: `util` is emitted once per widget INCLUDING the empty ones, so this index
         // and the companion's are the same count. When even that is silent the slot is locked,
@@ -1329,10 +1365,29 @@ ControlId SquadNeighbour(const std::vector<std::vector<ControlId>>& columns, siz
     return columns[from][row]; // no card that way: a self-edge, which KeyGraph::Move reads as a wall
 }
 
+// A card's words, matched on the GAME's own slot index — the index into XComHQ.Squad, which both
+// halves stamp independently: native off `UISquadSelect_ListItem.SlotIndex` (0x3D8, pinned by a
+// static_assert) and the companion off `Card.SlotIndex`.
+//
+// ⛔ Never by push order. The companion skips a list entry that is not a UISquadSelect_ListItem
+// (`if (Card == none) continue;`) while native walks every item the list holds, so one skipped
+// entry would put every later card's words on the wrong soldier — and on this screen the wrong
+// soldier owns a DISMISS button. It is the same rule the commodity list already states beside its
+// own row match: "a row either half skipped cannot silently shift every entry after it".
+const WireRecord* FindCardBySlot(const std::vector<const WireRecord*>& cards, int slotIndex)
+{
+    if (slotIndex < 0)
+        return nullptr;
+    for (const WireRecord* rec : cards) {
+        const std::string text = RecField(*rec, "slot");
+        if (!text.empty() && atoi(text.c_str()) == slotIndex)
+            return rec;
+    }
+    return nullptr;
+}
+
 std::unique_ptr<GraphRender> BuildSquadSelect()
 {
-    gFocus.clear();
-
     GameUI::SquadSelectView view = GameUI::ReadSquadSelect(gScreen);
     // ⛔ Before the walk-up matinee fires PreM_LineupUI the screen is hidden AND deaf —
     // OnUnrealCommand returns early on !bReceivedWalkupEvent — and the cards are still being
@@ -1381,7 +1436,9 @@ std::unique_ptr<GraphRender> BuildSquadSelect()
             if (value.empty())
                 continue;
             const std::string label = h.labelKey ? RecField(*mission, h.labelKey) : std::string();
-            const std::string text = label.empty() ? value : label + ", " + value;
+            // The game's own captions — "ЗАДАЧИ:" and friends already carry their colon, which
+            // is exactly the shape AppendPhrase exists for.
+            const std::string text = JoinPhrases(label, value);
             b.AddLabel(ControlId::Structural(std::string("squad/mission/") + h.key),
                 [text]() { return text; });
         }
@@ -1402,8 +1459,17 @@ std::unique_ptr<GraphRender> BuildSquadSelect()
     std::vector<std::vector<ControlId>> columns(view.slots.size());
     for (size_t i = 0; i < view.slots.size(); i++) {
         const GameUI::SquadSlot& slot = view.slots[i];
-        const WireRecord& card
-            = i < cards.size() ? *cards[i] : kEmptyRecord;
+        const WireRecord* cardRec = FindCardBySlot(cards, slot.slotIndex);
+        if (!cardRec && !cards.empty()) {
+            // The two halves read the same field off the same object, so a miss means a real
+            // disagreement rather than a missing companion. Say so once instead of quietly
+            // reading the card as an unnamed soldier.
+            static int sWarned = 0;
+            if (sWarned++ < 3)
+                LOG_WARN("MenuNavigator: squad select — no card record for slot %d (%zu records)",
+                    slot.slotIndex, cards.size());
+        }
+        const WireRecord& card = cardRec ? *cardRec : kEmptyRecord;
         const int visual = static_cast<int>(i);
 
         // A pure-structure parent: never navigable, announced when focus enters the card from
@@ -1641,15 +1707,13 @@ std::string LoadoutRowLabel(const GameUI::LoadoutRow& row)
     if (row.title.empty()) {
         if (row.slotLabel.empty())
             return std::string();
-        return row.slotLabel + ", " + Vocab::LoadoutEmptySlot;
+        return JoinPhrases(row.slotLabel, Vocab::LoadoutEmptySlot);
     }
-    return row.slotLabel.empty() ? row.title : row.slotLabel + ", " + row.title;
+    return JoinPhrases(row.slotLabel, row.title);
 }
 
 std::unique_ptr<GraphRender> BuildArmoryLoadout()
 {
-    gFocus.clear();
-
     GameUI::LoadoutView view = GameUI::ReadArmoryLoadout(gScreen);
     if (!view.valid)
         return nullptr; // InitArmory has not run PopulateData yet — treated as "closed"
@@ -1721,9 +1785,7 @@ std::unique_ptr<GraphRender> BuildArmoryLoadout()
         // lands AFTER the render that announces, so a header-sourced one would always be a row
         // behind.
         std::string value = row.infinite ? std::string() : RecField(rec, "count");
-        const std::string delta = RecField(rec, "delta");
-        if (!delta.empty())
-            value += (value.empty() ? "" : ", ") + delta;
+        AppendPhrase(value, RecField(rec, "delta"));
         if (!value.empty()) {
             vt.Announcements.emplace_back(NodeAnnouncement::Static(value));
             vt.Announcements.back().Kind = AnnouncementKinds::Value;
@@ -1779,8 +1841,8 @@ std::unique_ptr<GraphRender> BuildArmoryLoadout()
         // Keyed to the SELECTION rather than carried on the row, exactly as
         // UpdateNavHelp_LoadoutItem shows it: the nav help offers "make available" only while the
         // selected equipped item bCanBeCleared, and it acts on that item.
-        const std::string label = view.makeAvailable + ", "
-            + LoadoutRowLabel(view.rows[static_cast<size_t>(view.selectedRow)]);
+        const std::string label = JoinPhrases(view.makeAvailable,
+            LoadoutRowLabel(view.rows[static_cast<size_t>(view.selectedRow)]));
         NodeVtable vt;
         vt.Type = &ButtonType();
         vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
@@ -1899,65 +1961,47 @@ struct SaveWords {
 // by array position, so a null row in the middle of the list cannot shift the words along.
 using SaveWordMap = std::unordered_map<int, SaveWords>;
 
-// The companion call, cached on the ROW POINTERS. The navigator re-renders about ten times a
-// second and this walk is not free (the save screen's new-save row re-runs FillInHeaderForSave,
-// which iterates the history), but a save list changes ONLY through BuildMenu(), which respawns
-// every row panel — so an unchanged pointer vector is an exact, self-invalidating cache key.
+// The companion call, cached on the ROW POINTERS like every other recipe's — the navigator
+// re-renders about ten times a second and this walk is not free (the save screen's new-save row
+// re-runs FillInHeaderForSave, which iterates the history). What this screen does differently is
+// only what it does with the records AFTERWARDS: index them by the row's own `index=` rather than
+// keep the emission order. So the fetch is a WireCache like the others and the index pass runs
+// exactly when the cache actually refetched, which is what Generation() answers.
+WireCache gSaveWords(kSaveReaderClass, "DescribeSaves");
+
 const SaveWordMap& FetchSaveWords(const std::vector<GameUI::SaveSlot>& slots)
 {
-    static std::vector<void*> sKey;
     static SaveWordMap sWords;
+    static unsigned sGeneration = 0;
 
     std::vector<void*> key;
     key.reserve(slots.size() + 1);
     key.push_back(gScreen);
     for (const GameUI::SaveSlot& slot : slots)
         key.push_back(slot.handle);
-    if (key == sKey)
+
+    const std::vector<WireRecord>& records = gSaveWords.Get(std::move(key));
+    if (gSaveWords.Generation() == sGeneration)
         return sWords;
-    sKey = key;
+    sGeneration = gSaveWords.Generation();
     sWords.clear();
 
-    void* cdo = GameUI::FindCompanionCDO(kSaveReaderClass);
-    if (!cdo)
-        return sWords; // FindCompanionCDO logs the miss (companion mod not loaded)
-
-    int64_t zeros[2] = {};
-    if (!GameUI::CallScriptFunction(cdo, "DescribeSaves", zeros)) {
-        LOG_WARN("MenuNavigator: save/load — DescribeSaves failed");
-        return sWords;
-    }
-    const std::string raw
-        = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
-    if (raw.empty())
-        return sWords;
-
-    for (const std::string& recText : SplitOn(raw, kWireRecordSep)) {
-        int index = -1;
+    for (const WireRecord& rec : records) {
+        const std::string indexText = RecField(rec, "index");
+        if (indexText.empty())
+            continue;
+        const int index = atoi(indexText.c_str());
+        if (index < 0)
+            continue;
         SaveWords words;
-        for (const std::string& field : SplitOn(recText, kSquadFieldSep)) {
-            const size_t eq = field.find('=');
-            if (eq == std::string::npos || eq == 0)
-                continue;
-            const std::string key2 = field.substr(0, eq);
-            // CleanText here rather than in script: one implementation of "strip the markup the
-            // game colours its text with", shared with every other screen.
-            const std::string value = GameUI::CleanText(field.substr(eq + 1));
-            if (key2 == "index")
-                index = atoi(value.c_str());
-            else if (key2 == "desc")
-                words.desc = value;
-            else if (key2 == "name")
-                words.name = value;
-            else if (key2 == "mission")
-                words.mission = value;
-            else if (key2 == "time")
-                words.time = value;
-            else if (key2 == "new")
-                words.isNew = true;
-        }
-        if (index >= 0)
-            sWords[index] = std::move(words);
+        words.desc = RecField(rec, "desc");
+        words.name = RecField(rec, "name");
+        words.mission = RecField(rec, "mission");
+        words.time = RecField(rec, "time");
+        // Presence is the flag — the producer sends `new` only on the save screen's row 0, and
+        // whatever it carries as a value is not read.
+        words.isNew = !RecFieldAll(rec, "new").empty();
+        sWords[index] = std::move(words);
     }
     LOG_DEBUG("MenuNavigator: save/load — described %zu of %zu rows", sWords.size(), slots.size());
     return sWords;
@@ -1968,33 +2012,25 @@ const SaveWordMap& FetchSaveWords(const std::vector<GameUI::SaveSlot>& slots)
 // rest it is the same word twelve times over and the save's own description is the content.
 std::string SaveSlotLabel(const GameUI::SaveSlot& slot, const SaveWords* words)
 {
-    std::string line;
-    auto append = [&line](const std::string& part) {
-        if (part.empty())
-            return;
-        if (!line.empty())
-            line += ", ";
-        line += part;
-    };
-
     if (!words) {
         // No record for this row: the companion is missing, or the row carries no header at
         // all. The widget's own label is still a true statement about what is there.
         return slot.acceptLabel;
     }
+    // ⛔ AppendPhrase, not a bare comma: `desc` is the engine's own save description, split out
+    // of Header.Description, and the error-report branch ends it in a full stop.
+    std::string line;
     if (words->isNew)
-        append(slot.acceptLabel);
-    append(words->desc);
-    append(words->name);
-    append(words->mission);
-    append(words->time);
+        AppendPhrase(line, slot.acceptLabel);
+    AppendPhrase(line, words->desc);
+    AppendPhrase(line, words->name);
+    AppendPhrase(line, words->mission);
+    AppendPhrase(line, words->time);
     return line.empty() ? slot.acceptLabel : line;
 }
 
 std::unique_ptr<GraphRender> BuildSaveLoad()
 {
-    gFocus.clear();
-
     GameUI::SaveLoadView view = GameUI::ReadSaveLoad(gScreen);
 
     GraphBuilder b;
@@ -2108,12 +2144,7 @@ constexpr const char* kFacilityReaderClass = "X2AccessFacilityReader";
 // times a second for a set of labels that CANNOT change — AddFacilityButton runs once, in
 // InitScreen, and nothing ever relabels a UIFacility_RoomFunc. A changed pointer list means a
 // different room, which is the only thing that can change the answer.
-struct FacilityWords {
-    std::vector<WireRecord> records;
-    std::vector<void*> key;
-};
-
-FacilityWords gFacilityWords;
+WireCache gFacilityWords(kFacilityReaderClass, "DescribeFacility");
 
 const std::vector<WireRecord>& FetchFacilityWords(const GameUI::RoomView& view)
 {
@@ -2122,12 +2153,7 @@ const std::vector<WireRecord>& FetchFacilityWords(const GameUI::RoomView& view)
     for (const GameUI::RoomFunc& f : view.funcs)
         key.push_back(f.handle);
     key.push_back(view.facility);
-
-    if (key != gFacilityWords.key) {
-        gFacilityWords.records = FetchCompanionRecords(kFacilityReaderClass, "DescribeFacility");
-        gFacilityWords.key = std::move(key);
-    }
-    return gFacilityWords.records;
+    return gFacilityWords.Get(std::move(key));
 }
 
 // The room's own bottom-bar buttons, and the upgrade button beside them. Split out of BuildRoom
@@ -2200,8 +2226,6 @@ void AddRoomFunctions(GraphBuilder& b, const GameUI::RoomView& view)
 
 std::unique_ptr<GraphRender> BuildRoom()
 {
-    gFocus.clear();
-
     GameUI::RoomView view = GameUI::ReadRoom(gScreen);
 
     GraphBuilder b;
@@ -2341,13 +2365,7 @@ constexpr const char* kRoomReaderClass = "X2AccessRoomReader";
 // cache as the save rows: the slot widgets are respawned by RealizeStaffSlots and the picker's
 // rows by UpdateList, so a changed pointer set is an exact cache key — and the outbound call is
 // the cost here, not the payload.
-struct RoomWords {
-    std::vector<WireRecord> records;
-    std::vector<void*> key;
-    bool dropOpen = false;
-};
-
-RoomWords gRoomWords;
+WireCache gRoomWords(kRoomReaderClass, "DescribeRoom");
 
 const std::vector<WireRecord>& FetchRoomWords(const GameUI::RoomBuildView& view)
 {
@@ -2361,18 +2379,11 @@ const std::vector<WireRecord>& FetchRoomWords(const GameUI::RoomBuildView& view)
     // occupant and the status panel's whole state machine ("engineer required" → "ready") without
     // respawning a single widget, so a pointer-only cache key would speak the pre-assignment
     // room back at the player.
-    if (key != gRoomWords.key || dropOpen != gRoomWords.dropOpen || dropOpen) {
-        gRoomWords.records = FetchCompanionRecords(kRoomReaderClass, "DescribeRoom");
-        gRoomWords.key = std::move(key);
-        gRoomWords.dropOpen = dropOpen;
-    }
-    return gRoomWords.records;
+    return gRoomWords.Get(std::move(key), dropOpen ? 1 : 0, /*alwaysStale*/ dropOpen);
 }
 
 std::unique_ptr<GraphRender> BuildRoomBuild()
 {
-    gFocus.clear();
-
     GameUI::RoomBuildView view = GameUI::ReadRoomBuild(gScreen);
     const std::vector<WireRecord>& records = FetchRoomWords(view);
 
@@ -2563,13 +2574,7 @@ constexpr const char* kCommodityReaderClass = "X2AccessCommodityReader";
 // SELECTION is part of the key. The card is the selection's shadow — UIInventory sets
 // List.OnSelectionChanged = SelectedItemChanged in BuildScreen, and that delegate repopulates
 // the card on every move — so a pointer-only key would describe the row the player just left.
-struct CommodityWords {
-    std::vector<WireRecord> records;
-    std::vector<void*> key;
-    int selected = -2;
-};
-
-CommodityWords gCommodityWords;
+WireCache gCommodityWords(kCommodityReaderClass, "DescribeCommodity");
 
 const std::vector<WireRecord>& FetchCommodityWords(const GameUI::CommodityView& view)
 {
@@ -2577,19 +2582,13 @@ const std::vector<WireRecord>& FetchCommodityWords(const GameUI::CommodityView& 
     key.reserve(view.rows.size() + 1);
     for (const GameUI::CommodityRow& row : view.rows)
         key.push_back(row.handle);
-    // Switching a Build Items tab is covered by the row pointers alone: SwitchTab calls
-    // PopulateData, which runs List.ClearItems() and spawns a fresh panel per item, so a
-    // category change replaces every pointer in this key. The screen pointer goes in too, so a
-    // second screen of the family can never inherit a warm cache from the one it replaced.
+    // Switching a Build Items tab is USUALLY covered by the row pointers alone: SwitchTab calls
+    // PopulateData, which runs List.ClearItems() and spawns a fresh panel per item. "Usually" is
+    // the whole reason the tab verb calls Invalidate() as well — a respawn can land on the freed
+    // addresses. The screen pointer goes in too, so a second screen of the family can never
+    // inherit a warm cache from the one it replaced.
     key.push_back(view.screen);
-
-    if (key != gCommodityWords.key || view.selected != gCommodityWords.selected) {
-        gCommodityWords.records
-            = FetchCompanionRecords(kCommodityReaderClass, "DescribeCommodity");
-        gCommodityWords.key = std::move(key);
-        gCommodityWords.selected = view.selected;
-    }
-    return gCommodityWords.records;
+    return gCommodityWords.Get(std::move(key), view.selected);
 }
 
 const WireRecord* FindRecord(const std::vector<WireRecord>& records, const char* kind)
@@ -2644,12 +2643,17 @@ void BuildCommodityTabs(GraphBuilder& b, const std::vector<WireRecord>& records)
         }
         vt.OnActivate = [index]() {
             GameUI::SwitchCommodityTab(GameUI::ReadCommodity(gScreen), index);
+            // ⛔ The respawn USUALLY changes the key, and "usually" is not good enough: the fresh
+            // rows can land on the addresses the old ones just freed, and a key that happens to
+            // match would keep the previous category's words on screen. Same reasoning the
+            // personnel verbs have always applied — one outbound call on a keypress the player
+            // just made, against a silent wrong readout.
+            gCommodityWords.Invalidate();
         };
         // Post-activation feedback, read LIVE rather than from this render's closure. A captured
         // flag can only ever describe the state before the press — which spoke a bare "selected"
         // when the player pressed the tab they were already on, and nothing at all when they
-        // actually switched. SwitchTab respawns every row, so the cache key has already changed
-        // by the time this runs and the re-ask is the fresh answer.
+        // actually switched. The invalidation above is what makes the re-ask a fresh answer.
         vt.StateText = [index]() {
             const std::vector<WireRecord>& fresh
                 = FetchCommodityWords(GameUI::ReadCommodity(gScreen));
@@ -2734,8 +2738,6 @@ void BuildCommodityCard(GraphBuilder& b, const WireRecord& card)
 
 std::unique_ptr<GraphRender> BuildCommodity()
 {
-    gFocus.clear();
-
     GameUI::CommodityView view = GameUI::ReadCommodity(gScreen);
     const std::vector<WireRecord>& records = FetchCommodityWords(view);
 
@@ -2753,10 +2755,11 @@ std::unique_ptr<GraphRender> BuildCommodity()
         if (label.empty())
             continue;
 
-        // The right-hand quantity column, spoken only where the row draws one.
+        // The right-hand quantity column, spoken only where the row draws one. `label` is the
+        // game's own item name, so the join is AppendPhrase's — never a bare comma.
         const std::string qty = RecField(rec, "qty");
         if (!qty.empty())
-            label += ", " + qty + " " + Vocab::CommodityOwned;
+            AppendPhrase(label, qty + " " + Vocab::CommodityOwned);
 
         // Native's flags and the companion's words are matched on the GAME's list index, which
         // both halves stamp independently — so a row either half skipped cannot silently shift
@@ -2902,12 +2905,7 @@ constexpr const char* kPersonnelReaderClass = "X2AccessPersonnelReader";
 // ⛔ The SELECTION is deliberately NOT part of the key, unlike the commodity list's. Nothing on
 // this screen is the selection's shadow — there is no card — so re-asking on every arrow press
 // would walk the whole roster through XCOMHISTORY once per keystroke for no new words.
-struct PersonnelWords {
-    std::vector<WireRecord> records;
-    std::vector<void*> key;
-};
-
-PersonnelWords gPersonnelWords;
+WireCache gPersonnelWords(kPersonnelReaderClass, "DescribePersonnel");
 
 const std::vector<WireRecord>& FetchPersonnelWords(const GameUI::PersonnelView& view)
 {
@@ -2916,21 +2914,7 @@ const std::vector<WireRecord>& FetchPersonnelWords(const GameUI::PersonnelView& 
     for (const GameUI::PersonnelRow& row : view.rows)
         key.push_back(row.handle);
     key.push_back(view.screen);
-
-    if (key != gPersonnelWords.key) {
-        gPersonnelWords.records
-            = FetchCompanionRecords(kPersonnelReaderClass, "DescribePersonnel");
-        gPersonnelWords.key = std::move(key);
-    }
-    return gPersonnelWords.records;
-}
-
-// Drop the cache so the next read re-asks. Called after a tab switch or a sort, both of which
-// respawn the rows anyway — but the pointers can land on the same freed addresses, and a key
-// that happens to match would keep the previous tab's words on screen.
-void InvalidatePersonnelWords()
-{
-    gPersonnelWords.key.clear();
+    return gPersonnelWords.Get(std::move(key));
 }
 
 // One outbound call with a single int, for the two verbs the companion owns. Both resolve the
@@ -2948,7 +2932,10 @@ bool CallPersonnelVerb(const char* funcName, int value)
         LOG_WARN("MenuNavigator: %s.%s failed", kPersonnelReaderClass, funcName);
         return false;
     }
-    InvalidatePersonnelWords();
+    // Both verbs respawn the rows, so the key USUALLY changes on its own — but the fresh
+    // pointers can land on the freed addresses of the old ones, and a key that happens to match
+    // would keep the previous tab's words on screen.
+    gPersonnelWords.Invalidate();
     return true;
 }
 
@@ -3071,8 +3058,6 @@ SheetConfig PersonnelSheetConfig()
 
 std::unique_ptr<GraphRender> BuildPersonnel()
 {
-    gFocus.clear();
-
     GameUI::PersonnelView view = GameUI::ReadPersonnel(gScreen);
     const std::vector<WireRecord>& records = FetchPersonnelWords(view);
 
@@ -3270,13 +3255,7 @@ constexpr const char* kBuildFacilityReaderClass = "X2AccessBuildFacilityReader";
 // Keyed on the rows AND the selection, like the commodity list's and for the same reason: the
 // panel is the selection's shadow (UIList::OnSelectionChanged = UpdateSelection repopulates it on
 // every move), so a pointer-only key would describe the facility the player just left.
-struct BuildFacilityWords {
-    std::vector<WireRecord> records;
-    std::vector<void*> key;
-    int selected = -2;
-};
-
-BuildFacilityWords gBuildFacilityWords;
+WireCache gBuildFacilityWords(kBuildFacilityReaderClass, "DescribeFacilityChoice");
 
 const std::vector<WireRecord>& FetchBuildFacilityWords(const GameUI::ChooseFacilityView& view)
 {
@@ -3285,14 +3264,7 @@ const std::vector<WireRecord>& FetchBuildFacilityWords(const GameUI::ChooseFacil
     for (const GameUI::FacilityChoice& choice : view.choices)
         key.push_back(choice.handle);
     key.push_back(view.screen);
-
-    if (key != gBuildFacilityWords.key || view.selected != gBuildFacilityWords.selected) {
-        gBuildFacilityWords.records
-            = FetchCompanionRecords(kBuildFacilityReaderClass, "DescribeFacilityChoice");
-        gBuildFacilityWords.key = std::move(key);
-        gBuildFacilityWords.selected = view.selected;
-    }
-    return gBuildFacilityWords.records;
+    return gBuildFacilityWords.Get(std::move(key), view.selected);
 }
 
 void BuildFacilityCard(GraphBuilder& b, const WireRecord& card)
@@ -3345,8 +3317,6 @@ void BuildFacilityCard(GraphBuilder& b, const WireRecord& card)
 
 std::unique_ptr<GraphRender> BuildChooseFacility()
 {
-    gFocus.clear();
-
     GameUI::ChooseFacilityView view = GameUI::ReadChooseFacility(gScreen);
     const std::vector<WireRecord>& records = FetchBuildFacilityWords(view);
 
@@ -3496,8 +3466,6 @@ std::string GeoscapeName()
 
 std::unique_ptr<GraphRender> BuildGeoscape()
 {
-    gFocus.clear();
-
     GameUI::StrategyMapView view = GameUI::ReadStrategyMap(gScreen);
 
     GraphBuilder b;
@@ -3718,8 +3686,7 @@ constexpr const char* kPopupReaderClass = "X2AccessPopupReader";
 
 std::unique_ptr<GraphRender> BuildPopup()
 {
-    gFocus.clear(); // Flash-driven throughout: no panel the game will accept focus on
-
+    // Nothing joins gFocus here — Flash-driven throughout: no panel the game will accept focus on.
     const std::vector<WireRecord> words = FetchCompanionRecords(kPopupReaderClass, "DescribePopup");
     if (words.empty())
         return nullptr;
