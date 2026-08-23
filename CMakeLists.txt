@@ -109,6 +109,9 @@ add_library(X2Access SHARED
     src/ue3_reflection.cpp
     src/game_ui.cpp
     src/menu_navigator.cpp
+    # The companion wire grammar, in its own TU because it is STL-only and the recipes that
+    # decode it are not — menu_navigator.cpp includes windows.h, so tests/ cannot compile it.
+    src/wire_record.cpp
     src/mouse_gate.cpp
     src/tile_reader.cpp
     src/free_aim.cpp
