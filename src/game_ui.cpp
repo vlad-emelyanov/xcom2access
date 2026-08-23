@@ -4517,73 +4517,6 @@ std::string CleanText(const std::string& text)
     return out;
 }
 
-// ---- console commands -------------------------------------------------------------------------
-
-std::string ConsoleCommand(const std::string& command)
-{
-    if (command.empty())
-        return "[exec] empty command";
-
-    // WorldInfo.GetWorldInfo() is `native final static` — the one way into the world that needs
-    // no object cached across frames, which is exactly the rule about not holding UObject
-    // pointers. GetALocalPlayerController is declared on Actor, and WorldInfo is an Actor.
-    struct {
-        void* ReturnValue;
-    } world{};
-    if (!CallStaticNative("WorldInfo", "GetWorldInfo", &world) || !world.ReturnValue)
-        return "[exec] no WorldInfo (world not up yet?)";
-
-    struct {
-        void* ReturnValue;
-    } pc{};
-    if (!CallNamedFunction(world.ReturnValue, "GetALocalPlayerController", &pc) || !pc.ReturnValue)
-        return "[exec] no local PlayerController";
-
-    // Actor.ConsoleCommand(string Command, optional bool bWriteToLog) : string, FUNC_Native.
-    // Layout is transcribed from the SDK dump comments and is PACK(4): ReturnValue sits at 0x14,
-    // immediately after the bool bitfield with no padding, so the FString pointer is 4-byte
-    // aligned. Natural alignment would put it at 0x18 and every call would read garbage.
-#pragma pack(push, 4)
-    struct ConsoleParams {
-        wchar_t* CmdData;  // FString Command    @0x00
-        int32_t CmdCount;
-        int32_t CmdMax;
-        uint32_t bWriteToLog; // bitfield        @0x10
-        wchar_t* RetData;  // FString ReturnValue @0x14
-        int32_t RetCount;
-        int32_t RetMax;
-    };
-#pragma pack(pop)
-    static_assert(sizeof(ConsoleParams) == 0x24, "Actor.ConsoleCommand params must be 0x24 bytes");
-    static_assert(offsetof(ConsoleParams, bWriteToLog) == 0x10, "bWriteToLog must sit at 0x10");
-    static_assert(offsetof(ConsoleParams, RetData) == 0x14, "ReturnValue FString must sit at 0x14");
-
-    // Safe to hand the engine our own buffer: ProcessEvent (moduleBase+0x143B50, decompiled)
-    // shallow-memcpy's the whole parameter block into its alloca'd frame and only ever calls
-    // DestroyValue on properties whose Offset is >= ParmsSize — true locals, never parameters.
-    // So nothing frees this, and it must merely outlive the call.
-    std::wstring wide = Utf8ToWide(command);
-
-    ConsoleParams params{};
-    params.CmdData = wide.data();
-    params.CmdCount = static_cast<int32_t>(wide.size()) + 1; // FString counts the terminator
-    params.CmdMax = params.CmdCount;
-    params.bWriteToLog = 1; // also lands in the game's Launch.log, where `just gamelog` finds it
-
-    if (!CallNamedFunction(pc.ReturnValue, "ConsoleCommand", &params))
-        return "[exec] ConsoleCommand did not resolve or faulted";
-
-    // The native writes the return FString straight into our block (ProcessEvent passes
-    // Parms + ReturnValueOffset as the result pointer), allocated with the ENGINE's allocator.
-    // We deliberately leak it: freeing it needs appFree, and a dev-only endpoint leaking a few
-    // dozen bytes per call is a far better trade than calling the wrong deallocator.
-    std::vector<wchar_t> buf(64 * 1024);
-    int len = CopyFStringRaw(&params.RetData, buf.data(), static_cast<int>(buf.size()));
-    if (len <= 0)
-        return {}; // ran fine, said nothing — most commands are silent
-    return WcharToUtf8(buf.data(), len);
-}
-
 // ---- the geoscape (UIStrategyMap) — the mission tray ------------------------------------------
 //
 // The globe has no cursor for a mouse+keyboard player: ProcessGeoscapeSelection, and therefore
@@ -4936,6 +4869,73 @@ bool MoveTrayHover(const TrayIcon& icon, bool entering)
 // ---- dev harness only: raw object access for the /gui and /props dumps -------------------------
 
 #ifdef X2ACCESS_DEVSERVER
+
+// ---- console commands -------------------------------------------------------------------------
+
+std::string ConsoleCommand(const std::string& command)
+{
+    if (command.empty())
+        return "[exec] empty command";
+
+    // WorldInfo.GetWorldInfo() is `native final static` — the one way into the world that needs
+    // no object cached across frames, which is exactly the rule about not holding UObject
+    // pointers. GetALocalPlayerController is declared on Actor, and WorldInfo is an Actor.
+    struct {
+        void* ReturnValue;
+    } world{};
+    if (!CallStaticNative("WorldInfo", "GetWorldInfo", &world) || !world.ReturnValue)
+        return "[exec] no WorldInfo (world not up yet?)";
+
+    struct {
+        void* ReturnValue;
+    } pc{};
+    if (!CallNamedFunction(world.ReturnValue, "GetALocalPlayerController", &pc) || !pc.ReturnValue)
+        return "[exec] no local PlayerController";
+
+    // Actor.ConsoleCommand(string Command, optional bool bWriteToLog) : string, FUNC_Native.
+    // Layout is transcribed from the SDK dump comments and is PACK(4): ReturnValue sits at 0x14,
+    // immediately after the bool bitfield with no padding, so the FString pointer is 4-byte
+    // aligned. Natural alignment would put it at 0x18 and every call would read garbage.
+#pragma pack(push, 4)
+    struct ConsoleParams {
+        wchar_t* CmdData;  // FString Command    @0x00
+        int32_t CmdCount;
+        int32_t CmdMax;
+        uint32_t bWriteToLog; // bitfield        @0x10
+        wchar_t* RetData;  // FString ReturnValue @0x14
+        int32_t RetCount;
+        int32_t RetMax;
+    };
+#pragma pack(pop)
+    static_assert(sizeof(ConsoleParams) == 0x24, "Actor.ConsoleCommand params must be 0x24 bytes");
+    static_assert(offsetof(ConsoleParams, bWriteToLog) == 0x10, "bWriteToLog must sit at 0x10");
+    static_assert(offsetof(ConsoleParams, RetData) == 0x14, "ReturnValue FString must sit at 0x14");
+
+    // Safe to hand the engine our own buffer: ProcessEvent (moduleBase+0x143B50, decompiled)
+    // shallow-memcpy's the whole parameter block into its alloca'd frame and only ever calls
+    // DestroyValue on properties whose Offset is >= ParmsSize — true locals, never parameters.
+    // So nothing frees this, and it must merely outlive the call.
+    std::wstring wide = Utf8ToWide(command);
+
+    ConsoleParams params{};
+    params.CmdData = wide.data();
+    params.CmdCount = static_cast<int32_t>(wide.size()) + 1; // FString counts the terminator
+    params.CmdMax = params.CmdCount;
+    params.bWriteToLog = 1; // also lands in the game's Launch.log, where `just gamelog` finds it
+
+    if (!CallNamedFunction(pc.ReturnValue, "ConsoleCommand", &params))
+        return "[exec] ConsoleCommand did not resolve or faulted";
+
+    // The native writes the return FString straight into our block (ProcessEvent passes
+    // Parms + ReturnValueOffset as the result pointer), allocated with the ENGINE's allocator.
+    // We deliberately leak it: freeing it needs appFree, and a dev-only endpoint leaking a few
+    // dozen bytes per call is a far better trade than calling the wrong deallocator.
+    std::vector<wchar_t> buf(64 * 1024);
+    int len = CopyFStringRaw(&params.RetData, buf.data(), static_cast<int>(buf.size()));
+    if (len <= 0)
+        return {}; // ran fine, said nothing — most commands are silent
+    return WcharToUtf8(buf.data(), len);
+}
 
 void* FindStackScreen(const char* className)
 {

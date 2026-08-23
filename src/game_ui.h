@@ -1453,8 +1453,6 @@ struct FlashValue {
 /// Game thread only.
 FlashValue FlashCall(void* movie, const char* funcName, const char* path);
 
-#endif // X2ACCESS_DEVSERVER
-
 /// Run `command` through the game's own console (`Actor.ConsoleCommand` on the local player
 /// controller) and return what it printed — empty for the many commands that say nothing, or a
 /// `[exec] …` string when the call could not be made at all. This is the whole `exec function`
@@ -1464,5 +1462,7 @@ FlashValue FlashCall(void* movie, const char* funcName, const char* path);
 /// The reply comes back in an engine-allocated FString that we read and deliberately leak; see
 /// the implementation. Game thread only.
 std::string ConsoleCommand(const std::string& command);
+
+#endif // X2ACCESS_DEVSERVER
 
 } // namespace GameUI
