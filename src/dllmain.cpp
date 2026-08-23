@@ -51,6 +51,13 @@ static void InitThread() {
     LOG_INFO("Process PID: %lu, EXE base: 0x%p", pid, exe);
 
     // 2. TTS (Prism linked statically)
+    //
+    // ⚠ Straight to the backend, and one of only four such lines left in the project (the other
+    // three are Hooks::Init's). Two reasons, and the second is the durable one. It runs on the
+    // INIT thread, and Narrator::Say declares itself game-thread only. And it reports that the
+    // MOD loaded, before any producer can have queued a thing — so the queue has nothing to
+    // order it against, and the scrollback ring, which answers "what happened in the game", is
+    // not where it belongs. Everything that speaks ABOUT THE GAME goes through Narrator::Say.
     if (TTS::Init()) {
         TTS::SpeakInterrupt("X2 Access loaded. XCOM 2 War of the Chosen accessibility mod active.");
     } else {

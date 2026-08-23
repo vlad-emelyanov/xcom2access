@@ -165,7 +165,11 @@ static void RegisterEventHandlers() {
         std::string text = UE3Reflect::ReadStringProperty(obj, "AccessibilityData");
         if (!text.empty()) {
             LOG_INFO("Hooks: X2Access_Speak -> \"%s\"", text.c_str());
-            TTS::SpeakInterrupt(text);
+            // Focus, through the Narrator rather than TTS directly: a legacy listener fires on a
+            // screen or selection change, so it outranks — and CLEARS — whatever is still queued.
+            // Speaking straight to the backend cut only the current utterance and left the queue
+            // to resume on top of the new screen. It also puts these lines in the scrollback ring.
+            Narrator::Say(Narrator::Channel::Focus, text);
         } else {
             LOG_WARN("Hooks: X2Access_Speak fired but AccessibilityData was empty");
         }
@@ -178,6 +182,14 @@ std::string ReadListenerProperty(const char* propName) {
     return UE3Reflect::ReadStringProperty(sActiveListener, propName);
 }
 
+// ⚠ The three boot lines below are the deliberate exception to "all speech goes through the
+// Narrator", and the only one left in this file. Two reasons, and the second is the durable one.
+// This runs on the background INIT thread (the SDK retry loop sleeps in it for up to two
+// minutes), and Narrator::Say declares itself game-thread only. And they report the MOD's own
+// state before any producer can have queued a thing — so the queue has nothing to order them
+// against, and the scrollback ring, which answers "what happened in the game", is not where they
+// belong. X2Access_Speak above is the opposite case and does go through the Narrator: it fires
+// from the ProcessEvent hook, on the game thread, about the game.
 void Init() {
     LOG_INFO("Hooks: Starting SDK initialization (up to %d attempts)...", SDK_INIT_MAX_ATTEMPTS);
 
