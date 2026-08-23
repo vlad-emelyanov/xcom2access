@@ -2,6 +2,7 @@
 // Ported from RTAccess tests/GraphAnnouncerTests.cs.
 
 #include <functional>
+#include <initializer_list>
 #include <string>
 #include <vector>
 
@@ -276,4 +277,60 @@ TEST(TerminalPunctuationVariants)
     AppendPhrase(sb, "ok?");
     AppendPhrase(sb, "end");
     CHECK_EQ("\xD0\x98\xD0\x9D\xD0\x96\xD0\x95\xD0\x9D\xD0\x95\xD0\xA0! ok? end", sb);
+}
+
+// ---- the terminator set itself ----
+//
+// The rule was re-derived by hand across both layers with THREE different terminator sets, so the
+// set is now a single named constant and these tests are what makes it a contract rather than a
+// comment. Five characters in; everything else out, the trailing comma included — a part ending
+// in ',' is a part mid-list, and eating our separator there would run two facts together.
+
+TEST(EndsPhraseAcceptsExactlyTheFiveTerminators)
+{
+    CHECK_EQ(std::string(".!?:;"), std::string(kPhraseTerminators));
+    for (char c : std::string(".!?:;"))
+        CHECK(EndsPhrase(std::string("x") + c));
+}
+
+TEST(EndsPhraseRejectsEverythingElse)
+{
+    // ',' is the load-bearing rejection; the rest are the ordinary shapes a readout ends in.
+    for (const char* text : {"x,", "x", "60", "x)", "x-", "x ", "x\"", "x\xE2\x80\xA6"})
+        CHECK_FALSE(EndsPhrase(text));
+    CHECK_FALSE(EndsPhrase(""));
+}
+
+// The separator is the ONE knob, and a self-punctuated tail takes a plain space in every mode —
+// which is precisely why a ". " caller cannot just append a period of its own. This is the shape
+// the Skyranger briefing and the tutorial modal join in: whole sentences the GAME wrote, most of
+// which already end in a full stop and some of which (a title) never do.
+TEST(SentenceSeparatorSuppliesTheMissingFullStop)
+{
+    std::string sb;
+    AppendPhrase(sb, "Operation Gatecrasher", ". ");
+    AppendPhrase(sb, "Secure the transmitter.", ". ");
+    AppendPhrase(sb, "Press Enter to close.", ". ");
+    CHECK_EQ("Operation Gatecrasher. Secure the transmitter. Press Enter to close.", sb);
+}
+
+TEST(SeparatorDefaultsToCommaAndNeverLeadsTheLine)
+{
+    std::string sb;
+    AppendPhrase(sb, "only", ". ");
+    CHECK_EQ("only", sb);
+    AppendPhrase(sb, "", ". ");
+    CHECK_EQ("only", sb);
+}
+
+// ⚠ The test is on the ACCUMULATOR's tail, never the incoming part. A part that punctuates
+// itself still takes the ordinary separator, because the question the joiner answers is whether
+// the text ALREADY on the line wants a comma after it.
+TEST(SelfPunctuationOfTheIncomingPartIsNotConsulted)
+{
+    std::string sb;
+    AppendPhrase(sb, "Fireball");
+    AppendPhrase(sb, "Ready.");
+    AppendPhrase(sb, "next");
+    CHECK_EQ("Fireball, Ready. next", sb);
 }
