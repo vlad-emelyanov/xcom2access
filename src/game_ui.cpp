@@ -147,6 +147,7 @@ constexpr int32_t kNarrStartButtonOffset = 0x4E8;   // m_StartButton (UILargeBut
 constexpr int32_t kNarrXpackItemOffset = 0x4F0;     // m_XpacknarrativeMechaItem
 constexpr int32_t kNarrDLCInfosOffset = 0x510;      // DLCInfos (TArray<X2DownloadableContentInfo*>)
 constexpr int32_t kDLCNarrativeSummaryOffset = 0xB4; // X2DownloadableContentInfo::NarrativeContentSummary
+constexpr int kMaxDLCInfos = 32; // one per installed DLC — far past the shipped set
 
 // ---- new game flow: UIShellSoundtrackPicker ----
 // No title offset here on purpose: the retail package's localized m_chooseSoundtrack (0x430)
@@ -301,6 +302,12 @@ constexpr int32_t kLoadItemDropButtonOffset = 0x0458;
 constexpr int32_t kUtilButtonOffset = 0x3E0;    // Button (UIButton*) — carries the disabled bit
 constexpr int32_t kUtilSlotIndexOffset = 0x3F0; // SlotIndex (int)
 constexpr int32_t kUtilSlotTypeOffset = 0x3F4;  // SlotType (byte, EInventorySlot)
+
+// Caps for the squad-select / armory list reads. Each is a bound WE chose rather than one the
+// game states, so each read goes through TakeListItemsRaw and says so if the game hands us more.
+constexpr int kMaxSquadCards = 16;   // the squad's slot cards
+constexpr int kMaxUtilitySlots = 16; // one card's utility row
+constexpr int kMaxLoadoutRows = 64;  // the armory's inventory-slot rows
 
 // ---- UIScreenStack: the game's own list of what is on screen ----
 constexpr int32_t kStackFlagsOffset = 0x60;    // UIScreenStack flag dword
@@ -697,16 +704,21 @@ int ReadDropdownSelectionRaw(const void* dropdown, wchar_t* buf, int bufWchars)
 
 // The m_arrMechaItems pointer array, indices preserved (row index IS the List selection index —
 // rows are spawned into the list in array order).
-int ReadOptionRowPtrsRaw(void* screen, void** out, int maxItems)
+int ReadOptionRowPtrsRaw(void* screen, void** out, int maxItems, bool* clipped = nullptr)
 {
+    if (clipped)
+        *clipped = false;
     __try {
         auto* arr = reinterpret_cast<const uint8_t*>(screen) + kOptsMechaItemsOffset;
         auto* data = *reinterpret_cast<void* const* const*>(arr);
         int32_t n = *reinterpret_cast<const int32_t*>(arr + 8);
         if (!data || n <= 0)
             return 0;
-        if (n > maxItems)
+        if (n > maxItems) {
             n = maxItems;
+            if (clipped)
+                *clipped = true;
+        }
         for (int32_t i = 0; i < n; i++)
             out[i] = data[i];
         return n;
@@ -716,20 +728,43 @@ int ReadOptionRowPtrsRaw(void* screen, void** out, int maxItems)
 }
 
 // Any TArray<T*> at `offset`: copies up to maxItems pointers out, indices preserved. Returns
-// the count copied, or -1 if the array itself could not be read.
-int ReadPtrArrayRaw(const void* obj, int32_t offset, void** out, int maxItems)
+// the count copied, or -1 if the array itself could not be read. `clipped`, when asked for, says
+// whether the array held MORE than maxItems — a different fact from "the count came back equal
+// to the cap", and the one TakeArrayRaw below has to report.
+int ReadPtrArrayRaw(const void* obj, int32_t offset, void** out, int maxItems,
+    bool* clipped = nullptr)
 {
+    if (clipped)
+        *clipped = false;
     __try {
         auto* arr = reinterpret_cast<const uint8_t*>(obj) + offset;
         auto* data = *reinterpret_cast<void* const* const*>(arr);
         int32_t n = *reinterpret_cast<const int32_t*>(arr + 8);
         if (!data || n <= 0)
             return 0;
-        if (n > maxItems)
+        if (n > maxItems) {
             n = maxItems;
+            if (clipped)
+                *clipped = true;
+        }
         for (int32_t i = 0; i < n; i++)
             out[i] = data[i];
         return n;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+}
+
+// A TArray's own count at `offset`, without reading one element: -1 if it could not be read.
+// This is what lets a read be sized from the DATA rather than from a buffer we picked in
+// advance — see ReadPtrArrayAllRaw.
+int32_t ReadArrayCountRaw(const void* obj, int32_t offset)
+{
+    __try {
+        auto* arr = reinterpret_cast<const uint8_t*>(obj) + offset;
+        if (!*reinterpret_cast<void* const* const*>(arr))
+            return 0;
+        return *reinterpret_cast<const int32_t*>(arr + 8);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return -1;
     }
@@ -755,14 +790,105 @@ int CopyFStringElemRaw(const void* obj, int32_t offset, int index, wchar_t* buf,
 // A UIList's items in index order. GetItem(i) IS ItemContainer.ChildPanels[i] (UIList.uc), so
 // reading the child array directly matches the game's own indexing — which is what
 // SetSelectedIndex and the OnItemClicked delegates are expressed in.
-int ReadListItemsRaw(void* list, void** out, int maxItems)
+int ReadListItemsRaw(void* list, void** out, int maxItems, bool* clipped = nullptr)
 {
+    if (clipped)
+        *clipped = false;
     if (!list)
         return 0;
     void* container = ReadPtrRaw(list, kListItemContainerOffset);
     if (!container)
         return 0;
-    return ReadPtrArrayRaw(container, kPanelChildPanelsOffset, out, maxItems);
+    return ReadPtrArrayRaw(container, kPanelChildPanelsOffset, out, maxItems, clipped);
+}
+
+// ---- bounded array reads that SAY SO when they clip ----
+//
+// ⛔ Size the buffer from the data, never the data to the buffer — and a cap that drops the tail
+// must be LOUD. A silently truncated list reads to a blind player as *the screen has nothing
+// more*: indistinguishable from the truth, and therefore never reported as a bug. That is the
+// failure mode the 2051-character payload had, and every fixed-cap array read in this file is
+// the same bug waiting for a long enough list.
+//
+// Most caps here are structural — a room has eight staff slots, the strategy map has
+// MAX_NUM_STRATEGYICONS — but "structural" is a claim about the GAME that holds only until a mod
+// or a patch disagrees, and the -1 the primitives above return on a FAULTED read is otherwise
+// indistinguishable from an empty list. Both go through here.
+//
+// Once per SITE, not once per render: these run on every graph rebuild, ten times a second. The
+// latch map is touched only on the report path, so the ordinary case costs one compare.
+constexpr uint8_t kNoteFault = 0x1;       // the read faulted
+constexpr uint8_t kNoteClip = 0x2;        // the tail was dropped
+constexpr uint8_t kNoteImplausible = 0x4; // the count was too large to believe
+
+// True the FIRST time this (site, kind) pair comes up. The latch is what makes a warning
+// affordable on a path that runs ten times a second.
+bool NoteOnce(const char* what, uint8_t kind)
+{
+    static std::unordered_map<std::string, uint8_t> sSaid;
+    uint8_t& said = sSaid[what ? what : "?"];
+    if (said & kind)
+        return false;
+    said |= kind;
+    return true;
+}
+
+int NoteArrayRead(const char* what, int count, bool clipped, int maxItems)
+{
+    if (count < 0) {
+        if (NoteOnce(what, kNoteFault))
+            LOG_WARN("%s: the array could not be read — treating it as empty", what);
+        return 0;
+    }
+    if (clipped && NoteOnce(what, kNoteClip))
+        LOG_WARN("%s: more than %d entries — the tail is NOT being read", what, maxItems);
+    return count;
+}
+
+// ReadPtrArrayRaw with the -1 sentinel honoured and a dropped tail logged. `what` names the site
+// and doubles as the latch key, so pass a literal.
+int TakeArrayRaw(const char* what, const void* obj, int32_t offset, void** out, int maxItems)
+{
+    bool clipped = false;
+    const int count = ReadPtrArrayRaw(obj, offset, out, maxItems, &clipped);
+    return NoteArrayRead(what, count, clipped, maxItems);
+}
+
+// ReadListItemsRaw under the same contract.
+int TakeListItemsRaw(const char* what, void* list, void** out, int maxItems)
+{
+    bool clipped = false;
+    const int count = ReadListItemsRaw(list, out, maxItems, &clipped);
+    return NoteArrayRead(what, count, clipped, maxItems);
+}
+
+// The WHOLE of a TArray<T*>, sized from the array's own count. For a list whose length the GAME
+// decides and nothing bounds — the save list is the one that really grows — a cap is not
+// something to log about, it is something not to have: the entries it drops are saves the player
+// made, and a list that stops reads exactly like a list that ended. A count too large to be a
+// screen's list is refused with a line rather than walked.
+std::vector<void*> ReadPtrArrayAllRaw(const char* what, const void* obj, int32_t offset)
+{
+    std::vector<void*> out;
+    const int32_t n = ReadArrayCountRaw(obj, offset);
+    if (n == 0)
+        return out;
+    if (n < 0) {
+        NoteArrayRead(what, -1, false, 0);
+        return out;
+    }
+    // Not a guess about this screen: past this a count is far likelier a bad offset than a long
+    // list, and allocating for it would be the fault we are trying to avoid.
+    constexpr int32_t kImplausibleCount = 65536;
+    if (n > kImplausibleCount) {
+        if (NoteOnce(what, kNoteImplausible))
+            LOG_WARN("%s: the array claims %d entries — refusing to read it", what, n);
+        return out;
+    }
+    out.resize(static_cast<size_t>(n));
+    const int got = ReadPtrArrayRaw(obj, offset, out.data(), n);
+    out.resize(static_cast<size_t>(NoteArrayRead(what, got, false, n)));
+    return out;
 }
 
 // ---- the game's own screen stack ----
@@ -1553,12 +1679,15 @@ bool MakeRow(void* item, int index, OptionRow* out)
     return !out->label.empty();
 }
 
+// The tallest of these lists is an options tab; 64 is well past what any of them draws.
+constexpr int kMaxListRows = 64;
+
 // Every visible row of a UIList, indices preserved.
 std::vector<OptionRow> ReadListRows(void* list)
 {
     std::vector<OptionRow> rows;
-    void* items[64] = {};
-    int count = ReadListItemsRaw(list, items, 64);
+    void* items[kMaxListRows] = {};
+    int count = TakeListItemsRaw("Options: list rows", list, items, kMaxListRows);
     for (int i = 0; i < count; i++) {
         OptionRow row;
         if (MakeRow(items[i], i, &row))
@@ -1600,8 +1729,10 @@ OptionsView ReadOptions(void* screen)
     for (int i = 0; i < kOptionsTabCount; i++)
         v.tabNames[i] = ReadFStringField(screen, kOptsTabNameOffsets[i]);
 
-    void* rows[64] = {};
-    int rowCount = ReadOptionRowPtrsRaw(screen, rows, 64);
+    void* rows[kMaxListRows] = {};
+    bool clippedRows = false;
+    int rowCount = NoteArrayRead("Options: m_arrMechaItems",
+        ReadOptionRowPtrsRaw(screen, rows, kMaxListRows, &clippedRows), clippedRows, kMaxListRows);
     for (int i = 0; i < rowCount; i++) {
         OptionRow row;
         if (MakeRow(rows[i], i, &row))
@@ -2055,8 +2186,9 @@ NarrativeView ReadNarrative(void* screen)
 
     // The side-panel description the game shows for the focused row: row 0 is the
     // integrated-DLC option, every later row maps to DLCInfos[index - 1].
-    void* infos[32] = {};
-    int infoCount = ReadPtrArrayRaw(screen, kNarrDLCInfosOffset, infos, 32);
+    void* infos[kMaxDLCInfos] = {};
+    int infoCount = TakeArrayRaw("Narrative: DLCInfos", screen, kNarrDLCInfosOffset, infos,
+        kMaxDLCInfos);
     std::string integrated = CleanText(ReadFStringField(screen, kNarrIntegratedDescOffset));
     for (const OptionRow& row : v.rows) {
         if (row.index == 0) {
@@ -2184,8 +2316,8 @@ PauseMenuView ReadPauseMenu(void* screen)
     // The rows are UIListItemStrings, not UIMechaListItems, so MakeRow does not apply: a row is
     // just its Text plus the disabled bit DisableListItem sets (save is greyed out in the
     // tutorial, restart outside the missions that allow it).
-    void* items[64] = {};
-    int count = ReadListItemsRaw(list, items, 64);
+    void* items[kMaxListRows] = {};
+    int count = TakeListItemsRaw("PauseMenu: rows", list, items, kMaxListRows);
     for (int i = 0; i < count; i++) {
         MenuItem item;
         item.handle = items[i];
@@ -2309,27 +2441,31 @@ SaveLoadView ReadSaveLoad(void* screen)
     v.busy = v.saving ? ReadU8Raw(screen, kSaveStageOffset) != 0
                       : (ReadU32Raw(screen, kLoadFlagsOffset) & kLoadInProgress) != 0;
 
-    void* rows[128] = {};
-    int count = ReadPtrArrayRaw(screen, kSaveListItemsOffset, rows, 128);
-    for (int i = 0; i < count; i++) {
-        if (!rows[i])
+    // ⛔ Sized from the array, never from a cap we picked. This is the one list in this file
+    // whose length is the PLAYER's — a long campaign runs to hundreds of saves — and the tail a
+    // cap would drop is the OLDEST of them (the list is newest-first). Telling a player their
+    // early saves do not exist is unrecoverable on the one screen where they would go looking.
+    std::vector<void*> rows = ReadPtrArrayAllRaw("SaveLoad: the save list", screen,
+        kSaveListItemsOffset);
+    for (void* row : rows) {
+        if (!row)
             continue;
         SaveSlot slot;
-        slot.handle = rows[i];
+        slot.handle = row;
         // The row's OWN index, not our loop counter: it is what InitSaveLoadItem stamped and
         // what the screen's SetSelection / OnAccept path talks in.
-        slot.index = ReadI32Raw(rows[i], kSaveRowIndexOffset);
-        slot.id = ReadI32Raw(rows[i], kSaveRowIdOffset);
+        slot.index = ReadI32Raw(row, kSaveRowIndexOffset);
+        slot.id = ReadI32Raw(row, kSaveRowIdOffset);
 
         // UIButton.Click() refuses an invisible button, so a hidden one is not a verb the row
         // is offering. That is the documented bIsVisible exception: on a child BUTTON the bit is
         // toggled deliberately (the save screen hides Delete on its new-save row).
-        MenuItem accept = ReadButtonField(rows[i], kSaveRowAcceptOffset);
+        MenuItem accept = ReadButtonField(row, kSaveRowAcceptOffset);
         slot.accept = accept.handle;
         slot.acceptLabel = std::move(accept.label);
         slot.acceptDisabled = accept.disabled;
 
-        MenuItem remove = ReadButtonField(rows[i], kSaveRowDeleteOffset);
+        MenuItem remove = ReadButtonField(row, kSaveRowDeleteOffset);
         slot.remove = remove.handle;
         slot.deleteLabel = std::move(remove.label);
 
@@ -2505,8 +2641,8 @@ namespace {
 // One list into LoadoutRow structs, in the list's own order.
 void ReadLoadoutRows(void* list, std::vector<LoadoutRow>& out)
 {
-    void* items[64] = {};
-    const int count = ReadListItemsRaw(list, items, 64);
+    void* items[kMaxLoadoutRows] = {};
+    const int count = TakeListItemsRaw("Loadout: slot rows", list, items, kMaxLoadoutRows);
     for (int i = 0; i < count; i++) {
         LoadoutRow row;
         row.handle = items[i];
@@ -2528,8 +2664,9 @@ void ReadLoadoutRows(void* list, std::vector<LoadoutRow>& out)
 void AppendUtilityControls(void* card, std::vector<SquadControl>& out)
 {
     void* list = ReadPtrRaw(card, kCardUtilitySlotsOffset);
-    void* items[16] = {};
-    const int count = ReadListItemsRaw(list, items, 16);
+    void* items[kMaxUtilitySlots] = {};
+    const int count = TakeListItemsRaw("SquadSelect: utility slots", list, items,
+        kMaxUtilitySlots);
     for (int i = 0; i < count; i++) {
         SquadControl c;
         c.handle = items[i];
@@ -2644,8 +2781,8 @@ SquadSelectView ReadSquadSelect(void* screen)
         v.launchTitle += (v.launchTitle.empty() ? "" : " ") + mission;
 
     void* list = ReadPtrRaw(screen, kSquadSlotListOffset);
-    void* cards[16] = {};
-    const int count = ReadListItemsRaw(list, cards, 16);
+    void* cards[kMaxSquadCards] = {};
+    const int count = TakeListItemsRaw("SquadSelect: slot cards", list, cards, kMaxSquadCards);
     for (int i = 0; i < count; i++) {
         SquadSlot slot;
         slot.handle = cards[i];
@@ -2720,8 +2857,8 @@ SquadSelectView ReadSquadSelect(void* screen)
 bool SetSquadSelectFocus(void* screen, int visualIndex, const SquadControl& control)
 {
     void* list = ReadPtrRaw(screen, kSquadSlotListOffset);
-    void* cards[16] = {};
-    const int count = ReadListItemsRaw(list, cards, 16);
+    void* cards[kMaxSquadCards] = {};
+    const int count = TakeListItemsRaw("SquadSelect: slot cards", list, cards, kMaxSquadCards);
     if (visualIndex < 0 || visualIndex >= count)
         return false;
 
@@ -3131,6 +3268,8 @@ constexpr int kShortcutCategoryCount = 5;
 constexpr int kMaxRoomActions = 16;
 // Every shipped facility adds exactly one; the headroom is for a mod that adds more.
 constexpr int kMaxRoomFuncs = 8;
+// UIStaffContainer::StaffSlots. The shipped rooms top out at four; a staff-slot mod could add.
+constexpr int kMaxStaffSlots = 16;
 
 // Is `obj` an instance of `baseClass`, or of anything derived from it? The room screen is one of
 // 22 subclasses (UIFacility_Powercore, UIFacility_Armory, …), so an exact class-name compare
@@ -3226,8 +3365,9 @@ RoomView ReadRoom(void* screen)
         v.staffVisible = (flags & kPanelVisible) != 0;
         v.staffTitle = ReadFStringField(staff, kStaffContainerTitleOffset);
         v.staffSkill = ReadFStringField(staff, kStaffContainerSkillOffset);
-        void* slots[16] = {};
-        v.staffSlots = ReadPtrArrayRaw(staff, kStaffContainerSlotsOffset, slots, 16);
+        void* slots[kMaxStaffSlots] = {};
+        v.staffSlots = TakeArrayRaw("Room: staff slots", staff, kStaffContainerSlotsOffset, slots,
+            kMaxStaffSlots);
     }
 
     // The room's OWN button bar. Spawned lazily by AddFacilityButton, so a room with no buttons
@@ -3235,8 +3375,8 @@ RoomView ReadRoom(void* screen)
     void* roomContainer = ReadPtrRaw(screen, kFacilityRoomContainerOffset);
     if (roomContainer) {
         void* funcs[kMaxRoomFuncs] = {};
-        int funcCount
-            = ReadPtrArrayRaw(roomContainer, kRoomContainerFuncsOffset, funcs, kMaxRoomFuncs);
+        int funcCount = TakeArrayRaw("Room: facility buttons", roomContainer,
+            kRoomContainerFuncsOffset, funcs, kMaxRoomFuncs);
         for (int i = 0; i < funcCount; i++) {
             if (!funcs[i])
                 continue;
@@ -3261,7 +3401,7 @@ RoomView ReadRoom(void* screen)
     if (v.list) {
         v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
         void* rows[kMaxRoomActions] = {};
-        int rowCount = ReadListItemsRaw(v.list, rows, kMaxRoomActions);
+        int rowCount = TakeListItemsRaw("Room: action rows", v.list, rows, kMaxRoomActions);
         for (int i = 0; i < rowCount; i++) {
             if (!rows[i])
                 continue;
@@ -3383,7 +3523,8 @@ RoomBuildView ReadRoomBuild(void* screen)
     void* staff = ReadPtrRaw(screen, kRoomStaffContainerOffset);
     if (staff) {
         void* slots[kMaxBuildSlots] = {};
-        int n = ReadPtrArrayRaw(staff, kStaffContainerSlotsOffset, slots, kMaxBuildSlots);
+        int n = TakeArrayRaw("RoomBuild: staff slots", staff, kStaffContainerSlotsOffset, slots,
+            kMaxBuildSlots);
         for (int i = 0; i < n; i++) {
             if (slots[i])
                 v.slots.push_back(slots[i]);
@@ -3973,15 +4114,11 @@ CommodityView ReadCommodity(void* screen)
 
     v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
 
+    // The cap-is-loud check that used to be hand-rolled here is now what every array read in
+    // this file gets: TakeListItemsRaw logs once per site, and only when the list really held
+    // MORE than the cap rather than merely as many.
     void* rows[kMaxCommodityRows] = {};
-    int rowCount = ReadListItemsRaw(v.list, rows, kMaxCommodityRows);
-    // Once, not once per render: this runs on every graph rebuild, ten times a second.
-    static bool warnedCap = false;
-    if (rowCount == kMaxCommodityRows && !warnedCap) {
-        warnedCap = true;
-        LOG_WARN("Commodity: row list hit the %d cap — the tail is not being read",
-            kMaxCommodityRows);
-    }
+    int rowCount = TakeListItemsRaw("Commodity: item rows", v.list, rows, kMaxCommodityRows);
 
     for (int i = 0; i < rowCount; i++) {
         if (!rows[i])
@@ -4123,7 +4260,7 @@ PersonnelView ReadPersonnel(void* screen)
     v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
 
     void* rows[kMaxPersonnelRows] = {};
-    int rowCount = ReadListItemsRaw(v.list, rows, kMaxPersonnelRows);
+    int rowCount = TakeListItemsRaw("Personnel: roster rows", v.list, rows, kMaxPersonnelRows);
     for (int i = 0; i < rowCount; i++) {
         if (!rows[i])
             continue;
@@ -4191,7 +4328,7 @@ ChooseFacilityView ReadChooseFacility(void* screen)
     v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
 
     void* rows[kMaxFacilityChoices] = {};
-    int rowCount = ReadListItemsRaw(v.list, rows, kMaxFacilityChoices);
+    int rowCount = TakeListItemsRaw("ChooseFacility: rows", v.list, rows, kMaxFacilityChoices);
     for (int i = 0; i < rowCount; i++) {
         if (!rows[i])
             continue;
@@ -4252,17 +4389,23 @@ std::string ReadFStringFieldRawText(const void* obj, int32_t offset)
 }
 
 // A TArray<int32> at `offset`: copies up to maxItems values out. Returns the count, or -1 if the
-// array itself could not be read.
-int ReadIntArrayRaw(const void* obj, int32_t offset, int32_t* out, int maxItems)
+// array itself could not be read; `clipped` follows ReadPtrArrayRaw's contract.
+int ReadIntArrayRaw(const void* obj, int32_t offset, int32_t* out, int maxItems,
+    bool* clipped = nullptr)
 {
+    if (clipped)
+        *clipped = false;
     __try {
         auto* arr = reinterpret_cast<const uint8_t*>(obj) + offset;
         auto* data = *reinterpret_cast<const int32_t* const*>(arr);
         int32_t n = *reinterpret_cast<const int32_t*>(arr + 8);
         if (!data || n <= 0)
             return 0;
-        if (n > maxItems)
+        if (n > maxItems) {
             n = maxItems;
+            if (clipped)
+                *clipped = true;
+        }
         for (int32_t i = 0; i < n; i++)
             out[i] = data[i];
         return n;
@@ -4331,7 +4474,10 @@ std::vector<WorldMessage> ReadWorldMessages(void* mgr)
     // walking m_arrMsgs is what distinguishes "showing" from "pooled and waiting": a deactivated
     // message keeps its text in the slot it will be recycled from.
     int32_t active[kMaxWorldMessages];
-    int count = ReadIntArrayRaw(mgr, kWorldMsgActiveOffset, active, kMaxWorldMessages);
+    bool clipped = false;
+    int count = NoteArrayRead("WorldMessages: m_arrActiveMessages",
+        ReadIntArrayRaw(mgr, kWorldMsgActiveOffset, active, kMaxWorldMessages, &clipped), clipped,
+        kMaxWorldMessages);
     if (count <= 0)
         return out;
 
@@ -4628,11 +4774,13 @@ StrategyMapView ReadStrategyMap(void* screen)
     int navCount = 0;
     if (v.navigator) {
         v.selected = ReadI32Raw(v.navigator, kNavSelectedIndexOffset);
-        navCount = ReadPtrArrayRaw(v.navigator, kNavControlsOffset, navControls, kMaxNavControls);
+        navCount = TakeArrayRaw("StrategyMap: NavigableControls", v.navigator, kNavControlsOffset,
+            navControls, kMaxNavControls);
     }
 
     void* icons[kMaxTrayIcons] = {};
-    int iconCount = ReadPtrArrayRaw(screen, kStratMapMissionIconsOffset, icons, kMaxTrayIcons);
+    int iconCount = TakeArrayRaw("StrategyMap: MissionIcons", screen, kStratMapMissionIconsOffset,
+        icons, kMaxTrayIcons);
 
     for (int i = 0; i < iconCount; i++) {
         void* icon = icons[i];
@@ -4801,7 +4949,8 @@ bool SetTraySelection(const StrategyMapView& view, int navIndex)
         return false;
 
     void* controls[kMaxNavControls] = {};
-    int count = ReadPtrArrayRaw(view.navigator, kNavControlsOffset, controls, kMaxNavControls);
+    int count = TakeArrayRaw("StrategyMap: NavigableControls", view.navigator, kNavControlsOffset,
+        controls, kMaxNavControls);
     if (navIndex >= count || !controls[navIndex])
         return false;
 
@@ -4962,7 +5111,9 @@ bool IsLiveObject(void* obj)
 
 int ReadChildPanels(void* panel, void** out, int maxItems)
 {
-    return ReadPtrArrayRaw(panel, kPanelChildPanelsOffset, out, maxItems);
+    // The cap is the dumper's own buffer, and a /gui listing that silently stops short would
+    // send someone hunting for a widget the screen does have.
+    return TakeArrayRaw("Dev: ChildPanels", panel, kPanelChildPanelsOffset, out, maxItems);
 }
 
 FlashValue FlashCall(void* movie, const char* funcName, const char* path)
