@@ -292,6 +292,10 @@ void SpeakMove(const GraphNode* from, const GraphNode* to, const std::string& tr
 // hover state and leaves the camera parked on whatever site the player was last reading.
 void ClearGeoscapeHover();
 
+// Defined with the wire plumbing below: drops every recipe's cached companion words. See the
+// WireCache comment for why a pointer key alone cannot be trusted across a screen change.
+void InvalidateWireCaches();
+
 void Detach()
 {
     const char* name = gActive ? gActive->logName : "?";
@@ -300,6 +304,12 @@ void Detach()
     // REPLACED alert — but a second alert of the same kind, raised after the first closed,
     // reuses all three, so without this it would be answered from the first one's reading.
     GameUI::ResetAlertTextCache();
+    // Same argument one layer up: the companion-word caches are keyed on widget POINTERS, and
+    // the screen those pointers named is exactly what has just gone away. UE3 reuses freed
+    // addresses, so a warm cache is one recycled pointer set away from speaking the previous
+    // screen's words at a player who cannot see that they are wrong. Costs at most one outbound
+    // call per screen entry, which the first render was going to make anyway.
+    InvalidateWireCaches();
     gAttached = false;
     gActive = nullptr;
     gPending = nullptr;
@@ -1175,6 +1185,83 @@ std::vector<WireRecord> FetchCompanionRecords(const char* className, const char*
     return ParseRecords(raw, &GameUI::CleanText);
 }
 
+// One recipe's companion words, held between renders and keyed on the widget pointers they
+// describe. Five recipes need this and had five hand-written copies of it, which is how they came
+// to disagree about the hazard below.
+//
+// Why cache at all: the navigator re-renders about ten times a second, so an uncached fetch is an
+// outbound ProcessEvent per poll for words that usually cannot have changed. The game respawns a
+// screen's rows whenever their content changes (ClearItems + a fresh panel per item), so a changed
+// pointer set is an exact, self-invalidating key for almost everything.
+//
+// ⛔ Almost. The key is COMPARED and never dereferenced, so the never-cache-a-UObject-pointer rule
+// is satisfied by construction — but a key that MATCHES is not proof the screen is the same one.
+// UE3 reuses freed addresses, so an in-place repopulation can land the new widgets on the old
+// ones' addresses and produce a matching key over stale words. That is not hypothetical: it is
+// what `InvalidatePersonnelWords` was written for, and the reasoning is a property of the engine
+// rather than of the personnel screen. So the rule is now uniform — every verb this layer fires
+// that repopulates a screen calls `Invalidate()`, and `Detach()` calls `InvalidateWireCaches()`.
+//
+// `extra` is a second discriminator for a payload that also depends on something that is not a
+// pointer (the commodity list's selected row — the card is the selection's shadow); `alwaysStale`
+// is the debris room's deliberate unconditional re-ask while its picker is open.
+class WireCache {
+public:
+    WireCache(const char* className, const char* funcName) : mClass(className), mFunc(funcName)
+    {
+        All().push_back(this);
+    }
+
+    const std::vector<WireRecord>& Get(std::vector<void*> key, long long extra = 0,
+        bool alwaysStale = false)
+    {
+        if (!mWarm || alwaysStale || extra != mExtra || key != mKey) {
+            mRecords = FetchCompanionRecords(mClass, mFunc);
+            mKey = std::move(key);
+            mExtra = extra;
+            mWarm = true;
+            mGeneration++;
+        }
+        return mRecords;
+    }
+
+    /// Bumped on every actual re-ask, so a caller that DERIVES something from the records (the
+    /// save screen indexes them) can tell "the cache answered" from "the cache refetched"
+    /// without keeping a second copy of the key.
+    unsigned Generation() const { return mGeneration; }
+
+    /// Drop the cache so the next Get re-asks, whatever the key says.
+    void Invalidate() { mWarm = false; }
+
+    static void InvalidateAll()
+    {
+        for (WireCache* cache : All())
+            cache->Invalidate();
+    }
+
+private:
+    // Function-local so the registry is alive before the first cache's constructor runs, whatever
+    // order this TU's file-scope objects are built in.
+    static std::vector<WireCache*>& All()
+    {
+        static std::vector<WireCache*> caches;
+        return caches;
+    }
+
+    const char* mClass;
+    const char* mFunc;
+    std::vector<WireRecord> mRecords;
+    std::vector<void*> mKey;
+    long long mExtra = 0;
+    unsigned mGeneration = 0;
+    bool mWarm = false;
+};
+
+void InvalidateWireCaches()
+{
+    WireCache::InvalidateAll();
+}
+
 // Join the parts a card names, dropping the ones the game is not showing. The companion sends
 // identity as four SEPARATE fields for exactly this: joining them there meant a value that
 // CleanText later reduced to nothing still left its comma behind, and every rookie read
@@ -1846,29 +1933,32 @@ struct SaveWords {
 // by array position, so a null row in the middle of the list cannot shift the words along.
 using SaveWordMap = std::unordered_map<int, SaveWords>;
 
-// The companion call, cached on the ROW POINTERS. The navigator re-renders about ten times a
-// second and this walk is not free (the save screen's new-save row re-runs FillInHeaderForSave,
-// which iterates the history), but a save list changes ONLY through BuildMenu(), which respawns
-// every row panel — so an unchanged pointer vector is an exact, self-invalidating cache key.
+// The companion call, cached on the ROW POINTERS like every other recipe's — the navigator
+// re-renders about ten times a second and this walk is not free (the save screen's new-save row
+// re-runs FillInHeaderForSave, which iterates the history). What this screen does differently is
+// only what it does with the records AFTERWARDS: index them by the row's own `index=` rather than
+// keep the emission order. So the fetch is a WireCache like the others and the index pass runs
+// exactly when the cache actually refetched, which is what Generation() answers.
+WireCache gSaveWords(kSaveReaderClass, "DescribeSaves");
+
 const SaveWordMap& FetchSaveWords(const std::vector<GameUI::SaveSlot>& slots)
 {
-    static std::vector<void*> sKey;
     static SaveWordMap sWords;
+    static unsigned sGeneration = 0;
 
     std::vector<void*> key;
     key.reserve(slots.size() + 1);
     key.push_back(gScreen);
     for (const GameUI::SaveSlot& slot : slots)
         key.push_back(slot.handle);
-    if (key == sKey)
+
+    const std::vector<WireRecord>& records = gSaveWords.Get(std::move(key));
+    if (gSaveWords.Generation() == sGeneration)
         return sWords;
-    sKey = key;
+    sGeneration = gSaveWords.Generation();
     sWords.clear();
 
-    // The same wire payload every other recipe reads, decoded by the same parser — this screen
-    // only differs in what it does with the records afterwards (index them, rather than keep the
-    // order). A second hand-written copy of the parse is how the two would drift.
-    for (const WireRecord& rec : FetchCompanionRecords(kSaveReaderClass, "DescribeSaves")) {
+    for (const WireRecord& rec : records) {
         const std::string indexText = RecField(rec, "index");
         if (indexText.empty())
             continue;
@@ -2028,12 +2118,7 @@ constexpr const char* kFacilityReaderClass = "X2AccessFacilityReader";
 // times a second for a set of labels that CANNOT change — AddFacilityButton runs once, in
 // InitScreen, and nothing ever relabels a UIFacility_RoomFunc. A changed pointer list means a
 // different room, which is the only thing that can change the answer.
-struct FacilityWords {
-    std::vector<WireRecord> records;
-    std::vector<void*> key;
-};
-
-FacilityWords gFacilityWords;
+WireCache gFacilityWords(kFacilityReaderClass, "DescribeFacility");
 
 const std::vector<WireRecord>& FetchFacilityWords(const GameUI::RoomView& view)
 {
@@ -2042,12 +2127,7 @@ const std::vector<WireRecord>& FetchFacilityWords(const GameUI::RoomView& view)
     for (const GameUI::RoomFunc& f : view.funcs)
         key.push_back(f.handle);
     key.push_back(view.facility);
-
-    if (key != gFacilityWords.key) {
-        gFacilityWords.records = FetchCompanionRecords(kFacilityReaderClass, "DescribeFacility");
-        gFacilityWords.key = std::move(key);
-    }
-    return gFacilityWords.records;
+    return gFacilityWords.Get(std::move(key));
 }
 
 // The room's own bottom-bar buttons, and the upgrade button beside them. Split out of BuildRoom
@@ -2261,13 +2341,7 @@ constexpr const char* kRoomReaderClass = "X2AccessRoomReader";
 // cache as the save rows: the slot widgets are respawned by RealizeStaffSlots and the picker's
 // rows by UpdateList, so a changed pointer set is an exact cache key — and the outbound call is
 // the cost here, not the payload.
-struct RoomWords {
-    std::vector<WireRecord> records;
-    std::vector<void*> key;
-    bool dropOpen = false;
-};
-
-RoomWords gRoomWords;
+WireCache gRoomWords(kRoomReaderClass, "DescribeRoom");
 
 const std::vector<WireRecord>& FetchRoomWords(const GameUI::RoomBuildView& view)
 {
@@ -2281,12 +2355,7 @@ const std::vector<WireRecord>& FetchRoomWords(const GameUI::RoomBuildView& view)
     // occupant and the status panel's whole state machine ("engineer required" → "ready") without
     // respawning a single widget, so a pointer-only cache key would speak the pre-assignment
     // room back at the player.
-    if (key != gRoomWords.key || dropOpen != gRoomWords.dropOpen || dropOpen) {
-        gRoomWords.records = FetchCompanionRecords(kRoomReaderClass, "DescribeRoom");
-        gRoomWords.key = std::move(key);
-        gRoomWords.dropOpen = dropOpen;
-    }
-    return gRoomWords.records;
+    return gRoomWords.Get(std::move(key), dropOpen ? 1 : 0, /*alwaysStale*/ dropOpen);
 }
 
 std::unique_ptr<GraphRender> BuildRoomBuild()
@@ -2483,13 +2552,7 @@ constexpr const char* kCommodityReaderClass = "X2AccessCommodityReader";
 // SELECTION is part of the key. The card is the selection's shadow — UIInventory sets
 // List.OnSelectionChanged = SelectedItemChanged in BuildScreen, and that delegate repopulates
 // the card on every move — so a pointer-only key would describe the row the player just left.
-struct CommodityWords {
-    std::vector<WireRecord> records;
-    std::vector<void*> key;
-    int selected = -2;
-};
-
-CommodityWords gCommodityWords;
+WireCache gCommodityWords(kCommodityReaderClass, "DescribeCommodity");
 
 const std::vector<WireRecord>& FetchCommodityWords(const GameUI::CommodityView& view)
 {
@@ -2497,19 +2560,13 @@ const std::vector<WireRecord>& FetchCommodityWords(const GameUI::CommodityView& 
     key.reserve(view.rows.size() + 1);
     for (const GameUI::CommodityRow& row : view.rows)
         key.push_back(row.handle);
-    // Switching a Build Items tab is covered by the row pointers alone: SwitchTab calls
-    // PopulateData, which runs List.ClearItems() and spawns a fresh panel per item, so a
-    // category change replaces every pointer in this key. The screen pointer goes in too, so a
-    // second screen of the family can never inherit a warm cache from the one it replaced.
+    // Switching a Build Items tab is USUALLY covered by the row pointers alone: SwitchTab calls
+    // PopulateData, which runs List.ClearItems() and spawns a fresh panel per item. "Usually" is
+    // the whole reason the tab verb calls Invalidate() as well — a respawn can land on the freed
+    // addresses. The screen pointer goes in too, so a second screen of the family can never
+    // inherit a warm cache from the one it replaced.
     key.push_back(view.screen);
-
-    if (key != gCommodityWords.key || view.selected != gCommodityWords.selected) {
-        gCommodityWords.records
-            = FetchCompanionRecords(kCommodityReaderClass, "DescribeCommodity");
-        gCommodityWords.key = std::move(key);
-        gCommodityWords.selected = view.selected;
-    }
-    return gCommodityWords.records;
+    return gCommodityWords.Get(std::move(key), view.selected);
 }
 
 const WireRecord* FindRecord(const std::vector<WireRecord>& records, const char* kind)
@@ -2564,12 +2621,17 @@ void BuildCommodityTabs(GraphBuilder& b, const std::vector<WireRecord>& records)
         }
         vt.OnActivate = [index]() {
             GameUI::SwitchCommodityTab(GameUI::ReadCommodity(gScreen), index);
+            // ⛔ The respawn USUALLY changes the key, and "usually" is not good enough: the fresh
+            // rows can land on the addresses the old ones just freed, and a key that happens to
+            // match would keep the previous category's words on screen. Same reasoning the
+            // personnel verbs have always applied — one outbound call on a keypress the player
+            // just made, against a silent wrong readout.
+            gCommodityWords.Invalidate();
         };
         // Post-activation feedback, read LIVE rather than from this render's closure. A captured
         // flag can only ever describe the state before the press — which spoke a bare "selected"
         // when the player pressed the tab they were already on, and nothing at all when they
-        // actually switched. SwitchTab respawns every row, so the cache key has already changed
-        // by the time this runs and the re-ask is the fresh answer.
+        // actually switched. The invalidation above is what makes the re-ask a fresh answer.
         vt.StateText = [index]() {
             const std::vector<WireRecord>& fresh
                 = FetchCommodityWords(GameUI::ReadCommodity(gScreen));
@@ -2823,12 +2885,7 @@ constexpr const char* kPersonnelReaderClass = "X2AccessPersonnelReader";
 // ⛔ The SELECTION is deliberately NOT part of the key, unlike the commodity list's. Nothing on
 // this screen is the selection's shadow — there is no card — so re-asking on every arrow press
 // would walk the whole roster through XCOMHISTORY once per keystroke for no new words.
-struct PersonnelWords {
-    std::vector<WireRecord> records;
-    std::vector<void*> key;
-};
-
-PersonnelWords gPersonnelWords;
+WireCache gPersonnelWords(kPersonnelReaderClass, "DescribePersonnel");
 
 const std::vector<WireRecord>& FetchPersonnelWords(const GameUI::PersonnelView& view)
 {
@@ -2837,21 +2894,7 @@ const std::vector<WireRecord>& FetchPersonnelWords(const GameUI::PersonnelView& 
     for (const GameUI::PersonnelRow& row : view.rows)
         key.push_back(row.handle);
     key.push_back(view.screen);
-
-    if (key != gPersonnelWords.key) {
-        gPersonnelWords.records
-            = FetchCompanionRecords(kPersonnelReaderClass, "DescribePersonnel");
-        gPersonnelWords.key = std::move(key);
-    }
-    return gPersonnelWords.records;
-}
-
-// Drop the cache so the next read re-asks. Called after a tab switch or a sort, both of which
-// respawn the rows anyway — but the pointers can land on the same freed addresses, and a key
-// that happens to match would keep the previous tab's words on screen.
-void InvalidatePersonnelWords()
-{
-    gPersonnelWords.key.clear();
+    return gPersonnelWords.Get(std::move(key));
 }
 
 // One outbound call with a single int, for the two verbs the companion owns. Both resolve the
@@ -2869,7 +2912,10 @@ bool CallPersonnelVerb(const char* funcName, int value)
         LOG_WARN("MenuNavigator: %s.%s failed", kPersonnelReaderClass, funcName);
         return false;
     }
-    InvalidatePersonnelWords();
+    // Both verbs respawn the rows, so the key USUALLY changes on its own — but the fresh
+    // pointers can land on the freed addresses of the old ones, and a key that happens to match
+    // would keep the previous tab's words on screen.
+    gPersonnelWords.Invalidate();
     return true;
 }
 
@@ -3191,13 +3237,7 @@ constexpr const char* kBuildFacilityReaderClass = "X2AccessBuildFacilityReader";
 // Keyed on the rows AND the selection, like the commodity list's and for the same reason: the
 // panel is the selection's shadow (UIList::OnSelectionChanged = UpdateSelection repopulates it on
 // every move), so a pointer-only key would describe the facility the player just left.
-struct BuildFacilityWords {
-    std::vector<WireRecord> records;
-    std::vector<void*> key;
-    int selected = -2;
-};
-
-BuildFacilityWords gBuildFacilityWords;
+WireCache gBuildFacilityWords(kBuildFacilityReaderClass, "DescribeFacilityChoice");
 
 const std::vector<WireRecord>& FetchBuildFacilityWords(const GameUI::ChooseFacilityView& view)
 {
@@ -3206,14 +3246,7 @@ const std::vector<WireRecord>& FetchBuildFacilityWords(const GameUI::ChooseFacil
     for (const GameUI::FacilityChoice& choice : view.choices)
         key.push_back(choice.handle);
     key.push_back(view.screen);
-
-    if (key != gBuildFacilityWords.key || view.selected != gBuildFacilityWords.selected) {
-        gBuildFacilityWords.records
-            = FetchCompanionRecords(kBuildFacilityReaderClass, "DescribeFacilityChoice");
-        gBuildFacilityWords.key = std::move(key);
-        gBuildFacilityWords.selected = view.selected;
-    }
-    return gBuildFacilityWords.records;
+    return gBuildFacilityWords.Get(std::move(key), view.selected);
 }
 
 void BuildFacilityCard(GraphBuilder& b, const WireRecord& card)
