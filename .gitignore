@@ -10,3 +10,5 @@ Desktop.ini
 .DS_Store
 build_output.txt
 __pycache__/
+# Per-machine game/SDK paths for the justfile. Template: env.example
+.env

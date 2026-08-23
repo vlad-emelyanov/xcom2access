@@ -3,9 +3,15 @@
 
 set windows-shell := ["pwsh", "-NoProfile", "-NonInteractive", "-Command"]
 
+# Per-machine paths come from an untracked `.env` beside this file (copy `env.example`), so
+# the tree carries the generic Steam layout as its default and nobody's D: drive gets baked
+# in. Precedence, lowest first: the literal below, XCOM2_*_PATH from `.env` or the real
+# environment, then an explicit `just game_path=... <recipe>`.
+set dotenv-load := true
+
 # Override any of these per-invocation, e.g. `just config=Debug build`
-game_path := "C:/Program Files (x86)/Steam/steamapps/common/XCOM 2/XCom2-WarOfTheChosen"
-sdk_path := "C:/Program Files (x86)/Steam/steamapps/common/XCOM 2 War of the Chosen SDK"
+game_path := env_var_or_default("XCOM2_GAME_PATH", "C:/Program Files (x86)/Steam/steamapps/common/XCOM 2/XCom2-WarOfTheChosen")
+sdk_path := env_var_or_default("XCOM2_SDK_PATH", "C:/Program Files (x86)/Steam/steamapps/common/XCOM 2 War of the Chosen SDK")
 build_dir := "build"
 config := "Release"
 

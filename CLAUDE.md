@@ -653,10 +653,11 @@ in **Hard rules** below instead.
   The `.asi` is locked by the running game too, but that half FAILS FAST.
 - Kernel tests (no game needed): `ctest --test-dir build -C Release` (`just test`).
 - Loading: Ultimate ASI Loader sits in `Binaries/Win64/` under one of the several host DLL names it
-  can impersonate — **this install uses `dinput8.dll`, not `version-x64.dll`**, so do not treat a
-  missing `version.dll` as a broken install (`just status` checked exactly that one name and
-  reported the loader MISSING on a perfectly working setup; it now probes the whole candidate
-  list). The ASI logs to
+  can impersonate, and **which name it uses differs per machine** — so never test for a
+  particular one: a missing `version.dll` is not a broken install (`just status` checked exactly
+  that one name and reported the loader MISSING on a perfectly working setup; it now probes the
+  whole candidate list and PRINTS which host it found, which is also how you learn what this
+  machine is using). The ASI logs to
   `X2Access.log` next to itself, rotating the previous three sessions to `X2Access.1/2/3.log` on
   every start. Timestamps carry milliseconds; screen-transition latency is unreadable without them.
 
