@@ -197,10 +197,21 @@ in **Hard rules** below instead.
     abilities resolving in one burst from interleaving; it is what the game's own HUD does
     (`UIUnitFlagManager:55`, `UITacticalHUD_Enemies:68`). The replay narrator needs none of this:
     walking frames in order gets the human order for free.
-  - Three details that needed the game's own source: damage is SUMMED over the entries whose
-    `DamageResult.Context` matches this state (`DamageResults` accumulates for the whole mission and
-    one grenade lands as several entries); only abilities that actually roll get a result word
-    (`X2AbilityToHitCalc_DeadEye` always hits, so the word would be noise), and it is the game's own
+  - ⛔ **One grenade landing as several `DamageResults` entries is TWO bugs, and summing is only
+    the first.** `DamageResults` accumulates for the whole mission, so damage is SUMMED over the
+    entries whose `DamageResult.Context` matches this state — that fixes what the line SAYS.
+    `XComGameState_Unit.TakeDamage` also fires `UnitTakeEffectDamage` once per entry, and deferred
+    to `ELD_OnVisualizationBlockCompleted` those N callbacks are IDENTICAL in every argument (same
+    unit state, array already complete), so each re-sums the same total into the same sentence and
+    all N land in one 100 ms drain — that is how many times it is said, and summing does nothing
+    about it. Nothing stateless can pick one of N indistinguishable calls, so
+    `OnUnitTakeEffectDamage` claims `(GameState.HistoryIndex, Unit.ObjectID)` through
+    `ClaimDamageNarration` before it speaks. **The key is identity, never the text** — that is what
+    keeps it compatible with the narrator's no-text-dedup rule, since two ADVENT Troopers differ by
+    ObjectID where their words do not. The replay narrator needs no such guard: it visits each unit
+    of a frame once by construction.
+  - Two more details that needed the game's own source: only abilities that actually roll get a
+    result word (`X2AbilityToHitCalc_DeadEye` always hits, so the word would be noise), and it is the game's own
     localized `m_aAbilityHitResultStrings`; and the interrupt pass is skipped, because
     `AbilityActivated` re-triggers per interrupt step. Fog parity via `CanXComSquadSeeTarget` with
     ONE documented exception — a unit stops being visible the moment it dies, so a kill the squad
