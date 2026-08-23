@@ -128,10 +128,8 @@ function PollFocus()
 	// keyboard navigation. The Enter handler only routes to the Second Wave
 	// list for controllers (ISCONTROLLERACTIVE check). Fix: put m_SecondWaveList
 	// directly in the screen navigator so Enter/arrows reach UIList.OnUnrealCommand.
-	// Also fix checkbox items: UICheckbox.OnUnrealCommand always returns true
-	// (consuming Enter) even when bReadOnly=true, preventing UIList.OnItemClicked
-	// from firing. Change item Type so the checkbox handler is bypassed and set
-	// OnClickDelegate to the same toggle function used by the controller path.
+	// FixSecondWaveItems below is the other half; read its comment before touching it,
+	// because it is the reason a Second Wave row reads Type = Description in native.
 	if (DiffScreen.m_bSecondWaveOpen && !bWasSecondWaveOpen)
 	{
 		DiffScreen.Navigator.AddControl(DiffScreen.m_SecondWaveList);
@@ -290,6 +288,27 @@ function string BuildAnnouncement(UIShellDifficulty DiffScreen, int FocusedIdx)
 // Fix SecondWave items for keyboard Enter: change Type so HandleCustomControls
 // skips checkbox routing (which consumes Enter without toggling when bReadOnly=true),
 // and set OnClickDelegate to the controller toggle function.
+//
+// Why the Type rewrite is the mechanism, from the game's own source: UIShellDifficulty
+// builds each row with SetWidgetType(EUILineItemType_Checkbox) and then sets
+// Checkbox.bReadOnly = true (:472, :482), and UIMechaListItem.HandleCustomControls
+// (:186-190) routes Enter to Checkbox.OnUnrealCommand on Type == Checkbox — which
+// returns true, consuming the key, while bReadOnly means it toggles nothing. Retyping
+// the row is what lets Enter reach UIList.OnItemClicked instead. This path is live
+// whenever no native recipe is attached, so the mutation stays.
+//
+// WARNING -- THIS WRITE IS VISIBLE TO NATIVE. The row's Type is the field
+// ReadOptionRowRaw (src/game_ui.cpp) classifies on, so a Second Wave row reading
+// Type = Description at runtime is OUR doing on this screen, not the game's: the game
+// really does set Checkbox here, which is why the screen's own bottom rows still read
+// Checkbox. Native must not derive an engine fact from it. What IS the game's, and is
+// the durable reason native prefers the VISIBLE widget over the Type tag, is that
+// SetWidgetType hides the widgets it switches away from and leaves their pointers
+// behind. Do not "clean this up" by leaving the game's value in place without first
+// re-testing Enter on the Second Wave list with no recipe attached.
+//
+// Guarded so it is idempotent and states its own precondition: only a row the game
+// still has typed as a checkbox is retyped.
 function FixSecondWaveItems(UIShellDifficulty DiffScreen)
 {
 	local int i;
@@ -298,7 +317,7 @@ function FixSecondWaveItems(UIShellDifficulty DiffScreen)
 	for (i = 0; i < DiffScreen.m_SecondWaveList.ItemCount; i++)
 	{
 		SWItem = UIMechaListItem(DiffScreen.m_SecondWaveList.GetItem(i));
-		if (SWItem != none)
+		if (SWItem != none && SWItem.Type == EUILineItemType_Checkbox)
 		{
 			SWItem.Type = EUILineItemType_Description;
 			SWItem.OnClickDelegate = DiffScreen.OnAdvancedOptionsClicked;

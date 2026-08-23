@@ -1205,6 +1205,11 @@ struct GeoscapeGate {
     bool mapOnStack = false; // UIStrategyMap is somewhere on the stack
     bool current = false;    // ...and it is the first entry
     char blocker[64] = {};   // what sits on top instead, when it is not; for the log
+    /// The map itself, and ONLY while `current` — the same walk that answered the gate already
+    /// had it in hand, so re-walking to find it again is two answers to one question waiting to
+    /// disagree. ⛔ Use it within the call that produced it and never store it: this is a
+    /// return-by-value convenience, not a cache, and the never-hold-a-UObject rule applies.
+    void* map = nullptr;
 
     bool Active() const { return current; }
 };
@@ -1448,8 +1453,6 @@ struct FlashValue {
 /// Game thread only.
 FlashValue FlashCall(void* movie, const char* funcName, const char* path);
 
-#endif // X2ACCESS_DEVSERVER
-
 /// Run `command` through the game's own console (`Actor.ConsoleCommand` on the local player
 /// controller) and return what it printed — empty for the many commands that say nothing, or a
 /// `[exec] …` string when the call could not be made at all. This is the whole `exec function`
@@ -1459,5 +1462,7 @@ FlashValue FlashCall(void* movie, const char* funcName, const char* path);
 /// The reply comes back in an engine-allocated FString that we read and deliberately leak; see
 /// the implementation. Game thread only.
 std::string ConsoleCommand(const std::string& command);
+
+#endif // X2ACCESS_DEVSERVER
 
 } // namespace GameUI

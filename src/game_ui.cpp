@@ -147,6 +147,7 @@ constexpr int32_t kNarrStartButtonOffset = 0x4E8;   // m_StartButton (UILargeBut
 constexpr int32_t kNarrXpackItemOffset = 0x4F0;     // m_XpacknarrativeMechaItem
 constexpr int32_t kNarrDLCInfosOffset = 0x510;      // DLCInfos (TArray<X2DownloadableContentInfo*>)
 constexpr int32_t kDLCNarrativeSummaryOffset = 0xB4; // X2DownloadableContentInfo::NarrativeContentSummary
+constexpr int kMaxDLCInfos = 32; // one per installed DLC — far past the shipped set
 
 // ---- new game flow: UIShellSoundtrackPicker ----
 // No title offset here on purpose: the retail package's localized m_chooseSoundtrack (0x430)
@@ -301,6 +302,12 @@ constexpr int32_t kLoadItemDropButtonOffset = 0x0458;
 constexpr int32_t kUtilButtonOffset = 0x3E0;    // Button (UIButton*) — carries the disabled bit
 constexpr int32_t kUtilSlotIndexOffset = 0x3F0; // SlotIndex (int)
 constexpr int32_t kUtilSlotTypeOffset = 0x3F4;  // SlotType (byte, EInventorySlot)
+
+// Caps for the squad-select / armory list reads. Each is a bound WE chose rather than one the
+// game states, so each read goes through TakeListItemsRaw and says so if the game hands us more.
+constexpr int kMaxSquadCards = 16;   // the squad's slot cards
+constexpr int kMaxUtilitySlots = 16; // one card's utility row
+constexpr int kMaxLoadoutRows = 64;  // the armory's inventory-slot rows
 
 // ---- UIScreenStack: the game's own list of what is on screen ----
 constexpr int32_t kStackFlagsOffset = 0x60;    // UIScreenStack flag dword
@@ -697,16 +704,21 @@ int ReadDropdownSelectionRaw(const void* dropdown, wchar_t* buf, int bufWchars)
 
 // The m_arrMechaItems pointer array, indices preserved (row index IS the List selection index —
 // rows are spawned into the list in array order).
-int ReadOptionRowPtrsRaw(void* screen, void** out, int maxItems)
+int ReadOptionRowPtrsRaw(void* screen, void** out, int maxItems, bool* clipped = nullptr)
 {
+    if (clipped)
+        *clipped = false;
     __try {
         auto* arr = reinterpret_cast<const uint8_t*>(screen) + kOptsMechaItemsOffset;
         auto* data = *reinterpret_cast<void* const* const*>(arr);
         int32_t n = *reinterpret_cast<const int32_t*>(arr + 8);
         if (!data || n <= 0)
             return 0;
-        if (n > maxItems)
+        if (n > maxItems) {
             n = maxItems;
+            if (clipped)
+                *clipped = true;
+        }
         for (int32_t i = 0; i < n; i++)
             out[i] = data[i];
         return n;
@@ -716,20 +728,43 @@ int ReadOptionRowPtrsRaw(void* screen, void** out, int maxItems)
 }
 
 // Any TArray<T*> at `offset`: copies up to maxItems pointers out, indices preserved. Returns
-// the count copied, or -1 if the array itself could not be read.
-int ReadPtrArrayRaw(const void* obj, int32_t offset, void** out, int maxItems)
+// the count copied, or -1 if the array itself could not be read. `clipped`, when asked for, says
+// whether the array held MORE than maxItems — a different fact from "the count came back equal
+// to the cap", and the one TakeArrayRaw below has to report.
+int ReadPtrArrayRaw(const void* obj, int32_t offset, void** out, int maxItems,
+    bool* clipped = nullptr)
 {
+    if (clipped)
+        *clipped = false;
     __try {
         auto* arr = reinterpret_cast<const uint8_t*>(obj) + offset;
         auto* data = *reinterpret_cast<void* const* const*>(arr);
         int32_t n = *reinterpret_cast<const int32_t*>(arr + 8);
         if (!data || n <= 0)
             return 0;
-        if (n > maxItems)
+        if (n > maxItems) {
             n = maxItems;
+            if (clipped)
+                *clipped = true;
+        }
         for (int32_t i = 0; i < n; i++)
             out[i] = data[i];
         return n;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -1;
+    }
+}
+
+// A TArray's own count at `offset`, without reading one element: -1 if it could not be read.
+// This is what lets a read be sized from the DATA rather than from a buffer we picked in
+// advance — see ReadPtrArrayAllRaw.
+int32_t ReadArrayCountRaw(const void* obj, int32_t offset)
+{
+    __try {
+        auto* arr = reinterpret_cast<const uint8_t*>(obj) + offset;
+        if (!*reinterpret_cast<void* const* const*>(arr))
+            return 0;
+        return *reinterpret_cast<const int32_t*>(arr + 8);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return -1;
     }
@@ -755,14 +790,105 @@ int CopyFStringElemRaw(const void* obj, int32_t offset, int index, wchar_t* buf,
 // A UIList's items in index order. GetItem(i) IS ItemContainer.ChildPanels[i] (UIList.uc), so
 // reading the child array directly matches the game's own indexing — which is what
 // SetSelectedIndex and the OnItemClicked delegates are expressed in.
-int ReadListItemsRaw(void* list, void** out, int maxItems)
+int ReadListItemsRaw(void* list, void** out, int maxItems, bool* clipped = nullptr)
 {
+    if (clipped)
+        *clipped = false;
     if (!list)
         return 0;
     void* container = ReadPtrRaw(list, kListItemContainerOffset);
     if (!container)
         return 0;
-    return ReadPtrArrayRaw(container, kPanelChildPanelsOffset, out, maxItems);
+    return ReadPtrArrayRaw(container, kPanelChildPanelsOffset, out, maxItems, clipped);
+}
+
+// ---- bounded array reads that SAY SO when they clip ----
+//
+// ⛔ Size the buffer from the data, never the data to the buffer — and a cap that drops the tail
+// must be LOUD. A silently truncated list reads to a blind player as *the screen has nothing
+// more*: indistinguishable from the truth, and therefore never reported as a bug. That is the
+// failure mode the 2051-character payload had, and every fixed-cap array read in this file is
+// the same bug waiting for a long enough list.
+//
+// Most caps here are structural — a room has eight staff slots, the strategy map has
+// MAX_NUM_STRATEGYICONS — but "structural" is a claim about the GAME that holds only until a mod
+// or a patch disagrees, and the -1 the primitives above return on a FAULTED read is otherwise
+// indistinguishable from an empty list. Both go through here.
+//
+// Once per SITE, not once per render: these run on every graph rebuild, ten times a second. The
+// latch map is touched only on the report path, so the ordinary case costs one compare.
+constexpr uint8_t kNoteFault = 0x1;       // the read faulted
+constexpr uint8_t kNoteClip = 0x2;        // the tail was dropped
+constexpr uint8_t kNoteImplausible = 0x4; // the count was too large to believe
+
+// True the FIRST time this (site, kind) pair comes up. The latch is what makes a warning
+// affordable on a path that runs ten times a second.
+bool NoteOnce(const char* what, uint8_t kind)
+{
+    static std::unordered_map<std::string, uint8_t> sSaid;
+    uint8_t& said = sSaid[what ? what : "?"];
+    if (said & kind)
+        return false;
+    said |= kind;
+    return true;
+}
+
+int NoteArrayRead(const char* what, int count, bool clipped, int maxItems)
+{
+    if (count < 0) {
+        if (NoteOnce(what, kNoteFault))
+            LOG_WARN("%s: the array could not be read — treating it as empty", what);
+        return 0;
+    }
+    if (clipped && NoteOnce(what, kNoteClip))
+        LOG_WARN("%s: more than %d entries — the tail is NOT being read", what, maxItems);
+    return count;
+}
+
+// ReadPtrArrayRaw with the -1 sentinel honoured and a dropped tail logged. `what` names the site
+// and doubles as the latch key, so pass a literal.
+int TakeArrayRaw(const char* what, const void* obj, int32_t offset, void** out, int maxItems)
+{
+    bool clipped = false;
+    const int count = ReadPtrArrayRaw(obj, offset, out, maxItems, &clipped);
+    return NoteArrayRead(what, count, clipped, maxItems);
+}
+
+// ReadListItemsRaw under the same contract.
+int TakeListItemsRaw(const char* what, void* list, void** out, int maxItems)
+{
+    bool clipped = false;
+    const int count = ReadListItemsRaw(list, out, maxItems, &clipped);
+    return NoteArrayRead(what, count, clipped, maxItems);
+}
+
+// The WHOLE of a TArray<T*>, sized from the array's own count. For a list whose length the GAME
+// decides and nothing bounds — the save list is the one that really grows — a cap is not
+// something to log about, it is something not to have: the entries it drops are saves the player
+// made, and a list that stops reads exactly like a list that ended. A count too large to be a
+// screen's list is refused with a line rather than walked.
+std::vector<void*> ReadPtrArrayAllRaw(const char* what, const void* obj, int32_t offset)
+{
+    std::vector<void*> out;
+    const int32_t n = ReadArrayCountRaw(obj, offset);
+    if (n == 0)
+        return out;
+    if (n < 0) {
+        NoteArrayRead(what, -1, false, 0);
+        return out;
+    }
+    // Not a guess about this screen: past this a count is far likelier a bad offset than a long
+    // list, and allocating for it would be the fault we are trying to avoid.
+    constexpr int32_t kImplausibleCount = 65536;
+    if (n > kImplausibleCount) {
+        if (NoteOnce(what, kNoteImplausible))
+            LOG_WARN("%s: the array claims %d entries — refusing to read it", what, n);
+        return out;
+    }
+    out.resize(static_cast<size_t>(n));
+    const int got = ReadPtrArrayRaw(obj, offset, out.data(), n);
+    out.resize(static_cast<size_t>(NoteArrayRead(what, got, false, n)));
+    return out;
 }
 
 // ---- the game's own screen stack ----
@@ -788,22 +914,73 @@ bool StackIsLiveRaw(void* stack)
 
 ScreenFinder gStackFinder{"UIScreenStack", StackIsLiveRaw};
 
-// The topmost live screen of `className` on the stack, or null if the stack does not hold one.
-// Matching is by class NAME, so no UClass has to be resolved first — the stack is at most a few
-// dozen entries, which makes the name compares cheaper than the class lookup would be.
-void* FindStackScreenRaw(const char* className)
+// Screens, top first, into `out`; 0 when there is no live stack. Every walker below opens with
+// this — one place to find the stack, one place that says so if the array outgrows the buffer.
+int WalkStackRaw(void** out, int max)
 {
     void* stack = gStackFinder.Find();
     if (!stack)
-        return nullptr;
+        return 0;
+    return TakeArrayRaw("ScreenStack: Screens", stack, kStackScreensOffset, out, max);
+}
 
+// ⛔ THE READINESS PREDICATE FOR A SCREEN ON THE STACK, in one place, because it is spelled out
+// at a dozen walkers and two hard rules are about it.
+//
+// `bIsInited && !bIsRemoved`, and NOT bIsVisible: the game leaves the visible bit false on
+// screens it is plainly showing (a live pause menu reads 0x259), so testing it means silence at
+// a modal the player then answers blind. bIsRemoved is the one flag a corpse does not keep —
+// removal sets it and clears nothing else, so inited/visible/focused all still read true on a
+// dead screen.
+//
+// This deliberately does NOT also require bIsFocused, which IS the right test for a GObjects
+// scan (see IsFocusedRaw) and would be redundant here: position in this array already answers
+// "is it on top", and it is the game's own answer rather than a bit we hope is in step.
+bool StackEntryLiveRaw(void* screen)
+{
+    const uint32_t flags = ReadU32Raw(screen, kPanelFlagsOffset);
+    return (flags & kPanelInited) && !(flags & kPanelRemoved);
+}
+
+// The GetCurrentScreen rule, which five of the finders below share: the TOPMOST non-null entry,
+// and only when it matches and is live. A non-match on top is a REFUSAL, not a reason to keep
+// looking — a screen under another screen has already lost the keys, and answering for it would
+// put our stops in front of the screen the player is actually on.
+//
+// `matches` is handed the entry and its class name, so a matcher may compare either; `nameOut`
+// receives that name when an entry is returned.
+void* TopStackScreenRaw(bool (*matches)(void* screen, const char* className),
+    char* nameOut = nullptr, int nameCap = 0)
+{
     void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    const int count = WalkStackRaw(screens, kMaxStackScreens);
     for (int i = 0; i < count; i++) {
         if (!screens[i])
             continue;
-        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+        char name[64];
+        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
+            return nullptr;
+        if (!matches(screens[i], name) || !StackEntryLiveRaw(screens[i]))
+            return nullptr;
+        if (nameOut && nameCap > 0)
+            strncpy_s(nameOut, static_cast<size_t>(nameCap), name, _TRUNCATE);
+        return screens[i];
+    }
+    return nullptr;
+}
+
+// The topmost live screen of `className` on the stack, or null if the stack does not hold one.
+// Matching is by class NAME, so no UClass has to be resolved first — the stack is at most a few
+// dozen entries, which makes the name compares cheaper than the class lookup would be.
+//
+// Unlike TopStackScreenRaw this keeps LOOKING past a non-match: the caller asked for a specific
+// screen wherever it sits, not for the one on top.
+void* FindStackScreenRaw(const char* className)
+{
+    void* screens[kMaxStackScreens] = {};
+    int count = WalkStackRaw(screens, kMaxStackScreens);
+    for (int i = 0; i < count; i++) {
+        if (!screens[i] || !StackEntryLiveRaw(screens[i]))
             continue;
         char name[64];
         if (ObjClassNameAnsiRaw(screens[i], name, sizeof(name)) && strcmp(name, className) == 0)
@@ -920,9 +1097,20 @@ bool ReadOptionRowRaw(void* item, RawOptionRow* out)
     // the very bit the campaign start reads (GetSelectedSecondWaveOptionNames) — verified live
     // 2026-08-19 with the box ticked on screen. Reading state only in the Type branch made those
     // rows report "unchecked" forever, which looked exactly like a toggle that would not take.
-    // The VISIBLE widget is the honest answer, and preferring it is safe: SetWidgetType hides
-    // the widgets it switches away from, so a visible checkbox means the row is showing one.
-    // State comes from the checkbox whenever there is one; only the row's KIND needs it visible.
+    //
+    // ⚠ WHERE THAT Description COMES FROM, since it would not reproduce for anyone reading
+    // SrcOrig: the GAME types those rows Checkbox (UIShellDifficulty.uc:472, and again inside
+    // UpdateDataCheckbox at UIMechaListItem.uc:549). OUR OWN companion rewrites them —
+    // UIScreenListener_Difficulty.FixSecondWaveItems, once per Second Wave panel open, so that
+    // Enter stops being eaten by a bReadOnly checkbox. So on this screen the Type tag is a field
+    // two of our layers touch, and it must never be read as evidence about the engine.
+    //
+    // The rule survives that correction, because the reason to prefer the VISIBLE widget is the
+    // GAME's: SetWidgetType hides the widgets it switches away from and leaves their pointers
+    // behind, so presence alone means nothing while visibility means the row is showing one.
+    // Reading the widget POINTER rather than the tag is also what makes this immune to a Type a
+    // mod — ours included — has rewritten. State comes from the checkbox whenever there is one;
+    // only the row's KIND needs it visible.
     void* checkbox = ReadPtrRaw(item, kMechaCheckboxOffset);
     if (checkbox) {
         out->checked = (ReadU32Raw(checkbox, kCheckboxFlagsOffset) & kCheckboxChecked) != 0;
@@ -1553,12 +1741,15 @@ bool MakeRow(void* item, int index, OptionRow* out)
     return !out->label.empty();
 }
 
+// The tallest of these lists is an options tab; 64 is well past what any of them draws.
+constexpr int kMaxListRows = 64;
+
 // Every visible row of a UIList, indices preserved.
 std::vector<OptionRow> ReadListRows(void* list)
 {
     std::vector<OptionRow> rows;
-    void* items[64] = {};
-    int count = ReadListItemsRaw(list, items, 64);
+    void* items[kMaxListRows] = {};
+    int count = TakeListItemsRaw("Options: list rows", list, items, kMaxListRows);
     for (int i = 0; i < count; i++) {
         OptionRow row;
         if (MakeRow(items[i], i, &row))
@@ -1600,8 +1791,10 @@ OptionsView ReadOptions(void* screen)
     for (int i = 0; i < kOptionsTabCount; i++)
         v.tabNames[i] = ReadFStringField(screen, kOptsTabNameOffsets[i]);
 
-    void* rows[64] = {};
-    int rowCount = ReadOptionRowPtrsRaw(screen, rows, 64);
+    void* rows[kMaxListRows] = {};
+    bool clippedRows = false;
+    int rowCount = NoteArrayRead("Options: m_arrMechaItems",
+        ReadOptionRowPtrsRaw(screen, rows, kMaxListRows, &clippedRows), clippedRows, kMaxListRows);
     for (int i = 0; i < rowCount; i++) {
         OptionRow row;
         if (MakeRow(rows[i], i, &row))
@@ -2055,8 +2248,9 @@ NarrativeView ReadNarrative(void* screen)
 
     // The side-panel description the game shows for the focused row: row 0 is the
     // integrated-DLC option, every later row maps to DLCInfos[index - 1].
-    void* infos[32] = {};
-    int infoCount = ReadPtrArrayRaw(screen, kNarrDLCInfosOffset, infos, 32);
+    void* infos[kMaxDLCInfos] = {};
+    int infoCount = TakeArrayRaw("Narrative: DLCInfos", screen, kNarrDLCInfosOffset, infos,
+        kMaxDLCInfos);
     std::string integrated = CleanText(ReadFStringField(screen, kNarrIntegratedDescOffset));
     for (const OptionRow& row : v.rows) {
         if (row.index == 0) {
@@ -2130,12 +2324,11 @@ std::string DescribeTrackedScreens()
 
 std::string DescribeScreenStack()
 {
-    void* stack = gStackFinder.Find();
-    if (!stack)
+    if (!gStackFinder.Find())
         return "  (no live UIScreenStack)\n";
 
     void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    int count = WalkStackRaw(screens, kMaxStackScreens);
     if (count <= 0)
         return "  (stack is empty)\n";
 
@@ -2184,8 +2377,8 @@ PauseMenuView ReadPauseMenu(void* screen)
     // The rows are UIListItemStrings, not UIMechaListItems, so MakeRow does not apply: a row is
     // just its Text plus the disabled bit DisableListItem sets (save is greyed out in the
     // tutorial, restart outside the missions that allow it).
-    void* items[64] = {};
-    int count = ReadListItemsRaw(list, items, 64);
+    void* items[kMaxListRows] = {};
+    int count = TakeListItemsRaw("PauseMenu: rows", list, items, kMaxListRows);
     for (int i = 0; i < count; i++) {
         MenuItem item;
         item.handle = items[i];
@@ -2309,27 +2502,31 @@ SaveLoadView ReadSaveLoad(void* screen)
     v.busy = v.saving ? ReadU8Raw(screen, kSaveStageOffset) != 0
                       : (ReadU32Raw(screen, kLoadFlagsOffset) & kLoadInProgress) != 0;
 
-    void* rows[128] = {};
-    int count = ReadPtrArrayRaw(screen, kSaveListItemsOffset, rows, 128);
-    for (int i = 0; i < count; i++) {
-        if (!rows[i])
+    // ⛔ Sized from the array, never from a cap we picked. This is the one list in this file
+    // whose length is the PLAYER's — a long campaign runs to hundreds of saves — and the tail a
+    // cap would drop is the OLDEST of them (the list is newest-first). Telling a player their
+    // early saves do not exist is unrecoverable on the one screen where they would go looking.
+    std::vector<void*> rows = ReadPtrArrayAllRaw("SaveLoad: the save list", screen,
+        kSaveListItemsOffset);
+    for (void* row : rows) {
+        if (!row)
             continue;
         SaveSlot slot;
-        slot.handle = rows[i];
+        slot.handle = row;
         // The row's OWN index, not our loop counter: it is what InitSaveLoadItem stamped and
         // what the screen's SetSelection / OnAccept path talks in.
-        slot.index = ReadI32Raw(rows[i], kSaveRowIndexOffset);
-        slot.id = ReadI32Raw(rows[i], kSaveRowIdOffset);
+        slot.index = ReadI32Raw(row, kSaveRowIndexOffset);
+        slot.id = ReadI32Raw(row, kSaveRowIdOffset);
 
         // UIButton.Click() refuses an invisible button, so a hidden one is not a verb the row
         // is offering. That is the documented bIsVisible exception: on a child BUTTON the bit is
         // toggled deliberately (the save screen hides Delete on its new-save row).
-        MenuItem accept = ReadButtonField(rows[i], kSaveRowAcceptOffset);
+        MenuItem accept = ReadButtonField(row, kSaveRowAcceptOffset);
         slot.accept = accept.handle;
         slot.acceptLabel = std::move(accept.label);
         slot.acceptDisabled = accept.disabled;
 
-        MenuItem remove = ReadButtonField(rows[i], kSaveRowDeleteOffset);
+        MenuItem remove = ReadButtonField(row, kSaveRowDeleteOffset);
         slot.remove = remove.handle;
         slot.deleteLabel = std::move(remove.label);
 
@@ -2505,8 +2702,8 @@ namespace {
 // One list into LoadoutRow structs, in the list's own order.
 void ReadLoadoutRows(void* list, std::vector<LoadoutRow>& out)
 {
-    void* items[64] = {};
-    const int count = ReadListItemsRaw(list, items, 64);
+    void* items[kMaxLoadoutRows] = {};
+    const int count = TakeListItemsRaw("Loadout: slot rows", list, items, kMaxLoadoutRows);
     for (int i = 0; i < count; i++) {
         LoadoutRow row;
         row.handle = items[i];
@@ -2528,8 +2725,9 @@ void ReadLoadoutRows(void* list, std::vector<LoadoutRow>& out)
 void AppendUtilityControls(void* card, std::vector<SquadControl>& out)
 {
     void* list = ReadPtrRaw(card, kCardUtilitySlotsOffset);
-    void* items[16] = {};
-    const int count = ReadListItemsRaw(list, items, 16);
+    void* items[kMaxUtilitySlots] = {};
+    const int count = TakeListItemsRaw("SquadSelect: utility slots", list, items,
+        kMaxUtilitySlots);
     for (int i = 0; i < count; i++) {
         SquadControl c;
         c.handle = items[i];
@@ -2644,8 +2842,8 @@ SquadSelectView ReadSquadSelect(void* screen)
         v.launchTitle += (v.launchTitle.empty() ? "" : " ") + mission;
 
     void* list = ReadPtrRaw(screen, kSquadSlotListOffset);
-    void* cards[16] = {};
-    const int count = ReadListItemsRaw(list, cards, 16);
+    void* cards[kMaxSquadCards] = {};
+    const int count = TakeListItemsRaw("SquadSelect: slot cards", list, cards, kMaxSquadCards);
     for (int i = 0; i < count; i++) {
         SquadSlot slot;
         slot.handle = cards[i];
@@ -2720,8 +2918,8 @@ SquadSelectView ReadSquadSelect(void* screen)
 bool SetSquadSelectFocus(void* screen, int visualIndex, const SquadControl& control)
 {
     void* list = ReadPtrRaw(screen, kSquadSlotListOffset);
-    void* cards[16] = {};
-    const int count = ReadListItemsRaw(list, cards, 16);
+    void* cards[kMaxSquadCards] = {};
+    const int count = TakeListItemsRaw("SquadSelect: slot cards", list, cards, kMaxSquadCards);
     if (visualIndex < 0 || visualIndex >= count)
         return false;
 
@@ -2913,17 +3111,13 @@ bool IsTacticalPassive(const char* name)
 TacticalGate ReadTacticalGate()
 {
     TacticalGate gate;
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return gate;
-
     void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    int count = WalkStackRaw(screens, kMaxStackScreens);
     for (int i = 0; i < count; i++) {
-        if (!screens[i])
-            continue;
-        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+        // A corpse above us is SKIPPED rather than treated as a blocker: it has already been
+        // popped and is holding no keys. That is this gate's own policy, deliberately not the
+        // one the two GetCurrentScreen gates below use.
+        if (!screens[i] || !StackEntryLiveRaw(screens[i]))
             continue;
         char name[64];
         if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
@@ -2955,12 +3149,8 @@ TacticalGate ReadTacticalGate()
 AvengerGate ReadAvengerGate()
 {
     AvengerGate gate;
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return gate;
-
     void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    int count = WalkStackRaw(screens, kMaxStackScreens);
 
     // GetCurrentScreen is the FIRST non-none entry — it applies no inited/removed filter of its
     // own, so neither do we. Filtering here would let us call the grid "current" on a frame the
@@ -2980,8 +3170,7 @@ AvengerGate ReadAvengerGate()
             // Still refuse a grid that is on the stack but torn down: the game reaches it
             // through GetCurrentScreen either way, but a removed screen's navigator is not
             // something to narrate.
-            uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-            if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+            if (!StackEntryLiveRaw(screens[i]))
                 gate.current = false;
             break;
         }
@@ -3036,17 +3225,12 @@ DropshipView ReadDropship()
     // ONE walk for both classes rather than FindStackScreenRaw twice: this poll runs for the
     // whole session and finds nothing in almost all of it, and taking whichever variant is
     // TOPMOST is also the more honest answer than preferring one by name.
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return v;
-
     void* screens[kMaxStackScreens] = {};
-    const int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    const int count = WalkStackRaw(screens, kMaxStackScreens);
     for (int i = 0; i < count && !v.screen; i++) {
-        if (!screens[i])
-            continue;
-        const uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+        // Skip past anything that is not one of ours — unlike the GetCurrentScreen finders, a
+        // screen over the briefing does not make the briefing the wrong answer.
+        if (!screens[i] || !StackEntryLiveRaw(screens[i]))
             continue;
         char name[64];
         if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
@@ -3131,6 +3315,8 @@ constexpr int kShortcutCategoryCount = 5;
 constexpr int kMaxRoomActions = 16;
 // Every shipped facility adds exactly one; the headroom is for a mod that adds more.
 constexpr int kMaxRoomFuncs = 8;
+// UIStaffContainer::StaffSlots. The shipped rooms top out at four; a staff-slot mod could add.
+constexpr int kMaxStaffSlots = 16;
 
 // Is `obj` an instance of `baseClass`, or of anything derived from it? The room screen is one of
 // 22 subclasses (UIFacility_Powercore, UIFacility_Armory, …), so an exact class-name compare
@@ -3162,28 +3348,13 @@ bool IsKindOfRaw(void* obj, const char* baseClass)
 
 void* FindRoomScreen()
 {
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return nullptr;
-
-    void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
-
     // Topmost non-null entry only — the same GetCurrentScreen definition ReadAvengerGate uses.
     // A UIFacility further down the stack is one the player has navigated AWAY from (the
     // facility summary and the choose-research screen both push over it), and narrating that
     // would name the wrong room.
-    for (int i = 0; i < count; i++) {
-        if (!screens[i])
-            continue;
-        if (!IsKindOfRaw(screens[i], "UIFacility"))
-            return nullptr;
-        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
-            return nullptr;
-        return screens[i];
-    }
-    return nullptr;
+    return TopStackScreenRaw([](void* screen, const char*) {
+        return IsKindOfRaw(screen, "UIFacility");
+    });
 }
 
 RoomView ReadRoom(void* screen)
@@ -3226,8 +3397,9 @@ RoomView ReadRoom(void* screen)
         v.staffVisible = (flags & kPanelVisible) != 0;
         v.staffTitle = ReadFStringField(staff, kStaffContainerTitleOffset);
         v.staffSkill = ReadFStringField(staff, kStaffContainerSkillOffset);
-        void* slots[16] = {};
-        v.staffSlots = ReadPtrArrayRaw(staff, kStaffContainerSlotsOffset, slots, 16);
+        void* slots[kMaxStaffSlots] = {};
+        v.staffSlots = TakeArrayRaw("Room: staff slots", staff, kStaffContainerSlotsOffset, slots,
+            kMaxStaffSlots);
     }
 
     // The room's OWN button bar. Spawned lazily by AddFacilityButton, so a room with no buttons
@@ -3235,8 +3407,8 @@ RoomView ReadRoom(void* screen)
     void* roomContainer = ReadPtrRaw(screen, kFacilityRoomContainerOffset);
     if (roomContainer) {
         void* funcs[kMaxRoomFuncs] = {};
-        int funcCount
-            = ReadPtrArrayRaw(roomContainer, kRoomContainerFuncsOffset, funcs, kMaxRoomFuncs);
+        int funcCount = TakeArrayRaw("Room: facility buttons", roomContainer,
+            kRoomContainerFuncsOffset, funcs, kMaxRoomFuncs);
         for (int i = 0; i < funcCount; i++) {
             if (!funcs[i])
                 continue;
@@ -3261,7 +3433,7 @@ RoomView ReadRoom(void* screen)
     if (v.list) {
         v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
         void* rows[kMaxRoomActions] = {};
-        int rowCount = ReadListItemsRaw(v.list, rows, kMaxRoomActions);
+        int rowCount = TakeListItemsRaw("Room: action rows", v.list, rows, kMaxRoomActions);
         for (int i = 0; i < rowCount; i++) {
             if (!rows[i])
                 continue;
@@ -3348,29 +3520,11 @@ constexpr int kMaxBuildSlots = 8;
 
 void* FindRoomBuildScreen()
 {
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return nullptr;
-
-    void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
-
     // Topmost non-null entry, the GetCurrentScreen rule again — and UIRoom's own OnUnrealCommand
     // is unguarded, so anything above it has already taken the keys.
-    for (int i = 0; i < count; i++) {
-        if (!screens[i])
-            continue;
-        char name[64];
-        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
-            return nullptr;
-        if (strcmp(name, "UIRoom") != 0)
-            return nullptr;
-        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
-            return nullptr;
-        return screens[i];
-    }
-    return nullptr;
+    return TopStackScreenRaw([](void*, const char* className) {
+        return strcmp(className, "UIRoom") == 0;
+    });
 }
 
 RoomBuildView ReadRoomBuild(void* screen)
@@ -3383,7 +3537,8 @@ RoomBuildView ReadRoomBuild(void* screen)
     void* staff = ReadPtrRaw(screen, kRoomStaffContainerOffset);
     if (staff) {
         void* slots[kMaxBuildSlots] = {};
-        int n = ReadPtrArrayRaw(staff, kStaffContainerSlotsOffset, slots, kMaxBuildSlots);
+        int n = TakeArrayRaw("RoomBuild: staff slots", staff, kStaffContainerSlotsOffset, slots,
+            kMaxBuildSlots);
         for (int i = 0; i < n; i++) {
             if (slots[i])
                 v.slots.push_back(slots[i]);
@@ -3500,31 +3655,14 @@ bool IsPopupClass(const char* className)
 PopupView FindPopupScreen()
 {
     PopupView v;
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return v;
-
-    void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
-
     // TOPMOST only, and a non-popup on top is a refusal rather than a reason to keep looking:
     // a popup under another screen has already lost the keys, and answering for it would put
     // our stops in front of a screen the player is actually on. Same rule as UIRoom's finder.
-    for (int i = 0; i < count; i++) {
-        if (!screens[i])
-            continue;
-        char name[64];
-        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
-            return v;
-        if (!IsPopupClass(name))
-            return v;
-        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
-            return v;
-        v.screen = screens[i];
+    char name[64] = {};
+    v.screen = TopStackScreenRaw([](void*, const char* className) { return IsPopupClass(className); },
+        name, static_cast<int>(sizeof(name)));
+    if (v.screen)
         v.className = name;
-        return v;
-    }
     return v;
 }
 
@@ -3936,28 +4074,13 @@ constexpr int kMaxCommodityRows = 256;
 
 void* FindCommodityScreen()
 {
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return nullptr;
-
-    void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
-
     // Topmost non-null entry only, matching GetCurrentScreen — which is what the companion
     // resolves too. A UIInventory further down is one the player has pushed past (the black
     // market's confirmation and the build-item dialog both land on top of it), and reading that
     // would describe a screen nobody is on.
-    for (int i = 0; i < count; i++) {
-        if (!screens[i])
-            continue;
-        if (!IsKindOfRaw(screens[i], "UIInventory"))
-            return nullptr;
-        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
-            return nullptr;
-        return screens[i];
-    }
-    return nullptr;
+    return TopStackScreenRaw([](void* screen, const char*) {
+        return IsKindOfRaw(screen, "UIInventory");
+    });
 }
 
 CommodityView ReadCommodity(void* screen)
@@ -3973,15 +4096,11 @@ CommodityView ReadCommodity(void* screen)
 
     v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
 
+    // The cap-is-loud check that used to be hand-rolled here is now what every array read in
+    // this file gets: TakeListItemsRaw logs once per site, and only when the list really held
+    // MORE than the cap rather than merely as many.
     void* rows[kMaxCommodityRows] = {};
-    int rowCount = ReadListItemsRaw(v.list, rows, kMaxCommodityRows);
-    // Once, not once per render: this runs on every graph rebuild, ten times a second.
-    static bool warnedCap = false;
-    if (rowCount == kMaxCommodityRows && !warnedCap) {
-        warnedCap = true;
-        LOG_WARN("Commodity: row list hit the %d cap — the tail is not being read",
-            kMaxCommodityRows);
-    }
+    int rowCount = TakeListItemsRaw("Commodity: item rows", v.list, rows, kMaxCommodityRows);
 
     for (int i = 0; i < rowCount; i++) {
         if (!rows[i])
@@ -4086,27 +4205,12 @@ constexpr int kMaxPersonnelRows = 256;
 
 void* FindPersonnelScreen()
 {
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return nullptr;
-
-    void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
-
     // Topmost non-null entry only, matching GetCurrentScreen — which is also what the companion
     // resolves. A UIPersonnel further down is one something else has been pushed over (an armory
     // screen, a confirmation), and its rows are not what the player is looking at.
-    for (int i = 0; i < count; i++) {
-        if (!screens[i])
-            continue;
-        if (!IsKindOfRaw(screens[i], "UIPersonnel"))
-            return nullptr;
-        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-        if (!(flags & kPanelInited) || (flags & kPanelRemoved))
-            return nullptr;
-        return screens[i];
-    }
-    return nullptr;
+    return TopStackScreenRaw([](void* screen, const char*) {
+        return IsKindOfRaw(screen, "UIPersonnel");
+    });
 }
 
 PersonnelView ReadPersonnel(void* screen)
@@ -4123,7 +4227,7 @@ PersonnelView ReadPersonnel(void* screen)
     v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
 
     void* rows[kMaxPersonnelRows] = {};
-    int rowCount = ReadListItemsRaw(v.list, rows, kMaxPersonnelRows);
+    int rowCount = TakeListItemsRaw("Personnel: roster rows", v.list, rows, kMaxPersonnelRows);
     for (int i = 0; i < rowCount; i++) {
         if (!rows[i])
             continue;
@@ -4173,8 +4277,18 @@ constexpr int kMaxFacilityChoices = 64;
 
 void* FindChooseFacilityScreen()
 {
+    // Stack first, like every other screen-class finder. UIChooseFacility is PUSHED by the build
+    // flow, so the stack has the answer without a GObjects pass — and the pass is the cost that
+    // was actually being paid, once a second for the whole session in which this screen is not
+    // up. The fallback's one-line report is the other half: it is how "this class is not
+    // stack-managed" becomes a fact in the log rather than something we assumed.
     static ScreenFinder sFinder{"UIChooseFacility"};
-    return sFinder.Find();
+    static bool sReported = false;
+    void* screen = PreferStack("UIChooseFacility", sFinder, sReported);
+    // PreferStack's two halves do not filter alike: the stack half takes inited/not-removed,
+    // the scan half takes ScreenFinder's default IsFocusedRaw. The header promises the CURRENT
+    // screen, so the focus test belongs here rather than in whichever half answered.
+    return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
 }
 
 ChooseFacilityView ReadChooseFacility(void* screen)
@@ -4191,7 +4305,7 @@ ChooseFacilityView ReadChooseFacility(void* screen)
     v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
 
     void* rows[kMaxFacilityChoices] = {};
-    int rowCount = ReadListItemsRaw(v.list, rows, kMaxFacilityChoices);
+    int rowCount = TakeListItemsRaw("ChooseFacility: rows", v.list, rows, kMaxFacilityChoices);
     for (int i = 0; i < rowCount; i++) {
         if (!rows[i])
             continue;
@@ -4252,17 +4366,23 @@ std::string ReadFStringFieldRawText(const void* obj, int32_t offset)
 }
 
 // A TArray<int32> at `offset`: copies up to maxItems values out. Returns the count, or -1 if the
-// array itself could not be read.
-int ReadIntArrayRaw(const void* obj, int32_t offset, int32_t* out, int maxItems)
+// array itself could not be read; `clipped` follows ReadPtrArrayRaw's contract.
+int ReadIntArrayRaw(const void* obj, int32_t offset, int32_t* out, int maxItems,
+    bool* clipped = nullptr)
 {
+    if (clipped)
+        *clipped = false;
     __try {
         auto* arr = reinterpret_cast<const uint8_t*>(obj) + offset;
         auto* data = *reinterpret_cast<const int32_t* const*>(arr);
         int32_t n = *reinterpret_cast<const int32_t*>(arr + 8);
         if (!data || n <= 0)
             return 0;
-        if (n > maxItems)
+        if (n > maxItems) {
             n = maxItems;
+            if (clipped)
+                *clipped = true;
+        }
         for (int32_t i = 0; i < n; i++)
             out[i] = data[i];
         return n;
@@ -4331,7 +4451,10 @@ std::vector<WorldMessage> ReadWorldMessages(void* mgr)
     // walking m_arrMsgs is what distinguishes "showing" from "pooled and waiting": a deactivated
     // message keeps its text in the slot it will be recycled from.
     int32_t active[kMaxWorldMessages];
-    int count = ReadIntArrayRaw(mgr, kWorldMsgActiveOffset, active, kMaxWorldMessages);
+    bool clipped = false;
+    int count = NoteArrayRead("WorldMessages: m_arrActiveMessages",
+        ReadIntArrayRaw(mgr, kWorldMsgActiveOffset, active, kMaxWorldMessages, &clipped), clipped,
+        kMaxWorldMessages);
     if (count <= 0)
         return out;
 
@@ -4403,73 +4526,6 @@ std::string CleanText(const std::string& text)
         out += c;
     }
     return out;
-}
-
-// ---- console commands -------------------------------------------------------------------------
-
-std::string ConsoleCommand(const std::string& command)
-{
-    if (command.empty())
-        return "[exec] empty command";
-
-    // WorldInfo.GetWorldInfo() is `native final static` — the one way into the world that needs
-    // no object cached across frames, which is exactly the rule about not holding UObject
-    // pointers. GetALocalPlayerController is declared on Actor, and WorldInfo is an Actor.
-    struct {
-        void* ReturnValue;
-    } world{};
-    if (!CallStaticNative("WorldInfo", "GetWorldInfo", &world) || !world.ReturnValue)
-        return "[exec] no WorldInfo (world not up yet?)";
-
-    struct {
-        void* ReturnValue;
-    } pc{};
-    if (!CallNamedFunction(world.ReturnValue, "GetALocalPlayerController", &pc) || !pc.ReturnValue)
-        return "[exec] no local PlayerController";
-
-    // Actor.ConsoleCommand(string Command, optional bool bWriteToLog) : string, FUNC_Native.
-    // Layout is transcribed from the SDK dump comments and is PACK(4): ReturnValue sits at 0x14,
-    // immediately after the bool bitfield with no padding, so the FString pointer is 4-byte
-    // aligned. Natural alignment would put it at 0x18 and every call would read garbage.
-#pragma pack(push, 4)
-    struct ConsoleParams {
-        wchar_t* CmdData;  // FString Command    @0x00
-        int32_t CmdCount;
-        int32_t CmdMax;
-        uint32_t bWriteToLog; // bitfield        @0x10
-        wchar_t* RetData;  // FString ReturnValue @0x14
-        int32_t RetCount;
-        int32_t RetMax;
-    };
-#pragma pack(pop)
-    static_assert(sizeof(ConsoleParams) == 0x24, "Actor.ConsoleCommand params must be 0x24 bytes");
-    static_assert(offsetof(ConsoleParams, bWriteToLog) == 0x10, "bWriteToLog must sit at 0x10");
-    static_assert(offsetof(ConsoleParams, RetData) == 0x14, "ReturnValue FString must sit at 0x14");
-
-    // Safe to hand the engine our own buffer: ProcessEvent (moduleBase+0x143B50, decompiled)
-    // shallow-memcpy's the whole parameter block into its alloca'd frame and only ever calls
-    // DestroyValue on properties whose Offset is >= ParmsSize — true locals, never parameters.
-    // So nothing frees this, and it must merely outlive the call.
-    std::wstring wide = Utf8ToWide(command);
-
-    ConsoleParams params{};
-    params.CmdData = wide.data();
-    params.CmdCount = static_cast<int32_t>(wide.size()) + 1; // FString counts the terminator
-    params.CmdMax = params.CmdCount;
-    params.bWriteToLog = 1; // also lands in the game's Launch.log, where `just gamelog` finds it
-
-    if (!CallNamedFunction(pc.ReturnValue, "ConsoleCommand", &params))
-        return "[exec] ConsoleCommand did not resolve or faulted";
-
-    // The native writes the return FString straight into our block (ProcessEvent passes
-    // Parms + ReturnValueOffset as the result pointer), allocated with the ENGINE's allocator.
-    // We deliberately leak it: freeing it needs appFree, and a dev-only endpoint leaking a few
-    // dozen bytes per call is a far better trade than calling the wrong deallocator.
-    std::vector<wchar_t> buf(64 * 1024);
-    int len = CopyFStringRaw(&params.RetData, buf.data(), static_cast<int>(buf.size()));
-    if (len <= 0)
-        return {}; // ran fine, said nothing — most commands are silent
-    return WcharToUtf8(buf.data(), len);
 }
 
 // ---- the geoscape (UIStrategyMap) — the mission tray ------------------------------------------
@@ -4550,12 +4606,8 @@ bool WidgetShowing(void* panel)
 GeoscapeGate ReadGeoscapeGate()
 {
     GeoscapeGate gate;
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return gate;
-
     void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    int count = WalkStackRaw(screens, kMaxStackScreens);
 
     // GetCurrentScreen is the FIRST non-none entry and applies no state-bit filter of its own,
     // so neither do we — the same rule ReadAvengerGate follows, and for the same reason: a gate
@@ -4573,9 +4625,14 @@ GeoscapeGate ReadGeoscapeGate()
             gate.current = !sawTop;
             if (!sawTop) {
                 // Still refuse a map that is on the stack but torn down.
-                uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-                if (!(flags & kPanelInited) || (flags & kPanelRemoved))
+                if (!StackEntryLiveRaw(screens[i]))
                     gate.current = false;
+                // Carried out by VALUE, in this same call: the finder below needs exactly the
+                // screen this walk already identified, and walking again to re-answer a question
+                // just answered is how the two would come to disagree. Nothing caches it across
+                // frames, so the never-hold-a-UObject rule is untouched.
+                if (gate.current)
+                    gate.map = screens[i];
             }
             break;
         }
@@ -4589,24 +4646,8 @@ GeoscapeGate ReadGeoscapeGate()
 
 void* FindStrategyMapScreen()
 {
-    GeoscapeGate gate = ReadGeoscapeGate();
-    if (!gate.Active())
-        return nullptr;
-
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return nullptr;
-    void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
-    for (int i = 0; i < count; i++) {
-        if (!screens[i])
-            continue;
-        char name[64];
-        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
-            continue;
-        return strcmp(name, "UIStrategyMap") == 0 ? screens[i] : nullptr;
-    }
-    return nullptr;
+    // One walk, not two: ReadGeoscapeGate has already found the map and validated it.
+    return ReadGeoscapeGate().map;
 }
 
 StrategyMapView ReadStrategyMap(void* screen)
@@ -4628,11 +4669,13 @@ StrategyMapView ReadStrategyMap(void* screen)
     int navCount = 0;
     if (v.navigator) {
         v.selected = ReadI32Raw(v.navigator, kNavSelectedIndexOffset);
-        navCount = ReadPtrArrayRaw(v.navigator, kNavControlsOffset, navControls, kMaxNavControls);
+        navCount = TakeArrayRaw("StrategyMap: NavigableControls", v.navigator, kNavControlsOffset,
+            navControls, kMaxNavControls);
     }
 
     void* icons[kMaxTrayIcons] = {};
-    int iconCount = ReadPtrArrayRaw(screen, kStratMapMissionIconsOffset, icons, kMaxTrayIcons);
+    int iconCount = TakeArrayRaw("StrategyMap: MissionIcons", screen, kStratMapMissionIconsOffset,
+        icons, kMaxTrayIcons);
 
     for (int i = 0; i < iconCount; i++) {
         void* icon = icons[i];
@@ -4801,7 +4844,8 @@ bool SetTraySelection(const StrategyMapView& view, int navIndex)
         return false;
 
     void* controls[kMaxNavControls] = {};
-    int count = ReadPtrArrayRaw(view.navigator, kNavControlsOffset, controls, kMaxNavControls);
+    int count = TakeArrayRaw("StrategyMap: NavigableControls", view.navigator, kNavControlsOffset,
+        controls, kMaxNavControls);
     if (navIndex >= count || !controls[navIndex])
         return false;
 
@@ -4837,6 +4881,73 @@ bool MoveTrayHover(const TrayIcon& icon, bool entering)
 
 #ifdef X2ACCESS_DEVSERVER
 
+// ---- console commands -------------------------------------------------------------------------
+
+std::string ConsoleCommand(const std::string& command)
+{
+    if (command.empty())
+        return "[exec] empty command";
+
+    // WorldInfo.GetWorldInfo() is `native final static` — the one way into the world that needs
+    // no object cached across frames, which is exactly the rule about not holding UObject
+    // pointers. GetALocalPlayerController is declared on Actor, and WorldInfo is an Actor.
+    struct {
+        void* ReturnValue;
+    } world{};
+    if (!CallStaticNative("WorldInfo", "GetWorldInfo", &world) || !world.ReturnValue)
+        return "[exec] no WorldInfo (world not up yet?)";
+
+    struct {
+        void* ReturnValue;
+    } pc{};
+    if (!CallNamedFunction(world.ReturnValue, "GetALocalPlayerController", &pc) || !pc.ReturnValue)
+        return "[exec] no local PlayerController";
+
+    // Actor.ConsoleCommand(string Command, optional bool bWriteToLog) : string, FUNC_Native.
+    // Layout is transcribed from the SDK dump comments and is PACK(4): ReturnValue sits at 0x14,
+    // immediately after the bool bitfield with no padding, so the FString pointer is 4-byte
+    // aligned. Natural alignment would put it at 0x18 and every call would read garbage.
+#pragma pack(push, 4)
+    struct ConsoleParams {
+        wchar_t* CmdData;  // FString Command    @0x00
+        int32_t CmdCount;
+        int32_t CmdMax;
+        uint32_t bWriteToLog; // bitfield        @0x10
+        wchar_t* RetData;  // FString ReturnValue @0x14
+        int32_t RetCount;
+        int32_t RetMax;
+    };
+#pragma pack(pop)
+    static_assert(sizeof(ConsoleParams) == 0x24, "Actor.ConsoleCommand params must be 0x24 bytes");
+    static_assert(offsetof(ConsoleParams, bWriteToLog) == 0x10, "bWriteToLog must sit at 0x10");
+    static_assert(offsetof(ConsoleParams, RetData) == 0x14, "ReturnValue FString must sit at 0x14");
+
+    // Safe to hand the engine our own buffer: ProcessEvent (moduleBase+0x143B50, decompiled)
+    // shallow-memcpy's the whole parameter block into its alloca'd frame and only ever calls
+    // DestroyValue on properties whose Offset is >= ParmsSize — true locals, never parameters.
+    // So nothing frees this, and it must merely outlive the call.
+    std::wstring wide = Utf8ToWide(command);
+
+    ConsoleParams params{};
+    params.CmdData = wide.data();
+    params.CmdCount = static_cast<int32_t>(wide.size()) + 1; // FString counts the terminator
+    params.CmdMax = params.CmdCount;
+    params.bWriteToLog = 1; // also lands in the game's Launch.log, where `just gamelog` finds it
+
+    if (!CallNamedFunction(pc.ReturnValue, "ConsoleCommand", &params))
+        return "[exec] ConsoleCommand did not resolve or faulted";
+
+    // The native writes the return FString straight into our block (ProcessEvent passes
+    // Parms + ReturnValueOffset as the result pointer), allocated with the ENGINE's allocator.
+    // We deliberately leak it: freeing it needs appFree, and a dev-only endpoint leaking a few
+    // dozen bytes per call is a far better trade than calling the wrong deallocator.
+    std::vector<wchar_t> buf(64 * 1024);
+    int len = CopyFStringRaw(&params.RetData, buf.data(), static_cast<int>(buf.size()));
+    if (len <= 0)
+        return {}; // ran fine, said nothing — most commands are silent
+    return WcharToUtf8(buf.data(), len);
+}
+
 void* FindStackScreen(const char* className)
 {
     if (className && className[0])
@@ -4846,16 +4957,10 @@ void* FindStackScreen(const char* className)
     // (Push inserts there), but the entry above a live screen can be a corpse the stack has
     // not dropped yet, so skip on the same predicate the finders use rather than taking [0]
     // blind.
-    void* stack = gStackFinder.Find();
-    if (!stack)
-        return nullptr;
     void* screens[kMaxStackScreens] = {};
-    int count = ReadPtrArrayRaw(stack, kStackScreensOffset, screens, kMaxStackScreens);
+    int count = WalkStackRaw(screens, kMaxStackScreens);
     for (int i = 0; i < count; i++) {
-        if (!screens[i])
-            continue;
-        uint32_t flags = ReadU32Raw(screens[i], kPanelFlagsOffset);
-        if ((flags & kPanelInited) && !(flags & kPanelRemoved))
+        if (screens[i] && StackEntryLiveRaw(screens[i]))
             return screens[i];
     }
     return nullptr;
@@ -4962,7 +5067,9 @@ bool IsLiveObject(void* obj)
 
 int ReadChildPanels(void* panel, void** out, int maxItems)
 {
-    return ReadPtrArrayRaw(panel, kPanelChildPanelsOffset, out, maxItems);
+    // The cap is the dumper's own buffer, and a /gui listing that silently stops short would
+    // send someone hunting for a widget the screen does have.
+    return TakeArrayRaw("Dev: ChildPanels", panel, kPanelChildPanelsOffset, out, maxItems);
 }
 
 FlashValue FlashCall(void* movie, const char* funcName, const char* path)
