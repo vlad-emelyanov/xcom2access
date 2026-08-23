@@ -4,12 +4,48 @@
 
 #include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "GraphTypes.hpp"
 
 namespace X2Access::Graph
 {
+
+/// THE terminator set — the ONE definition of "this phrase already punctuated itself", and the
+/// only place it may be spelled out. Both layers are meant to agree with it: a native surface
+/// calls EndsPhrase/AppendPhrase directly, and the companion's shared helper mirrors this exact
+/// set (five characters, no more, no fewer) so the same game string is never voiced two ways
+/// depending on which surface read it.
+///
+/// `.` `!` `?` are sentence ends the GAME writes itself. `:` and `;` are here for the
+/// label-then-value shape — "НАГРАДА:" followed by the reward — where a comma on top reads as a
+/// stumble. A trailing `,` is deliberately NOT in the set: a part ending in a comma is a part
+/// mid-list, and swallowing our separator there would run two facts together.
+inline constexpr std::string_view kPhraseTerminators = ".!?:;";
+
+/// Does this text end in its own punctuation, i.e. must a joiner NOT add a comma after it?
+/// Empty text answers false — there is nothing to punctuate.
+bool EndsPhrase(std::string_view text);
+
+/// Join one phrase onto a spoken line with the right separator, and the reason it is not just
+/// ``sb + separator``: the GAME's own strings routinely end a sentence themselves. Joining
+/// blindly produced "5 дн..", "ТРЕБУЕТСЯ ИНЖЕНЕР!." and "Перезаписать эту сохраненную игру?," —
+/// 14 of them in one measured Avenger session — and a screen reader voices that stumble. A line
+/// that already ends in terminal or clause punctuation takes a plain space; everything else
+/// takes `separator`. Shared so the announcer and the recipes that pre-join their own labels
+/// cannot drift apart about it.
+///
+/// ⚠ The test is on the tail of the ACCUMULATOR (`sb`), never on the incoming `part` — the
+/// question is whether the text already on the line wants a comma after it. Any reimplementation
+/// that tests `part` instead is a different function wearing this one's name.
+///
+/// `separator` is what an ORDINARY (non-self-punctuated) join gets, and it is the only knob:
+/// ", " builds a phrase list (the announcer's readouts), ". " builds a sentence sequence (the
+/// dropship briefing, the tutorial modal — where the parts are whole sentences the game wrote).
+/// A self-punctuated tail takes a single space in BOTH modes, which is exactly why ". " callers
+/// cannot just append a period themselves.
+void AppendPhrase(std::string& sb, const std::string& part, std::string_view separator = ", ");
 
 /// Composes the spoken line for a focus change by diffing the old and new focus PATHS — each
 /// node's ancestor chain (GraphNode::Parent) plus the node itself, compared by identity. Newly-
@@ -18,15 +54,6 @@ namespace X2Access::Graph
 /// the whole prefix and read just the control; ascends likewise; and descending from a group onto
 /// its own child re-announces nothing but the child — the group is on the child's chain AND is
 /// the from-node, so the prefix swallows it.
-/// Join one phrase onto a spoken line with the right separator, and the reason it is not just
-/// ``sb + ", "``: the GAME's own strings routinely end a sentence themselves. Joining blindly
-/// produced "5 дн..", "ТРЕБУЕТСЯ ИНЖЕНЕР!." and "Перезаписать эту сохраненную игру?," — 14 of
-/// them in one measured Avenger session — and a screen reader voices that stumble. A part that
-/// already ends in terminal or clause punctuation gets a plain space; everything else gets the
-/// comma. Shared so the announcer and the recipes that pre-join their own labels cannot drift
-/// apart about it.
-void AppendPhrase(std::string& sb, const std::string& part);
-
 class GraphAnnouncer
 {
 public:

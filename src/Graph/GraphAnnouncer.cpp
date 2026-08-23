@@ -68,19 +68,21 @@ void Append(std::string& sb, const std::string& text)
 
 } // namespace
 
-void AppendPhrase(std::string& sb, const std::string& part)
+bool EndsPhrase(std::string_view text)
+{
+    return !text.empty() && kPhraseTerminators.find(text.back()) != std::string_view::npos;
+}
+
+void AppendPhrase(std::string& sb, const std::string& part, std::string_view separator)
 {
     if (part.empty())
         return;
     if (!sb.empty())
     {
-        // A phrase that already punctuated itself does not take a comma on top. The game supplies
-        // most of these strings and it ends plenty of them in '.', '!' or '?'; ':' and ';' are
-        // here for the label-then-value shape ("НАГРАДА:" followed by the reward).
-        const char tail = sb.back();
-        const bool selfPunctuated
-            = tail == '.' || tail == '!' || tail == '?' || tail == ':' || tail == ';';
-        sb += selfPunctuated ? " " : ", ";
+        // A phrase that already punctuated itself does not take a separator on top — just the
+        // space that keeps the two words apart. The set lives in kPhraseTerminators (see the
+        // header): spelling it out a second time here is how the forks started.
+        sb += EndsPhrase(sb) ? std::string_view(" ") : separator;
     }
     sb += part;
 }
