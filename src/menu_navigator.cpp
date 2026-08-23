@@ -332,7 +332,17 @@ void Attach()
     gState = GraphState{};
     gLastSpoken = {};
     gLiveBase.clear();
-    gGraph = std::make_unique<KeyGraph>([]() { return gActive->Build(); }, &gState);
+    // ⛔ The focus map is reset HERE, not by each builder. gFocus holds raw widget pointers that
+    // are only valid for the render that produced them, and Build() is reached from far more
+    // places than this file — KeyGraph::Move, Activate, MoveStop and a dozen others all call
+    // Rerender() themselves. Every builder used to open with its own gFocus.clear(), which made
+    // the invariant something eighteen functions had to remember; the one that forgot would leak
+    // stale FocusTarget::button pointers into the next render's write-back. This lambda is the
+    // single entry into Build(), so it is the only place the reset cannot be forgotten.
+    gGraph = std::make_unique<KeyGraph>([]() {
+        gFocus.clear();
+        return gActive->Build();
+    }, &gState);
     if (!gGraph->Rerender()) {
         gGraph.reset();
         gAttached = false;
@@ -397,7 +407,6 @@ void SpeakStateAfterChange()
 
 std::unique_ptr<GraphRender> BuildMainMenu()
 {
-    gFocus.clear();
     std::vector<GameUI::MenuItem> items = GameUI::ReadMainMenu(gScreen);
     if (items.empty())
         return nullptr; // treated as "closed" — focus state survives for the next good render
@@ -489,7 +498,6 @@ std::string MainMenuName()
 // Discard, Credits, GPU auto-detect). Tab cycles the stops; arrows never leave one.
 std::unique_ptr<GraphRender> BuildOptions()
 {
-    gFocus.clear();
     GameUI::OptionsView view = GameUI::ReadOptions(gScreen);
     if (view.rows.empty() && view.buttons.empty())
         return nullptr;
@@ -774,7 +782,6 @@ std::function<void()> RowTooltipAction(void* handle)
 // panel, so those are the only controls a sighted player can reach either.
 std::unique_ptr<GraphRender> BuildDifficulty()
 {
-    gFocus.clear();
     GameUI::DifficultyView view = GameUI::ReadDifficulty(gScreen);
 
     GraphBuilder b;
@@ -880,7 +887,6 @@ std::string DifficultyName()
 // The Ironman choice: a warning and two buttons, nothing else on the screen.
 std::unique_ptr<GraphRender> BuildIronMan()
 {
-    gFocus.clear();
     GameUI::IronManView view = GameUI::ReadIronMan(gScreen);
     if (view.buttons.empty())
         return nullptr;
@@ -915,7 +921,6 @@ std::string IronManName()
 // (they read as one column on screen), then the button that actually starts the campaign.
 std::unique_ptr<GraphRender> BuildNarrative()
 {
-    gFocus.clear();
     GameUI::NarrativeView view = GameUI::ReadNarrative(gScreen);
     if (!view.xpack.handle && view.rows.empty())
         return nullptr;
@@ -959,7 +964,6 @@ std::string NarrativeName()
 // only). Same shape as the narrative screen: a choice list, then the confirm button.
 std::unique_ptr<GraphRender> BuildSoundtrack()
 {
-    gFocus.clear();
     GameUI::SoundtrackView view = GameUI::ReadSoundtrack(gScreen);
     if (view.rows.empty())
         return nullptr;
@@ -998,7 +1002,6 @@ std::string SoundtrackName()
 // is positional; the list is read as it stands and activation goes back through its index.
 std::unique_ptr<GraphRender> BuildPauseMenu()
 {
-    gFocus.clear();
     GameUI::PauseMenuView view = GameUI::ReadPauseMenu(gScreen);
     if (view.options.empty())
         return nullptr;
@@ -1053,8 +1056,7 @@ std::string PauseMenuName()
 // still reports itself focused underneath.
 std::unique_ptr<GraphRender> BuildDialog()
 {
-    gFocus.clear(); // Flash-driven: no panels to drive the game's own focus onto
-
+    // Nothing joins gFocus here — Flash-driven: no panels to drive the game's own focus onto.
     GameUI::DialogView view = GameUI::ReadDialog(gScreen);
 
     // Identity has to carry the dialog's text: one dialog can be replaced by another between
@@ -1365,8 +1367,6 @@ ControlId SquadNeighbour(const std::vector<std::vector<ControlId>>& columns, siz
 
 std::unique_ptr<GraphRender> BuildSquadSelect()
 {
-    gFocus.clear();
-
     GameUI::SquadSelectView view = GameUI::ReadSquadSelect(gScreen);
     // ⛔ Before the walk-up matinee fires PreM_LineupUI the screen is hidden AND deaf —
     // OnUnrealCommand returns early on !bReceivedWalkupEvent — and the cards are still being
@@ -1684,8 +1684,6 @@ std::string LoadoutRowLabel(const GameUI::LoadoutRow& row)
 
 std::unique_ptr<GraphRender> BuildArmoryLoadout()
 {
-    gFocus.clear();
-
     GameUI::LoadoutView view = GameUI::ReadArmoryLoadout(gScreen);
     if (!view.valid)
         return nullptr; // InitArmory has not run PopulateData yet — treated as "closed"
@@ -2003,8 +2001,6 @@ std::string SaveSlotLabel(const GameUI::SaveSlot& slot, const SaveWords* words)
 
 std::unique_ptr<GraphRender> BuildSaveLoad()
 {
-    gFocus.clear();
-
     GameUI::SaveLoadView view = GameUI::ReadSaveLoad(gScreen);
 
     GraphBuilder b;
@@ -2200,8 +2196,6 @@ void AddRoomFunctions(GraphBuilder& b, const GameUI::RoomView& view)
 
 std::unique_ptr<GraphRender> BuildRoom()
 {
-    gFocus.clear();
-
     GameUI::RoomView view = GameUI::ReadRoom(gScreen);
 
     GraphBuilder b;
@@ -2360,8 +2354,6 @@ const std::vector<WireRecord>& FetchRoomWords(const GameUI::RoomBuildView& view)
 
 std::unique_ptr<GraphRender> BuildRoomBuild()
 {
-    gFocus.clear();
-
     GameUI::RoomBuildView view = GameUI::ReadRoomBuild(gScreen);
     const std::vector<WireRecord>& records = FetchRoomWords(view);
 
@@ -2716,8 +2708,6 @@ void BuildCommodityCard(GraphBuilder& b, const WireRecord& card)
 
 std::unique_ptr<GraphRender> BuildCommodity()
 {
-    gFocus.clear();
-
     GameUI::CommodityView view = GameUI::ReadCommodity(gScreen);
     const std::vector<WireRecord>& records = FetchCommodityWords(view);
 
@@ -3038,8 +3028,6 @@ SheetConfig PersonnelSheetConfig()
 
 std::unique_ptr<GraphRender> BuildPersonnel()
 {
-    gFocus.clear();
-
     GameUI::PersonnelView view = GameUI::ReadPersonnel(gScreen);
     const std::vector<WireRecord>& records = FetchPersonnelWords(view);
 
@@ -3299,8 +3287,6 @@ void BuildFacilityCard(GraphBuilder& b, const WireRecord& card)
 
 std::unique_ptr<GraphRender> BuildChooseFacility()
 {
-    gFocus.clear();
-
     GameUI::ChooseFacilityView view = GameUI::ReadChooseFacility(gScreen);
     const std::vector<WireRecord>& records = FetchBuildFacilityWords(view);
 
@@ -3450,8 +3436,6 @@ std::string GeoscapeName()
 
 std::unique_ptr<GraphRender> BuildGeoscape()
 {
-    gFocus.clear();
-
     GameUI::StrategyMapView view = GameUI::ReadStrategyMap(gScreen);
 
     GraphBuilder b;
@@ -3672,8 +3656,7 @@ constexpr const char* kPopupReaderClass = "X2AccessPopupReader";
 
 std::unique_ptr<GraphRender> BuildPopup()
 {
-    gFocus.clear(); // Flash-driven throughout: no panel the game will accept focus on
-
+    // Nothing joins gFocus here — Flash-driven throughout: no panel the game will accept focus on.
     const std::vector<WireRecord> words = FetchCompanionRecords(kPopupReaderClass, "DescribePopup");
     if (words.empty())
         return nullptr;
