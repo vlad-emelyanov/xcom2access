@@ -11,6 +11,10 @@
 #include "tts.h"
 #include "vocab.h"
 
+// <cstdint> for the int32_t in CallPersonnelVerb's hand-rolled param struct. It used to arrive
+// by accident, through input_arbiter.h, back when this code lived in menu_navigator.cpp; that
+// header is gone from this TU and nothing else here promises the fixed-width types.
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
