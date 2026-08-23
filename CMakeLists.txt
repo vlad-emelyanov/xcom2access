@@ -109,6 +109,15 @@ add_library(X2Access SHARED
     src/ue3_reflection.cpp
     src/game_ui.cpp
     src/menu_navigator.cpp
+    # The screen recipes, one TU per surface family — the axis docs/surfaces/*.md already uses.
+    # They see the navigator only through src/recipes/recipe_context.h, and their probe ORDER
+    # is not theirs to decide: it is the kRecipes literal in menu_navigator.cpp. None of them
+    # includes windows.h or the generated SDK, so they keep DEFAULT warnings; nothing here
+    # needs the /bigobj or /w exceptions the two SDK-facing TUs take below.
+    src/recipes/recipe_context.cpp
+    src/recipes/recipe_shell.cpp
+    src/recipes/recipe_strategy.cpp
+    src/recipes/recipe_avenger.cpp
     # The companion wire grammar, in its own TU because it is STL-only and the recipes that
     # decode it are not — menu_navigator.cpp includes windows.h, so tests/ cannot compile it.
     src/wire_record.cpp

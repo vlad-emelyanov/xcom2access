@@ -90,9 +90,16 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
     farm is narrate-only and had to be given it by hand. Four kernel tests pin it.
 - **UI reading**: `src/game_ui.cpp` reads `UIScreen`/`UIPanel`/`UIList` object
   trees through EXPLICIT field offsets (never the generated class layouts) and
-  `src/menu_navigator.cpp` turns them into GraphRenders — one *recipe* per screen
+  `src/recipes/` turns them into GraphRenders — one *recipe* per screen
   (probe → build → name), one attached at a time, listed in `kRecipes` TOPMOST
-  SCREEN FIRST. This replaces per-screen UnrealScript listeners screen-by-screen;
+  SCREEN FIRST. The recipes sit one TU per surface family
+  (`recipe_shell/strategy/avenger.cpp`) and see the navigator only through
+  `src/recipes/recipe_context.h`; `src/menu_navigator.cpp` keeps the state
+  machine — probe, settle, attach, differ, detach — and the `kRecipes` literal.
+  ⛔ That literal stays an explicit array in that one file: cross-TU static
+  initialization order is unspecified, so a self-registering roster would order
+  itself by LINK order and attach to the wrong screen non-deterministically.
+  This replaces per-screen UnrealScript listeners screen-by-screen;
   existing listeners stay until a recipe covers their screen. Every hand-
   transcribed offset is pinned by a `static_assert` in `src/sdk_layout_checks.cpp`,
   so a bad transcription or a regenerated SDK is a build error, not a silent wrong
@@ -122,7 +129,7 @@ in **Hard rules** below instead.
 
 | Surface | Native | Companion / recipe | Rules | Recon |
 |---|---|---|---|---|
-| Main menu, settings, new-campaign flow, pause menu | `menu_navigator.cpp` | recipes | — | — |
+| Main menu, settings, new-campaign flow, pause menu | `game_ui.cpp` | `recipes/recipe_shell.cpp` | — | — |
 | Save / load | `game_ui.cpp` | `X2AccessSaveReader.uc`, save/load recipe | surfaces/shell.md | `save-load-recon.md` |
 | Text-entry dialog | `text_input.cpp` | — (observer, no recipe) | surfaces/shell.md | `save-load-recon.md` §7.1 |
 | Tactical tile cursor | `tile_reader.cpp`, `mouse_gate.cpp` | `X2AccessTileReader.uc` | surfaces/tactical.md | — |
@@ -835,8 +842,10 @@ compass 180° rotation in one session without the player touching the keyboard.
    somewhere the game refuses to keep it.
 2. Transcribe field offsets from the generated SDK's dump comments into `game_ui.cpp`, add a matching
    `static_assert` per offset to `sdk_layout_checks.cpp`, and expose a `Read<Screen>` view struct.
-3. Add the recipe to `menu_navigator.cpp` and list it in `kRecipes`, TOPMOST SCREEN FIRST — probe
-   order is what resolves a stacked screen.
+3. Add the recipe to its family's TU in `src/recipes/`, declare it in `recipes.h` (bumping
+   `kRecipeCount`), and list it in `kRecipes` in `menu_navigator.cpp`, TOPMOST SCREEN FIRST —
+   probe order is what resolves a stacked screen, and the count turns "declared but never
+   listed" (a screen silently never probed) into a build error.
 4. Prefer the game's own handlers over poking state: feed a row `OnUnrealCommand`, click a button
    through `Click()`, call the screen's own delegate target. That keeps every side effect the game
    expects.
@@ -954,7 +963,8 @@ free, earmarked for the vantage read.
 4. Two known wording defects: the no-target readout doubles a full stop and repeats the same fact in
    two languages (the localized string already ends in a period and carries the meaning); recentering
    says the unit's name three times.
-5. `Narrator::Say` adoption: `menu_navigator.cpp` is the last surface still calling `TTS` directly,
+5. `Narrator::Say` adoption: the menu navigator — `menu_navigator.cpp` plus the recipe TUs under
+   `src/recipes/` — is the last surface still calling `TTS` directly,
    and finishing it is a design step rather than a swap — its `TTS::Speak(line, false)` sites mean
    "queued, non-interrupting, focus-owned", which no current channel expresses (`Focus`/`Aid`
    interrupt AND clear, `Alert` marks the batch interrupting, `Combat` is named for a producer this

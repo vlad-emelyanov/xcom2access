@@ -1,0 +1,1105 @@
+// Strategy-layer recipes: squad select, the armory loadout, the geoscape's mission tray and the
+// popup family — docs/surfaces/strategy.md.
+
+// Shared by every recipe TU: the recipe contract, the attach state a builder reads, the
+// control-type registry and the companion-wire cache. See src/recipes/recipe_context.h.
+#include "recipes/recipe_context.h"
+#include "recipes/recipes.h"
+
+#include "game_ui.h"
+#include "log.h"
+#include "tts.h"
+#include "vocab.h"
+
+#include <cstdlib>
+#include <cstring>
+#include <functional>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace MenuNavigator {
+namespace Recipes {
+namespace {
+
+// ---- squad select recipe (UISquadSelect) ----
+//
+// The last gate before every mission. Unlike the shell screens this one already HAS working
+// keyboard navigation (UIList_SquadEditor handles the arrows, Tab and Enter with no controller
+// gate — measured live), so a recipe has to earn its place. It does, twice over: the controls a
+// sighted player uses most — launch, and the strip/build/boost verbs — are not on vanilla's
+// focus path AT ALL (UINavigationHelp dispatches them from OnMouseEvent alone, and LaunchButton
+// is bIsNavigable false), and the mission header no focus ever visits. As graph nodes they cost
+// nothing; as a narrate-only reader they would have cost one claimed hotkey each.
+//
+// Attaching also takes vanilla's unbounded ShiftButtonFocus skip loop out of the picture, and
+// lets DISABLED controls be announced rather than skipped — a sighted player still sees the
+// greyed ИЗМЕНИТЬ. See docs/squad-select-recon.md §4 and §7.
+
+constexpr const char* kSquadReaderClass = "X2AccessSquadReader";
+
+// A card's spoken context line — what the announcer reads when focus ENTERS the card, and stays
+// quiet about while moving within it.
+//
+// ⛔ The four screen-wide labels (edit / dismiss / promote / select-unit) live on the MISSION
+// record, not the card: they are class defaults, identical for every card, and sending them six
+// times over would be six copies of the same string per keypress. Looking them up on the card is
+// what silently dropped the Edit, Dismiss and Promote nodes entirely — SquadControlLabel returned
+// "" and the build skips an unlabelled node, so a whole live run of the screen offered a weapon
+// and its utility slots and nothing else.
+std::string SquadCardContext(const WireRecord& card, const WireRecord& mission, int visualIndex)
+{
+    const std::string locked = RecField(card, "locked");
+    if (!locked.empty())
+        return locked;
+    if (!RecField(card, "empty").empty())
+        return RecField(mission, "selectunit");
+
+    // Reading order is the card's own top-to-bottom order, with the two icon-only markers last:
+    // they qualify the soldier rather than identify them.
+    std::string line = JoinParts(card, {"rank", "name", "nick", "class", "hp", "will", "psi",
+                                           "faction", "bond"});
+    if (line.empty())
+        line = Vocab::SoldierFallback + (" " + std::to_string(visualIndex + 1));
+    return line;
+}
+
+// The spoken label for one card control. The words are the companion's; which controls EXIST is
+// native's read plus the companion's flags, and the two are joined here.
+std::string SquadControlLabel(const WireRecord& card, const WireRecord& mission,
+    const GameUI::SquadControl& control)
+{
+    switch (control.button) {
+    case GameUI::SquadButton::Promote:
+        return RecField(mission, "promotelabel");
+    case GameUI::SquadButton::Edit:
+        return RecField(mission, "edit");
+    case GameUI::SquadButton::Dismiss:
+        return RecField(mission, "dismiss");
+    case GameUI::SquadButton::WeaponPrime:
+        return JoinPhrases(RecField(card, "weaponlabel"), RecField(card, "weapon"));
+    case GameUI::SquadButton::WeaponHeavy:
+        return JoinPhrases(RecField(card, "heavylabel"), RecField(card, "heavy"));
+    case GameUI::SquadButton::Utility: {
+        // Positional: `util` is emitted once per widget INCLUDING the empty ones, so this index
+        // and the companion's are the same count. When even that is silent the slot is locked,
+        // and its own tooltip — the reason the game gives — is added as a Reason part below.
+        const std::vector<std::string> slots = RecFieldAll(card, "util");
+        const int index = control.utilityIndex;
+        if (index >= 0 && index < static_cast<int>(slots.size()) && !slots[static_cast<size_t>(index)].empty())
+            return slots[static_cast<size_t>(index)];
+        return control.tooltip.empty() ? std::string(Vocab::UtilitySlotFallback) : control.tooltip;
+    }
+    case GameUI::SquadButton::Bond:
+        // The icon's own tooltip IS its name here ("SOLDIER BOND" / the bondmate's), which keeps
+        // this node localized without a word of ours; the card's `bond` line carries the state.
+        return control.tooltip;
+    default:
+        return std::string();
+    }
+}
+
+// Where Left/Right land when leaving card `from` in direction `step`: the same control ROW in the
+// nearest card that has one, clamped to its last control. Cards are ragged — a Reaper has one
+// utility slot where a Grenadier has three, and only some soldiers can be promoted — so a plain
+// index would fall off the end of the short ones.
+ControlId SquadNeighbour(const std::vector<std::vector<ControlId>>& columns, size_t from,
+    int step, size_t row)
+{
+    for (int c = static_cast<int>(from) + step; c >= 0 && c < static_cast<int>(columns.size());
+        c += step) {
+        const std::vector<ControlId>& col = columns[static_cast<size_t>(c)];
+        if (col.empty())
+            continue;
+        return col[row < col.size() ? row : col.size() - 1];
+    }
+    return columns[from][row]; // no card that way: a self-edge, which KeyGraph::Move reads as a wall
+}
+
+// A card's words, matched on the GAME's own slot index — the index into XComHQ.Squad, which both
+// halves stamp independently: native off `UISquadSelect_ListItem.SlotIndex` (0x3D8, pinned by a
+// static_assert) and the companion off `Card.SlotIndex`.
+//
+// ⛔ Never by push order. The companion skips a list entry that is not a UISquadSelect_ListItem
+// (`if (Card == none) continue;`) while native walks every item the list holds, so one skipped
+// entry would put every later card's words on the wrong soldier — and on this screen the wrong
+// soldier owns a DISMISS button. It is the same rule the commodity list already states beside its
+// own row match: "a row either half skipped cannot silently shift every entry after it".
+const WireRecord* FindCardBySlot(const std::vector<const WireRecord*>& cards, int slotIndex)
+{
+    if (slotIndex < 0)
+        return nullptr;
+    for (const WireRecord* rec : cards) {
+        const std::string text = RecField(*rec, "slot");
+        if (!text.empty() && atoi(text.c_str()) == slotIndex)
+            return rec;
+    }
+    return nullptr;
+}
+
+std::unique_ptr<GraphRender> BuildSquadSelect()
+{
+    GameUI::SquadSelectView view = GameUI::ReadSquadSelect(gScreen);
+    // ⛔ Before the walk-up matinee fires PreM_LineupUI the screen is hidden AND deaf —
+    // OnUnrealCommand returns early on !bReceivedWalkupEvent — and the cards are still being
+    // filled. Refusing to build here is what keeps the layer from narrating a screen the player
+    // cannot see yet (recon §5).
+    if (!view.walkupDone || view.slots.empty())
+        return nullptr;
+
+    const std::vector<WireRecord> words = FetchCompanionRecords(kSquadReaderClass, "DescribeSquad");
+    const WireRecord* mission = nullptr;
+    std::vector<const WireRecord*> cards;
+    for (const WireRecord& rec : words) {
+        const std::string kind = RecField(rec, "kind");
+        if (kind == "mission" && !mission)
+            mission = &rec;
+        else if (kind == "card")
+            cards.push_back(&rec);
+    }
+    static const WireRecord kEmptyRecord;
+    const WireRecord* missionRec = mission ? mission : &kEmptyRecord;
+
+    GraphBuilder b(&gState.Expanded);
+
+    // ---- the mission header: read by nobody today, because no focus goes there ----
+    if (mission) {
+        b.BeginStop("mission");
+        b.SetRegion("mission");
+        // Label and value both come from the game. Ours used to be English constants, which read
+        // "objective, Уничтожить передатчик" — a mixed-language line three words from the game's
+        // own word for it, the same defect the tutorial vocabulary table exists to prevent.
+        struct HeaderField {
+            const char* key;
+            const char* labelKey;
+        };
+        static constexpr HeaderField kHeader[] = {
+            {"op", nullptr},
+            {"squadsize", "squadlabel"},
+            {"objective", "objlabel"},
+            {"difficulty", "difflabel"},
+            {"rewards", "rewlabel"},
+            {"sitrep", nullptr},
+            {"sitrepdesc", nullptr},
+        };
+        for (const HeaderField& h : kHeader) {
+            const std::string value = RecField(*mission, h.key);
+            if (value.empty())
+                continue;
+            const std::string label = h.labelKey ? RecField(*mission, h.labelKey) : std::string();
+            // The game's own captions — "ЗАДАЧИ:" and friends already carry their colon, which
+            // is exactly the shape AppendPhrase exists for.
+            const std::string text = JoinPhrases(label, value);
+            b.AddLabel(ControlId::Structural(std::string("squad/mission/") + h.key),
+                [text]() { return text; });
+        }
+    }
+
+    // ---- the cards, in the screen's own visual order ----
+    //
+    // ARROW MODEL, and it is the screen's own geometry rather than a convention of ours: the
+    // cards sit SIDE BY SIDE and each stacks its controls vertically, so Up/Down walks one
+    // soldier's card and Left/Right steps to the soldier beside them at the same height. Every
+    // edge below is wired EXPLICITLY (raw edges are applied after the menu pass, so they win):
+    // the builder's automatic single-item chain would have run Down straight out of one card and
+    // into the next, which reads as one long list and loses the column the screen actually draws.
+    // A direction with nowhere to go points at ITSELF — KeyGraph::Move treats dest == node as a
+    // wall and stays put, which is how a card's top and bottom stop without wrapping.
+    b.BeginStop("squad");
+    b.SetRegion("squad");
+    std::vector<std::vector<ControlId>> columns(view.slots.size());
+    for (size_t i = 0; i < view.slots.size(); i++) {
+        const GameUI::SquadSlot& slot = view.slots[i];
+        const WireRecord* cardRec = FindCardBySlot(cards, slot.slotIndex);
+        if (!cardRec && !cards.empty()) {
+            // The two halves read the same field off the same object, so a miss means a real
+            // disagreement rather than a missing companion. Say so once instead of quietly
+            // reading the card as an unnamed soldier.
+            static int sWarned = 0;
+            if (sWarned++ < 3)
+                LOG_WARN("MenuNavigator: squad select — no card record for slot %d (%zu records)",
+                    slot.slotIndex, cards.size());
+        }
+        const WireRecord& card = cardRec ? *cardRec : kEmptyRecord;
+        const int visual = static_cast<int>(i);
+
+        // A pure-structure parent: never navigable, announced when focus enters the card from
+        // outside and silent while moving within it. This is where the soldier is named, so the
+        // controls under it can be as short as "primary weapon, Shotgun" — and with Left/Right
+        // crossing cards, it is what makes each step across say who you landed on.
+        b.PushContext(SquadCardContext(card, *missionRec, visual));
+
+        // An empty or locked card holds no controls a sighted player can use either; its one
+        // node IS the card, and activating it opens the soldier picker.
+        if (slot.controls.empty()) {
+            ControlId id = ControlId::Referenced(slot.handle, "squad/card/" + std::to_string(i));
+            columns[i].push_back(id);
+            gFocus[id.StructuralKey] = FocusTarget{-1, nullptr, false, [visual]() {
+                GameUI::SquadControl none;
+                GameUI::SetSquadSelectFocus(gScreen, visual, none);
+            }};
+            NodeVtable vt;
+            vt.Type = &ButtonType();
+            const std::string label = SquadCardContext(card, *missionRec, visual);
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+            if (!slot.locked) {
+                vt.OnActivate = [visual]() {
+                    GameUI::SquadSelectView v = GameUI::ReadSquadSelect(gScreen);
+                    if (visual < static_cast<int>(v.slots.size())) {
+                        GameUI::SquadControl pick;
+                        pick.button = GameUI::SquadButton::Edit; // the empty card's own click
+                        GameUI::ActivateSquadControl(gScreen, v.slots[visual], pick);
+                    }
+                };
+            }
+            b.AddItem(std::move(id), std::move(vt));
+            b.PopContext();
+            continue;
+        }
+
+        // Promote, the heavy weapon and the bond icon are emitted HERE rather than by native:
+        // their widgets are hidden (or inert) when the soldier has none, and only the unit state
+        // knows which — so the companion's flags decide, and the order stays the card's own
+        // top-to-bottom order (ESquadSelectButton's declaration order).
+        std::vector<GameUI::SquadControl> controls;
+        if (!RecField(card, "promote").empty()) {
+            GameUI::SquadControl promote;
+            promote.handle = slot.handle;
+            promote.button = GameUI::SquadButton::Promote;
+            controls.push_back(promote);
+        }
+        for (const GameUI::SquadControl& c : slot.controls) {
+            controls.push_back(c);
+            // The heavy weapon sits between the primary and the utility row on the card.
+            if (c.button == GameUI::SquadButton::WeaponPrime && !RecField(card, "heavy").empty()) {
+                GameUI::SquadControl heavy;
+                heavy.handle = slot.handle;
+                heavy.button = GameUI::SquadButton::WeaponHeavy;
+                controls.push_back(heavy);
+            }
+        }
+        if (!RecField(card, "canbond").empty() && slot.bondIcon) {
+            GameUI::SquadControl bond;
+            bond.handle = slot.handle;
+            bond.button = GameUI::SquadButton::Bond;
+            bond.tooltip = GameUI::ReadPanelTooltip(slot.bondIcon);
+            controls.push_back(bond);
+        }
+
+        for (size_t c = 0; c < controls.size(); c++) {
+            const GameUI::SquadControl& control = controls[c];
+            const std::string label = SquadControlLabel(card, *missionRec, control);
+            if (label.empty())
+                continue;
+
+            ControlId id = ControlId::Structural(
+                "squad/card/" + std::to_string(i) + "/"
+                + std::to_string(static_cast<int>(control.button)) + "/"
+                + std::to_string(control.utilityIndex));
+            columns[i].push_back(id);
+            gFocus[id.StructuralKey] = FocusTarget{-1, nullptr, false, [visual, control]() {
+                GameUI::SetSquadSelectFocus(gScreen, visual, control);
+            }};
+
+            NodeVtable vt;
+            vt.Type = &ButtonType();
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+            if (control.button == GameUI::SquadButton::Bond) {
+                // The icon's tooltip named the control; the card's own line says what state it
+                // is in ("bond level 1, bondmate on the squad"), which is what the icon draws.
+                const std::string state = RecField(card, "bond");
+                if (!state.empty()) {
+                    vt.Announcements.emplace_back(NodeAnnouncement::Static(state));
+                    vt.Announcements.back().Kind = AnnouncementKinds::Value;
+                }
+            }
+            if (control.disabled) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+                vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+                // Why the game refuses, in the game's own words — the padlock's hover text. The
+                // label already IS the tooltip when nothing else named the slot, so this only
+                // speaks when it adds something.
+                if (!control.tooltip.empty() && control.tooltip != label) {
+                    vt.Announcements.emplace_back(NodeAnnouncement::Static(control.tooltip));
+                    vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+                }
+            }
+            if (!control.disabled) {
+                // Re-read the screen at activation: the handler runs from the input drain, a
+                // frame or more after this render, and the cards are rebuilt on every change.
+                vt.OnActivate = [visual, control]() {
+                    GameUI::SquadSelectView v = GameUI::ReadSquadSelect(gScreen);
+                    if (visual < static_cast<int>(v.slots.size()))
+                        GameUI::ActivateSquadControl(gScreen, v.slots[visual], control);
+                };
+            }
+            b.AddItem(std::move(id), std::move(vt));
+        }
+
+        // The tired warning belongs to the CARD, not to any one control: CreateFlyoverTooltip
+        // sets bHasTooltip only at eMentalState_Tired, so this line exists exactly when a mouse
+        // player has one to hover. It rides as a read-only tail node so it can be reached without
+        // the header repeating it on every step within the card.
+        if (!slot.tooltip.empty()) {
+            const std::string warn = slot.tooltip;
+            ControlId id = ControlId::Structural("squad/card/" + std::to_string(i) + "/tired");
+            columns[i].push_back(id);
+            b.AddLabel(id, [warn]() { return warn; });
+        }
+        b.PopContext();
+    }
+
+    // Up/Down inside one card, Left/Right across the strip — see the note above the loop.
+    for (size_t c = 0; c < columns.size(); c++) {
+        for (size_t r = 0; r < columns[c].size(); r++) {
+            const ControlId& here = columns[c][r];
+            b.Connect(here, GraphDir::Up, columns[c][r > 0 ? r - 1 : r]);
+            b.Connect(here, GraphDir::Down, columns[c][r + 1 < columns[c].size() ? r + 1 : r]);
+            b.Connect(here, GraphDir::Left, SquadNeighbour(columns, c, -1, r));
+            b.Connect(here, GraphDir::Right, SquadNeighbour(columns, c, 1, r));
+        }
+    }
+
+    // ---- the actions a mouse player clicks and a keyboard player cannot reach ----
+    b.BeginStop("actions");
+    b.SetRegion("actions");
+    if (view.launch) {
+        ControlId id = ControlId::Referenced(view.launch, "squad/launch");
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(view.launchTitle));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (view.launchDisabled) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+            // The game's own refusal text — "not enough soldiers", or whatever the mission's
+            // CanLaunchMission complains about — read from the tooltip a mouse player hovers.
+            const std::string reason = GameUI::ReadPanelTooltip(view.launch);
+            if (!reason.empty()) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(reason));
+                vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+            }
+        } else {
+            // Through the button's own Click(), so OnLaunchMission runs with every side effect
+            // the game expects (hidden soldiers added, psi training paused, bLaunched set, the
+            // departure cinematic started).
+            vt.OnActivate = []() {
+                GameUI::SquadSelectView v = GameUI::ReadSquadSelect(gScreen);
+                if (v.launch)
+                    GameUI::ClickButton(v.launch);
+            };
+        }
+        b.AddItem(std::move(id), std::move(vt));
+    }
+    for (const GameUI::SquadVerb& verb : view.verbs) {
+        ControlId id = ControlId::Structural(std::string("squad/verb/") + verb.handler);
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(verb.label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        const char* handler = verb.handler;
+        vt.OnActivate = [handler]() { GameUI::InvokeScreenVerb(gScreen, handler); };
+        b.AddItem(std::move(id), std::move(vt));
+    }
+
+    return b.Build();
+}
+
+void* ProbeSquadSelect()
+{
+    void* screen = GameUI::FindSquadSelect();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+std::string SquadSelectName()
+{
+    // The operation's own name is what a sighted player reads at the top left; the fallback is
+    // only for the window between attach and the companion answering.
+    for (const WireRecord& rec : FetchCompanionRecords(kSquadReaderClass, "DescribeSquad")) {
+        if (RecField(rec, "kind") != "mission")
+            continue;
+        const std::string op = RecField(rec, "op");
+        if (!op.empty())
+            return op;
+        break;
+    }
+    return Vocab::ScreenSquadSelectFallback;
+}
+
+// ---- armory loadout recipe (UIArmory_Loadout) ----
+//
+// The screen squad select hands the player to, and until now the only one in that flow with no
+// reader at all: a live session equipped a medikit here with FIVE Escapes and two Enters and zero
+// feedback of any kind (2026-08-21), which is what made a correct squad-select readout look like
+// a stale one.
+//
+// Unlike squad select this is mostly a READER, for the same reason the ant farm is: every
+// UIArmory_LoadoutItem RETAINS its words. What the companion adds is only what the screen
+// computes and discards — the localized count sentence, the refusal behind a greyed row, the
+// hover tooltip's stat block, and what equipping a candidate would change.
+//
+// ⛔ Only ONE list is navigable at a time. ChangeActiveList calls DisableNavigation() on the
+// other, so the active list is the focusable stop and the equipped list becomes a READ-ONLY
+// mirror while the locker is open — which is exactly what stays on screen, since "openList" only
+// slides it aside. Writing a selection into a list the game has switched off is how the two
+// models drift apart, so the mirror gets no focus write-back and no activation.
+constexpr const char* kLoadoutReaderClass = "X2AccessLoadoutReader";
+
+// An equipped row reads "SLOT, item"; a locker row has no slot label and reads as the item alone.
+// An empty slot says so rather than leaving the slot name to stand on its own, which would sound
+// identical to a filled slot whose item we failed to resolve.
+std::string LoadoutRowLabel(const GameUI::LoadoutRow& row)
+{
+    if (row.title.empty()) {
+        if (row.slotLabel.empty())
+            return std::string();
+        return JoinPhrases(row.slotLabel, Vocab::LoadoutEmptySlot);
+    }
+    return JoinPhrases(row.slotLabel, row.title);
+}
+
+std::unique_ptr<GraphRender> BuildArmoryLoadout()
+{
+    GameUI::LoadoutView view = GameUI::ReadArmoryLoadout(gScreen);
+    if (!view.valid)
+        return nullptr; // InitArmory has not run PopulateData yet — treated as "closed"
+
+    const std::vector<WireRecord> words
+        = FetchCompanionRecords(kLoadoutReaderClass, "DescribeLoadout");
+    static const WireRecord kEmptyRecord;
+    const WireRecord* head = &kEmptyRecord;
+    std::vector<const WireRecord*> eqWords, lkWords;
+    for (const WireRecord& rec : words) {
+        const std::string kind = RecField(rec, "kind");
+        if (kind == "header" && head == &kEmptyRecord)
+            head = &rec;
+        else if (kind == "row")
+            (RecField(rec, "list") == "lk" ? lkWords : eqWords).push_back(&rec);
+    }
+    const bool lockerActive = view.active == GameUI::LoadoutList::Locker;
+    const std::vector<const WireRecord*>& activeWords = lockerActive ? lkWords : eqWords;
+
+    GraphBuilder b;
+
+    // ---- who this is: three lines no focus visits on mouse+keyboard ----
+    b.BeginStop("soldier");
+    b.SetRegion("soldier");
+    for (const char* key : {"who", "status", "stats"}) {
+        const std::string text = RecField(*head, key);
+        if (text.empty())
+            continue;
+        b.AddLabel(ControlId::Structural(std::string("loadout/soldier/") + key),
+            [text]() { return text; });
+    }
+
+    // ---- the list the game is actually driving ----
+    b.BeginStop("items");
+    b.SetRegion("items");
+    const std::string listTitle = lockerActive ? view.lockerTitle : view.inventoryTitle;
+    if (!listTitle.empty())
+        b.PushContext(listTitle);
+    for (size_t i = 0; i < view.rows.size(); i++) {
+        const GameUI::LoadoutRow& row = view.rows[i];
+        const WireRecord& rec = i < activeWords.size() ? *activeWords[i] : kEmptyRecord;
+        const std::string label = LoadoutRowLabel(row);
+        if (label.empty() || !row.handle)
+            continue;
+
+        ControlId id = ControlId::Referenced(row.handle, "loadout/row/" + std::to_string(i));
+        const int index = static_cast<int>(i);
+        gFocus[id.StructuralKey] = FocusTarget{-1, nullptr, false,
+            [index]() { GameUI::SetLoadoutSelection(gScreen, index); }};
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (row.disabled) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+            // The refusal in the game's own words. `disabledText` is declared on the row and
+            // never assigned — SetDisabled queues the reason straight into Flash — so this is
+            // the companion asking the screen the same question it asked itself.
+            const std::string reason = RecField(rec, "reason");
+            if (!reason.empty()) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(reason));
+                vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+            }
+        }
+        // How many the inventory holds, and — for a locker row — what equipping it would change.
+        // The delta rides the ROW rather than the soldier header because our focus write-back
+        // lands AFTER the render that announces, so a header-sourced one would always be a row
+        // behind.
+        std::string value = row.infinite ? std::string() : RecField(rec, "count");
+        AppendPhrase(value, RecField(rec, "delta"));
+        if (!value.empty()) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(value));
+            vt.Announcements.back().Kind = AnnouncementKinds::Value;
+        }
+        // Space: the hover tooltip a mouse player gets and a keyboard player never can —
+        // DelayedShowTooltip is called only under `ISCONTROLLERACTIVE.
+        const std::string detail = RecField(rec, "detail");
+        if (!detail.empty())
+            vt.OnTooltip = [detail]() { TTS::Speak(detail, /*interrupt*/ true); };
+        if (!row.disabled) {
+            // Selection FIRST, then OnAccept — it reads ActiveList.SelectedIndex and ignores
+            // everything else, so a one-frame disagreement equips the wrong item.
+            vt.OnActivate = [index]() {
+                if (GameUI::SetLoadoutSelection(gScreen, index))
+                    GameUI::ActivateLoadoutSelection(gScreen);
+            };
+        }
+        if (index == view.selectedRow)
+            b.SetStart(id);
+        b.AddItem(std::move(id), std::move(vt));
+    }
+    if (!listTitle.empty())
+        b.PopContext();
+
+    // ---- what the soldier is still wearing, while the locker is open ----
+    if (lockerActive && !view.equipped.empty()) {
+        b.BeginStop("equipped");
+        b.SetRegion("equipped");
+        if (!view.inventoryTitle.empty())
+            b.PushContext(view.inventoryTitle);
+        for (size_t i = 0; i < view.equipped.size(); i++) {
+            const std::string label = LoadoutRowLabel(view.equipped[i]);
+            if (label.empty())
+                continue;
+            b.AddLabel(ControlId::Structural("loadout/eq/" + std::to_string(i)),
+                [label]() { return label; });
+        }
+        if (!view.inventoryTitle.empty())
+            b.PopContext();
+    }
+
+    // ---- the verbs a keyboard cannot reach ----
+    //
+    // All four are nav-help entries: UpdateNavHelp registers them with mouse handlers, and
+    // OnUnrealCommand maps them to CONTROLLER trigger codes (FXS_BUTTON_LTRIGGER / RTRIGGER / R3,
+    // and FXS_BUTTON_X for the clear). None of those is a key a mouse+keyboard player has.
+    b.BeginStop("actions");
+    b.SetRegion("actions");
+    if (!lockerActive && view.selectedRow >= 0
+        && view.selectedRow < static_cast<int>(view.rows.size())
+        && view.rows[static_cast<size_t>(view.selectedRow)].canBeCleared
+        && !view.makeAvailable.empty()) {
+        // Keyed to the SELECTION rather than carried on the row, exactly as
+        // UpdateNavHelp_LoadoutItem shows it: the nav help offers "make available" only while the
+        // selected equipped item bCanBeCleared, and it acts on that item.
+        const std::string label = JoinPhrases(view.makeAvailable,
+            LoadoutRowLabel(view.rows[static_cast<size_t>(view.selectedRow)]));
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.OnActivate = []() {
+            GameUI::LoadoutView v = GameUI::ReadArmoryLoadout(gScreen);
+            if (v.valid && v.selectedRow >= 0
+                && v.selectedRow < static_cast<int>(v.rows.size()))
+                GameUI::ClearLoadoutRow(v.rows[static_cast<size_t>(v.selectedRow)]);
+        };
+        b.AddItem(ControlId::Structural("loadout/clear"), std::move(vt));
+    }
+
+    struct StripVerb {
+        const char* labelKey;
+        const char* handler;
+        bool spent;
+        const std::string* tip;
+        const std::string* tipSpent;
+    };
+    const StripVerb kStrip[] = {
+        {"stripitems", "OnStripItems", view.itemsStripped, &view.tipStripItems,
+            &view.tipStripItemsOff},
+        {"stripweapons", "OnStripWeapons", view.weaponsStripped, &view.tipStripWeapons,
+            &view.tipStripWeaponsOff},
+        {"stripgear", "OnStripGear", view.gearStripped, &view.tipStripGear, &view.tipStripGearOff},
+    };
+    for (const StripVerb& verb : kStrip) {
+        const std::string label = RecField(*head, verb.labelKey);
+        if (label.empty())
+            continue;
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (verb.spent) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        }
+        const std::string tip = verb.spent ? *verb.tipSpent : *verb.tip;
+        if (!tip.empty()) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(tip));
+            vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+        }
+        if (!verb.spent) {
+            const char* handler = verb.handler;
+            vt.OnActivate = [handler]() { GameUI::InvokeScreenVerb(gScreen, handler); };
+        }
+        b.AddItem(ControlId::Structural(std::string("loadout/verb/") + verb.handler),
+            std::move(vt));
+    }
+
+    return b.Build();
+}
+
+void* ProbeArmoryLoadout()
+{
+    void* screen = GameUI::FindArmoryLoadout();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+std::string ArmoryLoadoutName()
+{
+    // Whose loadout, which is the question two screens of arrowing makes urgent; the panel
+    // heading is the fallback for the window between attach and the companion answering.
+    for (const WireRecord& rec : FetchCompanionRecords(kLoadoutReaderClass, "DescribeLoadout")) {
+        if (RecField(rec, "kind") != "header")
+            continue;
+        const std::string who = RecField(rec, "who");
+        if (!who.empty())
+            return who;
+        break;
+    }
+    GameUI::LoadoutView view = GameUI::ReadArmoryLoadout(gScreen);
+    return view.inventoryTitle.empty() ? std::string(Vocab::ScreenLoadoutFallback)
+                                       : view.inventoryTitle;
+}
+
+// ---- the geoscape's mission tray (UIStrategyMap) ----
+//
+// The globe itself is unreachable from the keyboard — pin selection is per-frame and
+// ISCONTROLLERACTIVE-gated, so it is not the ant farm's one-call ungate — but the TRAY along the
+// bottom is the game's own list of everything actionable, and its navigator already answers the
+// arrows on mouse+keyboard. What the mouse-active guard withholds is only the visible half:
+// UIStrategyMap_MissionIcon.OnReceiveFocus early-returns, so there are no selection brackets, no
+// camera fly-to and no tooltip refresh. This recipe supplies those three and the voice.
+//
+// Claiming the arrows is deliberate and costs the player nothing they cannot get back: bare
+// arrows pan the globe, Ctrl+arrow still does (the leniency rule), and panning actively degrades
+// our own data — an off-screen pin stops updating (UpdateVisuals gates on bOnScreen), so sharing
+// the axis would leave the reader describing widgets holding class defaults.
+
+// The icon our hover currently sits on, so the next move can hand the one being LEFT its
+// matching MOUSE_OUT. The pair is symmetric by design — IN saves the camera location and sets
+// bOverrideZoomHide, OUT restores and clears both — so an unmatched IN strands the pin in its
+// hover state and overwrites the saved location with a site the player never asked to return to.
+//
+// Stored as a raw pointer and always re-matched against a freshly read view before use: the
+// twenty icons are spawned once and reused, so the pointers are stable across UpdateMissions,
+// but a screen teardown collects them and a stale one must never be called into.
+void* gGeoHovered = nullptr;
+
+// eSMS_Flight — the Avenger is in transit and the game itself takes NO input on this screen:
+// UIStrategyMap.OnUnrealCommand opens with `if(m_eUIstate == eSMS_Flight) return true;`, above
+// even its release check. Attaching there would claim the arrows for a tray whose icons cannot
+// be acted on and whose pins are moving under the camera, so the layer stands down for exactly
+// as long as the game does. It is also the state the pins are least readable in — UpdateVisuals
+// skips UpdateFromGeoscapeEntity entirely while bFlightMode.
+constexpr int kStrategyMapFlight = 2;
+
+void* ProbeGeoscape()
+{
+    void* screen = GameUI::FindStrategyMapScreen();
+    if (!screen || !GameUI::IsScreenFocused(screen))
+        return nullptr;
+    if (GameUI::ReadStrategyMap(screen).uiState == kStrategyMapFlight)
+        return nullptr;
+    return screen;
+}
+
+std::string GeoscapeName()
+{
+    return Vocab::ScreenGeoscapeFallback;
+}
+
+std::unique_ptr<GraphRender> BuildGeoscape()
+{
+    GameUI::StrategyMapView view = GameUI::ReadStrategyMap(gScreen);
+
+    GraphBuilder b;
+    b.BeginStop("tray");
+
+    if (view.icons.empty()) {
+        // Legitimate, not a fault: with no missions live, no scan site available and no faction
+        // met, UpdateMissions binds nothing and hides all twenty slots. Naming the way out
+        // matters most here, as it does in an empty room — with no nodes to move between, a
+        // player has nothing to feel their way with.
+        b.AddLabel(ControlId::Structural("geoscape/empty"), []() {
+            return std::string(Vocab::GeoscapeTrayEmpty) + ". " + Vocab::GeoscapeLeaveHint;
+        });
+        return b.Build();
+    }
+
+    // A horizontal row, because that is what the tray IS on screen — Left/Right step it, which
+    // is also the direction the game's own navigator moves in (HorizontalNavigation is set in
+    // InitScreen).
+    b.StartRow("tray");
+
+    for (const GameUI::TrayIcon& icon : view.icons) {
+        // Keyed by the pin's ObjectID where there is one: the tray is rebuilt whenever the map
+        // changes and a slot index is not stable across that, while an ObjectID is stable over
+        // the whole campaign history. Placeholders have no entity, so they key by slot.
+        ControlId id = ControlId::Referenced(icon.handle,
+            "geoscape/" + std::string(icon.entityId ? "e" : "s")
+                + std::to_string(icon.entityId ? icon.entityId : icon.slot));
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+
+        if (icon.placeholder) {
+            // The slot of a faction not yet met. The game gives it no tooltip at all, so a
+            // sighted player hovering it learns nothing either — the grey Faction_unknown art is
+            // the whole message. Parity is therefore "one of the faction slots, and you have not
+            // met them", which is exactly what the PIN's generic localized noun plus our clause
+            // says. ⛔ Never name WHICH faction: the icon deliberately does not, and the tray
+            // slot order (Reaper, Skirmisher, Templar) would leak it.
+            const std::string label
+                = icon.pinHeader.empty() ? std::string(Vocab::GeoscapeUnmetFaction)
+                                         : icon.pinHeader;
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+            if (!icon.pinHeader.empty()) {
+                vt.Announcements.emplace_back(
+                    NodeAnnouncement::Static(Vocab::GeoscapeUnmetFaction));
+                vt.Announcements.back().Kind = AnnouncementKinds::Value;
+            }
+        } else {
+            // The game's own hover tooltip, verbatim: Title is the site, Body the detail
+            // ("НЕПОВРЕЖДЕННЫЕ СТРОЕНИЯ: АФРИКА" / "Новобранцы: 6 дн. осталось"). Read at
+            // ANNOUNCE time rather than closed over, because our own MOUSE_IN refreshes them —
+            // it re-fetches the scan site from the history first, so a days-remaining count
+            // that has ticked since UpdateMissions last ran is current by the time we speak.
+            void* handle = icon.handle;
+            // Never silence. A tooltip is spawned lazily by SetMissionIconTooltip, so an icon
+            // bound this frame can legitimately have none yet — and a stop that says only
+            // "button, 3 of 5" tells a player nothing at all. The pin's own generic localized
+            // noun ("RESISTANCE HQ", "POINT OF INTEREST") is the honest last word for that.
+            const std::string titleFallback = icon.title.empty() ? icon.pinHeader : icon.title;
+            vt.Announcements.emplace_back(
+                [handle, titleFallback]() {
+                    GameUI::StrategyMapView live = GameUI::ReadStrategyMap(gScreen);
+                    for (const GameUI::TrayIcon& t : live.icons)
+                        if (t.handle == handle)
+                            return t.title.empty() ? titleFallback : t.title;
+                    return titleFallback;
+                },
+                /*live*/ false, AnnouncementKinds::Label);
+
+            const std::string bodyFallback = icon.body;
+            if (!bodyFallback.empty()) {
+                vt.Announcements.emplace_back(
+                    [handle, bodyFallback]() {
+                        GameUI::StrategyMapView live = GameUI::ReadStrategyMap(gScreen);
+                        for (const GameUI::TrayIcon& t : live.icons)
+                            if (t.handle == handle)
+                                return t.body.empty() ? bodyFallback : t.body;
+                        return bodyFallback;
+                    },
+                    /*live*/ false, AnnouncementKinds::Value);
+            }
+
+            // Send the Avenger there — or make contact, or build the outpost, or start the
+            // scan, whichever the game's own priority picks for this pin. Vanilla reaches none
+            // of it from the keyboard: FXS_BUTTON_A is the only entry, so this is the layer
+            // supplying a route the game already built and never wired to a key.
+            //
+            // ⚠ It acts on the game's SelectedMapItem, which our focus write-back has already
+            // moved onto this icon — so it is re-read here only to confirm the screen is still
+            // there, not to identify the target.
+            vt.OnActivate = []() {
+                GameUI::StrategyMapView live = GameUI::ReadStrategyMap(gScreen);
+                GameUI::ActivateTraySelection(live);
+            };
+        }
+
+        // Focus write-back, two INDEPENDENT halves. Conflating them was the first version's bug.
+        //
+        //  1. Move the game's own navigator, so SelectedMapItem follows what was just spoken.
+        //     This applies to placeholders TOO — measured live, an unmet faction's slot IS in
+        //     NavigableControls — and SetTraySelection no-ops on the navIndex < 0 case by itself.
+        //  2. Hand the icon the mouse hover, for the camera fly-to and the tooltip refresh. NOT
+        //     for a placeholder: OnMouseEvent early-returns on an unmet faction before reaching
+        //     any of that, so the game would not move the camera either, and pretending to would
+        //     be worse than parity rather than better.
+        void* handle = icon.handle;
+        gFocus[id.StructuralKey] = FocusTarget{-1, nullptr, false, [handle]() {
+            GameUI::StrategyMapView live = GameUI::ReadStrategyMap(gScreen);
+            for (const GameUI::TrayIcon& t : live.icons) {
+                if (t.handle != handle)
+                    continue;
+                GameUI::SetTraySelection(live, t.navIndex);
+                if (t.placeholder) {
+                    ClearGeoscapeHover();
+                    return;
+                }
+                if (gGeoHovered != handle)
+                    ClearGeoscapeHover();
+                if (GameUI::MoveTrayHover(t, /*entering*/ true))
+                    gGeoHovered = handle;
+                return;
+            }
+        }};
+
+        b.AddItem(std::move(id), std::move(vt));
+    }
+
+    b.EndRow();
+
+    // ---- stop 2: the HUD's four keyboard-unreachable verbs ----
+    //
+    // PARITY, which is what earns them a stop at all: Dark Events, Chosen Info and Resistance
+    // Orders are drawn on screen and clickable with a mouse, and vanilla reaches none of them
+    // from the keyboard (AddDarkEventsButton ends in DisableNavigation() on both the container
+    // and the button; the two HUD buttons are children of StrategyMapHUD, which UpdateMissions'
+    // Navigator.Clear() leaves out of the screen's navigator entirely). The ResNet toggle is a
+    // nav-help hotlink with a controller-only key. So this is the ant-farm shape again — the
+    // game has the verb and only the mouse can reach it.
+    //
+    // ⛔ And it is what justifies TAKING Tab on this screen. The world ring and the ';' status
+    // block are AIDS — they enumerate regions and continents no sighted player can read off the
+    // globe — so by the stop-list parity rule they stay on their own keys and out of the Tab
+    // cycle. Without this stop the tray would be the only one and Tab would have nothing to do.
+    if (!view.verbs.empty()) {
+        b.BeginStop("hud");
+        for (const GameUI::HudVerb& verb : view.verbs) {
+            const auto kind = verb.kind;
+            ControlId id = ControlId::Structural(
+                "geoscape/verb/" + std::to_string(static_cast<int>(kind)));
+
+            NodeVtable vt;
+            vt.Type = &ButtonType();
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(verb.label));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+
+            // The map-mode toggle is the one verb that HAS a state, and a sighted player reads
+            // it off the globe itself changing — so speech has to say it outright.
+            if (kind == GameUI::HudVerb::Kind::ResNetToggle) {
+                const bool on = verb.on;
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(
+                    on ? Vocab::GeoscapeResNetOn : Vocab::GeoscapeResNetOff));
+                vt.Announcements.back().Kind = AnnouncementKinds::Value;
+            }
+
+            // Re-read at activation rather than closing over the verb: the handler runs from the
+            // input drain a frame or more after this render, and the two HUD buttons are
+            // Show()/Hide()n on every RefreshData — so the pointer captured here may describe a
+            // verb the game has since taken off screen.
+            vt.OnActivate = [kind]() {
+                GameUI::StrategyMapView live = GameUI::ReadStrategyMap(gScreen);
+                for (const GameUI::HudVerb& v : live.verbs) {
+                    if (v.kind == kind) {
+                        GameUI::ActivateHudVerb(live, v);
+                        return;
+                    }
+                }
+            };
+
+            b.AddItem(std::move(id), std::move(vt));
+        }
+    }
+
+    return b.Build();
+}
+
+// ---- the popup recipe (docs/popup-inventory.md §1-3) ----
+//
+// One recipe for every modal notification in the game: the strategy alert family (UIAlert, 118
+// variants), the bespoke one-screen popups (faction, bond, ability, Chosen fragment/level-up/
+// reveal, UFO attack), and the blocking progress dialog. They look nothing alike and they share
+// exactly what a reader needs: the popup is the topmost stack screen, and its own
+// OnUnrealCommand answers Enter and Escape at SCREEN level.
+//
+// TWO STOPS. The MESSAGE, one node per line — which is the point of this whole recipe: a bond
+// alert or a Chosen reveal is several paragraphs, and speech is serial, so a player has to be
+// able to step through it with Tab rather than sit through all of it to reach the part they
+// wanted. Then the BUTTONS. Nothing goes in gFocus: every one of these screens either disables
+// navigation on its buttons or spawns them with an empty label, so pushing the game's own focus
+// at them would ask the navigator for something it refuses to keep.
+//
+// ⛔ Activation is the SCREEN's own OnUnrealCommand, never a button's Click. UIAlert's Button1/
+// Button2 are spawned with InitButton(…, "", …) and get their labels only through Flash, so
+// there is no delegate to reach that the screen's own accept path does not already run — and for
+// several alert names OnUnrealCommand branches BEFORE dispatching (eAlert_Contact refuses when
+// the player cannot afford contact, eAlert_TrainingComplete routes Enter to cancel rather than
+// confirm). Sending the key keeps every one of those branches; poking a delegate loses them all.
+
+constexpr const char* kPopupReaderClass = "X2AccessPopupReader";
+
+std::unique_ptr<GraphRender> BuildPopup()
+{
+    // Nothing joins gFocus here — Flash-driven throughout: no panel the game will accept focus on.
+    const std::vector<WireRecord> words = FetchCompanionRecords(kPopupReaderClass, "DescribePopup");
+    if (words.empty())
+        return nullptr;
+
+    const WireRecord* header = FindRecord(words, "popup");
+    const std::string screenClass = header ? RecField(*header, "class") : std::string();
+
+    // Message lines: the companion's own, plus — for UIAlert — the ones native reads back out of
+    // the Flash panel, because that screen retains none (see GameUI::ReadAlertText).
+    std::vector<std::string> lines;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") == "line")
+            lines.push_back(RecField(rec, "text"));
+    }
+
+    std::vector<std::string> alertButtons;
+    if (const WireRecord* alert = FindRecord(words, "alert")) {
+        const GameUI::AlertView view = GameUI::ReadAlertText(gScreen, RecField(*alert, "mcpath"),
+            RecField(*alert, "symbol"), RecField(*alert, "name"));
+        // The Flash reading leads: for every alert but the objective one the companion has
+        // nothing, and where it DOES have something (ObjectiveUIHeaderText/BodyText) the panel
+        // is showing the same words, so appending would say each of them twice.
+        if (!view.lines.empty())
+            lines = view.lines;
+        alertButtons = view.buttons;
+    }
+
+    // Identity carries the text, for the dialog recipe's reason: one popup can be replaced by
+    // another between two polls (a callback raising the next alert in the queue), and without
+    // the words in the key the differ would see the same node and stay silent about a message
+    // the player has not heard.
+    std::string key = screenClass + "\n";
+    for (const std::string& line : lines)
+        key += line + "\n";
+
+    GraphBuilder b;
+    b.BeginStop("message");
+
+    // The screen's own title as a context rather than a node: a REPLACED popup gets no fresh
+    // attach to speak a screen name with, so the heading has to ride in the node path to be
+    // heard at all.
+    const std::string title = header ? RecField(*header, "title") : std::string();
+    if (!title.empty())
+        b.PushContext(title, "", /*positions*/ false);
+
+    // ⛔ NO StartRow here, and that is the point: a control added outside an open row becomes its
+    // OWN single-item row, so the message reads DOWN with Up/Down instead of across with
+    // Left/Right. A message is prose stacked vertically on screen, not a strip of side-by-side
+    // controls, and walking it sideways contradicts both the layout and the reading order.
+    // It also drops the "N of M" stamp, which GraphBuilder only applies within a row holding more
+    // than one item — right here, because "СОЛДАТ ПОЛУЧИЛ НОВОЕ ЗВАНИЕ, 1 of 6" reads as a menu
+    // position on something that is a sentence.
+    for (size_t i = 0; i < lines.size(); i++) {
+        const std::string& line = lines[i];
+        b.AddLabel(ControlId::Structural(key + "line/" + std::to_string(i)),
+            [line]() { return line; });
+    }
+    if (lines.empty()) {
+        // Recognised, but nothing readable came back. Say so rather than attaching an empty
+        // graph: silence here is indistinguishable from "no popup", and the player still has to
+        // press something to get out of it.
+        b.AddLabel(ControlId::Structural(key + "line/none"),
+            []() { return std::string(Vocab::PopupNoText); });
+    }
+
+    // The buttons. Their labels come from the companion when it has them and from Flash for an
+    // alert; when neither does, the accept/cancel pair is still offered under the game's own
+    // generic wording, because a modal a blind player cannot dismiss is worse than one that
+    // reads badly.
+    struct Choice {
+        std::string label;
+        int cmd;
+    };
+    std::vector<Choice> choices;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "button")
+            continue;
+        const std::string label = RecField(rec, "label");
+        if (!label.empty())
+            choices.push_back({label, atoi(RecField(rec, "cmd").c_str())});
+    }
+    // Flash order is Button0 = confirm, Button1 = cancel — the same order UIAlert's own
+    // OnUnrealCommand maps Enter and Escape onto.
+    for (size_t i = 0; i < alertButtons.size(); i++)
+        choices.push_back({alertButtons[i], i == 0 ? GameUI::kCmdEnter : GameUI::kCmdEscape});
+    if (choices.empty()) {
+        choices.push_back({std::string(Vocab::PopupContinue), GameUI::kCmdEnter});
+        choices.push_back({std::string(Vocab::PopupDismiss), GameUI::kCmdEscape});
+    }
+
+    b.BeginStop("buttons");
+    b.StartRow();
+    for (size_t i = 0; i < choices.size(); i++) {
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(choices[i].label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        // Read gScreen at activation rather than capturing it: the handler runs from the input
+        // drain, a frame or more after this render, and the popup may already have been replaced.
+        vt.OnActivate = [cmd = choices[i].cmd]() { GameUI::SendScreenCommand(gScreen, cmd); };
+        b.AddItem(ControlId::Structural(key + "button/" + std::to_string(i)), std::move(vt));
+    }
+    b.EndRow();
+    return b.Build();
+}
+
+void* ProbePopup()
+{
+    const GameUI::PopupView view = GameUI::FindPopupScreen();
+    // Focus is the readiness test the shell screens use; the finder has already refused anything
+    // that is not topmost, inited and un-removed.
+    return (view.screen && GameUI::IsScreenFocused(view.screen)) ? view.screen : nullptr;
+}
+
+// Just the word. The popup's own title and its message ride in the graph — as a context and as
+// the message stop — so naming the screen only has to announce that a modal has appeared.
+std::string PopupName()
+{
+    return Vocab::ScreenPopup;
+}
+
+} // namespace
+
+// ---- what the navigator calls back into this file for ----
+//
+// Detach() has to hand the tray icon we hovered its matching MOUSE_OUT, so this one function is
+// outside the anonymous namespace above; it is declared in recipe_context.h and is the only
+// symbol any recipe TU exports besides its Recipe objects. gGeoHovered stays file-local — a
+// function in the enclosing namespace still sees the anonymous namespace's names.
+
+void ClearGeoscapeHover()
+{
+    if (!gGeoHovered)
+        return;
+    void* screen = GameUI::FindStrategyMapScreen();
+    if (screen) {
+        GameUI::StrategyMapView live = GameUI::ReadStrategyMap(screen);
+        for (const GameUI::TrayIcon& icon : live.icons) {
+            if (icon.handle == gGeoHovered) {
+                GameUI::MoveTrayHover(icon, /*entering*/ false);
+                break;
+            }
+        }
+    }
+    gGeoHovered = nullptr;
+}
+
+// ---- the recipes this file defines ----
+//
+// ⛔ THE PROBE ORDER IS NOT HERE. It is the `kRecipes` array literal in menu_navigator.cpp,
+// the one place that lists every recipe in a single readable sequence next to the loop that
+// consumes it. Adding a recipe means adding it there as well as declaring it in recipes.h; a
+// recipe declared and never listed is a screen that is silently never probed. Each definition
+// below keeps the sentence that argues where in that order it belongs.
+
+const Recipe kSquadSelectRecipe{
+    "squad select", ProbeSquadSelect, BuildSquadSelect, SquadSelectName};
+
+const Recipe kArmoryLoadoutRecipe{
+    "armory loadout", ProbeArmoryLoadout, BuildArmoryLoadout, ArmoryLoadoutName};
+
+// Above the ant farm and the Avenger HUD it sits over, below anything it pushes (a mission
+// briefing, the pause menu, a dialog) — which is what ProbeGeoscape's "must be the current
+// screen" test enforces, mirroring UIStrategyMap's own input routing.
+const Recipe kGeoscapeRecipe{"geoscape tray", ProbeGeoscape, BuildGeoscape, GeoscapeName};
+
+const Recipe kPopupRecipe{"popup", ProbePopup, BuildPopup, PopupName};
+
+} // namespace Recipes
+} // namespace MenuNavigator
