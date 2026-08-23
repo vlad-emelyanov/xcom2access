@@ -4,6 +4,7 @@
 #include "tts.h"
 #include "ue3_reflection.h"
 #include "vocab.h"
+#include "wire_record.hpp"
 #include "log.h"
 
 #include "Graph/GraphAnnouncer.hpp"
@@ -29,6 +30,7 @@ namespace MenuNavigator {
 namespace {
 
 using namespace X2Access::Graph;
+using namespace X2Access::Wire;
 
 // Host-local announcement kind for the game's "!" badge (custom kinds are part of the kernel
 // contract: they order wherever the type's Order places them and key user settings like the
@@ -1146,83 +1148,31 @@ const Recipe kMainMenuRecipe{"main menu", ProbeMainMenu, BuildMainMenu, MainMenu
 // greyed ИЗМЕНИТЬ. See docs/squad-select-recon.md §4 and §7.
 
 constexpr const char* kSquadReaderClass = "X2AccessSquadReader";
-constexpr const char* kWireRecordSep = "~|~";
-constexpr const char* kSquadFieldSep = "~:~";
 
-// One record of a companion's wire format, as ordered key/value pairs — ordered because some
-// keys REPEAT (squad select's `util`, once per slot) and the order is the row order. Shared by
-// every recipe whose words come from a companion CDO.
-using WireRecord = std::vector<std::pair<std::string, std::string>>;
-
-std::string RecField(const WireRecord& rec, const char* key)
-{
-    for (const auto& kv : rec) {
-        if (kv.first == key)
-            return kv.second;
-    }
-    return std::string();
-}
-
-std::vector<std::string> RecFieldAll(const WireRecord& rec, const char* key)
-{
-    std::vector<std::string> out;
-    for (const auto& kv : rec) {
-        if (kv.first == key)
-            out.push_back(kv.second);
-    }
-    return out;
-}
-
-std::vector<std::string> SplitOn(const std::string& text, const char* sep)
-{
-    std::vector<std::string> parts;
-    const size_t sepLen = strlen(sep);
-    size_t start = 0;
-    for (;;) {
-        const size_t hit = text.find(sep, start);
-        if (hit == std::string::npos) {
-            parts.push_back(text.substr(start));
-            return parts;
-        }
-        parts.push_back(text.substr(start, hit - start));
-        start = hit + sepLen;
-    }
-}
+// The record grammar, the parse and the field readers live in src/wire_record.hpp — STL-only, so
+// `tests/` can compile them without a game and pin the empty-value rule the format turns on.
+// Nothing here is squad-specific despite where the section sits; every wire-backed recipe uses it.
 
 // ONE outbound call per render, which is one per keypress — the same budget the tile cursor
 // spends. Used wherever the widget tree cannot answer: squad select retains no words at all, and
 // the loadout retains its rows but not the four things it computes and throws away.
 std::vector<WireRecord> FetchCompanionRecords(const char* className, const char* funcName)
 {
-    std::vector<WireRecord> records;
     void* cdo = GameUI::FindCompanionCDO(className);
     if (!cdo)
-        return records; // FindCompanionCDO logs the miss (companion mod not loaded)
+        return {}; // FindCompanionCDO logs the miss (companion mod not loaded)
 
     int64_t zeros[2] = {};
     if (!GameUI::CallScriptFunction(cdo, funcName, zeros)) {
         LOG_WARN("MenuNavigator: %s.%s failed", className, funcName);
-        return records;
+        return {};
     }
     const std::string raw
         = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
-    if (raw.empty())
-        return records;
-
-    for (const std::string& recText : SplitOn(raw, kWireRecordSep)) {
-        WireRecord rec;
-        for (const std::string& field : SplitOn(recText, kSquadFieldSep)) {
-            const size_t eq = field.find('=');
-            if (eq == std::string::npos || eq == 0)
-                continue;
-            // CleanText here rather than in script: one implementation of "strip the markup the
-            // game colours its text with", shared with every other screen.
-            rec.emplace_back(field.substr(0, eq), GameUI::CleanText(field.substr(eq + 1)));
-        }
-        if (!rec.empty())
-            records.push_back(std::move(rec));
-    }
-    return records;
+    // CleanText is handed in rather than called inside the parser: one implementation of "strip
+    // the markup the game colours its text with", shared with every other screen, and keeping it
+    // out is what lets the parser stay engine-free.
+    return ParseRecords(raw, &GameUI::CleanText);
 }
 
 // Join the parts a card names, dropping the ones the game is not showing. The companion sends
@@ -1918,46 +1868,25 @@ const SaveWordMap& FetchSaveWords(const std::vector<GameUI::SaveSlot>& slots)
     sKey = key;
     sWords.clear();
 
-    void* cdo = GameUI::FindCompanionCDO(kSaveReaderClass);
-    if (!cdo)
-        return sWords; // FindCompanionCDO logs the miss (companion mod not loaded)
-
-    int64_t zeros[2] = {};
-    if (!GameUI::CallScriptFunction(cdo, "DescribeSaves", zeros)) {
-        LOG_WARN("MenuNavigator: save/load — DescribeSaves failed");
-        return sWords;
-    }
-    const std::string raw
-        = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
-    if (raw.empty())
-        return sWords;
-
-    for (const std::string& recText : SplitOn(raw, kWireRecordSep)) {
-        int index = -1;
+    // The same wire payload every other recipe reads, decoded by the same parser — this screen
+    // only differs in what it does with the records afterwards (index them, rather than keep the
+    // order). A second hand-written copy of the parse is how the two would drift.
+    for (const WireRecord& rec : FetchCompanionRecords(kSaveReaderClass, "DescribeSaves")) {
+        const std::string indexText = RecField(rec, "index");
+        if (indexText.empty())
+            continue;
+        const int index = atoi(indexText.c_str());
+        if (index < 0)
+            continue;
         SaveWords words;
-        for (const std::string& field : SplitOn(recText, kSquadFieldSep)) {
-            const size_t eq = field.find('=');
-            if (eq == std::string::npos || eq == 0)
-                continue;
-            const std::string key2 = field.substr(0, eq);
-            // CleanText here rather than in script: one implementation of "strip the markup the
-            // game colours its text with", shared with every other screen.
-            const std::string value = GameUI::CleanText(field.substr(eq + 1));
-            if (key2 == "index")
-                index = atoi(value.c_str());
-            else if (key2 == "desc")
-                words.desc = value;
-            else if (key2 == "name")
-                words.name = value;
-            else if (key2 == "mission")
-                words.mission = value;
-            else if (key2 == "time")
-                words.time = value;
-            else if (key2 == "new")
-                words.isNew = true;
-        }
-        if (index >= 0)
-            sWords[index] = std::move(words);
+        words.desc = RecField(rec, "desc");
+        words.name = RecField(rec, "name");
+        words.mission = RecField(rec, "mission");
+        words.time = RecField(rec, "time");
+        // Presence is the flag — the producer sends `new` only on the save screen's row 0, and
+        // whatever it carries as a value is not read.
+        words.isNew = !RecFieldAll(rec, "new").empty();
+        sWords[index] = std::move(words);
     }
     LOG_DEBUG("MenuNavigator: save/load — described %zu of %zu rows", sWords.size(), slots.size());
     return sWords;
