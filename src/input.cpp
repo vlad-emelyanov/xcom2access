@@ -1,7 +1,7 @@
 #include "input.h"
 #include "input_arbiter.h"
 #include "hooks.h"
-#include "tts.h"
+#include "narrator.h"
 #include "log.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -44,9 +44,29 @@ void Init()
 {
     using namespace InputArbiter;
 
+    // ⛔ KNOWN GAP, and it is the answer this key gives that is wrong, not the key itself.
+    // NavHelpData comes off the v1 sentinel path, and exactly three classes ever write it —
+    // UIScreenListener_MainMenu, _Difficulty and _NarrativeContent, each from its own OnInit.
+    // No recipe writes it, no tactical or strategy surface writes it, and NOTHING clears it: the
+    // listeners are CDOs, so the string outlives the screen that filled it. Two consequences.
+    // On those three screens the answer is right (the listener's OnInit runs whether or not a
+    // recipe owns the surface, so this is deliberately NOT gated on MenuNavigator::IsAttached).
+    // Everywhere else it is either the honest fallback below or — once the shell has been
+    // visited — the MAIN MENU's nav help, recited in the middle of a mission. A help key that
+    // describes a different screen is worse than one that says nothing.
+    //
+    // The fix is not more producers: the claim registry already knows what works here, because
+    // every Claim carries a description written as help text ("tile cursor: north", "scanner:
+    // re-announce selection"). Enumerating the ACTIVE ones answers the question the player is
+    // actually asking, on every surface, and stays correct as claims are added. That needs a
+    // DescribeActiveClaims in input_arbiter.cpp; until it exists the legacy read stands, since
+    // the three screens it does cover would otherwise lose the help they have.
     RegisterClaim({VK_OEM_2, ModShift, nullptr, OnPress([] {
         std::string navHelp = Hooks::ReadListenerProperty("NavHelpData");
-        TTS::SpeakInterrupt(!navHelp.empty() ? navHelp : "No navigation help available.");
+        // Aid, through the Narrator: the player pressed a key for this, so it outranks and
+        // CLEARS whatever narration is queued rather than merely cutting the current sentence.
+        Narrator::Say(Narrator::Channel::Aid,
+            !navHelp.empty() ? navHelp : "No navigation help available.");
     }), "?: navigation help"});
 
     LOG_INFO("Input: hotkey claims registered");
