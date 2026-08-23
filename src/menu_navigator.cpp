@@ -1178,18 +1178,23 @@ std::vector<WireRecord> FetchCompanionRecords(const char* className, const char*
 // Join the parts a card names, dropping the ones the game is not showing. The companion sends
 // identity as four SEPARATE fields for exactly this: joining them there meant a value that
 // CleanText later reduced to nothing still left its comma behind, and every rookie read
-// "Новобранец, Sokolova,," live 2026-08-21.
+// "Новобранец, Sokolova,," live 2026-08-21. The join itself is AppendPhrase's, not ours — these
+// are the game's own strings and it ends plenty of them in '.' or ':' (⛔ never a bare ", ").
 std::string JoinParts(const WireRecord& rec, std::initializer_list<const char*> keys)
 {
     std::string line;
-    for (const char* key : keys) {
-        const std::string part = RecField(rec, key);
-        if (part.empty())
-            continue;
-        if (!line.empty())
-            line += ", ";
-        line += part;
-    }
+    for (const char* key : keys)
+        AppendPhrase(line, RecField(rec, key));
+    return line;
+}
+
+// The same join for two parts held in hand rather than looked up — the label-then-value shape
+// these recipes compose all over ("ОСНОВНОЕ ОРУЖИЕ" + the weapon, a mission caption + its text).
+// Either half may be absent, and neither leaves a separator behind when it is.
+std::string JoinPhrases(const std::string& first, const std::string& second)
+{
+    std::string line = first;
+    AppendPhrase(line, second);
     return line;
 }
 
@@ -1231,18 +1236,10 @@ std::string SquadControlLabel(const WireRecord& card, const WireRecord& mission,
         return RecField(mission, "edit");
     case GameUI::SquadButton::Dismiss:
         return RecField(mission, "dismiss");
-    case GameUI::SquadButton::WeaponPrime: {
-        const std::string label = RecField(card, "weaponlabel");
-        const std::string name = RecField(card, "weapon");
-        if (name.empty())
-            return label;
-        return label.empty() ? name : label + ", " + name;
-    }
-    case GameUI::SquadButton::WeaponHeavy: {
-        const std::string label = RecField(card, "heavylabel");
-        const std::string name = RecField(card, "heavy");
-        return label.empty() ? name : label + ", " + name;
-    }
+    case GameUI::SquadButton::WeaponPrime:
+        return JoinPhrases(RecField(card, "weaponlabel"), RecField(card, "weapon"));
+    case GameUI::SquadButton::WeaponHeavy:
+        return JoinPhrases(RecField(card, "heavylabel"), RecField(card, "heavy"));
     case GameUI::SquadButton::Utility: {
         // Positional: `util` is emitted once per widget INCLUDING the empty ones, so this index
         // and the companion's are the same count. When even that is silent the slot is locked,
@@ -1331,7 +1328,9 @@ std::unique_ptr<GraphRender> BuildSquadSelect()
             if (value.empty())
                 continue;
             const std::string label = h.labelKey ? RecField(*mission, h.labelKey) : std::string();
-            const std::string text = label.empty() ? value : label + ", " + value;
+            // The game's own captions — "ЗАДАЧИ:" and friends already carry their colon, which
+            // is exactly the shape AppendPhrase exists for.
+            const std::string text = JoinPhrases(label, value);
             b.AddLabel(ControlId::Structural(std::string("squad/mission/") + h.key),
                 [text]() { return text; });
         }
@@ -1591,9 +1590,9 @@ std::string LoadoutRowLabel(const GameUI::LoadoutRow& row)
     if (row.title.empty()) {
         if (row.slotLabel.empty())
             return std::string();
-        return row.slotLabel + ", " + Vocab::LoadoutEmptySlot;
+        return JoinPhrases(row.slotLabel, Vocab::LoadoutEmptySlot);
     }
-    return row.slotLabel.empty() ? row.title : row.slotLabel + ", " + row.title;
+    return JoinPhrases(row.slotLabel, row.title);
 }
 
 std::unique_ptr<GraphRender> BuildArmoryLoadout()
@@ -1671,9 +1670,7 @@ std::unique_ptr<GraphRender> BuildArmoryLoadout()
         // lands AFTER the render that announces, so a header-sourced one would always be a row
         // behind.
         std::string value = row.infinite ? std::string() : RecField(rec, "count");
-        const std::string delta = RecField(rec, "delta");
-        if (!delta.empty())
-            value += (value.empty() ? "" : ", ") + delta;
+        AppendPhrase(value, RecField(rec, "delta"));
         if (!value.empty()) {
             vt.Announcements.emplace_back(NodeAnnouncement::Static(value));
             vt.Announcements.back().Kind = AnnouncementKinds::Value;
@@ -1729,8 +1726,8 @@ std::unique_ptr<GraphRender> BuildArmoryLoadout()
         // Keyed to the SELECTION rather than carried on the row, exactly as
         // UpdateNavHelp_LoadoutItem shows it: the nav help offers "make available" only while the
         // selected equipped item bCanBeCleared, and it acts on that item.
-        const std::string label = view.makeAvailable + ", "
-            + LoadoutRowLabel(view.rows[static_cast<size_t>(view.selectedRow)]);
+        const std::string label = JoinPhrases(view.makeAvailable,
+            LoadoutRowLabel(view.rows[static_cast<size_t>(view.selectedRow)]));
         NodeVtable vt;
         vt.Type = &ButtonType();
         vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
@@ -1897,26 +1894,20 @@ const SaveWordMap& FetchSaveWords(const std::vector<GameUI::SaveSlot>& slots)
 // rest it is the same word twelve times over and the save's own description is the content.
 std::string SaveSlotLabel(const GameUI::SaveSlot& slot, const SaveWords* words)
 {
-    std::string line;
-    auto append = [&line](const std::string& part) {
-        if (part.empty())
-            return;
-        if (!line.empty())
-            line += ", ";
-        line += part;
-    };
-
     if (!words) {
         // No record for this row: the companion is missing, or the row carries no header at
         // all. The widget's own label is still a true statement about what is there.
         return slot.acceptLabel;
     }
+    // ⛔ AppendPhrase, not a bare comma: `desc` is the engine's own save description, split out
+    // of Header.Description, and the error-report branch ends it in a full stop.
+    std::string line;
     if (words->isNew)
-        append(slot.acceptLabel);
-    append(words->desc);
-    append(words->name);
-    append(words->mission);
-    append(words->time);
+        AppendPhrase(line, slot.acceptLabel);
+    AppendPhrase(line, words->desc);
+    AppendPhrase(line, words->name);
+    AppendPhrase(line, words->mission);
+    AppendPhrase(line, words->time);
     return line.empty() ? slot.acceptLabel : line;
 }
 
@@ -2682,10 +2673,11 @@ std::unique_ptr<GraphRender> BuildCommodity()
         if (label.empty())
             continue;
 
-        // The right-hand quantity column, spoken only where the row draws one.
+        // The right-hand quantity column, spoken only where the row draws one. `label` is the
+        // game's own item name, so the join is AppendPhrase's — never a bare comma.
         const std::string qty = RecField(rec, "qty");
         if (!qty.empty())
-            label += ", " + qty + " " + Vocab::CommodityOwned;
+            AppendPhrase(label, qty + " " + Vocab::CommodityOwned);
 
         // Native's flags and the companion's words are matched on the GAME's list index, which
         // both halves stamp independently — so a row either half skipped cannot silently shift
