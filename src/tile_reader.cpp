@@ -3,7 +3,7 @@
 #include "input_arbiter.h"
 #include "menu_navigator.h"
 #include "mouse_gate.h"
-#include "tts.h"
+#include "narrator.h"
 #include "ue3_reflection.h"
 #include "log.h"
 
@@ -74,11 +74,17 @@ bool ComputeActive(char* why, size_t whyLen, bool* hudOnStack)
 // One outbound call to the companion reader, then speak whatever it wrote to NativeResult.
 // Runs from the arbiter's tick drain — the game thread — which is what outbound ProcessEvent
 // requires. An empty result is a deliberate "nothing to say", not an error.
-void Call(const char* funcName, void* params)
+//
+// Through the Narrator rather than TTS directly, and on an INTERRUPTING channel: the player
+// pressed a key, so their answer outranks — and CLEARS — whatever combat narration is still
+// queued behind it. Speaking straight to the backend cut the current utterance but left the
+// queue standing, so the stale burst resumed on top of the answer on the very next flush.
+// It is also what puts these lines in the scrollback ring, which a review key will need.
+void Call(const char* funcName, void* params, Narrator::Channel channel)
 {
     void* cdo = GameUI::FindCompanionCDO(kReaderClass);
     if (!cdo) {
-        TTS::SpeakInterrupt("Tile reader unavailable.");
+        Narrator::Say(Narrator::Channel::Aid, "Tile reader unavailable.");
         return;
     }
     if (!GameUI::CallScriptFunction(cdo, funcName, params)) {
@@ -92,7 +98,7 @@ void Call(const char* funcName, void* params)
     std::string result
         = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
     if (!result.empty())
-        TTS::SpeakInterrupt(result);
+        Narrator::Say(channel, result);
 }
 
 // Compass cardinals, matching X2AccessTileReader's DIR_* constants (the engine's cover-flag
@@ -104,12 +110,15 @@ constexpr int32_t kDirSouth = 1;
 constexpr int32_t kDirEast = 2;
 constexpr int32_t kDirWest = 3;
 
+// Moving the cursor is Focus — a selection changed under the player's own key, the same reading
+// UnitInfo's Tab poll takes. The on-demand reads below are Aid. Both interrupt and clear the
+// queue identically; the channel is what the scrollback ring will show them as.
 void StepCall(int32_t cardinal)
 {
     struct {
         int32_t cardinal;
     } params{cardinal};
-    Call("CursorStep", &params);
+    Call("CursorStep", &params, Narrator::Channel::Focus);
 }
 
 void FloorCall(int32_t delta)
@@ -117,14 +126,14 @@ void FloorCall(int32_t delta)
     struct {
         int32_t delta;
     } params{delta};
-    Call("CursorFloor", &params);
+    Call("CursorFloor", &params, Narrator::Channel::Focus);
 }
 
-void SimpleCall(const char* funcName)
+void SimpleCall(const char* funcName, Narrator::Channel channel)
 {
     // No-parameter functions still get a zeroed buffer — ProcessEvent copies ParmsSize bytes.
     int64_t zeros[2] = {};
-    Call(funcName, zeros);
+    Call(funcName, zeros, channel);
 }
 
 // Everything fires once per press — auto-repeat is DISABLED for now, including on the arrows:
@@ -170,11 +179,14 @@ void Init()
     RegisterClaim({VK_OEM_PERIOD, ModCtrl, active, OnPress([] { FloorCall(1); }),
         "tile cursor: floor up"});
 
-    RegisterClaim({'C', ModNone, active, OnPress([] { SimpleCall("CursorRecenter"); }),
+    RegisterClaim({'C', ModNone, active,
+        OnPress([] { SimpleCall("CursorRecenter", Narrator::Channel::Focus); }),
         "tile cursor: recenter on unit"});
-    RegisterClaim({VK_DELETE, ModNone, active, OnPress([] { SimpleCall("CursorAnnounce"); }),
+    RegisterClaim({VK_DELETE, ModNone, active,
+        OnPress([] { SimpleCall("CursorAnnounce", Narrator::Channel::Aid); }),
         "tile cursor: re-announce"});
-    RegisterClaim({VK_BACK, ModNone, active, OnPress([] { SimpleCall("CursorMoveTo"); }),
+    RegisterClaim({VK_BACK, ModNone, active,
+        OnPress([] { SimpleCall("CursorMoveTo", Narrator::Channel::Aid); }),
         "tile cursor: move to (press twice)"});
 
     LOG_INFO("TileReader: claims registered");
@@ -187,7 +199,7 @@ bool IsActive()
 
 void GoToMarker()
 {
-    SimpleCall("CursorGoToMarker");
+    SimpleCall("CursorGoToMarker", Narrator::Channel::Focus);
 }
 
 void OnTick()

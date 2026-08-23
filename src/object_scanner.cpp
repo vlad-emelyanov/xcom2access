@@ -2,8 +2,8 @@
 #include "free_aim.h"
 #include "game_ui.h"
 #include "input_arbiter.h"
+#include "narrator.h"
 #include "tile_reader.h"
-#include "tts.h"
 #include "ue3_reflection.h"
 #include "log.h"
 
@@ -23,11 +23,17 @@ constexpr const char* kScannerClass = "X2AccessObjectScanner";
 // One outbound call to the companion scanner, then speak whatever it wrote to NativeResult.
 // Runs from the arbiter's tick drain — the game thread — which is what outbound ProcessEvent
 // requires. An empty result is a deliberate "nothing to say", not an error.
+//
+// Aid, through the Narrator rather than TTS directly. Every line here is an on-demand read the
+// player pressed a key for, so it outranks — and CLEARS — whatever combat narration is still
+// queued: speaking straight to the backend cut only the current utterance and left the queue
+// standing, so the stale burst resumed on top of the answer on the very next flush. It is also
+// what puts these lines in the scrollback ring, which a review key will need.
 void Call(const char* funcName, void* params)
 {
     void* cdo = GameUI::FindCompanionCDO(kScannerClass);
     if (!cdo) {
-        TTS::SpeakInterrupt("Object scanner unavailable.");
+        Narrator::Say(Narrator::Channel::Aid, "Object scanner unavailable.");
         return;
     }
     if (!GameUI::CallScriptFunction(cdo, funcName, params)) {
@@ -37,7 +43,7 @@ void Call(const char* funcName, void* params)
     std::string result
         = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
     if (!result.empty())
-        TTS::SpeakInterrupt(result);
+        Narrator::Say(Narrator::Channel::Aid, result);
 }
 
 // Category ids. MUST match the CAT_* constants in X2AccessObjectScanner.uc — the one place the

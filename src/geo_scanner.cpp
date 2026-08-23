@@ -1,7 +1,7 @@
 #include "geo_scanner.h"
 #include "game_ui.h"
 #include "input_arbiter.h"
-#include "tts.h"
+#include "narrator.h"
 #include "ue3_reflection.h"
 #include "log.h"
 
@@ -21,11 +21,18 @@ constexpr const char* kScannerClass = "X2AccessGeoScanner";
 // One outbound call to the companion, then speak whatever it wrote to NativeResult. Runs from the
 // arbiter's tick drain — the game thread — which is what outbound ProcessEvent requires. An empty
 // result is a deliberate "nothing to say", not an error.
+//
+// Aid, through the Narrator rather than TTS directly. Every line here is an on-demand read the
+// player pressed a key for, so it outranks — and CLEARS — whatever is still queued. That matters
+// on the geoscape specifically: TransientReader queues commlink and toast lines on the Combat
+// channel alongside this scanner, and nothing else drops them here (TacticalHUD::OnTick's
+// DropPending fires only on the tactical layer's falling edge). It is also what puts these lines
+// in the scrollback ring, which a review key will need.
 void Call(const char* funcName, void* params)
 {
     void* cdo = GameUI::FindCompanionCDO(kScannerClass);
     if (!cdo) {
-        TTS::SpeakInterrupt("Geoscape scanner unavailable.");
+        Narrator::Say(Narrator::Channel::Aid, "Geoscape scanner unavailable.");
         return;
     }
     if (!GameUI::CallScriptFunction(cdo, funcName, params)) {
@@ -35,7 +42,7 @@ void Call(const char* funcName, void* params)
     std::string result
         = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
     if (!result.empty())
-        TTS::SpeakInterrupt(result);
+        Narrator::Say(Narrator::Channel::Aid, result);
 }
 
 void StepCall(const char* funcName, int32_t delta)
