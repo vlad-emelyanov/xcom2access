@@ -186,26 +186,11 @@ private function string DescribeMissionEnd(UIDropShipBriefing_MissionEnd Screen)
 // ⛔ NEVER join two spoken phrases with a bare separator — the kernel's AppendPhrase rule, which
 // graph recipes inherit and which a narrate-only surface has to apply itself. It bites hard on
 // exactly this screen: EVERY label here ends in a colon ("LOCATION:", "ЗАДАЧА:"), so a blind
-// join would voice "МЕСТОПОЛОЖЕНИЕ:, Москва" at the player. A self-punctuated part takes a plain
-// space; everything else takes the separator.
-private function bool EndsSentence(string Text)
-{
-	local string Last;
-
-	if (Text == "")
-		return false;
-
-	Last = Right(Text, 1);
-	return Last == "." || Last == "!" || Last == "?" || Last == ":" || Last == ";";
-}
-
+// join would voice "МЕСТОПОЛОЖЕНИЕ:, Москва" at the player. The rule and its terminator set live
+// on X2AccessHelper now; this is call-site sugar over it.
 private function AppendPart(out string Result, string Part)
 {
-	if (Part == "")
-		return;
-	if (Result != "")
-		Result $= EndsSentence(Result) ? " " : ". ";
-	Result $= Part;
+	class'X2AccessHelper'.static.AppendPart(Result, Part);
 }
 
 // A label is dropped when its value is empty — an "OBJECTIVE:" with nothing after it is worse

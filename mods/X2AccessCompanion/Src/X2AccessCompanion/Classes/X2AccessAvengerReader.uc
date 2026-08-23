@@ -477,34 +477,15 @@ private function UIFacilityGrid GetGrid()
 // every graph recipe inherits and the ant farm, being narrate-only, has to apply itself. The
 // game ends plenty of its own strings with '.', '!', '?' or ':', and blind joining voiced
 // "5 дн.. 1 of 1 staff slots filled" at the player (measured live 2026-08-21, on a room being
-// cleared: the clearing estimate ends in a period and the staff line followed it). A
-// self-punctuated part takes a plain SPACE; everything else takes the separator.
-private function bool EndsSentence(string Text)
-{
-	local string Last;
-
-	if (Text == "")
-		return false;
-
-	Last = Right(Text, 1);
-	return Last == "." || Last == "!" || Last == "?" || Last == ":" || Last == ";";
-}
-
-private function AppendJoined(out string Result, string Part, string Separator)
-{
-	if (Part == "")
-		return;
-	if (Result != "")
-		Result $= EndsSentence(Result) ? " " : Separator;
-	Result $= Part;
-}
-
+// cleared: the clearing estimate ends in a period and the staff line followed it). This class
+// was where that fix landed; it now lives on X2AccessHelper so the other eight surfaces that
+// join game text inherit it too, and these two are call-site sugar over it.
 private function AppendPart(out string Result, string Part)
 {
-	AppendJoined(Result, Part, ". ");
+	class'X2AccessHelper'.static.AppendPart(Result, Part);
 }
 
 private function AppendComma(out string Result, string Part)
 {
-	AppendJoined(Result, Part, ", ");
+	class'X2AccessHelper'.static.AppendComma(Result, Part);
 }

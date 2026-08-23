@@ -553,31 +553,14 @@ private function UIHackingScreen GetHackScreen()
 // Joins with a full stop, EXCEPT after a part that already ends in one. Every reward
 // Description is a complete sentence with its own terminator, so the naive join produced
 // "получает маскировку.. Неудача" — audible as a stumble in most screen readers (heard live
-// 2026-08-20).
+// 2026-08-20). That test is X2AccessHelper's now, along with the wider terminator set; these
+// two are call-site sugar over it.
 private function AppendPart(out string Result, string Part)
 {
-	local string Tail;
-
-	if (Part == "")
-		return;
-
-	if (Result != "")
-	{
-		Tail = Right(Result, 1);
-		if (Tail == "." || Tail == "!" || Tail == "?")
-			Result $= " ";
-		else
-			Result $= ". ";
-	}
-
-	Result $= Part;
+	class'X2AccessHelper'.static.AppendPart(Result, Part);
 }
 
 private function AppendComma(out string Result, string Part)
 {
-	if (Part == "")
-		return;
-	if (Result != "")
-		Result $= ", ";
-	Result $= Part;
+	class'X2AccessHelper'.static.AppendComma(Result, Part);
 }

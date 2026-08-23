@@ -385,11 +385,8 @@ private function AddField(out string Rec, string Key, string Value)
 	Rec $= FLD_SEP $ Key $ "=" $ Value;
 }
 
+// Call-site sugar over X2AccessHelper.AppendComma, which owns the ⛔ never-a-bare-separator rule.
 private function AppendComma(out string Result, string Part)
 {
-	if (Part == "")
-		return;
-	if (Result != "")
-		Result $= ", ";
-	Result $= Part;
+	class'X2AccessHelper'.static.AppendComma(Result, Part);
 }

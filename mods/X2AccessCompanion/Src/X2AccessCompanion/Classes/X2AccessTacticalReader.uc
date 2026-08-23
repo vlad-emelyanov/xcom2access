@@ -1289,20 +1289,15 @@ private function int TileDistance(TTile A, TTile B)
 // Shared plumbing (mirrors X2AccessTileReader's)
 // ---------------------------------------------------------------------------
 
+// Call-site sugar over X2AccessHelper's joiners, which own the ⛔ never-a-bare-separator rule and
+// its terminator set. Nothing outside this class calls these: the object scanner used to reach
+// AppendComma through here, and now asks the oracle directly.
 private function AppendPart(out string Result, string Part)
 {
-	if (Part == "")
-		return;
-	if (Result != "")
-		Result $= class'X2AccessTileReader'.static.EndsSentence(Result) ? " " : ". ";
-	Result $= Part;
+	class'X2AccessHelper'.static.AppendPart(Result, Part);
 }
 
-static function AppendComma(out string Result, string Part)
+private static function AppendComma(out string Result, string Part)
 {
-	if (Part == "")
-		return;
-	if (Result != "")
-		Result $= ", ";
-	Result $= Part;
+	class'X2AccessHelper'.static.AppendComma(Result, Part);
 }
