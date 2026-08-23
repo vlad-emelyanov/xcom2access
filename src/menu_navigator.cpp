@@ -1365,6 +1365,27 @@ ControlId SquadNeighbour(const std::vector<std::vector<ControlId>>& columns, siz
     return columns[from][row]; // no card that way: a self-edge, which KeyGraph::Move reads as a wall
 }
 
+// A card's words, matched on the GAME's own slot index — the index into XComHQ.Squad, which both
+// halves stamp independently: native off `UISquadSelect_ListItem.SlotIndex` (0x3D8, pinned by a
+// static_assert) and the companion off `Card.SlotIndex`.
+//
+// ⛔ Never by push order. The companion skips a list entry that is not a UISquadSelect_ListItem
+// (`if (Card == none) continue;`) while native walks every item the list holds, so one skipped
+// entry would put every later card's words on the wrong soldier — and on this screen the wrong
+// soldier owns a DISMISS button. It is the same rule the commodity list already states beside its
+// own row match: "a row either half skipped cannot silently shift every entry after it".
+const WireRecord* FindCardBySlot(const std::vector<const WireRecord*>& cards, int slotIndex)
+{
+    if (slotIndex < 0)
+        return nullptr;
+    for (const WireRecord* rec : cards) {
+        const std::string text = RecField(*rec, "slot");
+        if (!text.empty() && atoi(text.c_str()) == slotIndex)
+            return rec;
+    }
+    return nullptr;
+}
+
 std::unique_ptr<GraphRender> BuildSquadSelect()
 {
     GameUI::SquadSelectView view = GameUI::ReadSquadSelect(gScreen);
@@ -1438,8 +1459,17 @@ std::unique_ptr<GraphRender> BuildSquadSelect()
     std::vector<std::vector<ControlId>> columns(view.slots.size());
     for (size_t i = 0; i < view.slots.size(); i++) {
         const GameUI::SquadSlot& slot = view.slots[i];
-        const WireRecord& card
-            = i < cards.size() ? *cards[i] : kEmptyRecord;
+        const WireRecord* cardRec = FindCardBySlot(cards, slot.slotIndex);
+        if (!cardRec && !cards.empty()) {
+            // The two halves read the same field off the same object, so a miss means a real
+            // disagreement rather than a missing companion. Say so once instead of quietly
+            // reading the card as an unnamed soldier.
+            static int sWarned = 0;
+            if (sWarned++ < 3)
+                LOG_WARN("MenuNavigator: squad select — no card record for slot %d (%zu records)",
+                    slot.slotIndex, cards.size());
+        }
+        const WireRecord& card = cardRec ? *cardRec : kEmptyRecord;
         const int visual = static_cast<int>(i);
 
         // A pure-structure parent: never navigable, announced when focus enters the card from
