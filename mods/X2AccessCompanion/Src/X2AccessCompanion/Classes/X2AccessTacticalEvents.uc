@@ -42,6 +42,15 @@ class X2AccessTacticalEvents extends X2EventListener config(Game);
 // game state and assigned long before visualization runs — and NarratedDamageUnits holds the
 // ObjectIDs already spoken for it, each wrapped in pipes so a search for |3| cannot match |37|.
 // Read only through ClaimDamageNarration, which is where the reasoning lives.
+//
+// Both are `config` for the reason CLAUDE.md records — `default.X = ...` does not compile
+// otherwise — and that ALSO costs them a defaultproperties initialiser: the compiler refuses one
+// on a config property ("Import failed for 'NarratedDamageFrame': property is config") and
+// leaves the value at zero, silently. So NarratedDamageFrame starts at 0, not at a sentinel, and
+// the first damage of a session may well share its frame number. That is harmless, but only
+// because of the OTHER var: the claimed set starts EMPTY, so the first line is claimed and spoken
+// whether or not the frame comparison happened to reset it. The empty set is the safety here;
+// the frame number never was.
 var config int NarratedDamageFrame;
 var config string NarratedDamageUnits;
 
@@ -517,15 +526,4 @@ static function string HitResultWord(EAbilityHitResult Result)
 		return Word;
 
 	return string(Result);
-}
-
-defaultproperties
-{
-	// -1 is the engine's OWN sentinel for "this state is not part of the history"
-	// (XComGameState.uc:125), which is what makes it usable as the empty marker rather than merely
-	// unlikely: a listener deferred to ELD_OnVisualizationBlockCompleted is handed nothing but
-	// SUBMITTED states, so every index that ever reaches this class is >= 0. The first damage of a
-	// session therefore always resets the claimed set instead of starting out sharing a frame with
-	// state 0.
-	NarratedDamageFrame=-1
 }
