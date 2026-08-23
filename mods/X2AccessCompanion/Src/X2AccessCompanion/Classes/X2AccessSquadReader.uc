@@ -78,7 +78,7 @@ function DescribeSquad()
 		Card = UISquadSelect_ListItem(Screen.m_kSlotList.GetItem(i));
 		if (Card == none)
 			continue;
-		NativeResult $= REC_SEP $ DescribeCard(Screen, Card);
+		NativeResult $= REC_SEP $ DescribeCard(Screen, Card, i);
 	}
 }
 
@@ -139,12 +139,23 @@ private function string DescribeMission(UISquadSelect Screen)
 // One card
 // ---------------------------------------------------------------------------------------
 
-private function string DescribeCard(UISquadSelect Screen, UISquadSelect_ListItem Card)
+private function string DescribeCard(UISquadSelect Screen, UISquadSelect_ListItem Card,
+	int ListIndex)
 {
 	local XComGameState_Unit Unit;
 	local string Rec;
 
 	Rec = "kind=card";
+	// ⛔ The KEY is the card's position in m_kSlotList, NOT its SlotIndex. UpdateData bails at
+	// `if(bDisabled) return;` BEFORE `SlotIndex = Index != -1 ? Index : SlotIndex`, so a locked
+	// "increase squad size" card never gets one and keeps the default 0 — live 2026-08-23 three
+	// of six cards read SlotIndex 0, and the two locked ones collided with the real squad-slot-0
+	// soldier, who then wore the locked card's words. This is the loop index both halves walk in
+	// the same order, so it is unique by construction; a `Card == none` skip above leaves a HOLE
+	// rather than shifting every later card, which is the whole reason it is the list position
+	// and not a running counter.
+	AddField(Rec, "pos", string(ListIndex));
+	// Kept for the readout and for diagnosis; never matched on.
 	AddField(Rec, "slot", string(Card.SlotIndex));
 
 	// A card the game greyed out ("increase squad size in the Guerrilla Tactics School"):

@@ -73,6 +73,32 @@ speech is serial.
 - ⛔ **A repeating field must never be dropped when empty.** `util` is indexed by list position, so
   a locked slot in front of an occupied one makes the occupied one answer for the pocket in front
   of it and pushes the last slot off the end into the fallback.
+- ⛔ **`UISquadSelect_ListItem.SlotIndex` IS NOT UNIQUE, so it cannot be the key that joins the two
+  halves' records.** `UpdateData` returns at `if(bDisabled) return;` exactly one line before
+  `SlotIndex = Index != -1 ? Index : SlotIndex`, so a locked "increase squad size" card is never
+  given one and keeps the default **0**. Live 2026-08-23 a six-card strip read `0,1,0,2,3,0`: both
+  locked cards collided with the genuine squad-slot-0 soldier, who matched the FIRST record and
+  announced herself as *"увеличьте размер отряда в партизанской школе"* for the whole screen — and
+  because the locked record carries no `weapon`/`util` fields, every one of her controls whose
+  words come from the card record lost its label and was skipped, leaving her card three nodes
+  deep instead of six. Both halves now key on the card's POSITION in `m_kSlotList`, the one index
+  they walk in the same order. The generalisation outranks the "never by push order" rule it
+  replaces: **a field both halves read off the same object is a key only if the game guarantees it
+  is distinct — and a field the game sometimes never writes cannot be.** The list position is
+  still the right choice over a running counter, because the companion's `Card == none` skip must
+  leave a visible HOLE rather than shift every later card onto the wrong soldier.
+- ⛔ **"Is this card empty" is a question only the unit ref can answer, never the widget tree.** An
+  unmanned card keeps every widget it was built with — the `ВЫБРАТЬ БОЙЦА` card still owned a
+  two-item `UtilitySlots` list under a hidden parent — so a `controls.empty()` test never fired,
+  the card was built as an ordinary one, and the node the player landed on was **Edit**.
+  `OnClickedEditUnitButton` guards its whole body with `if( XComHQ.Squad[...].ObjectID > 0 )`, so
+  on an empty slot it fell through and did nothing: no picker, no negative sound, **no way to put
+  a soldier on the mission**. The verb that opens `UIPersonnel_SquadSelect` is
+  `OnClickedSelectUnitButton`, reachable in vanilla only from `selectUnitButtonMC` and from
+  `HandleButtonSelect`'s own `if(ListItemIsEmpty())` branch — a special case we did not inherit,
+  because activating through `HandleButtonSelect` is deliberately refused (it dispatches on the
+  game's `m_eActiveButton` rather than ours). `SquadButton::SelectUnit` names it; it is **not** an
+  `ESquadSelectButton` member and is blocked from reaching `SetSquadSelectButtonFocus`.
 - **Join after cleaning, never before**: rank, name, nickname and class pre-joined in the companion
   left a separator behind when `CleanText` reduced a nickname to nothing. They are four fields,
   joined after each is cleaned. Header labels come from `UISquadSelectMissionInfo`'s own strings —

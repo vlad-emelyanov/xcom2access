@@ -563,6 +563,14 @@ enum class SquadButton {
     WeaponHeavy = 4,
     Utility = 5,
     Bond = 6,
+    /// ⛔ NOT an ESquadSelectButton member — the game has no button enum for the empty card,
+    /// only the `selectUnitButtonMC` mouse target and `HandleButtonSelect`'s own
+    /// `if(ListItemIsEmpty())` special case. So this value must never reach
+    /// SetSquadSelectButtonFocus, which takes the game's enum; it exists solely to name the
+    /// activation. Without it Enter on an empty card fired Edit, whose body is
+    /// `if( XComHQ.Squad[...].ObjectID > 0 )` — false on an empty slot, so it fell through and
+    /// did nothing at all, not even a negative sound (live 2026-08-23).
+    SelectUnit = 7,
 };
 
 /// One sub-control of a soldier card. A utility ROW expands into one entry per slot, because

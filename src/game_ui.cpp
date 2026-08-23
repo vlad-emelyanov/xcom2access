@@ -3155,6 +3155,12 @@ bool SetSquadSelectFocus(void* screen, int visualIndex, const SquadControl& cont
         SetListIndex(ReadPtrRaw(cards[visualIndex], kCardUtilitySlotsOffset), control.utilityIndex);
     }
 
+    // SelectUnit is ours, not ESquadSelectButton's (see the enum), so it must not be handed to a
+    // function that switches on the game's own values. The card focus above is the whole of what
+    // an empty card needs; enforcing that here rather than only documenting it.
+    if (control.button == SquadButton::SelectUnit)
+        return true;
+
     struct {
         int32_t ButtonEnumAsInt;
         uint32_t bReverseFocusIfUtility;
@@ -3184,6 +3190,12 @@ bool ActivateSquadControl(void* screen, const SquadSlot& slot, const SquadContro
         return CallNamedFunction(slot.handle, "OnClickedEditUnitButton", noParams);
     case SquadButton::Dismiss:
         return CallNamedFunction(slot.handle, "OnClickedDismissButton", noParams);
+    case SquadButton::SelectUnit:
+        // The empty card's only verb, and the one the game reaches from `selectUnitButtonMC` and
+        // from HandleButtonSelect's ListItemIsEmpty() branch. It sets m_iSelectedSlot, snaps the
+        // camera and opens UIPersonnel_SquadSelect with the screen's own ChangeSlot/UpdateState
+        // delegates — everything the mouse path does.
+        return CallNamedFunction(slot.handle, "OnClickedSelectUnitButton", noParams);
     case SquadButton::WeaponPrime:
         return CallNamedFunction(slot.handle, "OnClickedPrimaryWeapon", noParams);
     case SquadButton::WeaponHeavy:

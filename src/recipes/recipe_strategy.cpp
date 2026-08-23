@@ -117,22 +117,30 @@ ControlId SquadNeighbour(const std::vector<std::vector<ControlId>>& columns, siz
     return columns[from][row]; // no card that way: a self-edge, which KeyGraph::Move reads as a wall
 }
 
-// A card's words, matched on the GAME's own slot index — the index into XComHQ.Squad, which both
-// halves stamp independently: native off `UISquadSelect_ListItem.SlotIndex` (0x3D8, pinned by a
-// static_assert) and the companion off `Card.SlotIndex`.
+// A card's words, matched on its POSITION in m_kSlotList — the one index both halves walk in the
+// same order, native through TakeListItemsRaw and the companion through GetItem(i).
 //
-// ⛔ Never by push order. The companion skips a list entry that is not a UISquadSelect_ListItem
-// (`if (Card == none) continue;`) while native walks every item the list holds, so one skipped
-// entry would put every later card's words on the wrong soldier — and on this screen the wrong
-// soldier owns a DISMISS button. It is the same rule the commodity list already states beside its
-// own row match: "a row either half skipped cannot silently shift every entry after it".
-const WireRecord* FindCardBySlot(const std::vector<const WireRecord*>& cards, int slotIndex)
+// ⛔ NOT on SlotIndex, which is what this did until 2026-08-23, and not because push order is
+// safe: it is because SlotIndex IS NOT UNIQUE. UpdateData returns at `if(bDisabled) return;`
+// one line BEFORE it assigns SlotIndex, so every locked "increase squad size" card keeps the
+// default 0. Measured live, six cards read 0,1,0,2,3,0 — the two locked cards collided with the
+// genuine squad-slot-0 soldier, who took the FIRST match and spent the whole screen announcing
+// herself as "увеличьте размер отряда в партизанской школе". The lesson is narrower than "never
+// by push order" and outranks it: a field both halves read off the same object is only a KEY if
+// the game guarantees it is distinct, and this one is not even always written.
+//
+// The original concern still holds and is what makes the LIST POSITION the right answer rather
+// than a running counter: the companion skips a list entry that is not a UISquadSelect_ListItem
+// (`if (Card == none) continue;`) while native walks every item, so a skip must leave a HOLE —
+// caught by the warning at the call site — never shift every later card onto the wrong soldier.
+// On this screen the wrong soldier owns a DISMISS button.
+const WireRecord* FindCardByPosition(const std::vector<const WireRecord*>& cards, int listIndex)
 {
-    if (slotIndex < 0)
+    if (listIndex < 0)
         return nullptr;
     for (const WireRecord* rec : cards) {
-        const std::string text = RecField(*rec, "slot");
-        if (!text.empty() && atoi(text.c_str()) == slotIndex)
+        const std::string text = RecField(*rec, "pos");
+        if (!text.empty() && atoi(text.c_str()) == listIndex)
             return rec;
     }
     return nullptr;
@@ -211,15 +219,15 @@ std::unique_ptr<GraphRender> BuildSquadSelect()
     std::vector<std::vector<ControlId>> columns(view.slots.size());
     for (size_t i = 0; i < view.slots.size(); i++) {
         const GameUI::SquadSlot& slot = view.slots[i];
-        const WireRecord* cardRec = FindCardBySlot(cards, slot.slotIndex);
+        const WireRecord* cardRec = FindCardByPosition(cards, static_cast<int>(i));
         if (!cardRec && !cards.empty()) {
-            // The two halves read the same field off the same object, so a miss means a real
-            // disagreement rather than a missing companion. Say so once instead of quietly
-            // reading the card as an unnamed soldier.
+            // Both halves walk the same list in the same order, so a miss means the companion
+            // skipped that entry — the hole the position key exists to leave visible. Say so once
+            // instead of quietly reading the card as an unnamed soldier.
             static int sWarned = 0;
             if (sWarned++ < 3)
-                LOG_WARN("MenuNavigator: squad select — no card record for slot %d (%zu records)",
-                    slot.slotIndex, cards.size());
+                LOG_WARN("MenuNavigator: squad select — no card record at position %zu of %zu"
+                    " (slot %d)", i, cards.size(), slot.slotIndex);
         }
         const WireRecord& card = cardRec ? *cardRec : kEmptyRecord;
         const int visual = static_cast<int>(i);
@@ -232,7 +240,17 @@ std::unique_ptr<GraphRender> BuildSquadSelect()
 
         // An empty or locked card holds no controls a sighted player can use either; its one
         // node IS the card, and activating it opens the soldier picker.
-        if (slot.controls.empty()) {
+        //
+        // ⛔ Emptiness is the COMPANION's answer (the unit ref behind the card), never
+        // `slot.controls.empty()`. An unmanned card keeps every widget it was built with — live
+        // 2026-08-23 the "ВЫБРАТЬ БОЙЦА" card still owned a two-item UtilitySlots list under a
+        // hidden parent — so native reports controls for it and this branch never fired. The card
+        // was built as an ordinary one whose first node is EDIT, and Edit on an empty slot falls
+        // straight through `if( XComHQ.Squad[...].ObjectID > 0 )` and does nothing: the player
+        // heard "ВЫБРАТЬ БОЙЦА, ИЗМЕНИТЬ" and could not put a soldier on the mission at all.
+        // A widget tree cannot answer "is anyone standing here"; only the unit ref can.
+        const bool cardEmpty = !RecField(card, "empty").empty();
+        if (slot.controls.empty() || cardEmpty) {
             ControlId id = ControlId::Referenced(slot.handle, "squad/card/" + std::to_string(i));
             columns[i].push_back(id);
             gFocus[id.StructuralKey] = FocusTarget{-1, nullptr, false, [visual]() {
@@ -249,7 +267,10 @@ std::unique_ptr<GraphRender> BuildSquadSelect()
                     GameUI::SquadSelectView v = GameUI::ReadSquadSelect(gScreen);
                     if (visual < static_cast<int>(v.slots.size())) {
                         GameUI::SquadControl pick;
-                        pick.button = GameUI::SquadButton::Edit; // the empty card's own click
+                        // OnClickedSelectUnitButton — the empty card's own click, and the only
+                        // handler that opens UIPersonnel_SquadSelect. Edit sat here and was a
+                        // no-op on an unmanned slot; see the note above the branch.
+                        pick.button = GameUI::SquadButton::SelectUnit;
                         GameUI::ActivateSquadControl(gScreen, v.slots[visual], pick);
                     }
                 };
