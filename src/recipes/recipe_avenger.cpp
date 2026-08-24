@@ -1279,6 +1279,142 @@ bool SetChooseFacilityListIndex(void* screen, int index)
     return GameUI::SetChooseFacilitySelection(GameUI::ReadChooseFacility(screen), index);
 }
 
+// ---- the research report (UIResearchReport) — docs/research-report-recon.md ----
+//
+// The research-complete dossier: letterhead, the project's name and codename, the completion
+// date, what it unlocked, and Tygan's write-up. Raised from four places — the Labs on entry, the
+// Shadow Chamber, either archive's "View Report" row, and the GEOSCAPE when an instant tech
+// finishes with no Labs visit at all.
+//
+// EVERY WORD COMES FROM THE FLASH CAPTURE, and this is the first recipe with no UnrealScript
+// behind it. The screen resolves eight strings into locals, pushes them once, and retains none of
+// them — not even the TechRef it was called with, which is what rules out a companion class
+// re-deriving them. It spawns no widgets either, so the tree is empty as well.
+// GameUI::ReadResearchReport is the whole reading.
+//
+// A DOCUMENT, NOT A CONTROL SET. One node per line and NO StartRow anywhere: an item added
+// outside a row becomes its own single-item row, so the report reads DOWN the way it is laid out,
+// and GraphBuilder stamps no "N of M" — it only does that within a row holding more than one item,
+// and "TOP SECRET, 2 of 11" reads as a menu position on a classification banner. The sentence
+// axis a paragraph could carry (a row per paragraph, sentences to the Right) was considered and
+// dropped: prose stacked vertically on screen should not be walked sideways.
+//
+// The cost that buys: one paragraph is one node, so a node runs to ~600 characters and a
+// description with no internal break could be one node of 2438. Pressing Down interrupts it
+// (Focus clears the queue), which is the escape hatch — a deal made deliberately rather than
+// discovered live.
+//
+// ⛔ ONE KEY CLOSES IT, AND WHICH ONE DEPENDS ON THE STACK. OnUnrealCommand (:199) answers Escape
+// only while an exact UIResearchArchives is in the stack and Enter only while it is not, marking
+// the other one handled either way — so the wrong key is SWALLOWED and does nothing. The button
+// node therefore carries the matching key and the matching word together, or it advertises a way
+// out of a modal that does not work.
+
+std::unique_ptr<GraphRender> BuildResearchReport()
+{
+    const GameUI::ResearchReportView view = GameUI::ReadResearchReport(gScreen);
+
+    // The project name rides in every node id, for the popup recipe's reason: the differ compares
+    // node IDENTITY, so two reports read back to back through the same screen slot would look
+    // like one unchanged graph and the second would go unspoken.
+    const std::string key = "report/" + view.project + "/";
+
+    GraphBuilder b;
+    b.BeginStop("report");
+
+    // ⛔ AN EMPTY-LABEL CONTEXT, AND THE LABEL IS EMPTY ON PURPOSE. This exists only to reach
+    // SuppressChildPositions, which is the kernel's own answer for "a log-like stream where
+    // '37 of 200' is noise" — and a document is exactly that. Without it every line gets stamped:
+    // single-item rows do NOT escape StampPositions, they are grouped by (Parent, StopKey,
+    // segment) and stamped as a group (GraphBuilder.cpp:414), so the first live run said
+    // "СОВЕРШЕННО СЕКРЕТНО, 1 of 14" — a menu position on a classification banner, which is the
+    // very thing the popup recipe's comment warns about.
+    //
+    // The label stays empty because the header is the SCREEN NAME (see ResearchReportName), spoken
+    // once on attach; as a context label too it would be said twice in a row. An empty
+    // announcement part is silent by contract — AppendPhrase returns early on it — so this
+    // contributes no words and no stray separator, only the suppression.
+    b.PushContext("", "", /*positions*/ false);
+
+    // Nothing joins gFocus: the screen has no navigable widget at all to push the game's focus at
+    // (ContinueButton is declared and never assigned, UIResearchReport.uc:23).
+    int added = 0;
+    auto say = [&](const char* id, const std::string& text) {
+        // An empty field is ordinary here — a repeatable tech has no codename, a datapad has no
+        // unlocks — and an unlabelled node is a control that silently ceases to exist. Drop it.
+        if (text.empty())
+            return ControlId();
+        ControlId node = ControlId::Structural(key + id);
+        b.AddLabel(node, [text]() { return text; });
+        added++;
+        return node;
+    };
+
+    // ⛔ THE HEADER IS NOT A NODE. It is the screen name (see ResearchReportName), spoken once on
+    // attach — as a node too it would be said twice in a row, which is the wording defect class
+    // CLAUDE.md already lists against the recentering readout.
+    //
+    // Order is the PAGE's, not the push's: the greeble is the letterhead's second half and belongs
+    // beside the header, not after a 2400-character description where arg 7 sits.
+    say("greeble", view.greeble);
+    const ControlId project = say("project", view.project);
+    say("code", view.code);
+    say("date", view.date);
+    for (size_t i = 0; i < view.unlockLines.size(); i++)
+        say(("unlock/" + std::to_string(i)).c_str(), view.unlockLines[i]);
+    for (size_t i = 0; i < view.descriptionLines.size(); i++)
+        say(("para/" + std::to_string(i)).c_str(), view.descriptionLines[i]);
+
+    if (added == 0) {
+        // Recognised the screen and captured nothing. Say so rather than attaching a graph that is
+        // only a close button: silence here is indistinguishable from no screen at all, and the
+        // player still has to press something to escape it.
+        say("empty", Vocab::ReportNoText);
+    } else if (project.IsValid()) {
+        // Land on the tech, not on the letterhead: it is the fact the player opened this for, and
+        // the greeble above it stays one Up away. Everything below is the document in page order,
+        // with the unlocks — the half a player acts on — BEFORE the prose, so nothing forces them
+        // through Tygan to reach it. That is why the whole report can be one stop.
+        b.SetStart(project);
+    }
+
+    b.PopContext(); // the button is not part of the document
+    b.BeginStop("continue");
+    {
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(
+            view.fromArchives ? Vocab::ReportBack : Vocab::ReportContinue));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        // gScreen is read AT ACTIVATION rather than captured — the handler runs from the input
+        // drain, a frame or more after this render. `fromArchives` is captured, and that is safe
+        // for a reason worth stating: it is a fact about a screen BELOW this one, which cannot
+        // leave the stack while this one sits on top of it.
+        vt.OnActivate = [archives = view.fromArchives]() {
+            GameUI::SendScreenCommand(
+                gScreen, archives ? GameUI::kCmdEscape : GameUI::kCmdEnter);
+        };
+        b.AddItem(ControlId::Structural(key + "close"), std::move(vt));
+    }
+
+    return b.Build();
+}
+
+void* ProbeResearchReport()
+{
+    void* screen = GameUI::FindResearchReportScreen();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+std::string ResearchReportName()
+{
+    // The screen's OWN localized letterhead ("RESEARCH REPORT"), which the capture hands us along
+    // with everything else. Not joined with the project name: that is the landing node, and the
+    // two would be spoken back to back.
+    const GameUI::ResearchReportView view = GameUI::ReadResearchReport(gScreen);
+    return view.header.empty() ? std::string(Vocab::ScreenResearchReport) : view.header;
+}
+
 } // namespace
 
 // ---- the recipes this file defines ----
@@ -1311,6 +1447,14 @@ const Recipe kPersonnelRecipe{
 // Above the facility grid and UIBuildFacilities it is opened from, below any dialog it raises.
 const Recipe kChooseFacilityRecipe{"choose facility", ProbeChooseFacility, BuildChooseFacility,
     ChooseFacilityName, SetChooseFacilityListIndex};
+
+// HIGH — above every screen it can be raised over, which is an unusually wide set: the Labs and
+// the Shadow Chamber (a UIFacility), the two archives (the commodity list), and the GEOSCAPE, for
+// an instant tech that completes with no Labs visit. It is a modal in all four cases, so it wins
+// against each of them; only the dialog and popup recipes sit above it. No SetListIndex — the
+// screen has no UIList, and no navigable widget of any kind.
+const Recipe kResearchReportRecipe{
+    "research report", ProbeResearchReport, BuildResearchReport, ResearchReportName};
 
 } // namespace Recipes
 } // namespace MenuNavigator

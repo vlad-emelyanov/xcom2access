@@ -1144,9 +1144,18 @@ std::unique_ptr<GraphRender> BuildPopup()
     // OWN single-item row, so the message reads DOWN with Up/Down instead of across with
     // Left/Right. A message is prose stacked vertically on screen, not a strip of side-by-side
     // controls, and walking it sideways contradicts both the layout and the reading order.
-    // It also drops the "N of M" stamp, which GraphBuilder only applies within a row holding more
-    // than one item — right here, because "СОЛДАТ ПОЛУЧИЛ НОВОЕ ЗВАНИЕ, 1 of 6" reads as a menu
-    // position on something that is a sentence.
+    //
+    // ⚠ WHAT IT DOES NOT DO IS DROP THE "N of M" STAMP — this comment used to claim it did, and
+    // the claim cost the research report recipe a live defect ("СОВЕРШЕННО СЕКРЕТНО, 1 of 14").
+    // Single-item rows are NOT exempt: StampPositions groups them by (Parent, StopKey, segment)
+    // and stamps the group (GraphBuilder.cpp:414). The only thing suppressing the stamp here is
+    // the PushContext above, whose `positions` false sets SuppressChildPositions — which is why
+    // it is the right call for "СОЛДАТ ПОЛУЧИЛ НОВОЕ ЗВАНИЕ, 1 of 6" reading as a menu position
+    // on something that is a sentence.
+    //
+    // ⚠ AND IT IS CONDITIONAL, so a popup whose title reads empty still stamps its message lines.
+    // Unverified live; the fix is an empty-label context (the research report recipe carries the
+    // worked version), not a second PushContext with invented words.
     for (size_t i = 0; i < lines.size(); i++) {
         const std::string& line = lines[i];
         b.AddLabel(ControlId::Structural(key + "line/" + std::to_string(i)),

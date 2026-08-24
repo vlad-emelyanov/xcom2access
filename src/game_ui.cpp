@@ -4565,6 +4565,126 @@ AlertView ReadAlertText(
     return v;
 }
 
+// ---- the research report (UIResearchReport) — the capture's second consumer ---------------------
+//
+// See the header for why the capture is the only route in. What is worth keeping HERE is how much
+// less this needs than the alert reader above it: no symbol table, no per-panel field map, no
+// asset-path heuristic, no button matcher, and no cache. The function name is unique to this
+// screen and the argument order is fixed by the .uc, so the read is eight positions and nothing
+// else — which is what the capture was supposed to feel like.
+//
+// No cache, deliberately: the words are already OUR map (the capture's), so re-reading them is a
+// hash lookup and eight string copies per render. ReadAlertText caches because its fallbacks reach
+// into Flash with GetVariableString, which UIMCController.uc itself calls "immediate and blocking
+// … very expensive". Nothing here does.
+
+namespace {
+
+// AS_UpdateResearchReport's parameter order (UIResearchReport.uc:183-195).
+//
+// ⛔ READ BY POSITION, and that is the point of StringArgs() keeping non-string operands as empty
+// entries: index 4 is an asset path that must never be spoken, and a consumer that dropped it
+// instead of skipping it would shift the description into the unlocks and the greeble into the
+// description. Same rule as the wire format's repeating fields.
+enum ResearchReportArg {
+    kReportHeader = 0,
+    kReportProject = 1,
+    kReportCode = 2,
+    kReportDate = 3,
+    kReportImage = 4, // TechState.GetImage() — never spoken
+    kReportUnlocks = 5,
+    kReportDescription = 6,
+    kReportGreeble = 7,
+};
+
+std::string ReportArg(const std::vector<std::string>& args, size_t index)
+{
+    return index < args.size() ? CleanText(args[index]) : std::string();
+}
+
+// Split on newlines FIRST, then clean each line — see the header. Empty lines go: the description's
+// paragraph break is "\n\n", which yields one, and a tech with no unlocks yields nothing at all.
+std::vector<std::string> ReportArgLines(const std::vector<std::string>& args, size_t index)
+{
+    std::vector<std::string> lines;
+    if (index >= args.size())
+        return lines;
+    const std::string& raw = args[index];
+    size_t start = 0;
+    for (;;) {
+        const size_t hit = raw.find('\n', start);
+        std::string line = CleanText(raw.substr(start, hit == std::string::npos ? hit : hit - start));
+        if (!line.empty())
+            lines.push_back(std::move(line));
+        if (hit == std::string::npos)
+            return lines;
+        start = hit + 1;
+    }
+}
+
+} // namespace
+
+void* FindResearchReportScreen()
+{
+    return FindStackScreenRaw("UIResearchReport");
+}
+
+ResearchReportView ReadResearchReport(void* screen)
+{
+    ResearchReportView v;
+    v.screen = screen;
+    if (!screen)
+        return v;
+
+    // ⛔ EXACT CLASS, not the class chain, because that is what the screen's own test is:
+    // UIScreenStack.GetScreen compares `ScreenClass == Screens[i].Class` (UIScreenStack.uc:613),
+    // while the IsA matching everyone assumes lives two functions further down in
+    // GetFirstInstanceOf. UIShadowChamberArchives extends UIChooseResearch and is NOT a
+    // UIResearchArchives — so a report opened from the SHADOW archives closes with Enter, exactly
+    // like the one that opens in the Labs, and its nav help says "Continue" too. FindStackScreenRaw
+    // compares class-name strings, which reproduces that semantics for free.
+    v.fromArchives = FindStackScreenRaw("UIResearchArchives") != nullptr;
+
+    // The screen pushes through its OWN MC (AS_UpdateResearchReport calls MC.BeginFunctionOp
+    // directly), unlike UIAlert, which paints a library panel — so the cache index is the screen's.
+    const int32_t index = FlashShadow::PanelCacheIndex(screen);
+    if (index < 0)
+        return v;
+
+    FlashShadow::Call call;
+    if (!FlashShadow::GetCall(index, "UpdateResearchReport", call))
+        return v;
+
+    const std::vector<std::string> args = call.StringArgs();
+    v.captured = true;
+    v.header = ReportArg(args, kReportHeader);
+    v.project = ReportArg(args, kReportProject);
+    v.code = ReportArg(args, kReportCode);
+    v.date = ReportArg(args, kReportDate);
+    v.greeble = ReportArg(args, kReportGreeble);
+    v.unlockLines = ReportArgLines(args, kReportUnlocks);
+    v.descriptionLines = ReportArgLines(args, kReportDescription);
+
+    // ⛔ LOG ON CHANGE, NEVER PER READ. This is called from Build() AND ScreenName(), so twice a
+    // poll — about twenty times a second — and the first live run wrote the same line 20+ times
+    // for one report. A log that floods is a log nobody can read a defect out of, and the ASI
+    // keeps only three sessions.
+    //
+    // The screen pointer is COMPARED and never dereferenced (the WireCache rule), and the project
+    // rides in the key beside it so a second report landing on a reused address still logs.
+    static void* sLastScreen = nullptr;
+    static std::string sLastProject;
+    if (screen != sLastScreen || v.project != sLastProject) {
+        sLastScreen = screen;
+        sLastProject = v.project;
+        LOG_INFO("ResearchReport: '%s' from cache index %d — %zu operand(s), %zu unlock line(s), "
+                 "%zu paragraph(s)%s",
+            v.project.c_str(), index, args.size(), v.unlockLines.size(), v.descriptionLines.size(),
+            v.fromArchives ? ", archives (Escape closes)" : " (Enter closes)");
+    }
+    return v;
+}
+
 // ---- the commodity list (UIInventory and its dozen subclasses) ----
 //
 // The most reused screen shape in the strategy layer, and the one where the widget tree is

@@ -68,6 +68,21 @@ inline constexpr const char* PopupNoText = "No readable text";
 inline constexpr const char* PopupContinue = "Continue";
 inline constexpr const char* PopupDismiss = "Dismiss";
 
+// The research report (docs/research-report-recon.md). The screen pushes its own localized
+// "RESEARCH REPORT" and we read that, so the fallback is reached only when the Flash capture
+// found nothing at all.
+inline constexpr const char* ScreenResearchReport = "Research report";
+/// ⛔ The report's close key depends on the screen stack, so its BUTTON must too — one of these
+/// two, never both. The game's own words are unreachable: AddContinueButton spawns a Flash
+/// X2ContinueButton whose label lives in the movie, and on mouse-active PC the back button is an
+/// icon rather than text (UINavigationHelp.uc:99-107).
+inline constexpr const char* ReportContinue = "Continue";
+inline constexpr const char* ReportBack = "Back";
+/// The capture came back empty on a screen we recognised. Said out loud for the same reason
+/// PopupNoText is: the player is looking at a modal they still have to dismiss, and silence
+/// there is indistinguishable from no screen at all.
+inline constexpr const char* ReportNoText = "Report text unavailable";
+
 // The in-game Escape menu. It carries its own localized title and only falls back to this.
 inline constexpr const char* ScreenPauseMenuFallback = "Pause menu";
 

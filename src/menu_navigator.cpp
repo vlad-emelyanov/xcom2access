@@ -415,7 +415,8 @@ void SpeakStateAfterChange()
 //    it, or the layer would attach to the screen underneath.
 //  · Settings stacks on the shell, so the shell is last.
 // Each recipe's own definition in src/recipes/ carries the rest of its ordering argument.
-const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kNarrativeRecipe, &kIronManRecipe,
+const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchReportRecipe,
+    &kNarrativeRecipe, &kIronManRecipe,
     &kSoundtrackRecipe, &kOptionsRecipe, &kDifficultyRecipe, &kSaveLoadRecipe, &kPauseMenuRecipe,
     &kPersonnelRecipe, &kChooseFacilityRecipe, &kPromotionRecipe, &kArmoryLoadoutRecipe,
     &kSquadSelectRecipe,

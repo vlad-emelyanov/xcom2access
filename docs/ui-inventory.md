@@ -60,7 +60,6 @@ What actually blocks a campaign, in rough play order:
 11. **`UIRecruitSoldiers`**, **`UIBlackMarket`** + **`UIBlackMarket_Sell`** — recruiting and
     selling. (`_Sell` is explicitly NOT in the commodity family — own list, own card call;
     `avenger-view-recon.md` §14.1.)
-12. **`UIResearchReport`** — the research-complete report.
 
 Plus one standing ⚠: **`UIShellStrategy`** below — possibly a live bug in an existing surface.
 
@@ -210,7 +209,7 @@ launch/cancel), the single biggest unreadable surface left in the strategy layer
 | `UIMissionSummary` | post-mission stats | ⬜ **P1** |
 | `UIChosenMissionSummary` | Chosen encounter result | ⬜ **P1** |
 | `UIAfterAction` | post-mission squad walk-up (wounds, promotions) | ⬜ **P1** |
-| `UIResearchReport` | research complete | ⬜ **P1** |
+| `UIResearchReport` | research complete | ✅ research report recipe (`research-report-recon.md`) |
 | `UIResearchUnlocked` | new research available | ⬜ P2 |
 | `UIEndGameStats` | campaign-end stats | ⬜ P3 |
 | `UISoldierIntroCinematic` | soldier intro cinematic card | ⬜ P3 (mostly visual) |

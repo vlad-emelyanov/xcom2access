@@ -155,6 +155,7 @@ in **Hard rules** below instead.
 | Commodity list (13 screens) | `game_ui.cpp` | `X2AccessCommodityReader.uc`, `commodity list` | surfaces/avenger.md | `avenger-view-recon.md` §14 |
 | Personnel roster | `game_ui.cpp` | `X2AccessPersonnelReader.uc`, `personnel roster` | surfaces/avenger.md | `avenger-view-recon.md` §15 |
 | Choose facility | `game_ui.cpp` | `X2AccessBuildFacilityReader.uc`, `choose facility` | surfaces/avenger.md | `avenger-view-recon.md` §16 |
+| Research report | `game_ui.cpp` (Flash capture) | — (no companion), `research report` | — | `research-report-recon.md` |
 | Geoscape tray | `geo_scanner.cpp` | `X2AccessGeoScanner.uc`, `geoscape tray` | surfaces/strategy.md | `geoscape-recon.md` |
 | Region actions (contact, radio relay) | — | `X2AccessGeoScanner.uc`, `geoscape tray` stop 2 | surfaces/strategy.md | `geoscape-recon.md` §16 |
 | Skyranger briefing | `dropship.cpp` | `X2AccessDropshipReader.uc` | surfaces/strategy.md | `dropship-briefing-recon.md` |
@@ -1029,7 +1030,10 @@ free, earmarked for the vantage read.
    must actually fly the Avenger to a POI.
    **Not yet run live** (builds clean, unexercised): Skyranger briefing, modal/popup
    recipe, commlink transient reader, armory loadout, personnel roster, commodity list, inside-a-room
-   recipe, selected-unit readout, objectives readout (`Ctrl+X`). Each needs a first pass against
+   recipe, selected-unit readout, objectives readout (`Ctrl+X`), research report
+   (`research-report-recon.md` §7 — the Flash capture's SECOND consumer, so the pass must also
+   check `just dev-flashqueue` against `just dev-speech`, and must cover the Shadow Chamber path,
+   which is the only one that puts this screen on the 2D movie). Each needs a first pass against
    `just dev-speech` and a shape-count of the speech ring afterwards. For the objectives readout the
    OFFSETS are already confirmed live (2026-08-23, `LostAndAbandonedB`) and the `static_assert`s
    pass — what is unexercised is the spoken COMPOSITION, plus the Avenger/dark-event and

@@ -1044,6 +1044,47 @@ AlertView ReadAlertText(
 /// same kind with different words is never answered from the first one's reading.
 void ResetAlertTextCache();
 
+// ---- the research report (UIResearchReport) ----
+//
+// docs/research-report-recon.md. The whole screen is ONE Flash push: InitResearchReport
+// (UIResearchReport.uc:79) resolves eight strings into LOCALS and hands them to
+// AS_UpdateResearchReport, retaining not one of them — not even the TechRef it was called with,
+// which is what rules out re-deriving the words in the companion. It spawns no widgets either
+// (ContinueButton is declared at :23 and never assigned), so the widget tree is empty too.
+//
+// ✅ So the words come from the Flash command-queue capture, and this is the cleanest case for it
+// yet. The batch is matched by NAME — "UpdateResearchReport" is unique to this screen — rather
+// than by UIAlert's "most recent batch carrying a string", and the argument layout is fixed by the
+// .uc, so the image path at index 4 is skipped by POSITION rather than by looking like an asset.
+struct ResearchReportView {
+    void* screen = nullptr;
+    bool captured = false; // the Update batch was found; false => there is nothing to say
+
+    /// ⛔ Which key closes the screen, and NOT "did the player come from an archive" — see
+    /// ReadResearchReport for why the two differ.
+    bool fromArchives = false;
+
+    std::string header;  // "RESEARCH REPORT" (localized, arg 0)
+    std::string project; // the tech's display name (arg 1)
+    std::string code;    // "CODENAME: Orsted" — the game joined it itself with @ (arg 2)
+    std::string date;    // completion date, localized field order (arg 3)
+    std::string greeble; // "TOP SECRET" (localized, arg 7) — rendered text, so it is read
+
+    /// Args 5 and 6, already split on their newlines and cleaned. ⛔ SPLIT BEFORE CLEANING: both
+    /// arrive as one string with \n (and \n\n between the description's paragraphs), and CleanText
+    /// collapses every run of whitespace — so cleaning first would fuse a four-paragraph report
+    /// into one 2438-character node. Same family as the join-after-cleaning rule.
+    std::vector<std::string> unlockLines;
+    std::vector<std::string> descriptionLines;
+};
+
+/// Read the report's eight strings out of the Flash capture. Game thread only.
+ResearchReportView ReadResearchReport(void* screen);
+
+/// The report screen, or null. Stack-managed — four call sites push it, all through
+/// XComHQPresentationLayer.
+void* FindResearchReportScreen();
+
 // ---- the commodity list (UIInventory and everything derived from it) ----
 //
 // ONE view over about a dozen screens, because Firaxis built them as one: choose research,
