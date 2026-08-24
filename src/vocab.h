@@ -153,6 +153,43 @@ inline constexpr const char* CommodityOwned = "owned";
 // list heading and reaches this only in the window between attaching and the companion answering.
 inline constexpr const char* ScreenChooseFacilityFallback = "Build facility";
 
+// ---- covert actions (docs/covert-actions-recon.md) ----
+//
+// Nearly every word on this screen is the game's own: the row text is retained on the widget, and
+// the card, the risks and the slots come off the screen's own accessors through the companion.
+// Two are ours, and both name a thing the game states with no words at all.
+inline constexpr const char* ScreenCovertActions = "Covert actions";
+/// ⛔ The one AID on this surface, and it is a warning about a control's SIDE EFFECT.
+/// SelectedItemChanged empties the outgoing action's staff and cost slots before switching
+/// (UICovertActions.uc:883), so arrowing to a neighbouring action to compare it silently throws
+/// away the squad you just assembled. A sighted player watches the portraits vanish; speech gets
+/// nothing. Said on the SELECTED row only, and only while something is actually in a slot, so it
+/// costs nothing until there is something to lose — and it is PREVENTIVE rather than a report,
+/// because the write-back runs before the move's own readout and anything said there would be
+/// interrupted by it.
+inline constexpr const char* CovertActionStaffed
+    = "staffed; moving to another action clears it";
+
+// ---- resistance orders (UIStrategyPolicy) ----
+//
+// The screen carries no title of its own — DeckTitle names the HAND, not the board — so this one
+// is ours outright. The other three each name something the screen draws with no words at all.
+inline constexpr const char* ScreenPolicy = "Resistance orders";
+/// A slot with nothing in it. The game draws an empty card frame and gives it no text whatever
+/// (RealizeColumn hints only the wild-card column's blanks), and an unnamed node is a control
+/// that silently ceases to exist — on the one screen where the empty slots are the whole point.
+inline constexpr const char* PolicyEmptySlot = "empty slot";
+/// The card currently picked up. UIStrategyPolicy.SelectCard is a two-step state machine over
+/// InspectingCard, and a sighted player sees which card is held because it is dragged under the
+/// cursor. With no drag there is nothing to see, so the state is said.
+inline constexpr const char* PolicyHeld = "held";
+/// ⛔ Said ONCE, on the screen name, rather than on each of a dozen cards. Outside the monthly
+/// report bEnableDragging is false and every card refuses — a sighted player discovers that by
+/// clicking and reading the popup, which is cheap for them and costs a blind player a modal per
+/// attempt. The cards keep their activation anyway, so pressing one still raises the game's own
+/// explanation.
+inline constexpr const char* PolicyReadOnly = "orders cannot be changed now";
+
 // The personnel roster. Almost every word there is the game's own — the rows are re-derived from
 // the unit, the tab names and the sort captions are localized strings off the screen, and even
 // the empty-list line is the one PopulateListInstantly pushes into Flash. These five are the

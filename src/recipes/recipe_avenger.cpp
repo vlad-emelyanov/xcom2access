@@ -131,20 +131,50 @@ void AddRoomFunctions(GraphBuilder& b, const GameUI::RoomView& view)
     }
 }
 
+// The Resistance Ring's covert-op readout — "COVERT ACTIONS, Recruit Scientist, 12 Days", or the
+// game's own "NO CURRENT COVERT ACTION, Assign a new action". UIFacility_CovertOpsStatus retains
+// nothing (see the companion's header), so this is a wire read like the bottom-bar labels; the
+// record is absent on every room but the Ring, which is the only one that spawns the panel.
+std::string RoomCovertOpsLine(const GameUI::RoomView& view)
+{
+    // ⛔ NOT gated on view.funcs being non-empty, tempting though it is — the Ring happens to
+    // have a bottom-bar button too, so the gate would work today and would turn any future room
+    // that grows a status panel without a button into SILENCE, which is the one failure mode a
+    // blind player cannot tell from "there is nothing here". The cost of dropping it is one
+    // outbound call per room ENTRY, not per render: the cache below keys on the screen.
+    const std::vector<WireRecord>& words = FetchFacilityWords(view);
+    const WireRecord* rec = FindRecord(words, "covertops");
+    if (!rec)
+        return {};
+    return JoinParts(*rec, {"label", "title", "time"});
+}
+
 std::unique_ptr<GraphRender> BuildRoom()
 {
     GameUI::RoomView view = GameUI::ReadRoom(gScreen);
 
     GraphBuilder b;
 
-    // The crew line first, and as its own stop: "SCIENTISTS: 0" is drawn in the room and is
-    // reachable by no keyboard in the game. It is also the one number that decides whether the
+    // The room's STATUS lines first, as their own stop: "SCIENTISTS: 0" is drawn in the room and
+    // is reachable by no keyboard in the game. It is also the one number that decides whether the
     // room's verbs will do anything — a lab with no scientists researches nothing — so it reads
-    // before the actions rather than after them.
+    // before the actions rather than after them. The Ring's covert-op panel is the same kind of
+    // fact about the same kind of question, so it joins the same stop.
+    bool status = false;
     if (!view.staffTitle.empty() && !view.staffSkill.empty()) {
         b.BeginStop("crew");
+        status = true;
         const std::string crew = view.staffTitle + Vocab::RoomCrewSeparator + view.staffSkill;
         b.AddLabel(ControlId::Structural("room/crew"), [crew]() { return crew; });
+    }
+
+    const std::string covertOps = RoomCovertOpsLine(view);
+    if (!covertOps.empty()) {
+        // Same stop KEY whether or not the crew line opened it, so the stop's remembered position
+        // survives a room that has one line and not the other.
+        if (!status)
+            b.BeginStop("crew");
+        b.AddLabel(ControlId::Structural("room/covertops"), [covertOps]() { return covertOps; });
     }
 
     // The room's OWN controls before the HUD's submenu, because that is the order the game

@@ -155,8 +155,70 @@ speech is serial.
 - ⛔ **Change detection is deliberately NOT in native** — all three surfaces re-render continuously
   (the commlink retypes its subtitle as the line scrolls), so "what is on screen" reads true for
   hundreds of consecutive polls and only the model can turn that level into an edge.
+- ⛔ **The commlink obeys the game's SUBTITLE SETTING, because our speech IS the subtitle.** With
+  `Interface → Show Subtitles` cleared, `UINarrativeCommLink.RefreshSubtitleVisibility` calls
+  `AS_HideSubtitles` and the text block leaves the screen while the portrait and speaker name stay;
+  reading the line anyway would make the one option in the game that means *stop showing me the
+  words* the one option the mod ignores. `PollCommLink` tests the same flag the widget tests —
+  `` `XENGINE.bSubtitlesEnabled ``, the ENGINE's copy, not `` `XPROFILESETTINGS.Data.m_bSubtitles ``
+  where the checkbox writes: `XComOnlineProfileSettings.ApplyOptions` copies one to the other, so
+  the profile value can be a toggle ahead of what is actually being drawn, and the drawn one is
+  what parity is defined against. The last-spoken marker is cleared on the way out so re-enabling
+  mid-conversation still announces the line in progress. ⚠ Two of the game's own paths already
+  interact with this and neither replaces the gate: an `AkEvent` with `HideSpeaker` hides the whole
+  commlink when subtitles are off (`UINarrativeMgr:1417` — caught by the existing `bIsVisible`
+  test), and `EndCurrentConversation` is delayed 0.75-1.5 s only while subtitles are ON, so the
+  widget vanishes a beat sooner with them off.
 - **Tick order is load-bearing in one place**: `Dropship` runs after `TransientReader`, so the
   arrival block queues behind Central rather than over him.
+
+## Movie subtitles (`src/movie_subtitles.cpp`)
+
+The OTHER subtitle system, and nothing else in this project touches it: the text the engine draws
+over a full-screen `.bk2` — the WOTC pre-intro, the Chosen strongholds, the XP autopsies, the final
+movie. The base game's tentpole cinematics are NOT this; they are in-engine matinees over which
+`UINarrativeMgr` deliberately keeps the commlink alive (`HideUIForCinematics` spares
+`UINarrativeCommLink` and `UIStrategyTutorialBox`), so the transient reader above has them. The two
+can never both be showing, which is why their lines cannot collide.
+
+- **The pipeline**: `XComGame/Movies/<name>.txt` is a cue track (`startMs endMs CueKey`) that the
+  Bink player loads beside the video; each cue resolves through `Localize("Subtitles", <CueKey>,
+  "Subtitles")` and is drawn by `XComEngine::RenderExtraSubtitles`. **No `UIScreen`, no Flash, no
+  script-visible property anywhere on it** — which is why this surface reads a raw C++ object,
+  the only place in the mod that does.
+- ⛔ **There are TWO `Subtitles` loc files and only one is the right one.**
+  `Engine/Localization/<lang>/Subtitles.<lang>` is 72-76 bytes and holds `MovieIsPaused` alone; the
+  cue text is in **`XComGame/Localization/<lang>/Subtitles.<lang>`**, 167 KB of `CueKey="line"`
+  under `[Subtitles]`. Reading only the engine copy says the game ships no movie subtitles at all,
+  which is wrong and was believed here for one session.
+- ⛔ **Read what the game is SHOWING; do not rebuild it.** Both halves are plain files on disk and
+  a private parser would have been half the code — and a second subtitle system agreeing with the
+  game only by luck: it would keep talking after the player turned subtitles off, guess a language
+  instead of using the one the engine resolved, drift the moment a mod replaced a track, and miss
+  the loop counter that says which pass through a looping movie is running. So the cue table, the
+  frame, the option and the text are all read out of the live player. The only thing reproduced is
+  the interval scan that picks a cue for a time.
+- ⛔ **One hard-coded address, and it is validated before anything is dereferenced through it.**
+  `GFullScreenMovie` is at RVA `0x1DB8900`; the object's vtable must be RVA `0x13E9B28`, the one
+  `FFullScreenMovieBink`'s constructor writes. A mismatch disables the surface permanently with one
+  `LOG_ERROR`. **That check IS the pin** — none of these offsets can be `static_assert`ed, because
+  the type is not a UObject and appears in no SDK dump. Provenance for re-derivation: `FUN_14024c630`
+  is the lazy creator (names the global and the constructor), `FUN_1402073b0` the constructor
+  (writes the vtable, allocates the cue track into `+0x114`), `FUN_14023d7a0` `PlayMovie` (movie
+  name `+0x40`, `BINKHANDLE` `+0x84`), `FUN_14023ed10` `PumpMovie` (the time arithmetic, transcribed
+  line for line), `FUN_14034db80` the cue lookup.
+- **The option gate is the game's own test, not a policy of ours**: `PumpMovie` blanks the string
+  it just fetched unless `UEngine.bSubtitlesEnabled` is set OR the movie carries flag `0x80` on
+  `+0x60` (which is how a legal screen stays readable). Both are mirrored. `GameUI::SubtitlesEnabled`
+  reads the ENGINE's copy for the same reason the commlink does — the profile can be a toggle ahead.
+- **A missing localization is logged, not spoken.** The engine falls back to drawing the raw cue key;
+  we do not say "CIN_XP_PreIntro_01" out loud, because an internal name tells a blind player exactly
+  as much as it tells a sighted one. The `LOG_WARN` naming the cue is what keeps a missing line from
+  being indistinguishable from a silent one.
+- Speech is on the **Combat** channel (subtitles are a sequence — a line that interrupted its
+  predecessor would cut off the half not yet heard) with source **Flyover** (the game put it on
+  screen). A changed `BINKHANDLE` means a different movie and clears the last-cue marker, so a
+  second cinematic reusing a cue key is not swallowed as already-said.
 
 ## Squad select and armory loadout
 
@@ -212,3 +274,124 @@ speech is serial.
 - The loadout screen exists for verbs a keyboard cannot reach at all: strip items, weapons and gear
   are dispatched from mouse handlers and controller trigger codes, and unequip is the row's X
   button.
+
+## Covert actions
+
+The WOTC core strategy loop (`docs/covert-actions-recon.md` is the survey). It fails in three
+different ways at once, and each half of the mod owns one.
+
+- ✅ **The action ROWS really are retained**, which puts this screen in the `UIChooseFacility`
+  family rather than the `UIPersonnel_ListItem` one: `InitListItem` goes through
+  `UIListItemString.SetText`, so `Text` and `bDisabled` are readable natively — and
+  `Item.metadataInt = ActionState.ObjectID` (`UICovertActions.uc:368`) is written unconditionally
+  for every action row, which gives the two halves a **real join key** instead of a position.
+  Check which kind a row is before planning the read; this screen is the good kind.
+- ⛔ **Everything else retains nothing, and the slots are not even widgets.**
+  `UICovertActionSlot extends Object`, so the four slot cards never appear in the panel tree at
+  all and `/gui` cannot see them. The detail card, faction panel and risk rows are ordinary
+  `MC.BeginFunctionOp` pipes. What the screen DOES keep is `arrActions` — the state objects it
+  populated Flash FROM — so the companion re-derives every word through the screen's own public
+  accessors (`GetActionName`, `GetActionRisks`, `IsActionInfluenceMet`, …) with **not one
+  `XCOMHISTORY` lookup for the card**. Tier 2 of the read-the-screen rule, verbatim.
+- ⛔ **`CONFIRM ACTION` is MOUSE-ONLY in vanilla, and `EDIT` loadout is gamepad-only.**
+  `LaunchButton.DisableNavigation()` (`:433`) takes the launch button out of the navigator and the
+  only key path to `OnLaunchClicked` is `FXS_BUTTON_X` (`:1087`); `EditSoldierLoadout` is
+  `FXS_BUTTON_Y`. Both constants come only from `XboxTypeS_X`/`_Y` in `DefaultInput.ini` — there is
+  no keyboard binding in any input section, so a keyboard-only player cannot launch a covert action
+  at all. Re-providing those two is most of what this surface is for. Launch goes through
+  `UIButton::Click()`, which self-gates on `IsDisabled && bIsVisible`; the slot buttons go through
+  the slot object's own `HandleClick("theButton"/"theButton2")`.
+- ⛔ **Selecting a row is DESTRUCTIVE, so the warning is preventive rather than a report.**
+  `SelectedItemChanged` (`:883`) calls `ClearSlots()` BEFORE switching `ActionRef`, submitting a
+  game state that empties the OUTGOING action's staff and cost slots — so arrowing to a neighbour
+  to compare it throws away the squad you just assembled. The recipe mirrors vanilla rather than
+  decoupling (the confirm handler reads the screen's own `ActionRef`, so a focus that disagreed
+  would be the `UISaveGame.OnAccept` hazard at campaign scale). It cannot be ANNOUNCED after the
+  fact either: `WriteBackFocus` runs before `SpeakMove(..., interrupt=true)`, so anything said
+  there is cut off. `Vocab::CovertActionStaffed` therefore rides on the SELECTED row while it
+  still has something to lose.
+- ⛔ **A slot's gate is its own `IsDisabled`, not a re-derived condition.**
+  `UICovertActionStaffSlot.HandleClick` only tests `!GetAction().bStarted`, so with ANOTHER action
+  in progress it would happily open the personnel picker for an action that cannot be run —
+  vanilla is saved from that by `!bActionInProgress` in `OnUnrealCommand` and by
+  `DisableMouseHit()`. `UpdateData` records the same decision on the slot as `IsDisabled`
+  (`DisableAllSlots`/`EnableAllSlots`), so the verbs test that. One gate, the game's own.
+- **The game's own slot mode is skipped.** Enter on a row calls `SelectStaffSlots()`, which rewires
+  the screen's navigator into a 2×2 grid with its own Escape meaning. Our recipe owns the arrows,
+  so the slots are ordinary nodes in one graph and the 2×2 is flattened to four rows — geometry is
+  not information. A row therefore has NO Enter: selecting IS the action, and Tab is the way on to
+  the slots.
+- **The risks are a LIST, not a `GraphSheet`.** Two facts per row, no column headings drawn
+  anywhere, and "Soldier captured, moderate" is a complete sentence. ⚠ The bucket
+  (`Low`/`Moderate`/`High`) is all a sighted player gets — `GetRiskLevel` thresholds
+  `ChanceToOccur` and the raw number is never displayed, so speaking it would be the initiative-
+  order leak again.
+- ⚠ **We deliberately speak MORE risks than the screen draws.** `RefreshRisksPanel` bounds its loop
+  by `arrActions.Length` where it means `Labels.Length` (`:524`) — the number of ACTIONS on offer,
+  not of risks — so with fewer actions listed than the action has risks, the extras are blanked and
+  hidden from sighted players too. The Highlander does not fix it. This goes the opposite way to
+  the cheat-gated WOTC initiative order because the direction of the error is opposite: that
+  overlay withholds on purpose, this is a typo losing information the design means to show.
+  `covert-actions-recon.md` §6.1.
+- ⚠ `XComGameState_CovertAction` is a **counter-example to "the Highlander appends"**:
+  `AmbushMissionSource` (#485) and `RewardsNotGivenOnCompletion` (#810) are declared before the
+  struct declarations, so `StaffSlots`/`CostSlots`/`Risks`/`NegatedRisks` all move against a
+  vanilla dump. Nothing native reads them, but it is the concrete case `just sdk-adopt`'s vanilla
+  refusal exists for.
+
+## Resistance orders
+
+The card board (`UIStrategyPolicy` + `_Card` + `_DeckList`): three faction columns of order slots
+plus a wild-card column, the hand of unplayed orders below, and Continue.
+
+- ⛔ **Vanilla's keyboard has ONE verb here, and it is "leave".** `OnUnrealCommand` answers Escape
+  and Enter with the same `OnClickedContinue()`; every other branch is a controller constant
+  (`FXS_BUTTON_X` remove, `FXS_BUTTON_Y` filter, the DPAD navigation) or wrapped in
+  `` `ISCONTROLLERACTIVE ``. Placing a card is **drag and drop** — `UIStrategyPolicy_Card.OnMouseEvent`
+  is the only path into `SelectCard`. So this recipe is not narration over something that works;
+  like the debris room, it is what makes the screen exist.
+- ✅ **The cards retain their STRUCTURE and none of their words.** `CardRef`, `ColumnIndex`,
+  `ColumnSlot`, `bLocked` and `bVital` are real fields, so native reads the board layout for
+  itself; `SetCardData(Title, Desc, Quote, Image, …)` takes every word as a parameter, so the
+  companion re-derives them from the `XComGameState_StrategyCard` the ref names.
+- ⛔ **The cards are walked off the SCREEN'S OWN lists, never off the game state.**
+  `Screen.Columns[i]` and `Screen.Hand` are what the screen built, in the order it built them, and
+  both halves address a card by `(column, slot)` — column −1 being the hand. Re-deriving the layout
+  from `ResHQ.GetHandCards()` / `FactionState.GetCardSlots()` would be a second opinion about which
+  card is where, and the first time the two disagreed a verb would move the wrong card. Same
+  family as the squad-select key.
+- ⛔ **`SelectCard` is a two-step state machine, and reproducing the mouse gesture means
+  reproducing BOTH of its gates — which are not the same gate.** Picking a card UP is
+  `FXS_L_MOUSE_DOWN`, which requires the card's own `CanDragCard()`; putting one DOWN is
+  `FXS_L_MOUSE_IN` under `if( bDragging )`, which tests **nothing** about the target. A blank slot
+  is the normal drop target and `CanDragCard()` returns FALSE on one — so testing it on the drop
+  makes every empty slot unfillable, which is the whole screen.
+- ⛔ **`bEnableDragging` is the other gate and `SelectCard` does not check it** on the
+  mouse+keyboard path (only the controller branch does). Outside the monthly report the card's own
+  handler refuses and raises `UICantChangeOrders()`; calling `SelectCard` without that gate would
+  let a player rearrange orders on a day the game forbids it. The refusal is reproduced whole —
+  negative sound and the game's own popup — because that popup is the only statement anywhere of
+  why, and the popup recipe already reads it. ⚠ The read-only state is said ONCE, on the screen
+  name at attach (`Vocab::PolicyReadOnly`), not on each of a dozen cards: a sighted player finds
+  out by clicking, which is cheap for them and costs a blind player a modal per attempt.
+- **The board is its own geometry and menu mode already speaks it**: one ROW per column, its items
+  the slots, all sharing a row key — so Left/Right walks one faction's slots and Up/Down steps
+  between factions keeping the slot position, which is the comparison the board exists for. The
+  faction's name and influence are a `PushContext` around each row, announced once on entry rather
+  than repeated per card.
+- ⛔ **The held card is said with a plain Value part, NOT `AnnouncementKinds::Selected`.** Selected
+  also makes a node its stop's LANDING node, which would silently reroute Tab past every card
+  declared before it — the hazard the kernel's own comment names.
+- **An empty slot is NAMED, never skipped.** `RealizeColumn` hints only the wild-card column's
+  blanks, so most empty slots carry no text at all; an unnamed node is a control that silently
+  ceases to exist, on the one screen where the empty slots are what the player is aiming at.
+  `Vocab::PolicyEmptySlot`.
+- **No focus write-back through `Recipe::SetListIndex`**: the board is FIVE lists (four columns and
+  the hand) and that hook takes one index against one screen. `FocusTarget::button` instead — the
+  cards are navigable `UIPanel`s and the screen's navigator is live on mouse+keyboard
+  (`DisableNavigation` is called only under `` `ISCONTROLLERACTIVE ``).
+- The hand is NOT paginated on mouse+keyboard: `UIStrategyPolicy_DeckList.FilterCardsToDisplay`
+  returns every card unless a controller is active, and the page arrows stay hidden. So the graph
+  reads the whole hand and needs no paging verb.
+- ⚠ `XComGameState_ResistanceFaction.GetColumnHint()` returns `""` unconditionally (a shipped
+  `//TODO`), so the column-hint pipe carries nothing and is not read.

@@ -419,6 +419,12 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     &kNarrativeRecipe, &kIronManRecipe,
     &kSoundtrackRecipe, &kOptionsRecipe, &kDifficultyRecipe, &kSaveLoadRecipe, &kPauseMenuRecipe,
     &kPersonnelRecipe, &kChooseFacilityRecipe, &kPromotionRecipe, &kArmoryLoadoutRecipe,
+    // Below BOTH screens it opens: a slot asking for a soldier pushes UIPersonnel_CovertAction,
+    // and the EDIT verb pushes UIArmory_Loadout. Above the Resistance Ring it was pushed over.
+    &kCovertActionsRecipe,
+    // Its own modal: raised OVER the Resistance Report and over the Ring, and it pushes only
+    // dialogs and alerts (both above it here), so nothing it opens competes with it.
+    &kStrategyPolicyRecipe,
     &kSquadSelectRecipe,
     &kCommodityRecipe,
     &kRoomBuildRecipe, &kRoomRecipe, &kGeoscapeRecipe, &kMainMenuRecipe};

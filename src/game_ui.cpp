@@ -4983,6 +4983,226 @@ bool ActivateChooseFacility(const ChooseFacilityView& view, int index)
     return SendRowCommand(view.screen, kCmdEnter);
 }
 
+// ---- covert actions (UICovertActions) ----
+//
+// See the header for the three-way split and the two ⛔s (destructive selection, mouse-only
+// confirm). This half reads the ROWS, which really are retained, plus the four structural facts
+// the companion cannot see: which action the panels are describing, whether one is already
+// running, whether the game is in its own slot mode, and whether the launch button is on screen.
+
+namespace {
+
+constexpr int32_t kCovertActionRefOffset = 0x580;   // UICovertActions::ActionRef (ObjectID first)
+constexpr int32_t kCovertActionsFlagsOffset = 0x5A4; // bActionInProgress .. bTutorialPopupDisplayed
+constexpr uint32_t kCovertActionInProgress = 0x01;   // bActionInProgress
+constexpr uint32_t kCovertActionSelectingSlots = 0x20; // bIsSelectingSlots
+constexpr int32_t kCovertActionsListOffset = 0x5A8;   // UICovertActions::List
+constexpr int32_t kCovertActionsLaunchOffset = 0x5B0; // UICovertActions::LaunchButton
+
+// UIListItemString::metadataInt — the action's ObjectID on an action row, and the ONLY field that
+// tells one row's action from another's. Zero on the faction headings, which never set it.
+constexpr int32_t kListItemStringMetaIntOffset = 0x3D8;
+
+// Four factions' worth of actions plus a heading each, bounded far above what the game builds.
+constexpr int kMaxCovertActionRows = 64;
+
+} // namespace
+
+void* FindCovertActionsScreen()
+{
+    static ScreenFinder sFinder{"UICovertActions"};
+    static bool sReported = false;
+    void* screen = PreferStack("UICovertActions", sFinder, sReported);
+    return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
+}
+
+CovertActionsView ReadCovertActions(void* screen)
+{
+    CovertActionsView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+
+    const uint32_t flags = ReadU32Raw(screen, kCovertActionsFlagsOffset);
+    v.actionInProgress = (flags & kCovertActionInProgress) != 0;
+    v.selectingSlots = (flags & kCovertActionSelectingSlots) != 0;
+    v.actionId = ReadI32Raw(screen, kCovertActionRefOffset);
+
+    // ⛔ Only while the game is SHOWING it. UpdateData calls LaunchButton.Hide() outright when an
+    // action is in progress or influence is unmet, and UIButton::Click() refuses a hidden button
+    // anyway — so a node built over a hidden one would advertise a verb that cannot fire. This is
+    // the documented exception to never-gate-on-bIsVisible: a BUTTON's visibility is toggled
+    // deliberately and does mean hidden.
+    void* launch = ReadPtrRaw(screen, kCovertActionsLaunchOffset);
+    if (launch && (ReadU32Raw(launch, kPanelFlagsOffset) & kPanelVisible) != 0) {
+        v.launch = launch;
+        v.launchDisabled = (ReadU32Raw(launch, kButtonFlagsOffset) & kButtonDisabled) != 0;
+    }
+
+    v.list = ReadPtrRaw(screen, kCovertActionsListOffset);
+    if (!v.list)
+        return v;
+
+    v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
+
+    void* rows[kMaxCovertActionRows] = {};
+    const int rowCount
+        = TakeListItemsRaw("CovertActions: rows", v.list, rows, kMaxCovertActionRows);
+    for (int i = 0; i < rowCount; i++) {
+        if (!rows[i])
+            continue;
+        // ⛔ The list holds TWO kinds of row. BuildScreen spawns a UICovertOpsFactionListItem
+        // heading whenever the faction changes, and that class pushes its words through
+        // MC.BeginFunctionOp("populateData") — so it derives from UIListItemString, sits in the
+        // same itemContainer, and has an EMPTY Text. It is also DisableNavigation()ed, i.e. the
+        // game's own arrows skip it, so ours must too. Matched by CLASS rather than by the empty
+        // Text: an empty answer is indistinguishable from a field looked up in the wrong place,
+        // and this one has a name to ask for instead.
+        char cls[64];
+        if (ObjClassNameAnsiRaw(rows[i], cls, sizeof(cls))
+            && strcmp(cls, "UICovertOpsFactionListItem") == 0)
+            continue;
+
+        CovertActionRow r;
+        r.handle = rows[i];
+        // The LIST's index, headings included — SetSelectedIndex counts them, so a row's position
+        // among the actions is not the number to hand back to the game.
+        r.index = i;
+        r.actionId = ReadI32Raw(rows[i], kListItemStringMetaIntOffset);
+        r.label = CleanText(ReadFStringField(rows[i], kListItemStringTextOffset));
+        r.disabled = (ReadU32Raw(rows[i], kListItemStringFlagsOffset) & kListItemDisabled) != 0;
+        v.rows.push_back(std::move(r));
+    }
+    return v;
+}
+
+bool SetCovertActionSelection(const CovertActionsView& view, int index)
+{
+    return SetListIndex(view.list, index);
+}
+
+bool ActivateCovertActionLaunch(const CovertActionsView& view)
+{
+    // No select-then-Enter dance here, and deliberately: OnLaunchClicked reads the screen's own
+    // ActionRef, which only SelectedItemChanged writes — and that is already in step, because the
+    // recipe's focus write-back is what moved it. Click() re-tests IsDisabled itself.
+    if (!view.launch || view.launchDisabled)
+        return false;
+    return ClickButton(view.launch);
+}
+
+// ---- resistance orders (UIStrategyPolicy) ----
+//
+// See the header for why this screen needs a recipe rather than a reader. Native reads the
+// STRUCTURE — which cards are in which slot of which column, which one is picked up, and whether
+// the game will accept a change at all; every word comes from X2AccessPolicyReader, because a
+// UIStrategyPolicy_Card retains none.
+
+namespace {
+
+constexpr int32_t kPolicyColumnsOffset = 0x4D0; // TArray<UIList*>, always four
+constexpr int32_t kPolicyHandOffset = 0x4E0;    // UIStrategyPolicy_DeckList*
+constexpr int32_t kPolicyFlagsOffset = 0x4F8;   // bDragging .. m_bLoopHandSelection
+constexpr uint32_t kPolicyEnableDragging = 0x04; // bEnableDragging
+constexpr uint32_t kPolicyResistanceReport = 0x10; // bResistanceReport
+constexpr int32_t kPolicyInspectingOffset = 0x538;  // UIStrategyPolicy_Card*
+
+// UIStrategyPolicy_Card. AssociatedFactionName at 0x3D8 is an FName and is deliberately NOT read:
+// the companion has the faction from the card state, and an FName would be an untranslated
+// 'Faction_Reapers' at the player.
+constexpr int32_t kPolicyCardColumnOffset = 0x3E0; // ColumnIndex
+constexpr int32_t kPolicyCardSlotOffset = 0x3E4;   // ColumnSlot
+constexpr int32_t kPolicyCardRefOffset = 0x3E8;    // CardRef (ObjectID first)
+constexpr int32_t kPolicyCardFlagsOffset = 0x3EC;  // bLocked | bVital
+constexpr uint32_t kPolicyCardLocked = 0x01;
+constexpr uint32_t kPolicyCardVital = 0x02;
+
+// A column holds at most three slots plus one locked placeholder; the hand is the player's whole
+// unplayed deck, which the game does not page on mouse+keyboard (FilterCardsToDisplay returns
+// everything unless a controller is active). Both bounded far above what the game builds.
+constexpr int kMaxPolicySlots = 16;
+constexpr int kMaxPolicyHandCards = 64;
+constexpr int kPolicyColumnCount = 4;
+
+PolicyCard ReadPolicyCardRaw(void* handle, void* inspecting, bool inHand, int handIndex)
+{
+    PolicyCard c;
+    c.handle = handle;
+    c.cardId = ReadI32Raw(handle, kPolicyCardRefOffset);
+    const uint32_t flags = ReadU32Raw(handle, kPolicyCardFlagsOffset);
+    c.locked = (flags & kPolicyCardLocked) != 0;
+    c.vital = (flags & kPolicyCardVital) != 0;
+    c.inspecting = handle == inspecting;
+    if (inHand) {
+        // A hand card is never given a ColumnIndex — CreateCard leaves it at the default 0, which
+        // is the WILD-CARD column's real index. Writing -1 here is what keeps the verbs' two-int
+        // address unambiguous; the hand's own list index takes the slot field.
+        c.column = -1;
+        c.slot = handIndex;
+    } else {
+        c.column = ReadI32Raw(handle, kPolicyCardColumnOffset);
+        c.slot = ReadI32Raw(handle, kPolicyCardSlotOffset);
+    }
+    return c;
+}
+
+} // namespace
+
+void* FindStrategyPolicyScreen()
+{
+    static ScreenFinder sFinder{"UIStrategyPolicy"};
+    static bool sReported = false;
+    void* screen = PreferStack("UIStrategyPolicy", sFinder, sReported);
+    return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
+}
+
+StrategyPolicyView ReadStrategyPolicy(void* screen)
+{
+    StrategyPolicyView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+
+    const uint32_t flags = ReadU32Raw(screen, kPolicyFlagsOffset);
+    v.canPlay = (flags & kPolicyEnableDragging) != 0;
+    v.resistanceReport = (flags & kPolicyResistanceReport) != 0;
+
+    void* inspecting = ReadPtrRaw(screen, kPolicyInspectingOffset);
+    if (inspecting)
+        v.inspectingId = ReadI32Raw(inspecting, kPolicyCardRefOffset);
+
+    void* lists[kPolicyColumnCount] = {};
+    const int listCount
+        = TakeArrayRaw("StrategyPolicy: columns", screen, kPolicyColumnsOffset, lists,
+            kPolicyColumnCount);
+    for (int i = 0; i < listCount; i++) {
+        if (!lists[i])
+            continue;
+        PolicyColumn col;
+        col.list = lists[i];
+        col.index = i;
+        void* cards[kMaxPolicySlots] = {};
+        const int n = TakeListItemsRaw("StrategyPolicy: slots", lists[i], cards, kMaxPolicySlots);
+        for (int j = 0; j < n; j++) {
+            if (cards[j])
+                col.cards.push_back(ReadPolicyCardRaw(cards[j], inspecting, /*inHand*/ false, j));
+        }
+        v.columns.push_back(std::move(col));
+    }
+
+    v.hand = ReadPtrRaw(screen, kPolicyHandOffset);
+    if (v.hand) {
+        void* cards[kMaxPolicyHandCards] = {};
+        const int n
+            = TakeListItemsRaw("StrategyPolicy: hand", v.hand, cards, kMaxPolicyHandCards);
+        for (int j = 0; j < n; j++) {
+            if (cards[j])
+                v.handCards.push_back(ReadPolicyCardRaw(cards[j], inspecting, /*inHand*/ true, j));
+        }
+    }
+    return v;
+}
+
 // ---- promotion / level-up (UIArmory_Promotion + subclasses) ----
 
 namespace {

@@ -1238,6 +1238,139 @@ bool SetChooseFacilitySelection(const ChooseFacilityView& view, int index);
 /// UpdateSelection ever writes. Game thread only.
 bool ActivateChooseFacility(const ChooseFacilityView& view, int index);
 
+// ---- covert actions (UICovertActions) — docs/covert-actions-recon.md ----
+//
+// The WOTC core strategy loop, reached only from the Resistance Ring. It splits three ways and
+// native owns exactly one of the three:
+//
+//   * RETAINED — the action ROWS. They are ordinary UIListItemStrings: InitListItem goes through
+//     SetText, so Text is really there, along with bDisabled and, uniquely useful,
+//     `metadataInt = ActionState.ObjectID` (UICovertActions.uc:368), written unconditionally for
+//     every action row. That is a REAL join key, so the companion's records need carry no
+//     positional coupling at all.
+//   * NOTHING AT ALL — every other string. The detail card, the faction panel, the risks and the
+//     four slots are `MC.BeginFunctionOp` pipes with locals on both sides, and the slots are not
+//     even panels: `UICovertActionSlot extends Object`, so /gui cannot see them. The whole widget
+//     tree here is the list, SlotContainer with four empty slotMC_N panels, and LaunchButton.
+//   * RE-DERIVABLE — the screen keeps `arrActions` (the state objects it populated Flash FROM),
+//     so X2AccessCovertActionReader rebuilds every word with no XCOMHISTORY lookup. Tier 2 of the
+//     read-the-screen rule, verbatim.
+//
+// ⛔ SELECTING A ROW IS DESTRUCTIVE. UICovertActions.SelectedItemChanged (:883) calls ClearSlots()
+// BEFORE switching ActionRef, and ClearSlots submits a game state that runs EmptyAllStaffSlots +
+// ResetAllCostSlots on the OUTGOING action. So moving off an action you staffed throws the
+// staffing away. That is vanilla — a sighted player clicking around gets it too — and the recipe
+// mirrors it rather than decoupling, because the confirm handler acts on the screen's own
+// ActionRef and a focus that disagreed with it would be the UISaveGame.OnAccept hazard at
+// campaign scale. The recipe announces the loss instead.
+//
+// ⛔ CONFIRM ACTION IS MOUSE-ONLY IN VANILLA. LaunchButton calls DisableNavigation() (:433) and the
+// only key path to OnLaunchClicked is FXS_BUTTON_X (:1087), which DefaultInput.ini produces only
+// from XboxTypeS_X. A keyboard-only player cannot launch a covert action at all. Same for EDIT
+// loadout (FXS_BUTTON_Y). Re-providing those two is most of what this surface is for.
+
+struct CovertActionRow {
+    void* handle = nullptr; // UIListItemString — an ACTION row; faction headings are excluded
+    int index = 0;          // the list's own item index, headings INCLUDED (SetSelectedIndex's)
+    int actionId = 0;       // metadataInt = XComGameState_CovertAction::ObjectID — the join key
+    std::string label;      // Text — retained, already localized ("(NEW) Recruit Scientist")
+    bool disabled = false;  // bDisabled: another action is running, or influence is too low
+};
+
+struct CovertActionsView {
+    void* screen = nullptr;
+    void* list = nullptr; // UICovertActions::List
+    std::vector<CovertActionRow> rows;
+    int selected = -1;           // UIList::SelectedIndex — in the list's own indices
+    int actionId = 0;            // ActionRef.ObjectID: the action every panel is describing
+    bool actionInProgress = false; // bActionInProgress: one is running, so the rest are locked
+    bool selectingSlots = false; // bIsSelectingSlots — the game's own slot mode, which we skip
+    /// LaunchButton, and ONLY while the game is showing it: UpdateData hides it outright when an
+    /// action is in progress or influence is unmet, so a null here means the control is not on
+    /// screen rather than merely greyed.
+    void* launch = nullptr;
+    bool launchDisabled = true; // IsDisabled — CanBeginAction() said no
+};
+
+/// The covert-actions screen, when it is the CURRENT screen. Stack-managed (HQPRES pushes it).
+/// Game thread only.
+void* FindCovertActionsScreen();
+
+CovertActionsView ReadCovertActions(void* screen);
+
+/// P11 write-back. Driving UIList::SetSelectedIndex fires OnSetSelectedIndex =
+/// SelectedItemChanged, which is what repopulates every panel — so our focus and the words the
+/// companion reads can never describe different actions. ⛔ Read the destructive-selection note
+/// above before calling this on every render. Game thread only.
+bool SetCovertActionSelection(const CovertActionsView& view, int index);
+
+/// Launch, through the game's own path: UIButton::Click(), which self-gates on
+/// IsDisabled && bIsVisible and fires OnLaunchClicked → ConfirmAction() → the
+/// eAlert_ConfirmCovertAction popup the popup recipe already reads. Game thread only.
+bool ActivateCovertActionLaunch(const CovertActionsView& view);
+
+// ---- resistance orders (UIStrategyPolicy) ----
+//
+// The card board: three faction columns plus a wild-card column of SLOTS on top, the HAND of
+// unplayed orders along the bottom, and a Continue button. Reached from the monthly Resistance
+// Report and from the Resistance Ring's own screen.
+//
+// ⛔ IT IS ENTIRELY MOUSE-ONLY IN VANILLA, which is why this needs a recipe rather than a reader.
+// `UIStrategyPolicy.OnUnrealCommand` gives a keyboard exactly two verbs — Escape and Enter both
+// reach `OnClickedContinue()` — and every other branch is either a controller constant
+// (`FXS_BUTTON_X` remove, `FXS_BUTTON_Y` filter, the DPAD navigation) or guarded by
+// `` `ISCONTROLLERACTIVE ``. Placing a card is DRAG AND DROP: `UIStrategyPolicy_Card.OnMouseEvent`
+// is the only path to `SelectCard`. So a keyboard player can read nothing and change nothing —
+// they can only leave.
+//
+// ✅ The card panels DO retain their structure, which is the half that makes this tractable:
+// `CardRef` (the join key), `ColumnIndex`, `ColumnSlot`, `bLocked`, `bVital` and the two enums are
+// all real fields on `UIStrategyPolicy_Card`. What they do NOT retain is a single word — title,
+// summary, quote and slot hint all go through `MC.BeginFunctionOp("SetCardData")` as parameters —
+// so X2AccessPolicyReader re-derives them from the `XComGameState_StrategyCard` the ref names.
+//
+// ⛔ `SelectCard` IS A TWO-STEP STATE MACHINE over the screen's `InspectingCard`, and that is
+// exactly the pick-up/put-down gesture a graph wants: the first call inspects, the second plays,
+// swaps, or returns the card to the hand depending on where both ends are. The recipe drives it
+// through the companion so every guard stays in the game's own code.
+
+struct PolicyCard {
+    void* handle = nullptr; // UIStrategyPolicy_Card
+    /// The GAME's own coordinates, and what the verbs are addressed by: `column` is
+    /// `ColumnIndex` (0 = the wild-card column) or -1 for a hand card, `slot` is `ColumnSlot`
+    /// for a slot card and the hand list index for a hand card.
+    int column = -1;
+    int slot = 0;
+    int cardId = 0;          // CardRef.ObjectID — 0 on an empty or locked slot
+    bool locked = false;     // bLocked: the slot needs more influence to unlock
+    bool vital = false;      // bVital: MarkCardAsSpecial — a card that cannot be removed
+    bool inspecting = false; // this is the screen's InspectingCard — the card "picked up"
+};
+
+struct PolicyColumn {
+    void* list = nullptr;
+    int index = 0; // 0 = wild card, 1..3 = the faction columns in the screen's own sorted order
+    std::vector<PolicyCard> cards;
+};
+
+struct StrategyPolicyView {
+    void* screen = nullptr;
+    void* hand = nullptr; // UIStrategyPolicy_DeckList (a UIList)
+    std::vector<PolicyColumn> columns;
+    std::vector<PolicyCard> handCards;
+    /// bEnableDragging — the game's own answer to "can orders be changed right now". It is set
+    /// only for the monthly report; outside that window the card's own mouse handler refuses and
+    /// raises UICantChangeOrders(), so our verbs must refuse in the same place.
+    bool canPlay = false;
+    bool resistanceReport = false; // bResistanceReport
+    int inspectingId = 0;          // InspectingCard's CardRef.ObjectID, 0 = nothing picked up
+};
+
+/// The resistance-orders screen, when it is the CURRENT screen. Game thread only.
+void* FindStrategyPolicyScreen();
+
+StrategyPolicyView ReadStrategyPolicy(void* screen);
+
 // ---- promotion / level-up (UIArmory_Promotion + its two subclasses) ----
 //
 // THREE SCREENS, ONE ENTRY POINT. XComHQPresentationLayer.ShowPromotionUI picks the class, and

@@ -161,8 +161,11 @@ in **Hard rules** below instead.
 | Skyranger briefing | `dropship.cpp` | `X2AccessDropshipReader.uc` | surfaces/strategy.md | `dropship-briefing-recon.md` |
 | Modals / alerts | `flash_shadow.cpp` (UIAlert words) | `X2AccessPopupReader.uc`, `popup` | surfaces/strategy.md | `popup-inventory.md` |
 | Commlink / toasts | `transient_reader.cpp` | `X2AccessTransientReader.uc` | surfaces/strategy.md | `popup-inventory.md` |
+| Movie subtitles (`.bk2`) | `movie_subtitles.cpp` | — (no script surface exists) | surfaces/strategy.md | — |
 | Squad select | — | `X2AccessSquadReader.uc`, `squad select` | surfaces/strategy.md | `squad-select-recon.md` |
 | Armory loadout | — | `X2AccessLoadoutReader.uc`, `armory loadout` | surfaces/strategy.md | `loadout-recon.md` |
+| Covert actions | `game_ui.cpp` | `X2AccessCovertActionReader.uc`, `covert actions` | surfaces/strategy.md | `covert-actions-recon.md` |
+| Resistance orders | `game_ui.cpp` | `X2AccessPolicyReader.uc`, `resistance orders` | surfaces/strategy.md | — |
 
 ## UnrealScript companion owns
 
@@ -405,6 +408,17 @@ in **Hard rules** below instead.
   the backing storage is not reachable by path either (measured live on `descriptionText`). **When
   the question is "what words did this panel get", the capture above answers it and this does
   not**; keep the path API for caret, selection and focus, which the capture cannot see.
+- ⛔ **A full-screen `.bk2` movie is engine-native all the way down — no UObject, no reflection, no
+  script.** `FFullScreenMovieBink` is a plain C++ object behind the global `GFullScreenMovie`
+  (RVA `0x1DB8900`); it owns the Bink handle, the frame counter and the parsed
+  `Movies/<name>.txt` cue track, and it draws its subtitles with native canvas calls
+  (`XComEngine::RenderExtraSubtitles`). Script sees exactly two things about it, both booleans in
+  disguise: `XComEngine.PlayMovie` starts one and `IsAnyMoviePlaying` says whether one is up. So
+  **do not go looking for a UIScreen, a Flash path or a companion hook for anything Bink-related**
+  — `src/movie_subtitles.cpp` is the only surface in this mod that dereferences a raw C++ object,
+  and the rule it established is the one to copy if a second ever needs to: hard-code ONE address
+  (the global), and validate it by its VTABLE before dereferencing anything through it, because no
+  offset on a non-UObject can be `static_assert`ed and that check is therefore the entire pin.
 - ⛔ **No gameplay event fires in the TUTORIAL — it replays history, it never submits it.**
   `X2GameRuleset.SubmitGameStateContext` (`:292`, `:401`) routes every context to
   `XComTutorialMgr.HandleSubmittedGameStateContext` instead of `SubmitGameStateContext_Internal`
@@ -1033,7 +1047,16 @@ free, earmarked for the vantage read.
    recipe, selected-unit readout, objectives readout (`Ctrl+X`), research report
    (`research-report-recon.md` §7 — the Flash capture's SECOND consumer, so the pass must also
    check `just dev-flashqueue` against `just dev-speech`, and must cover the Shadow Chamber path,
-   which is the only one that puts this screen on the 2D movie). Each needs a first pass against
+   which is the only one that puts this screen on the 2D movie), covert actions
+   (`covert-actions-recon.md` §9 — the checklist there is the pass, and its two live-only questions
+   are whether `LaunchButton.Click()` really reaches the confirm popup and whether the destructive
+   row selection behaves as the source says), the geoscape's **region actions** stop
+   (`geoscape-recon.md` §16 — make contact / install a radio relay, the two pin buttons vanilla
+   wires to no key; needs a save with `ResistanceRadio` researched, and its confirm alert is the
+   Flash capture's `Alert_MakeContact` panel, also unexercised), resistance orders
+   (`UIStrategyPolicy` — the pass must cover BOTH windows, the monthly report where cards can be
+   played and the read-only visit, and must actually place a card, swap two, and take one back out
+   with Backspace). Each needs a first pass against
    `just dev-speech` and a shape-count of the speech ring afterwards. For the objectives readout the
    OFFSETS are already confirmed live (2026-08-23, `LostAndAbandonedB`) and the `static_assert`s
    pass — what is unexercised is the spoken COMPOSITION, plus the Avenger/dark-event and
@@ -1045,12 +1068,28 @@ free, earmarked for the vantage read.
    wrongly-dropped LINE would show up. Alerts worth hitting: an image-carrying splash
    (`BuildGOpsAlert` / retaliation / supply raid, which push an image path mid-list) and any alert
    whose confirm label should be matched out of the prose by the button filter.
+   ⚠ The commlink reader's first pass now has a SECOND branch to cover: it obeys the game's
+   Show Subtitles setting (`surfaces/strategy.md`), so the same conversation must be heard once
+   with subtitles on and once with them off — off must be silent, and turning them back on
+   mid-conversation must announce the line still in progress rather than swallow it.
+   ⛔ **`movie_subtitles.cpp` has NEVER RUN and its first pass outranks the rest of this list**,
+   because it is the only surface in the mod that dereferences a raw C++ object rather than a
+   UObject: nothing in it is `static_assert`ed and the vtable check is the whole pin. The FIRST
+   thing to confirm is `just dev-log` carrying `MovieSubtitles: movie player at 0x… validated` —
+   if it says DISABLED instead, every offset below it is void and nothing else about this surface
+   is worth testing. Then a `.bk2` with a cue track (`CIN_XP_PreIntro` is the earliest, on a new
+   WOTC campaign; `CIN_XP_Stronghold_*` and the XP autopsies are the rest) checked three ways:
+   `just dev-speech` against what is on screen, the same movie with Show Subtitles OFF (must be
+   silent), and a grep for `no localized text for cue` — that line is the only place a cue whose
+   text we failed to resolve would show up, and its absence is what says the loc lookup found the
+   right package.
 3. Unexercised paths inside surfaces that HAVE run: tactical narration's panic / shields / evac
    events; the hacking screen's cancel line and any hack whose slot 0 is `bBadThing`; the ant farm's
    countdown path (`Status` is empty unless something is building) and its `Delete` re-announce; the
    SAVE screen (only LOAD was exercised — new-save row, overwrite confirmation, a save completing);
    the text-entry reader's own announcements (`just dev-log` should carry `TextInput: dialog up (...
-   caret N, selection A..B)`).
+   caret N, selection A..B)`); the Resistance Ring's covert-op status line, in BOTH branches — an
+   action running (name + days left) and none assigned.
 4. Two known wording defects: the no-target readout doubles a full stop and repeats the same fact in
    two languages (the localized string already ends in a period and carries the meaning); recentering
    says the unit's name three times.
@@ -1086,8 +1125,9 @@ free, earmarked for the vantage read.
    flyover poll (tutorial only today) and `X2AccessTacticalEvents`/`X2AccessReplayNarration` — and
    they do not all fire on the same mission, so check each where it actually fires.
 10. Strategy-layer surfaces still unread, in value order: the staff drop-down (`UIPersonnel_DropDown`,
-    a `UIPanel` and NOT part of the personnel family), the room's Flash-only status panels via the
-    companion, the resource strip, the to-do widget and the event queue (`avenger-view-recon.md` §2 —
+    a `UIPanel` and NOT part of the personnel family), `UIFacility.m_kResearchProgressBar` (the last
+    of the room's Flash-only status panels — `m_kCovertOpsStatus` is done, `surfaces/avenger.md`),
+    the resource strip, the to-do widget and the event queue (`avenger-view-recon.md` §2 —
     note §2.5 was CORRECTED: the event queue IS retained, `UIEventQueue_ListItem.Title` /
     `DaysValue`). Then the tactical HUD recipe itself.
 

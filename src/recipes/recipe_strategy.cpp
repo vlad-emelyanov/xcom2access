@@ -1225,6 +1225,636 @@ std::string PopupName()
     return Vocab::ScreenPopup;
 }
 
+// ---- covert actions (UICovertActions) — docs/covert-actions-recon.md ----
+//
+// The WOTC core strategy loop, and the screen where the mod earns the most per node. Vanilla
+// leaves a mouse+keyboard player able to READ nothing but the row names and able to PRESS neither
+// of the two controls that matter: CONFIRM ACTION is DisableNavigation()ed with its only key path
+// on FXS_BUTTON_X, and EDIT loadout on FXS_BUTTON_Y — both gamepad-only constants with no
+// keyboard binding in any input section. So this is not narration over something that works; like
+// the debris room, it is what makes the screen operable at all.
+//
+// SIX STOPS in the page's own order — list, card, faction, risks, slots, confirm — and focus
+// STARTS on the list, where the game itself puts it (BuildScreen ends with
+// Navigator.SetSelected(List)). The card is a stop of its own rather than parts folded onto each
+// row for the commodity list's reason: a narrative is a paragraph and a list is fifteen entries,
+// so folding one into the other makes every arrow press a paragraph.
+//
+// ⛔ THE GAME'S OWN SLOT MODE IS SKIPPED. Enter on a row calls SelectStaffSlots(), which rewires
+// the screen's navigator into a 2×2 grid with its own Escape meaning. Our recipe owns the arrows,
+// so the slots are ordinary nodes in one graph and activation goes straight to the slot object's
+// HandleClick through the companion. Geometry is not information: four cards read better as four
+// rows than as a square, and inheriting a second input mode buys nothing.
+//
+// ⛔ A ROW HAS NO Enter, DELIBERATELY. Selecting IS the action here — the focus write-back drives
+// UIList::SetSelectedIndex, which fires SelectedItemChanged and repopulates every other stop — so
+// an Enter would have to mean something else, and the only thing vanilla gives it is the slot
+// mode above. Tab is the way on to the slots.
+
+constexpr const char* kCovertActionReaderClass = "X2AccessCovertActionReader";
+
+// Keyed on the row pointers AND on the selected action, the commodity list's rule exactly: every
+// panel on this screen is the selected action's shadow (SelectedItemChanged repopulates the card,
+// the faction panel, the risks and all four slots), so a pointer-only key would describe the
+// action the player just left. The extra is the ACTION's ObjectID rather than the list index —
+// same identity the companion joins on, and it survives the list reordering under us.
+WireCache gCovertActionWords(kCovertActionReaderClass, "DescribeCovertActions");
+
+const std::vector<WireRecord>& FetchCovertActionWords(const GameUI::CovertActionsView& view)
+{
+    std::vector<void*> key;
+    key.reserve(view.rows.size() + 1);
+    for (const GameUI::CovertActionRow& row : view.rows)
+        key.push_back(row.handle);
+    key.push_back(view.screen);
+    return gCovertActionWords.Get(std::move(key), view.actionId);
+}
+
+// One outbound call with a single int, the personnel verbs' shape. Both slot verbs resolve the
+// screen themselves and gate on the slot's own IsDisabled, so there is nothing to pass but the
+// index — which is the ActionSlots array index the companion emitted.
+void CallCovertActionSlotVerb(const char* funcName, int index)
+{
+    void* cdo = GameUI::FindCompanionCDO(kCovertActionReaderClass);
+    if (!cdo)
+        return;
+    struct {
+        int32_t Index;
+    } params{index};
+    if (!GameUI::CallScriptFunction(cdo, funcName, &params)) {
+        LOG_WARN("MenuNavigator: %s.%s failed", kCovertActionReaderClass, funcName);
+        return;
+    }
+    // Both verbs change the slots — one opens the personnel picker and the other the armory, and
+    // clearing a slot rewrites the card and the risks in place without respawning a single row.
+    // The pointer key cannot see any of that, so the cache is dropped by hand.
+    gCovertActionWords.Invalidate();
+}
+
+const WireRecord* FindCovertRow(const std::vector<WireRecord>& words, int actionId)
+{
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") == "row" && atoi(RecField(rec, "action").c_str()) == actionId)
+            return &rec;
+    }
+    return nullptr;
+}
+
+// How many staff slots currently hold somebody — the input to the one warning this surface adds.
+int CountStaffedSlots(const std::vector<WireRecord>& words)
+{
+    int staffed = 0;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") == "slot" && RecField(rec, "slot") == "staff"
+            && RecField(rec, "state") == "good")
+            staffed++;
+    }
+    return staffed;
+}
+
+// The action list. Two structural levels of context: the list's own heading, and a faction
+// grouping inside it — both non-focusable, because the game makes them so as well
+// (listHeader.DisableNavigation(), UICovertActions.uc:364). `head` arrives per row and is the
+// heading the game would DRAW above it, so the grouping is the screen's own rather than ours.
+void BuildCovertActionList(GraphBuilder& b, const GameUI::CovertActionsView& view,
+    const std::vector<WireRecord>& words, ControlId& start)
+{
+    if (view.rows.empty())
+        return;
+
+    const WireRecord* screenRec = FindRecord(words, "screen");
+    const std::string listHeader = screenRec ? RecField(*screenRec, "listheader") : std::string();
+    const int staffed = CountStaffedSlots(words);
+
+    b.BeginStop("actions");
+    bool listContext = false;
+    if (!listHeader.empty()) {
+        b.PushContext(listHeader, "", /*positions*/ false);
+        listContext = true;
+    }
+
+    bool factionContext = false;
+    for (const GameUI::CovertActionRow& row : view.rows) {
+        const WireRecord* rec = FindCovertRow(words, row.actionId);
+        const std::string head = rec ? RecField(*rec, "head") : std::string();
+        if (!head.empty()) {
+            if (factionContext)
+                b.PopContext();
+            b.PushContext(head, "", /*positions*/ true);
+            factionContext = true;
+        }
+
+        // Keyed on the ACTION, not the row's position: the list is sorted four times over and a
+        // started action is moved to the top, so an index key would rebadge a different operation
+        // as "the same control" the moment anything changed.
+        ControlId id = ControlId::Referenced(
+            row.handle, "covert/row/" + std::to_string(row.actionId));
+        gFocus[id.StructuralKey] = FocusTarget{row.index, nullptr, false, nullptr};
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(row.label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+
+        if (row.disabled) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+            // The game's own tooltip text, re-derived rather than read off ButtonBG — it is one
+            // of exactly two localized sentences and the companion knows which applies.
+            const std::string reason = rec ? RecField(*rec, "reason") : std::string();
+            if (!reason.empty()) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(reason));
+                vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+            }
+        }
+
+        // ⛔ On the SELECTED row only, and only while something is in a slot: moving away empties
+        // it. See Vocab::CovertActionStaffed for why this is preventive rather than a report.
+        if (row.actionId == view.actionId && staffed > 0) {
+            vt.Announcements.emplace_back(
+                NodeAnnouncement::Static(Vocab::CovertActionStaffed));
+            vt.Announcements.back().Kind = kKindAttention;
+        }
+
+        // No OnActivate — see the header. Space still reads the row's own hover tooltip, which is
+        // where SetDisabled parked the refusal for a sighted player.
+        vt.OnTooltip = ListItemTooltipAction(row.handle);
+
+        if (!start.IsValid() && row.actionId == view.actionId)
+            start = id;
+        b.AddItem(std::move(id), std::move(vt));
+    }
+
+    if (factionContext)
+        b.PopContext();
+    if (listContext)
+        b.PopContext();
+}
+
+// The detail card and the faction panel — read-only lines, one node each, in the page's order.
+// Every label here is the screen's own localized header rather than a word of ours.
+void BuildCovertActionCard(GraphBuilder& b, const std::vector<WireRecord>& words)
+{
+    const WireRecord* card = FindRecord(words, "card");
+    if (!card)
+        return;
+
+    b.BeginStop("card");
+    int line = 0;
+    auto say = [&](const std::string& text) {
+        if (text.empty())
+            return;
+        b.AddLabel(ControlId::Structural("covert/card/" + std::to_string(line++)),
+            [text]() { return text; });
+    };
+
+    say(RecField(*card, "name"));
+    // The lock reason rides straight after the name, where the screen draws it over the card —
+    // it is the answer to "why can I not run this", and burying it under a paragraph of narrative
+    // would be answering it after the question stopped mattering.
+    say(JoinParts(*card, {"locklabel", "lockreason"}));
+    say(JoinParts(*card, {"durlabel", "duration"}));
+    say(JoinParts(*card, {"rewardlabel", "reward", "rewarddetails"}));
+    say(JoinParts(*card, {"loclabel", "location"}));
+    say(RecField(*card, "narrative"));
+
+    const WireRecord* faction = FindRecord(words, "faction");
+    if (faction) {
+        b.BeginStop("faction");
+        b.AddLabel(ControlId::Structural("covert/faction"),
+            [text = JoinParts(*faction, {"title", "name", "inflabel", "influence"})]() {
+                return text;
+            });
+    }
+}
+
+// The risk rows. A LIST, not a GraphSheet: two facts per row, no column headings drawn anywhere,
+// and "Soldier captured, moderate" is a complete sentence. ⚠ Every risk GetRisksStrings returns is
+// emitted, which is more than the screen draws — see the companion's own note and
+// docs/covert-actions-recon.md §6.1 for why that asymmetry is deliberate.
+void BuildCovertActionRisks(GraphBuilder& b, const std::vector<WireRecord>& words)
+{
+    const WireRecord* screenRec = FindRecord(words, "screen");
+    const WireRecord* ambush = FindRecord(words, "ambush");
+    bool any = false;
+    bool context = false; // tracked rather than re-derived: the pop must match the push exactly
+
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "risk")
+            continue;
+        if (!any) {
+            b.BeginStop("risks");
+            const std::string title
+                = screenRec ? RecField(*screenRec, "risktitle") : std::string();
+            if (!title.empty()) {
+                b.PushContext(title, "", /*positions*/ true);
+                context = true;
+            }
+            any = true;
+        }
+        b.AddLabel(ControlId::Structural("covert/risk/" + RecField(rec, "index")),
+            [text = JoinParts(rec, {"label", "level"})]() { return text; });
+    }
+
+    if (any) {
+        // The ambush warning is a paragraph the game prints under the rows, and it is the one
+        // that changes what a player DOES (it is why the EDIT verb exists on a slot at all), so
+        // it lives inside the risk group rather than after it.
+        if (ambush) {
+            b.AddLabel(ControlId::Structural("covert/ambush"),
+                [text = RecField(*ambush, "text")]() { return text; });
+        }
+        if (context)
+            b.PopContext();
+    }
+}
+
+// The four slot cards, flattened to four rows. Each carries the whole card as parts — what the
+// slot wants, what filling it earns, what the button will do — because a slot is one thing with
+// one name, which is exactly the case a flat readout loses nothing on.
+void BuildCovertActionSlots(GraphBuilder& b, const std::vector<WireRecord>& words)
+{
+    bool any = false;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "slot")
+            continue;
+        if (!any) {
+            b.BeginStop("slots");
+            any = true;
+        }
+
+        const int index = atoi(RecField(rec, "index").c_str());
+        const bool disabled = RecField(rec, "state") == "disabled";
+        const std::string edit = RecField(rec, "button2");
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        // req + fame + the slot's own name: "REQUIRED: FAMOUS Ranger", or just the soldier's
+        // rank and name once somebody is standing in it. Joined here, from parts the companion
+        // kept separate, so a part CleanText reduced to nothing leaves no separator behind.
+        vt.Announcements.emplace_back(
+            NodeAnnouncement::Static(JoinParts(rec, {"req", "fame", "label"})));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+
+        const std::string reward = RecField(rec, "reward");
+        if (!reward.empty()) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(reward));
+            vt.Announcements.back().Kind = AnnouncementKinds::Value;
+        }
+
+        if (disabled) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+            const std::string why = RecField(rec, "unavailable");
+            if (!why.empty()) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(why));
+                vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+            }
+        } else {
+            // The button's own label is what Enter will DO, so it is announced rather than
+            // implied — "+ ADD SOLDIER" and "CLEAR" are the same node in two different states.
+            const std::string button = RecField(rec, "button");
+            if (!button.empty()) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(button));
+                vt.Announcements.back().Kind = AnnouncementKinds::Value;
+            }
+            vt.OnActivate
+                = [index]() { CallCovertActionSlotVerb("ClickCovertActionSlot", index); };
+        }
+
+        // ⛔ EDIT is FXS_BUTTON_Y in vanilla — gamepad-only — so without this the loadout of a
+        // soldier about to walk into a Chosen ambush is unreachable from a keyboard. Announced
+        // as well as bound: an unadvertised verb is one nobody presses.
+        if (!edit.empty()) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(edit));
+            vt.Announcements.back().Kind = AnnouncementKinds::Value;
+            vt.OnSecondary
+                = [index]() { CallCovertActionSlotVerb("EditCovertActionLoadout", index); };
+        }
+
+        b.AddItem(ControlId::Structural("covert/slot/" + std::to_string(index)), std::move(vt));
+    }
+}
+
+std::unique_ptr<GraphRender> BuildCovertActions()
+{
+    const GameUI::CovertActionsView view = GameUI::ReadCovertActions(gScreen);
+    const std::vector<WireRecord>& words = FetchCovertActionWords(view);
+
+    GraphBuilder b;
+    ControlId start;
+
+    BuildCovertActionList(b, view, words, start);
+    BuildCovertActionCard(b, words);
+    BuildCovertActionRisks(b, words);
+    BuildCovertActionSlots(b, words);
+
+    // ⛔ The confirm node exists only while the GAME is showing the button. UpdateData hides it
+    // outright when another action is running or influence is unmet, and a stop over a hidden
+    // control would offer a verb that cannot fire — the card's lock line is what says why in
+    // that state, and it is already there.
+    if (view.launch) {
+        const WireRecord* rec = FindRecord(words, "confirm");
+        b.BeginStop("confirm");
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(
+            rec ? RecField(*rec, "label") : std::string()));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (view.launchDisabled) {
+            // CanBeginAction() said no — a required slot is empty, or the total cost is
+            // unaffordable. The game states neither in words anywhere, so the node reports the
+            // refusal and the slots above it are where the reason is readable.
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        } else {
+            vt.OnActivate = []() {
+                GameUI::ActivateCovertActionLaunch(GameUI::ReadCovertActions(gScreen));
+            };
+        }
+        b.AddItem(ControlId::Structural("covert/confirm"), std::move(vt));
+    }
+
+    if (start.IsValid())
+        b.SetStart(start);
+    return b.Build();
+}
+
+// ⚠ No second focus test here, unlike ProbeChooseFacility's: FindCovertActionsScreen already
+// applies it, and GameUI::IsScreenFocused is a null-guarded IsFocusedRaw — the same predicate.
+// The test is what keeps this recipe standing down under the personnel picker a slot opens, the
+// armory the EDIT verb opens, and the confirm popup, all of which push ON TOP of this screen.
+void* ProbeCovertActions()
+{
+    return GameUI::FindCovertActionsScreen();
+}
+
+std::string CovertActionsName()
+{
+    const GameUI::CovertActionsView view = GameUI::ReadCovertActions(gScreen);
+    const WireRecord* rec = FindRecord(FetchCovertActionWords(view), "screen");
+    const std::string header = rec ? RecField(*rec, "header") : std::string();
+    return header.empty() ? std::string(Vocab::ScreenCovertActions) : header;
+}
+
+// ⛔ Read the destructive-selection note in game_ui.h before touching this. Driving the list is
+// what repopulates every other stop, so it is not optional — but it also empties the OUTGOING
+// action's slots, which is why the row carries its warning while it still has something to lose.
+bool SetCovertActionListIndex(void* screen, int index)
+{
+    return GameUI::SetCovertActionSelection(GameUI::ReadCovertActions(screen), index);
+}
+
+// ---- resistance orders (UIStrategyPolicy) ----
+//
+// The card board: three faction columns of order SLOTS plus a wild-card column, the HAND of
+// unplayed orders along the bottom, and Continue. This recipe is not narration over something
+// that works — vanilla's keyboard has exactly one verb here (Escape and Enter both reach
+// OnClickedContinue) and placing a card is drag-and-drop through the card's own mouse handler, so
+// a blind player could previously read nothing and change nothing. See game_ui.h and the
+// companion for the two gates that had to be reproduced.
+//
+// THE BOARD IS ITS OWN GEOMETRY, and menu mode already speaks it: one ROW per column, its items
+// being that column's slots, all sharing a row key. So Left/Right walks one faction's slots and
+// Up/Down steps between factions keeping your slot position — which is the comparison a player
+// actually makes. The faction's name and influence are a PushContext around each row, announced
+// once when focus enters it rather than repeated on every card.
+//
+// ⛔ THE PICK-UP IS A TWO-STEP GESTURE AND THE HELD CARD IS SAID, NOT SELECTED. Enter picks a card
+// up, Enter on a second card puts it down (play / swap / return to hand — the game's own
+// SelectCard decides which). The held state rides as an ordinary Value part rather than
+// AnnouncementKinds::Selected, deliberately: Selected also makes a node its stop's LANDING node,
+// which would silently reroute Tab past every card declared before it.
+
+constexpr const char* kPolicyReaderClass = "X2AccessPolicyReader";
+
+// Keyed on the card pointers plus the screen, and on the HELD card as the extra. RefreshAllDecks
+// respawns every card whenever anything moves, so the pointer set covers placement — but picking
+// a card UP moves no card at all, and the readout has to change the instant it happens.
+WireCache gPolicyWords(kPolicyReaderClass, "DescribePolicy");
+
+const std::vector<WireRecord>& FetchPolicyWords(const GameUI::StrategyPolicyView& view)
+{
+    std::vector<void*> key;
+    key.reserve(view.handCards.size() + 8);
+    for (const GameUI::PolicyColumn& col : view.columns) {
+        for (const GameUI::PolicyCard& card : col.cards)
+            key.push_back(card.handle);
+    }
+    for (const GameUI::PolicyCard& card : view.handCards)
+        key.push_back(card.handle);
+    key.push_back(view.screen);
+    return gPolicyWords.Get(std::move(key), view.inspectingId);
+}
+
+// The verbs are addressed by the GAME's own (column, slot): column -1 is the hand, and the slot
+// is the card's index in whichever list holds it. Both halves resolve that pair through the
+// screen's own lists, which is what keeps them from ever disagreeing about which card is meant.
+void CallPolicyVerb(const char* funcName, int column, int slot)
+{
+    void* cdo = GameUI::FindCompanionCDO(kPolicyReaderClass);
+    if (!cdo)
+        return;
+    struct {
+        int32_t Column;
+        int32_t Slot;
+    } params{column, slot};
+    if (!GameUI::CallScriptFunction(cdo, funcName, &params)) {
+        LOG_WARN("MenuNavigator: %s.%s failed", kPolicyReaderClass, funcName);
+        return;
+    }
+    // Every one of these rebuilds the board (RefreshAllDecks) or moves the held card, and a
+    // respawn can land on the freed addresses of the cards it replaced.
+    gPolicyWords.Invalidate();
+}
+
+const WireRecord* FindPolicyCard(const std::vector<WireRecord>& words, int column, int slot)
+{
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "card")
+            continue;
+        if (atoi(RecField(rec, "column").c_str()) == column
+            && atoi(RecField(rec, "slot").c_str()) == slot)
+            return &rec;
+    }
+    return nullptr;
+}
+
+const WireRecord* FindPolicyColumn(const std::vector<WireRecord>& words, int index)
+{
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") == "column"
+            && atoi(RecField(rec, "index").c_str()) == index)
+            return &rec;
+    }
+    return nullptr;
+}
+
+// One card, whether it is an order, a locked slot or an empty one. The three read completely
+// differently and only the first has a name at all.
+NodeVtable PolicyCardNode(const GameUI::PolicyCard& card, const WireRecord* rec,
+    const std::string& removeLabel, bool canPlay)
+{
+    const std::string name = rec ? RecField(*rec, "name") : std::string();
+    const std::string hint = rec ? RecField(*rec, "hint") : std::string();
+
+    NodeVtable vt;
+    vt.Type = &ButtonType();
+    // A locked slot has only its influence hint; an empty one may have nothing at all, and it is
+    // the thing a player is aiming at — so it is NAMED rather than skipped.
+    std::string label = name;
+    if (label.empty())
+        label = hint;
+    if (label.empty())
+        label = Vocab::PolicyEmptySlot;
+    vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+    vt.Announcements.back().Kind = AnnouncementKinds::Label;
+
+    if (!name.empty()) {
+        // What the order actually DOES — the one fact that decides where a card goes. The quote
+        // is deliberately not here: it is flavour, and speech is serial. It rides on Space.
+        const std::string summary = RecField(*rec, "summary");
+        if (!summary.empty()) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(summary));
+            vt.Announcements.back().Kind = AnnouncementKinds::Value;
+        }
+        if (!hint.empty()) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(hint));
+            vt.Announcements.back().Kind = AnnouncementKinds::Value;
+        }
+        if (RecField(*rec, "attention") == "1") {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Attention));
+            vt.Announcements.back().Kind = kKindAttention;
+        }
+        const std::string quote = RecField(*rec, "quote");
+        if (!quote.empty())
+            vt.OnTooltip = [quote]() { TTS::SpeakInterrupt(quote); };
+    }
+
+    // ⛔ A plain Value part, NOT AnnouncementKinds::Selected — see the section header.
+    if (card.inspecting) {
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::PolicyHeld));
+        vt.Announcements.back().Kind = AnnouncementKinds::Value;
+    }
+
+    const int column = card.column;
+    const int slot = card.slot;
+    // Offered even when the game will refuse: the refusal raises UICantChangeOrders(), which is
+    // the only statement anywhere of WHY, and the popup recipe reads it. The screen name already
+    // said so once on attach, so this is the player checking rather than being told twice.
+    vt.OnActivate = [column, slot]() { CallPolicyVerb("SelectPolicyCard", column, slot); };
+
+    // Backspace takes a card back out of a slot — vanilla's FXS_BUTTON_X, a gamepad button. Only
+    // where the game would allow it: a hand card has nowhere to go back to, and a vital order
+    // (MarkCardAsSpecial) cannot be removed at all.
+    if (canPlay && column >= 0 && !card.locked && !card.vital && card.cardId != 0
+        && (!rec || RecField(*rec, "removable") != "0")) {
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(removeLabel));
+        vt.Announcements.back().Kind = AnnouncementKinds::Value;
+        vt.OnSecondary = [column, slot]() { CallPolicyVerb("RemovePolicyCard", column, slot); };
+    }
+    return vt;
+}
+
+std::unique_ptr<GraphRender> BuildStrategyPolicy()
+{
+    const GameUI::StrategyPolicyView view = GameUI::ReadStrategyPolicy(gScreen);
+    const std::vector<WireRecord>& words = FetchPolicyWords(view);
+    const WireRecord* screenRec = FindRecord(words, "screen");
+    const std::string removeLabel
+        = screenRec ? RecField(*screenRec, "removelabel") : std::string();
+
+    GraphBuilder b;
+    ControlId start;
+
+    b.BeginStop("board");
+    for (const GameUI::PolicyColumn& col : view.columns) {
+        if (col.cards.empty())
+            continue;
+        const WireRecord* colRec = FindPolicyColumn(words, col.index);
+        // The faction's name and its influence, announced once on entering the row rather than
+        // repeated on every card in it. An unmet faction reads as the game's own
+        // "UNKNOWN FACTION" — that withholding is the screen's, not ours.
+        if (colRec)
+            b.PushContext(JoinParts(*colRec, {"label", "influence"}), "", /*positions*/ true);
+
+        // One row per column, all sharing a key, so Up/Down keeps the slot position while
+        // stepping between factions — the comparison this board exists for.
+        b.StartRow("policy/board");
+        for (const GameUI::PolicyCard& card : col.cards) {
+            ControlId id = ControlId::Referenced(card.handle,
+                "policy/" + std::to_string(col.index) + "/" + std::to_string(card.slot));
+            gFocus[id.StructuralKey] = FocusTarget{-1, card.handle, false, nullptr};
+            if (!start.IsValid())
+                start = id;
+            b.AddItem(std::move(id),
+                PolicyCardNode(card, FindPolicyCard(words, col.index, card.slot), removeLabel,
+                    view.canPlay));
+        }
+        b.EndRow();
+
+        if (colRec)
+            b.PopContext();
+    }
+
+    if (!view.handCards.empty()) {
+        b.BeginStop("hand");
+        // DeckTitle names the HAND ("AVAILABLE ORDERS:"), not the screen — which is why the
+        // screen name below is one of ours.
+        const std::string deck
+            = screenRec ? RecField(*screenRec, "decktitle") : std::string();
+        if (!deck.empty())
+            b.PushContext(deck, "", /*positions*/ true);
+        b.StartRow("policy/hand");
+        for (const GameUI::PolicyCard& card : view.handCards) {
+            ControlId id
+                = ControlId::Referenced(card.handle, "policy/hand/" + std::to_string(card.slot));
+            gFocus[id.StructuralKey] = FocusTarget{-1, card.handle, false, nullptr};
+            b.AddItem(std::move(id),
+                PolicyCardNode(card, FindPolicyCard(words, -1, card.slot), removeLabel,
+                    view.canPlay));
+        }
+        b.EndRow();
+        if (!deck.empty())
+            b.PopContext();
+    }
+
+    // ⛔ Continue is a real node even though Escape already reaches it. OnClickedContinue is not
+    // merely a close — it submits OnCardScreenConfirm and, with orders still unplayed, raises the
+    // "you have orders left" dialog. A player who has just been told the board is read-only needs
+    // a way OUT that is a control rather than a key they have to know.
+    b.BeginStop("continue");
+    {
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(
+            screenRec ? RecField(*screenRec, "continue") : std::string(Vocab::PopupContinue)));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.OnActivate = []() { CallPolicyVerb("ContinuePolicy", 0, 0); };
+        b.AddItem(ControlId::Structural("policy/continue"), std::move(vt));
+    }
+
+    if (start.IsValid())
+        b.SetStart(start);
+    return b.Build();
+}
+
+void* ProbeStrategyPolicy()
+{
+    return GameUI::FindStrategyPolicyScreen();
+}
+
+std::string StrategyPolicyName()
+{
+    const GameUI::StrategyPolicyView view = GameUI::ReadStrategyPolicy(gScreen);
+    std::string name = Vocab::ScreenPolicy;
+    // Said here and nowhere else: outside the monthly report every card refuses, and repeating
+    // that on a dozen cards would be noise where saying it once, on arrival, is the whole answer.
+    if (!view.canPlay)
+        AppendPhrase(name, Vocab::PolicyReadOnly);
+    return name;
+}
+
 } // namespace
 
 // ---- what the navigator calls back into this file for ----
@@ -1271,6 +1901,21 @@ const Recipe kArmoryLoadoutRecipe{
 const Recipe kGeoscapeRecipe{"geoscape tray", ProbeGeoscape, BuildGeoscape, GeoscapeName};
 
 const Recipe kPopupRecipe{"popup", ProbePopup, BuildPopup, PopupName};
+
+// Above the Resistance Ring it is pushed over (the room recipe) and above the personnel roster's
+// family only in the sense that it can never be topmost at the same time — UIPersonnel_CovertAction
+// is PUSHED ON TOP of this screen when a slot asks for a soldier, so the roster must win while it
+// is up. ProbeCovertActions insists on being the current screen, which settles both: it stands
+// down under the picker, under the confirm popup, and under the armory the EDIT verb opens.
+const Recipe kCovertActionsRecipe{"covert actions", ProbeCovertActions, BuildCovertActions,
+    CovertActionsName, SetCovertActionListIndex};
+
+// No SetListIndex: the board is FIVE lists (four columns and the hand), and Recipe's hook takes
+// one index against one screen. Focus write-back goes through FocusTarget::button instead —
+// UIStrategyPolicy_Card is a navigable UIPanel, and the screen's own navigator is live on
+// mouse+keyboard (DisableNavigation is called only under `ISCONTROLLERACTIVE).
+const Recipe kStrategyPolicyRecipe{
+    "resistance orders", ProbeStrategyPolicy, BuildStrategyPolicy, StrategyPolicyName};
 
 // ---- promotion recipe (UIArmory_Promotion, UIArmory_PromotionHero, UIArmory_PromotionPsiOp) ----
 //

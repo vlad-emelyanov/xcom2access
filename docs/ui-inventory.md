@@ -55,7 +55,10 @@ What actually blocks a campaign, in rough play order:
    post-mission chain: stats, Chosen result, then the squad walk-up with wounds/promotions.
 8. **`UIResistanceReport`** (+ `_ChosenEvents`, `_FactionEvents`, `UIRewardsRecap`) — the
    monthly council report chain.
-9. **`UICovertActions`** + **`UICovertActionReport`** — the WOTC core loop.
+9. **`UICovertActions`** + **`UICovertActionReport`** — the WOTC core loop. Surveyed:
+   `covert-actions-recon.md`. The soldier picker and the confirm modal are already covered by the
+   personnel and popup recipes, so this is two screens, not four — and `CONFIRM ACTION` is
+   MOUSE-ONLY in vanilla (§4).
 10. **`UIStrategyPolicy`** — resistance orders (WOTC's card system).
 11. **`UIRecruitSoldiers`**, **`UIBlackMarket`** + **`UIBlackMarket_Sell`** — recruiting and
     selling. (`_Sell` is explicitly NOT in the commodity family — own list, own card call;
@@ -167,9 +170,9 @@ the pool itself are not cosmetic — P2, and the voice picker matters most.
 | `UIAdventOperations` | dark events | ✅ popup recipe |
 | `UIResistanceReport` (+`_ChosenEvents`, `_FactionEvents`) | monthly council report | ⬜ **P1** |
 | `UIRewardsRecap` | monthly rewards recap | ⬜ **P1** |
-| `UIStrategyPolicy` | resistance orders | ⬜ **P1** |
-| `UICovertActions` | covert action picker | ⬜ **P1** |
-| `UICovertActionReport` | covert action result | ⬜ **P1** |
+| `UIStrategyPolicy` | resistance orders | ✅ resistance orders recipe (`surfaces/strategy.md`) |
+| `UICovertActions` | covert action picker | ✅ covert actions recipe (`covert-actions-recon.md`) |
+| `UICovertActionReport` | covert action result | ⬜ **P1** — `covert-actions-recon.md` §8b |
 | `UIChosenInfo` | Chosen dossier | ⬜ P2 |
 | `UIChosenEncountered` | first-encounter overlay | ⬜ P2 (mostly cinematic) |
 | `UINotificationMenu` | notification list (opened from `UIToDoWidget`) | ⬜ P2, with the to-do widget work |

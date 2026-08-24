@@ -482,6 +482,39 @@ static_assert(offsetof(AUIPersonnel, m_kList) == 0x45C, "personnel roster list")
 static_assert(offsetof(AUIChooseFacility, m_List) == 0x418, "choose-facility list");
 static_assert(offsetof(AUIListItemString, AttentionIcon) == 0x440, "list item attention icon");
 
+// ---- covert actions (UICovertActions) ----
+//
+// The rows are ordinary UIListItemStrings (Text and the flag dword pinned above); what is new is
+// metadataInt, which carries the action's ObjectID and is the ONLY thing distinguishing one row's
+// action from another's — the companion joins on it.
+//
+// ⚠ The state object behind them is a documented counter-example to "the Highlander APPENDS":
+// XComGameState_CovertAction gains AmbushMissionSource (#485) and RewardsNotGivenOnCompletion
+// (#810) BEFORE its struct declarations, so StaffSlots/CostSlots/Risks/NegatedRisks all move
+// against a vanilla dump. Nothing here reads them — every covert-action state field is the
+// companion's — but that is why, and it is the case `just sdk-adopt`'s vanilla refusal exists for.
+static_assert(offsetof(AUIListItemString, metadataInt) == 0x3D8, "list item metadataInt");
+static_assert(offsetof(AUICovertActions, ActionRef) == 0x580, "covert actions selected action");
+static_assert(offsetof(AUICovertActions, arrActions) == 0x584, "covert actions state array");
+// The flag dword at 0x5A4 is bitfields (bActionInProgress 0x01 .. bIsSelectingSlots 0x20); List is
+// its nearest plain neighbour and pins the same layout.
+static_assert(offsetof(AUICovertActions, List) == 0x5A8, "covert actions flags precede List");
+static_assert(offsetof(AUICovertActions, LaunchButton) == 0x5B0, "covert actions launch button");
+
+// ---- resistance orders (UIStrategyPolicy) ----
+//
+// Both flag dwords are bitfields and are pinned by BRACKETING — the field immediately before and
+// the one immediately after — so a dword that moves fails one of the four.
+static_assert(offsetof(AUIStrategyPolicy, Columns) == 0x4D0, "policy columns");
+static_assert(offsetof(AUIStrategyPolicy, Hand) == 0x4E0, "policy hand list");
+static_assert(offsetof(AUIStrategyPolicy, DeckCatcher) == 0x4F0, "policy flags precede 0x4F8");
+static_assert(offsetof(AUIStrategyPolicy, FilterFaction) == 0x4FC, "policy flags end at 0x4FC");
+static_assert(offsetof(AUIStrategyPolicy, InspectingCard) == 0x538, "policy picked-up card");
+static_assert(offsetof(AUIStrategyPolicy_Card, ColumnIndex) == 0x3E0, "policy card column");
+static_assert(offsetof(AUIStrategyPolicy_Card, ColumnSlot) == 0x3E4, "policy card slot");
+static_assert(offsetof(AUIStrategyPolicy_Card, CardRef) == 0x3E8, "policy card ref");
+static_assert(offsetof(AUIStrategyPolicy_Card, eFaction) == 0x3F0, "policy card flags end");
+
 static_assert(offsetof(AUIAvengerHUD, Shortcuts) == 0x43C, "avenger HUD shortcut bar");
 static_assert(offsetof(AUIAvengerHUD, FacilityHeader) == 0x454, "avenger HUD facility header");
 

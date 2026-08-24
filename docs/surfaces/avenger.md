@@ -150,6 +150,26 @@ Every word is a RETAINED widget read, no `XCOMHISTORY` and no Flash: `FacilityHe
   and nothing else, which is why the bar is mouse-or-gamepad in vanilla. Labels are cached on the
   button pointers because the frame differ rebuilds ten times a second and `AddFacilityButton`
   runs once, in `InitScreen`.
+- ⛔ **The Resistance Ring has a SECOND wordless panel, and it is the one that says whether
+  walking in achieves anything.** `UIFacility_CovertOpsStatus` (`UIFacility.m_kCovertOpsStatus`,
+  spawned only by `UIFacility_CovertActions.InitScreen`) pushes the header, the running action's
+  name and the days left through `MC.FunctionString("setTitle"/"setDaysValue"/…)` and retains
+  none of it — its own `Label` var is declared and **never assigned**, so reading the widget gets
+  `""`. `X2AccessFacilityReader` re-derives it by re-running the SCREEN'S OWN `UpdateData`:
+  iterate the history for the `XComGameState_CovertAction` with `bStarted`, then format with the
+  same `UIUtilities_Text.GetTimeValueAndLabel(Hours, …, 0)` call `Refresh` makes, falling back to
+  `CovertOpsStatus_EmptyLabel`/`EmptyTitle`. Same rule as `X2AccessSaveReader` — re-run the
+  formatting the panel ran, never invent a second one. Three fields on the wire (`label`, `title`,
+  `time`), joined by native through `AppendPhrase`, because the game ends
+  `CovertOpsStatus_EmptyLabel` with a space. Two details earned in the reading:
+  `CovertActions_ScreenHeader` is declared on **both** `UICovertActions` and
+  `UICovertActionReport` with different populated values, so the class qualifier is load-bearing;
+  and the overdue branch (`Hours < 0`) draws a literal `"--"`, which a sighted eye reads as *no
+  number* and speech would read as noise, so the time is dropped instead. It joins the CREW stop
+  rather than getting one of its own — same kind of fact, same question. The fetch is
+  deliberately **not** gated on the room having bottom-bar buttons: the Ring happens to have both,
+  so the gate would work today and turn any future status-panel-without-a-button into silence.
+  (`m_kResearchProgressBar` is the same shape and is still unread.)
 - Probe insists the facility screen is TOPMOST, which keeps this recipe from attaching over the
   choose-research screen or the facility summary the room's own verbs push.
 - ⚠ Known gap: `UIFacility_Infirmary` spawns its own `PatientList` (`UIList`), the only facility
