@@ -1,0 +1,97 @@
+# The keyboard budget — what the game binds, what we claim
+
+The measured record of XCOM 2's own key bindings and of every key X2Access takes, with the
+reasoning behind each claim. `CLAUDE.md` keeps the RULES (leniency and what it obliges, the three
+tactical input modes, the Shift swallow, Tab stays the game's); this file is the census they rest
+on, and it is the file to update when a new hotkey is claimed.
+
+⛔ Re-measure across EVERY input section of `DefaultInput.ini` before calling a key free —
+`[Engine.PlayerInput]` binds keys the tactical block does not, and most letter bindings are generic
+`X_Key_Press` forwarders that look empty and are not.
+
+## The tactical layer: input ownership
+
+Three modes, and the layer must always know which one it is in:
+
+- **World mode** (default) — arrows drive the tile cursor.
+- **HUD mode** — the tactical recipe is FOCUSED; arrows navigate it.
+- **Targeting mode** (`UITacticalHUD.m_isMenuRaised`) — the GAME owns the arrows, Tab and F1-F8. We
+  narrate and read there; we claim nothing that steers. ⚠ **Narrowed to targeting with a TARGET
+  LIST.** In free aim the arrows steer nothing: the controller aiming branch is dead code on
+  mouse+keyboard, so a bare arrow lands in `CycleAbilitySelection` and abandons the ability the player
+  just chose. There the rule inverts and the arrows are ours — the principle was "do not take a key
+  the game is using to steer", and here it is not.
+
+So the recipe must be ATTACHED BUT UNFOCUSED while the cursor keeps the arrows — which needs an
+explicit focused state on the navigator, since gating the tile reader on mere attachment is right
+for menus and wrong here (`next-steps.md`, known defects).
+
+**UE3 matches modifiers LENIENTLY.** A `KeyBind`'s `Control`/`Shift`/`Alt` are modifiers the chord
+REQUIRES; modifiers the player merely happens to hold are NOT checked.
+`bIgnoreCtrl`/`bIgnoreShift`/`bIgnoreAlt` are the opt-in SUPPRESSORS — `Input.uc`: *"if true, the bind
+will not be activated if the corresponding key is held down"* — and the entire game config uses them
+exactly twice: on `R`, so `Shift+R` reaches ErrorReport without also reloading, and on `F4`, so Alt+F4
+does not also fire the game action. (Those exist to SUPPRESS a bare bind, which is only necessary
+because matching is lenient.) So a bare binding fires under ANY modifier. **Every modifier chord we
+advertise on a key that carries a vanilla bare binding MUST be claimed, or it double-fires.** Ctrl+Tab
+therefore enters/exits the HUD layer and plain Tab is claimed ONLY while the layer is focused.
+
+**The accessibility verbs outrank the vanilla bindings**, and taking a bare letter costs **nothing: no
+config snippet, no rebind at all**. Because matching is lenient, every vanilla bare-key action is
+ALREADY reachable at `Ctrl+key`: the arbiter claims the bare key and swallows it, the Ctrl chord is
+not claimed so it passes through, and the engine matches the vanilla binding with Ctrl held. Proven
+live — bare `Left` drove the tile cursor with no camera movement, `Ctrl+Left` scrolled the camera. Of
+RT's keymap only `, . / ' ; H I` are free in XCOM tactical (`V M N P L K O U X Y Z T G J B` all carry
+vanilla actions), and all of those vacate onto Ctrl+letter for free. ⛔ Still do NOT poke
+`PlayerInput.Bindings` at runtime: `UIKeybindingsPCScreen.ReadBindings()` reads the live array, so a
+runtime edit shows up in the Controls screen and is baked into the player's profile permanently the
+moment they press Save and Exit there.
+
+⚠ **The one thing leniency does NOT hand us is a free `Shift` — so we take it.** `LeftShift` is bound
+in `[XComGame.XComTacticalInput]` and `Key_Left_Shift`'s RELEASE calls `PrevUnit()` UNCONDITIONALLY
+(`XComTacticalInput.uc:2147`, state `ActiveUnit_Moving`), so every `Shift+` chord cycled the soldier
+when the player let go. It never showed up in testing because the tutorial runs `InReplayPlayback`,
+whose copy of the same function (`:587`) is a bare `return false` — the one place being a replay HID a
+bug instead of causing one. **The fix is a SWALLOW of the modifier itself**, not of the function: the
+arbiter accepts a claim on a modifier key (`{VK_LSHIFT, ModNone}`, side-resolved from lParam's scan
+code because WM_KEYDOWN reports the generic `VK_SHIFT`), so while our tactical layer owns input the
+engine never sees LeftShift go down or up. **Our own chord matching is untouched**, and that is the
+linchpin: `GetKeyState` reflects the state the OS updated when the message was pulled off the queue,
+not what the window procedure then did with it.
+⛔ **`object-scanner-recon.md` §4.6's Option B is WRONG and must not be tried**: the mouse-gate
+trick does not apply verbatim to `Key_Left_Shift`, which takes an `int ActionMask` and returns a bool.
+`MouseGate`'s thunk consumes a lone `EX_EndFunctionParms`; here it would meet a parameter expression
+instead, leave the VM's `Code` pointer mid-expression, and hand the caller an unwritten return value.
+Doing it properly needs `UStruct::Script`, an offset this project has never measured — and the swallow
+needs no engine offset at all.
+Two consequences: `RightShift` is deliberately NOT claimed (it carries no binding in the tactical
+section). And the swallow costs `PressedKeys` its `LeftShift` entry, which is what `Key_Tab`'s
+prev-soldier branch reads — so `Shift+Tab` is claimed and re-provided by
+`X2AccessObjectScanner.PrevSoldier`, reproducing `XComTacticalInput.IsManualUnitSwitchAllowed`'s guard
+rule for rule. `Ctrl` remains the safe modifier for anything that does NOT want to displace a vanilla
+key: `Key_Left_Control` merely toggles the pathing pawn's waypoint mode on press and untoggles it on
+release.
+
+⛔ **Tab stays the game's, in both of its meanings.** `eTBC_NextUnit` in world mode
+(`UIUtilities_Input.uc:451`) and `NextTarget` while the shot HUD is raised (`UITacticalHUD.uc:459`)
+are the player's own bindings and the layer does not take them: switching soldiers is narrated by
+POLLING the controller instead, which leaves the binding untouched AND catches the mouse click, the
+turn start and the death-driven re-select that a key claim never could. The one exception is
+`Shift+Tab`, claimed and re-provided only because the Shift swallow costs `Key_Tab`'s prev-soldier
+branch the `PressedKeys` entry it reads — a debt the swallow created, not a verb the layer wanted.
+
+**Exactly two letter keys are free: H and I.** Measured across every input section of
+`DefaultInput.ini` — and it must be measured across ALL of them. Two traps. First, most letter
+bindings are generic `X_Key_Press | onrelease X_Key_Release` forwarders into
+`XComInputBase.InputEvent`: they look empty and are not (`Y` is Overwatch's default ability hotkey via
+`Template.DefaultKeyBinding`, and `T`, `V`, `B`, `N` are live the same way). Second, **`U` is bound in
+`[Engine.PlayerInput]`, not in the tactical block** (`ClearAllWaypoints`), so a tactical-section-only
+grep reports it free and is wrong. Claimed: `H` = shot breakdown (targeting only), `I` = re-read the
+tutorial message (tutorial only). That is the whole supply of bare letters.
+
+**Punctuation is where the budget actually is**, and it costs even less: `;` and `'` carry NO
+`Bindings=` entry in any input section, so they displace nothing and need no leniency argument (the
+only two lines in `DefaultInput.ini` mentioning `Semicolon` are `WidgetInputAliases` character lists
+for the editor's edit boxes, which bind no command). `;` is the selected-unit readout; `'` remains
+free, earmarked for the vantage read.
+

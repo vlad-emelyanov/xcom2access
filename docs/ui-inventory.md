@@ -284,7 +284,7 @@ external references in the shipped sources.
 ## Not screens, but real work items
 
 Panels and subsystems that are TODO surfaces in their own right, already tracked in
-CLAUDE.md's next steps — listed so this census reads complete:
+`next-steps.md` — listed so this census reads complete:
 
 - `UIPersonnel_DropDown` — staff drop-down, a `UIPanel`, not part of the personnel family.
 - `UIToDoWidget` + `UINotificationMenu`, `UIEventQueue`, the `UIAvengerHUD` resource strip.

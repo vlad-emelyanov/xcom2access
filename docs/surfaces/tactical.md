@@ -468,3 +468,89 @@ that goes away uncommitted was cancelled.
   `BattleData.TacticalHackRewards`) the tail is unreachable for everyone. Chances come from the screen's own `GetHackChance`
   (never re-derived — sitreps, Gremlins and Skullmining all move the inputs) and are
   truncated, matching Flash: 6.42 and 2.75 print as 6% and 2%.
+
+## Tactical combat narration and the replay path
+
+Moved out of `CLAUDE.md` (which keeps the ownership rules and points here): the design of
+`X2AccessTacticalEvents.uc`, `X2AccessReplayNarration.uc`, the tutorial blade recovery in
+`X2AccessTutorial.uc`, and the markup vocabulary they share. Every ⛔ below is load-bearing —
+the listener set does not work if any one of them is undone.
+
+- **Tactical combat narration** (`X2AccessTacticalEvents.uc`): one `CHEventListenerTemplate`,
+  tactical only, nine events — the path forced by the flyover/notice/banner tap not being
+  buildable. **Deferral is a per-event decision, not a default**, and for one action it is SPLIT
+  ACROSS BOTH visualization windows: `ELD_OnVisualizationBlockStarted` for the ACTION
+  (`AbilityActivated`) and `ELD_OnVisualizationBlockCompleted` for its OUTCOME
+  (`UnitTakeEffectDamage`, `UnitDied`), because a listener otherwise fires at state submission,
+  seconds ahead of the animation; `ELD_OnStateSubmitted` for structural facts (`PlayerTurnBegun`,
+  concealment, panic, shields, evac), which are tied to no animation and would be dropped entirely
+  by a state that never builds a visualization block.
+  - ⛔ **The split is what puts cause before consequence, and a shared window cannot.** Priority
+    orders listeners for the SAME event only; between events the order is the GAME's trigger order,
+    and that is backwards for us — `XComGameState_Unit` triggers `UnitTakeEffectDamage` (`:5874`)
+    and `UnitDied` (`:6022`) while effects are applied, and `XComGameStateContext_Ability` only
+    reaches `AbilityActivated` afterwards under its own *"Trigger post-activation events"* comment
+    (`:191`). All three on one window speak the outcome before the attack — you learn you have been
+    shot before you learn by whom — and they land in the SAME 100 ms drain, so the narrator cannot
+    reorder what it cannot tell apart. Blocks run sequentially, so the split also stops two
+    abilities resolving in one burst from interleaving; it is what the game's own HUD does
+    (`UIUnitFlagManager:55`, `UITacticalHUD_Enemies:68`). The replay narrator needs none of this:
+    walking frames in order gets the human order for free.
+  - ⛔ **One grenade landing as several `DamageResults` entries is TWO bugs, and summing is only
+    the first.** `DamageResults` accumulates for the whole mission, so damage is SUMMED over the
+    entries whose `DamageResult.Context` matches this state — that fixes what the line SAYS.
+    `XComGameState_Unit.TakeDamage` also fires `UnitTakeEffectDamage` once per entry, and deferred
+    to `ELD_OnVisualizationBlockCompleted` those N callbacks are IDENTICAL in every argument (same
+    unit state, array already complete), so each re-sums the same total into the same sentence and
+    all N land in one 100 ms drain — that is how many times it is said, and summing does nothing
+    about it. Nothing stateless can pick one of N indistinguishable calls, so
+    `OnUnitTakeEffectDamage` claims `(GameState.HistoryIndex, Unit.ObjectID)` through
+    `ClaimDamageNarration` before it speaks. **The key is identity, never the text** — that is what
+    keeps it compatible with the narrator's no-text-dedup rule, since two ADVENT Troopers differ by
+    ObjectID where their words do not. The replay narrator needs no such guard: it visits each unit
+    of a frame once by construction.
+  - Two more details that needed the game's own source: only abilities that actually roll get a
+    result word (`X2AbilityToHitCalc_DeadEye` always hits, so the word would be noise), and it is the game's own
+    localized `m_aAbilityHitResultStrings`; and the interrupt pass is skipped, because
+    `AbilityActivated` re-triggers per interrupt step. Fog parity via `CanXComSquadSeeTarget` with
+    ONE documented exception — a unit stops being visible the moment it dies, so a kill the squad
+    CAUSED is always announced.
+- **Replay narration** (`X2AccessReplayNarration.uc`): the tutorial's stand-in for the dead event
+  bus. Polled from `Narrator::OnTick` (100 ms, next to the drain), it walks history frames and emits
+  ability / damage / death / concealment / turn lines through `X2AccessTacticalEvents`'s shared
+  builders — `BuildAbilityLine`, `BuildDamageLine`, `NarrateDeath` — so a shot reads identically
+  whether an event or a frame produced it. Its gate is `bInReplay`, i.e. exactly when the listeners
+  cannot fire, so the two paths can never both narrate one action.
+  - ⛔ **Never read past what the player was SHOWN**: the whole tutorial script is in the history at
+    mission start, so the cursor is `XComGameStateVisualizationMgr.LastStateHistoryVisualized` (the
+    game's own "which frame is on screen", what `UIUnitFlag` uses), clamped again to the replay's
+    `CurrentHistoryFrame`. That also syncs narration to the animation.
+  - ⛔ The catch-up bound is a RUNAWAY guard, not a pacing one: normal playback advances that cursor
+    in steps of **25-50 frames**, because most history frames carry no visualization of their own
+    and `LastStateHistoryVisualized` jumps to the end of a block when the block completes. A
+    24-frame bound read as "seek" on ordinary play and dropped 597 frames across one tutorial run —
+    among them an overwatch shot the player watched and never heard. It is 512 now, and the only
+    real seek is `StartReplay`'s own `JumpReplayToFrame`, which the first-poll branch already
+    adopts. A skip is always logged, never silently swallowed. It resolves the GRI by hand rather
+    than through `` `REPLAY `` / `` `XCOMVISUALIZATIONMGR ``, because those dereference a null GRI
+    in the shell ten times a second.
+
+### Tutorial blade recovery
+
+- **Tutorial blade recovery** (`X2AccessTutorial.uc`): the one tutorial surface native cannot read.
+  Walks the history BACKWARDS from `XComTutorialMgr.CurrentHistoryFrame` (never past it) collecting
+  removed `MessageID`s, and resolves the newest surviving UNANCHORED blade through the mission's own
+  `X2MissionNarrativeTemplate.GetObjectiveText`, exactly as
+  `X2Action_ShowTutorialPopup.GetTutorialBoxText` does. A removal context carries only `MessageID` +
+  `Remove` — `BoxType` reads as its default — so removals must be matched by id, never filtered by
+  type.
+
+### Speech vocabulary
+
+- **Speech vocabulary** (`X2AccessHelper.GetInputVocabulary` / `GetResultFlyovers`): the game's OWN
+  localized words for markup native has to speak. Our built-in table is English, which is wrong the
+  moment the player is not. Keyed by markup token (an `<img>` `src`, or `KEY:NAME`) so a missing
+  entry degrades to the English word instead of shifting a positional table. ⚠️ `%KEY:LMB%` is the
+  one that MUST be there: `X2MissionNarrativeTemplate.KeyBindingMarkups` resolves only
+  RMB/ENTER/TAB/Q/E/P and `%KEY:LMB%` is substituted solely by `UIUtilities_Input.InsertPCIcons`,
+  which the blade path never calls — so it reaches speech raw.

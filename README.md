@@ -141,7 +141,7 @@ A [`justfile`](justfile) wraps the common loops — `just build`, `just install`
 carry a loopback HTTP harness for observing and driving a live session
 (`just arm`, then `just dev-status` / `dev-speech` / `dev-gui` / `dev-props`).
 It is compiled out of release builds entirely and additionally needs a marker
-file to arm; see the dev-harness section of [CLAUDE.md](CLAUDE.md).
+file to arm; see [`docs/dev-harness.md`](docs/dev-harness.md).
 
 ## Installation
 
