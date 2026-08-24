@@ -738,6 +738,131 @@ std::string GeoscapeName()
     return Vocab::ScreenGeoscapeFallback;
 }
 
+// ---- stop 2: the region pins' two buttons (docs/surfaces/strategy.md, "Region actions") ----
+//
+// MAKE CONTACT and the captionless radio-tower button, which between them are the whole
+// resistance economy and which vanilla wires to no key at all — see X2AccessGeoScanner's own
+// header for the four dead ends that leave them mouse-and-controller-only.
+//
+// ⛔ This is PARITY, not an aid, and that is the whole reason it is a Tab stop next to the tray
+// while the world ring stays on PageUp/PageDown. Both buttons are DRAWN, on screen, right now, on
+// a pin a sighted player can click. The ring enumerates seventeen regions nobody can read off the
+// globe; this enumerates the two or three the globe is currently offering a verb on.
+constexpr const char* kGeoScannerClass = "X2AccessGeoScanner";
+
+// Verb codes, matching X2AccessGeoScanner's VERB_CONTACT / VERB_RELAY.
+constexpr int kGeoVerbContact = 0;
+constexpr int kGeoVerbRelay = 1;
+
+// ⛔ CACHED ON THE SCREEN, which needs an argument because this payload is game STATE and not
+// widgets — a pointer key cannot see a region change resistance level. It works because every
+// transition that changes this set pops a MODAL: contact completing (eAlert_ContactMade), a relay
+// completing (eAlert_OutpostBuilt), a region unlocking (UnlockPopup), the ResistanceRadio tech
+// finishing, and our own verb (which opens the confirm alert). A modal pushes a screen, the
+// navigator detaches, and Detach() calls InvalidateWireCaches() — so the set is re-asked exactly
+// when it can have moved. The tray handles ride along in the key as a free second signal.
+//
+// ⚠ The one case neither covers is a console command; not worth a per-render outbound call.
+WireCache gGeoActions(kGeoScannerClass, "DescribeRegionActions");
+
+// Fire one of the two verbs. The companion re-checks the gate by (region, verb) before acting —
+// the geoscape clock keeps running under this stop, so the region can have changed level between
+// the render that spoke a line and the Enter that acts on it.
+void CallGeoAction(int regionId, int verb)
+{
+    void* cdo = GameUI::FindCompanionCDO(kGeoScannerClass);
+    if (!cdo)
+        return;
+    struct {
+        int32_t RegionID;
+        int32_t Verb;
+    } params{regionId, verb};
+    if (!GameUI::CallScriptFunction(cdo, "ActivateRegionAction", &params)) {
+        LOG_WARN("MenuNavigator: %s.ActivateRegionAction failed", kGeoScannerClass);
+        return;
+    }
+    // The alert this opens detaches us and invalidates every cache on the way out; do it here
+    // too, for the path where the verb was refused and no alert appeared.
+    gGeoActions.Invalidate();
+}
+
+void BuildRegionActions(GraphBuilder& b, const GameUI::StrategyMapView& view)
+{
+    std::vector<void*> key;
+    key.reserve(view.icons.size() + 1);
+    for (const GameUI::TrayIcon& icon : view.icons)
+        key.push_back(icon.handle);
+    key.push_back(view.screen);
+
+    bool any = false;
+    for (const WireRecord& rec : gGeoActions.Get(std::move(key))) {
+        if (RecField(rec, "kind") != "action")
+            continue;
+        const std::string region = RecField(rec, "region");
+        const int regionId = atoi(RecField(rec, "id").c_str());
+        // ⛔ An unnamed or unidentified record is DROPPED rather than given an anonymous stop —
+        // and this is the one place that is safe to do here, because these fields are keyed and
+        // never positional (CLAUDE.md's empty-field rule). A node reading "button, 2 of 3" with
+        // no region would offer to spend supplies somewhere the player cannot name.
+        if (region.empty() || regionId == 0)
+            continue;
+        const int verb = RecField(rec, "verb") == "relay" ? kGeoVerbRelay : kGeoVerbContact;
+
+        if (!any) {
+            // Its own stop, and a context label because the buttons have no group name of their
+            // own: on screen their grouping is spatial (each sits on its region's pin), which is
+            // exactly the channel this layer cannot use.
+            b.BeginStop("actions");
+            b.PushContext(Vocab::GeoscapeRegionActions);
+            any = true;
+        }
+
+        // Keyed by ObjectID, stable over the whole campaign — there is no widget here to key on,
+        // and the verb is part of the identity because a region can offer a different one after
+        // the state moves.
+        ControlId id = ControlId::Structural(
+            "geoscape/action/" + std::to_string(verb) + "/" + std::to_string(regionId));
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+
+        // Region first, verb second: the region is what tells the entries apart, and on a stop
+        // where every line is one of two verbs the place is the news.
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(region));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+
+        auto value = [&vt](std::string text) {
+            if (text.empty())
+                return;
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(std::move(text)));
+            vt.Announcements.back().Kind = AnnouncementKinds::Value;
+        };
+
+        value(RecField(rec, "label"));
+        // The "+N supplies" figure the pin draws beside the button as HoverInfo — the whole
+        // reason for the verb, and the number a sighted player compares regions on.
+        value(RecField(rec, "income"));
+        // Cost and time as the alert labels them ("Cost", "Time"), joined here rather than in the
+        // companion so a label the game left empty leaves no separator behind.
+        value(JoinPhrases(RecField(rec, "costlabel"), RecField(rec, "cost")));
+        value(JoinPhrases(RecField(rec, "timelabel"), RecField(rec, "time")));
+        // Both refusals are still ACTIVATABLE, exactly as the pin's button is: the game shows the
+        // button whatever you can afford and explains itself inside the alert. Saying so here
+        // just means the player learns it before spending a keypress.
+        if (RecField(rec, "afford") == "0")
+            value(Vocab::GeoscapeCannotAfford);
+        if (RecField(rec, "comms") == "0")
+            value(Vocab::GeoscapeNoComms);
+
+        vt.OnActivate = [regionId, verb]() { CallGeoAction(regionId, verb); };
+
+        b.AddItem(std::move(id), std::move(vt));
+    }
+
+    if (any)
+        b.PopContext();
+}
+
 std::unique_ptr<GraphRender> BuildGeoscape()
 {
     GameUI::StrategyMapView view = GameUI::ReadStrategyMap(gScreen);
@@ -878,7 +1003,15 @@ std::unique_ptr<GraphRender> BuildGeoscape()
 
     b.EndRow();
 
-    // ---- stop 2: the HUD's four keyboard-unreachable verbs ----
+    // ---- stop 2: the two buttons on the region pins ----
+    //
+    // After the tray and before the HUD, which is both the screen's own order (the globe sits
+    // between them) and the useful one: the tray stays the landing stop, so nothing a player
+    // already knows moves. Silent when the globe is offering neither verb — an empty stop in the
+    // Tab cycle is a place to get stuck.
+    BuildRegionActions(b, view);
+
+    // ---- stop 3: the HUD's four keyboard-unreachable verbs ----
     //
     // PARITY, which is what earns them a stop at all: Dark Events, Chosen Info and Resistance
     // Orders are drawn on screen and clickable with a mouse, and vanilla reaches none of them
@@ -888,10 +1021,11 @@ std::unique_ptr<GraphRender> BuildGeoscape()
     // nav-help hotlink with a controller-only key. So this is the ant-farm shape again — the
     // game has the verb and only the mouse can reach it.
     //
-    // ⛔ And it is what justifies TAKING Tab on this screen. The world ring and the ';' status
-    // block are AIDS — they enumerate regions and continents no sighted player can read off the
-    // globe — so by the stop-list parity rule they stay on their own keys and out of the Tab
-    // cycle. Without this stop the tray would be the only one and Tab would have nothing to do.
+    // ⛔ And it is half of what justifies TAKING Tab on this screen (the region actions above are
+    // the other half). The world ring and the ';' status block are AIDS — they enumerate regions
+    // and continents no sighted player can read off the globe — so by the stop-list parity rule
+    // they stay on their own keys and out of the Tab cycle. Everything IN the cycle is a control
+    // the game has drawn and left unreachable, which is the test a stop has to pass.
     if (!view.verbs.empty()) {
         b.BeginStop("hud");
         for (const GameUI::HudVerb& verb : view.verbs) {

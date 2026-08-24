@@ -1318,3 +1318,104 @@ reaches `OnClickedDelegate` or it does not, and there is no selection left to di
 with. If `Enter` is still inert, the next thing to check is whether the ProcessEvent
 call lands at all — `just dev-call` `OnMouseEvent` against the icon's `?ptr=` from
 `just dev-gui` answers that without a rebuild.
+
+---
+
+## 16. ✅ THE RESISTANCE ECONOMY IS BUILT AND RUNS (2026-08-24)
+
+The gap this closes was found by asking a plain question — *how does a sighted
+player build a radio tower?* — and following it through the sources. The answer
+turned out to be a whole loop the keyboard never reaches, not the one verb the
+question implied.
+
+### What "radio tower" is
+
+The **outpost**, and the loc file says so in three places: `m_strOutpostTitle` =
+*INSTALL RADIO RELAY*, `m_strScanForOutpostLabel` = *BUILDING RADIO RELAY*,
+`m_strOutpostScanButtonLabel` = *BUILD RADIO RELAY*. Gated on the tech
+`ResistanceRadio` (`XComGameState_HeadquartersXCom.IsOutpostResearched:5816`); the
+3D pin mesh is literally `UI_3D.Overwold_Final.RadioTower`.
+
+### The sighted flow, end to end
+
+1. Region at `eResLevel_Contact`, `ResistanceRadio` researched, `!bCanScanForOutpost`
+   — `UIStrategyMapItem_Region.ShowOutpostButton():699`.
+2. `UpdateFlyoverText` shows `OutpostButton` on the pin, with the would-be supply
+   income beside it as `HoverInfo`.
+3. Click → `OnOutpostClicked:647` → `HQPRES.UIBuildOutpost(Region)` → a queued
+   `eAlert_Outpost` (`XComHQPresentationLayer:2682`), drawn through the Flash panel
+   **`Alert_MakeContact`**: title, region, cost (reddened if unaffordable), ETA, body,
+   confirm/ignore.
+4. Accept → `BuildOutpostCallback:1475` pays `CalcOutpostCost()` (a base plus an
+   increase per relay already built or building), sets `bCanScanForOutpost`, and
+   `SetPendingPointOfTravel` — the Avenger flies there with no second confirmation.
+5. On arrival the region satisfies `CanBeScanned()`, enters `GetAvailableScanningSites()`
+   and therefore the tray; `Space` (`ToggleScan`) runs the clock.
+6. Completion → `Update:530` → `eResLevel_Outpost` → `eAlert_OutpostBuilt` (panel
+   `Alert_ContactMade`). `XComGameState_Continent.GetNumRadioTowers()` counts it.
+
+**MAKE CONTACT is the same shape one level earlier** (`ShowContactButton():704` →
+`OnContactClicked:628` → `UIMakeContact` → `eAlert_Contact` →
+`MakeContactCallback:1399`), with one extra gate the relay does not have:
+`UIAlert.CanMakeContact()` is `GetRemainingContactCapacity() > 0`, i.e. Resistance
+Comms capacity, and it is the usual reason the verb refuses.
+
+### ⛔ Four dead ends, all of which had to be checked
+
+- the pin's `OnUnrealCommand` answers `FXS_BUTTON_A` only (`:657`);
+- the screen's `Enter`/`Space` go to `ToggleScan` (`UIStrategyMap:1663`);
+- `UIStrategyMap`'s own screen-level `OutpostButton`/`ContactButton` are **commented
+  out** (`:112-116`);
+- `UIResistance` — the screen `DisplaySelectionPrompt` was meant to open — is dead
+  code, its only call site commented out (`XComGameState_WorldRegion.uc:1313`).
+
+And the tray cannot stand in: a region enters it only once `CanBeScanned()` is true,
+which is only AFTER the button has been pressed and paid for. So a keyboard player
+could watch a relay being built and never start one.
+
+### What was built
+
+- `X2AccessGeoScanner.DescribeRegionActions` / `ActivateRegionAction(id, verb)` —
+  the gate mirrored from `ShowContactButton`/`ShowOutpostButton` with nothing added,
+  and re-checked at activation because the geoscape clock runs under the stop.
+- A second Tab stop in the geoscape recipe, between the tray and the HUD verbs.
+  Silent when neither verb is on offer.
+- The ring's region line now distinguishes *contact established* from *radio relay
+  available* from *BUILDING RADIO RELAY: N Days remaining* (the game's own composed
+  status line) — three situations that read identically before.
+- Continents gained `regions contacted N of M, radio relays N of M`, which is
+  `SetContinentLevel`'s own arithmetic and the only statement the globe makes about
+  how far a continent is from its bonus.
+
+### ✅ First live pass, same day — and what it did NOT cover
+
+The player ran it in a live campaign and reported the surface working: the stop is
+reachable and its verbs fire. That settles the two things a static reading could not
+— that the Tab stop appears where it should, and that the ObjectID round-trip
+(`DescribeRegionActions` → `ActivateRegionAction`) reaches the right region's
+handler.
+
+⚠ **Player-reported, not measured.** Nothing was captured from `/speech` or
+`/flashqueue` during the run, so what remains open is everything about the WORDS
+rather than the wiring. In rough order of how likely each is to be wrong:
+
+1. **The confirm alert is `Alert_MakeContact`, an unexercised panel** in the Flash
+   capture's field map — and it is shared by BOTH verbs (`UIAlert:1149-1150` maps
+   `eAlert_Contact` and `eAlert_Outpost` to the same library ID). Check
+   `just dev-flashqueue` against `just dev-speech` for the same alert, and grep the
+   log for `dropped asset-looking operand`, which is the asset filter reporting what
+   it removed and the only place a wrongly-dropped LINE would show up.
+2. **The completion alert** (`eAlert_OutpostBuilt` → panel `Alert_ContactMade`),
+   likewise never exercised.
+3. **The cache-invalidation argument**, which is the one design claim here that is
+   not enforced by anything: after accepting, the Avenger flies (`eSMS_Flight` → the
+   recipe detaches), and the stop must be GONE for that region when it re-attaches.
+   If a paid-for verb is still offered, the modal-detaches-us reasoning is wrong and
+   the cache needs a real discriminator.
+4. **A shape-count of the speech ring** (`CLAUDE.md`'s distribution rule). Two
+   specifics to look for: whether `cost` or `income` ever reads as a bare number with
+   no unit, and whether any line doubles a full stop — the labels are the game's and
+   some of them end in `:`.
+5. The **no comms capacity** and **cannot afford** branches, which need a campaign
+   state that produces them; and the `bInstantContacts` Resistance Order, the one
+   path where the ETA is a localized word (`strETAInstant`) rather than a day count.

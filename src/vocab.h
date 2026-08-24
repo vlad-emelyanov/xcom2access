@@ -189,6 +189,21 @@ inline constexpr const char* GeoscapeResNetOff = "off";
 inline constexpr const char* GeoscapeTrayEmpty = "Nothing on the map right now";
 inline constexpr const char* GeoscapeUnmetFaction = "Faction not yet met";
 
+// The region-actions stop: the two hotlink buttons a region pin draws (MAKE CONTACT, and the
+// captionless radio-tower button), which vanilla reaches by mouse and controller only. The verb
+// words, the cost, the time and the income all come from the game; only these three are ours.
+//
+// The stop's own name has no localized source — the buttons are drawn ON the pins and the game
+// never labels the pair as a group, because to a sighted player their grouping is spatial.
+inline constexpr const char* GeoscapeRegionActions = "Region actions";
+// Both are facts the game states in a channel speech does not have: the alert reddens a cost it
+// cannot pay (UIAlert.BuildOutpostAlert colours it eUIState_Bad and disables the confirm), and
+// the contact alert appends a whole sentence about Resistance Comms. Neither is on the PIN, so
+// these are said where the choice is made rather than left to the alert that follows — the alert
+// still says both, in the game's own words, one keypress later.
+inline constexpr const char* GeoscapeCannotAfford = "cannot afford";
+inline constexpr const char* GeoscapeNoComms = "no comms capacity";
+
 // The text-entry dialog (naming a save). The field is a Flash TextField, so no screen reader
 // sees the keystrokes and this layer has to echo them itself — hence the boundary words and the
 // punctuation table below.

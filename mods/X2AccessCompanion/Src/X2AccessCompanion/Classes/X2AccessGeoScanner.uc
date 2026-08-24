@@ -251,6 +251,254 @@ function LookAtSelection()
 }
 
 // ---------------------------------------------------------------------------
+// Region actions — the one PARITY surface in this file
+// ---------------------------------------------------------------------------
+
+// ⛔ EVERYTHING ELSE HERE IS AN AID. THIS IS NOT, AND THAT IS WHAT EARNS IT A TAB STOP.
+//
+// UIStrategyMapItem_Region draws two hotlink buttons on a region pin, and between them they ARE
+// the resistance economy: ContactButton ('contactButtonMC', captioned m_strButtonMakeContact) and
+// OutpostButton ('towerButtonMC' — captioned by NOTHING, InitButton is called with no label at
+// all and the radio-tower art is the whole caption). A mouse+keyboard player can reach neither.
+// The pin's own OnUnrealCommand answers FXS_BUTTON_A and nothing else (UIStrategyMapItem_Region
+// :657), the screen's Enter/Space go to ToggleScan (UIStrategyMap:1663), and the screen-level pair
+// that would have fixed it is commented out (UIStrategyMap.uc:112-116). The resistance screen
+// those buttons were once meant to open is dead code too — UIResistance is never pushed, its only
+// call site commented out (XComGameState_WorldRegion.uc:1313).
+//
+// So: the ant-farm shape once more. The game has the verb, has drawn the button, and wired it to
+// no key. The tray never covers this — a region enters the tray only once it is ALREADY
+// scannable, i.e. only after the button has been pressed and paid for.
+//
+// ⛔ The two verbs are one surface, not two. They are the same button family, mutually exclusive
+// by resistance level (contact at eResLevel_Unlocked, relay at eResLevel_Contact), and they are
+// two halves of one loop: contact a region, then install a relay in it. Splitting them into
+// separate stops would have made the second half look like a different feature.
+const VERB_CONTACT = 0;
+const VERB_RELAY = 1;
+
+// The wire format: records joined by REC_SEP, fields within a record by FLD_SEP, each field
+// key=value. PRINTABLE separators, matching every other reader's.
+const REC_SEP = "~|~";
+const FLD_SEP = "~:~";
+
+// One record per region whose pin is CURRENTLY drawing one of the two buttons:
+//
+//   kind=action  id  verb=contact|relay  region  label  income
+//                costlabel  cost  timelabel  time  afford=0|1  comms=0|1
+//
+// Every WORD is the game's own — the button caption, the alert's own cost and time labels, and
+// the "+N supplies" figure UpdateFlyoverText puts beside the button as HoverInfo. The two FLAGS
+// are facts a sighted player reads off a colour or off a sentence inside the alert behind the
+// button (the alert reddens a cost it cannot pay and appends m_strContactNeedResComms), so they
+// cross as flags and native turns them into words.
+function DescribeRegionActions()
+{
+	local XComGameState_WorldRegion Region;
+	local XComGameState_HeadquartersXCom XComHQ;
+
+	NativeResult = "";
+
+	XComHQ = `XCOMHQ;
+	if (XComHQ == none)
+	{
+		return;
+	}
+
+	foreach `XCOMHISTORY.IterateByClassType(class'XComGameState_WorldRegion', Region)
+	{
+		// The same fog-parity predicate every category here uses, and it is NOT redundant with
+		// the two gates below: ShouldBeVisible opens with `if(!ResistanceActive()) return false`,
+		// a single global flag (XComGameState_HeadquartersResistance.bInactive) that hides EVERY
+		// region pin at once. With the network switched off there is no button on screen to offer.
+		if (!Region.ShouldBeVisible())
+		{
+			continue;
+		}
+
+		if (CanOfferRelay(Region, XComHQ))
+		{
+			EmitAction(Region, XComHQ, VERB_RELAY);
+		}
+		else if (CanOfferContact(Region, XComHQ))
+		{
+			EmitAction(Region, XComHQ, VERB_CONTACT);
+		}
+	}
+}
+
+// Fire the verb. ⛔ THE GATE IS RE-CHECKED HERE and that is not belt-and-braces: the geoscape
+// clock is the one screen in the game that keeps RUNNING under our stop, so a contact scan can
+// complete between the render that spoke a line and the Enter that acts on it — moving the region
+// from Unlocked to Contact and turning "make contact" into "install a relay" under the player's
+// finger. Identity plus verb, both re-tested, is what makes that a silent no-op instead.
+//
+// ⚠ Note what this does NOT touch: SelectedMapItem. Both entry points take the region as a
+// PARAMETER (UIStrategyMapItem_Region.OnContactClicked/OnOutpostClicked are one line each and
+// pass GetRegion()), so this whole surface sidesteps the screen-accept trap that cost the tray's
+// Enter two sessions — there is no selection for our idea of the target to disagree with.
+function ActivateRegionAction(int RegionID, int Verb)
+{
+	local XComGameState_WorldRegion Region;
+	local XComGameState_HeadquartersXCom XComHQ;
+
+	NativeResult = "";
+
+	XComHQ = `XCOMHQ;
+	Region = XComGameState_WorldRegion(`XCOMHISTORY.GetGameStateForObjectID(RegionID));
+	if (Region == none || XComHQ == none || `HQPRES == none)
+	{
+		return;
+	}
+
+	// The listing's own visibility gate, re-applied: acting on a pin the globe has stopped
+	// drawing is the same mistake as listing one.
+	if (!Region.ShouldBeVisible())
+	{
+		return;
+	}
+
+	// The game's own handlers, one level up from the button — OnOutpostClicked IS
+	// `HQPRES.UIBuildOutpost(GetRegion()) and nothing else. Everything downstream stays the
+	// game's: the alert, its affordability check, the payment, the auto-flight.
+	if (Verb == VERB_RELAY && CanOfferRelay(Region, XComHQ))
+	{
+		`HQPRES.UIBuildOutpost(Region);
+	}
+	else if (Verb == VERB_CONTACT && CanOfferContact(Region, XComHQ))
+	{
+		`HQPRES.UIMakeContact(Region);
+	}
+}
+
+// UIStrategyMapItem_Region.ShowContactButton() / ShowOutpostButton(), mirrored gate for gate.
+// ⛔ Nothing is added to them — not affordability, not comms capacity, not "is the pin on screen".
+// The game shows both buttons regardless of whether you can pay, and says why only inside the
+// alert; refusing the stop here would hand a blind player LESS than the globe shows and hide the
+// explanation with it.
+private function bool CanOfferContact(XComGameState_WorldRegion Region,
+	XComGameState_HeadquartersXCom XComHQ)
+{
+	return XComHQ.IsContactResearched()
+		&& Region.ResistanceLevel == eResLevel_Unlocked
+		&& !Region.bCanScanForContact;
+}
+
+private function bool CanOfferRelay(XComGameState_WorldRegion Region,
+	XComGameState_HeadquartersXCom XComHQ)
+{
+	return XComHQ.IsOutpostResearched()
+		&& Region.ResistanceLevel == eResLevel_Contact
+		&& !Region.bCanScanForOutpost;
+}
+
+private function EmitAction(XComGameState_WorldRegion Region,
+	XComGameState_HeadquartersXCom XComHQ, int Verb)
+{
+	local string Rec;
+	local StrategyCost Cost;
+	local array<StrategyCostScalar> Scalars;
+	local int MinDays, MaxDays, Income;
+	local bool bRelay;
+
+	bRelay = (Verb == VERB_RELAY);
+
+	if (bRelay)
+	{
+		Cost = Region.CalcOutpostCost();
+		Scalars = Region.OutpostCostScalars;
+		Region.BuildHavenETA(MinDays, MaxDays);
+		// GetSupplyDropReward's two flags are POSITIONAL — "as if contacted" then "as if
+		// relayed" — and the pin asks it once per button for exactly this figure
+		// (PotentialSuppliesWithContact / PotentialSuppliesWithOutpost).
+		Income = Region.GetSupplyDropReward(, true);
+	}
+	else
+	{
+		Cost = Region.CalcContactCost();
+		Scalars = Region.ContactCostScalars;
+		Region.MakeContactETA(MinDays, MaxDays);
+		Income = Region.GetSupplyDropReward(true);
+	}
+
+	Rec = "kind=action";
+	Rec $= FLD_SEP $ "id=" $ string(Region.ObjectID);
+	Rec $= FLD_SEP $ "verb=" $ (bRelay ? "relay" : "contact");
+	Rec $= FLD_SEP $ "region=" $ Region.GetDisplayName();
+
+	// The caption. The relay button has none of its own, so the words come from the alert that
+	// button opens — which is the next thing the player hears either way, so the verb they choose
+	// and the verb they confirm are worded identically.
+	if (bRelay)
+	{
+		Rec $= FLD_SEP $ "label=" $ class'UIAlert'.default.m_strOutpostConfirm;
+		Rec $= FLD_SEP $ "timelabel=" $ class'UIAlert'.default.m_strOutpostTimeLabel;
+	}
+	else
+	{
+		Rec $= FLD_SEP $ "label=" $ class'UIStrategyMapItem_Region'.default.m_strButtonMakeContact;
+		Rec $= FLD_SEP $ "timelabel=" $ class'UIAlert'.default.m_strContactTimeLabel;
+	}
+
+	Rec $= FLD_SEP $ "income=" $ "+"
+		$ class'UIUtilities_Strategy'.default.m_strCreditsPrefix $ string(Income);
+
+	// m_strContactCostLabel for both: the alert reuses it for the relay too, and says so in a
+	// comment of its own ("reusing string here", UIAlert.BuildOutpostAlert).
+	Rec $= FLD_SEP $ "costlabel=" $ class'UIAlert'.default.m_strContactCostLabel;
+	Rec $= FLD_SEP $ "cost="
+		$ class'UIUtilities_Strategy'.static.GetStrategyCostString(Cost, Scalars);
+	Rec $= FLD_SEP $ "time=" $ ETAWords(MinDays, MaxDays, !bRelay);
+	Rec $= FLD_SEP $ "afford=" $ (XComHQ.CanAffordAllStrategyCosts(Cost, Scalars) ? "1" : "0");
+
+	// Comms capacity gates CONTACT only, and it is the reason a contact button most often
+	// refuses: UIAlert.CanMakeContact() is `GetRemainingContactCapacity() > 0` and nothing else.
+	if (!bRelay)
+	{
+		Rec $= FLD_SEP $ "comms=" $ (XComHQ.GetRemainingContactCapacity() > 0 ? "1" : "0");
+	}
+
+	Emit(Rec);
+}
+
+// UIAlert.GetOutpostTimeString / GetContactTimeString, with the day WORD taken from
+// UIUtilities_Text.GetDaysString rather than the alert's own m_strDays.
+// ⚠ Deliberate, and it is the localized-var trap from CLAUDE.md: m_strDays is declared on
+// UIX2SimpleScreen and the loc file populates it under [UIX2SimpleScreen], NOT under [UIAlert] —
+// so `class'UIAlert'.default.m_strDays` is a value this class has no business assuming. The
+// utility pair ([UIUtilities_Text] m_strDay / m_strDays) is populated where it is declared, and
+// it also gets the singular right, which the alert's own format does not.
+private function string ETAWords(int MinDays, int MaxDays, bool bContact)
+{
+	local XComGameState_HeadquartersXCom XComHQ;
+
+	if (bContact)
+	{
+		XComHQ = `XCOMHQ;
+		if (XComHQ != none && XComHQ.bInstantContacts)
+		{
+			return XComHQ.strETAInstant;
+		}
+	}
+
+	if (MinDays == MaxDays)
+	{
+		return string(MinDays) @ class'UIUtilities_Text'.static.GetDaysString(MinDays);
+	}
+	return string(MinDays) @ "-" @ string(MaxDays)
+		@ class'UIUtilities_Text'.static.GetDaysString(MaxDays);
+}
+
+private function Emit(string Rec)
+{
+	if (NativeResult != "")
+	{
+		NativeResult $= REC_SEP;
+	}
+	NativeResult $= Rec;
+}
+
+// ---------------------------------------------------------------------------
 // The ring
 // ---------------------------------------------------------------------------
 
@@ -553,10 +801,8 @@ private function array<AccessGeoEntry> BuildRegions()
 	local AccessGeoEntry Entry;
 	local XComGameState_WorldRegion Region;
 	local XComGameState_HeadquartersXCom XComHQ;
-	local bool bContactResearched;
 
 	XComHQ = `XCOMHQ;
-	bContactResearched = (XComHQ != none) && XComHQ.IsContactResearched();
 
 	foreach `XCOMHISTORY.IterateByClassType(class'XComGameState_WorldRegion', Region)
 	{
@@ -567,7 +813,7 @@ private function array<AccessGeoEntry> BuildRegions()
 
 		Entry.Key = Region.ObjectID;
 		Entry.Label = Region.GetDisplayName();
-		Entry.Detail = RegionState(Region, bContactResearched);
+		Entry.Detail = RegionState(Region, XComHQ);
 		Entry.Loc = Region.Get2DLocation();
 		Entries.AddItem(Entry);
 	}
@@ -577,17 +823,71 @@ private function array<AccessGeoEntry> BuildRegions()
 
 // The resistance state, plus the income figure the region pin draws as a coloured "+N" label.
 // Both are what GenerateTooltip shows; the colour is dropped because the number carries it.
-private function string RegionState(XComGameState_WorldRegion Region, bool bContactResearched)
+//
+// ⛔ THE STATE WORD ALONE IS NOT THE STATE. "contact established" is true of a region you can
+// install a relay in this minute, of one already building one, and of one whose relay tech is not
+// researched yet — three different situations with three different next moves, and the pin draws
+// them differently (a tower button, a scan meter, nothing). Collapsing them is the shape of bug
+// CLAUDE.md's distribution rule is about: every line reads correctly and the readout is still
+// wrong. The availability clause here and the actions stop in the recipe are the same fact said
+// twice on purpose — the ring is where you BROWSE the world, the stop is where you act on it.
+private function string RegionState(XComGameState_WorldRegion Region,
+	XComGameState_HeadquartersXCom XComHQ)
 {
 	local string Line;
+	local bool bContactResearched, bOutpostResearched;
+
+	bContactResearched = (XComHQ != none) && XComHQ.IsContactResearched();
+	bOutpostResearched = (XComHQ != none) && XComHQ.IsOutpostResearched();
 
 	switch (Region.ResistanceLevel)
 	{
-	case eResLevel_Outpost:  Line = "radio relay built"; break;
-	case eResLevel_Contact:  Line = "contact established"; break;
-	case eResLevel_Unlocked: Line = "contact available"; break;
-	case eResLevel_Locked:   Line = "no contact"; break;
-	default:                 Line = ""; break;
+	case eResLevel_Outpost:
+		Line = "radio relay built";
+		break;
+
+	case eResLevel_Contact:
+		if (Region.bCanScanForOutpost)
+		{
+			// The game's own composed status line — "BUILDING RADIO RELAY: 12 Days remaining" —
+			// the same call the scan-sites category makes, so a region in progress reads
+			// identically in both rings.
+			Line = Region.GetUIButtonTooltipBody();
+		}
+		else
+		{
+			Line = "contact established";
+			if (bOutpostResearched)
+			{
+				Line = Join(Line, "radio relay available");
+			}
+		}
+		break;
+
+	case eResLevel_Unlocked:
+		if (Region.bCanScanForContact)
+		{
+			Line = Region.GetUIButtonTooltipBody();
+		}
+		else if (bContactResearched)
+		{
+			Line = "contact available";
+		}
+		else
+		{
+			// No tech, no button, and GenerateTooltip suppresses the whole tooltip before contact
+			// is researched — so a sighted player cannot tell this from a locked region either.
+			Line = "no contact";
+		}
+		break;
+
+	case eResLevel_Locked:
+		Line = "no contact";
+		break;
+
+	default:
+		Line = "";
+		break;
 	}
 
 	// The income figure appears only where the game shows it: GenerateTooltip suppresses the whole
@@ -735,13 +1035,52 @@ private function array<AccessGeoEntry> BuildContinents()
 		if (BonusCard != none)
 		{
 			Entry.Detail = BonusCard.GetDisplayName();
+			// The bonus name is drawn in a COLOUR that says whether it is active
+			// (UIStrategyMapItem_Continent.UpdateFlyoverText: eUIState_Good against
+			// eUIState_Disabled), and the pin's tooltip spells the same thing out in words.
+			// Speech has no colour, so it takes the words — the game's own, both of them.
+			if (Continent.bContinentBonusActive)
+			{
+				Entry.Detail = Join(Entry.Detail,
+					class'UIStrategyMapItem_Continent'.default.m_strBonusAchieved);
+			}
+			else
+			{
+				Entry.Detail = Join(Entry.Detail,
+					class'UIStrategyMapItem_Continent'.default.m_strBonusHelp);
+			}
 		}
+
+		// The two counters the pin draws as rows of pips, and the reason a relay is worth
+		// building at all — the continent bonus needs every region contacted AND relayed.
+		// ⛔ The arithmetic is UpdateFlyoverText's own, not a re-derivation: resistance level
+		// counts 1 for a contact and 2 for a relay, so `level - towers` is regions contacted and
+		// `maxLevel - maxTowers` is regions in the continent. Recomputing it from the region list
+		// would be a second implementation to keep in step.
+		Entry.Detail = Join(Entry.Detail, ContinentProgress(Continent));
 
 		Entry.Loc = Continent.Get2DLocation();
 		Entries.AddItem(Entry);
 	}
 
 	return Entries;
+}
+
+// "regions contacted 3 of 4, radio relays 1 of 4" — the four numbers SetContinentLevel pushes
+// into Flash as two rows of pips, which is the only place the globe states how far a continent is
+// from its bonus.
+private function string ContinentProgress(XComGameState_Continent Continent)
+{
+	local int Towers, MaxTowers, Contacted, RegionCount;
+	local string Line;
+
+	Towers = Continent.GetNumRadioTowers();
+	MaxTowers = Continent.GetMaxRadioTowers();
+	Contacted = Continent.GetResistanceLevel() - Towers;
+	RegionCount = Continent.GetMaxResistanceLevel() - MaxTowers;
+
+	Line = "regions contacted" @ string(Contacted) @ "of" @ string(RegionCount);
+	return Join(Line, "radio relays" @ string(Towers) @ "of" @ string(MaxTowers));
 }
 
 // ---------------------------------------------------------------------------

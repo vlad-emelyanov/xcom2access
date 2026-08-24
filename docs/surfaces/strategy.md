@@ -47,6 +47,64 @@ own hover tooltip.
 - Beside it a ring on its own keys — PageUp/Dn, Ctrl+them for the category, `O`, `Home`, `C`, `/`
   — an AID rather than parity, because it reads the fourteen regions the tray never holds.
 
+## Region actions — make contact, install a radio relay
+
+The geoscape's second Tab stop (`BuildRegionActions`, fed by
+`X2AccessGeoScanner.DescribeRegionActions`). It lists every region whose pin is CURRENTLY drawing
+one of its two hotlink buttons, and Enter fires that button's own handler.
+
+⛔ **This is the whole resistance economy, and vanilla gives the keyboard no route to ANY of it.**
+`UIStrategyMapItem_Region` spawns `ContactButton` (`'contactButtonMC'`, captioned
+`m_strButtonMakeContact`) and `OutpostButton` (`'towerButtonMC'` — captioned by NOTHING:
+`InitButton` is called with no label and the radio-tower ART is the whole caption). Four dead ends
+leave them mouse-and-controller-only, and each had to be checked before building anything:
+
+- the pin's own `OnUnrealCommand` answers `FXS_BUTTON_A` and nothing else (`:657`), a controller
+  constant no key on a mouse+keyboard setup produces;
+- the screen's `Enter`/`Space` go to `ToggleScan` (`UIStrategyMap:1663`) and never reach the pin;
+- the screen-level pair that would have fixed it — `UIStrategyMap`'s own `OutpostButton` /
+  `ContactButton`, wired to `OnBuildOutpostClicked` / `OnMakeContactClicked` — is **commented out**
+  (`UIStrategyMap.uc:112-116`);
+- `UIResistance`, the screen `DisplaySelectionPrompt` was once meant to open for this, is dead
+  code: its only call site is commented out (`XComGameState_WorldRegion.uc:1313`).
+
+⛔ **The TRAY does not cover this and cannot.** A region enters `GetAvailableScanningSites()` only
+once `CanBeScanned()` is true, which for a region means `bCanScanForContact` / `bCanScanForOutpost`
+— flags set by the very callback this stop exists to reach. The tray holds regions whose verb has
+ALREADY been pressed and paid for.
+
+- ⛔ **The gate is `ShowContactButton()` / `ShowOutpostButton()` mirrored exactly, and nothing is
+  added to it.** Not affordability, not comms capacity, not "is the pin on screen". The game draws
+  both buttons whatever you can pay and explains itself only inside the alert; refusing the stop
+  would hand a blind player less than the globe shows AND hide the explanation with it. The two
+  refusal reasons are ANNOUNCED (`cannot afford`, `no comms capacity` — the second is
+  `UIAlert.CanMakeContact()`, `GetRemainingContactCapacity() > 0`) and the node stays activatable.
+- ✅ **This is the one activation on this screen that does not touch `SelectedMapItem`.** Both
+  entry points take the region as a PARAMETER (`OnContactClicked`/`OnOutpostClicked` are one line
+  each, passing `GetRegion()`), so the screen-accept trap that cost the tray's `Enter` two sessions
+  cannot arise here — there is no selection for our idea of the target to disagree with.
+- ⛔ **The verb is re-checked at activation, by (region, verb).** The geoscape clock keeps running
+  under this stop, so a contact scan can complete between the render that spoke a line and the
+  `Enter` that acts on it — moving the region from `Unlocked` to `Contact` and turning *make
+  contact* into *install a relay* under the player's finger. Re-testing makes that a silent no-op.
+- **Caching a payload that is game STATE, not widgets**: `gGeoActions` keys on the screen plus the
+  tray handles, which cannot see a resistance level change. It is still correct because every
+  transition that changes the set pops a MODAL — `eAlert_ContactMade`, `eAlert_OutpostBuilt`,
+  `UnlockPopup`, the `ResistanceRadio` tech alert, and our own confirm alert — and a modal detaches
+  the recipe, which invalidates every wire cache. ⚠ A console command is the one case it misses.
+- Words are the game's throughout: the caption (the relay button has none, so it borrows
+  `UIAlert.m_strOutpostConfirm` — the words on the confirm the player meets one keypress later),
+  the `Cost`/`Time` labels the alert uses, `GetStrategyCostString`, and the `+N supplies` figure
+  `UpdateFlyoverText` puts beside the button as `HoverInfo`. ⚠ Day words come from
+  `UIUtilities_Text.GetDaysString`, NOT the alert's own `m_strDays` — that one is declared on
+  `UIX2SimpleScreen` and populated under `[UIX2SimpleScreen]`, so reading it off `UIAlert` is the
+  localized-var trap in `CLAUDE.md`.
+
+The ring's region readout gained the matching clause (`radio relay available`, and the game's own
+`BUILDING RADIO RELAY: N Days remaining` while one is in progress), and the continents category
+gained `regions contacted N of M, radio relays N of M` — `SetContinentLevel`'s own four numbers,
+which are the only place the globe says how far a continent is from its bonus.
+
 ## Skyranger briefing
 
 Not a movie and not a progress dialog but a real `UIScreen` on the transition map, where the

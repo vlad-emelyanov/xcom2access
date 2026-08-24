@@ -156,6 +156,7 @@ in **Hard rules** below instead.
 | Personnel roster | `game_ui.cpp` | `X2AccessPersonnelReader.uc`, `personnel roster` | surfaces/avenger.md | `avenger-view-recon.md` §15 |
 | Choose facility | `game_ui.cpp` | `X2AccessBuildFacilityReader.uc`, `choose facility` | surfaces/avenger.md | `avenger-view-recon.md` §16 |
 | Geoscape tray | `geo_scanner.cpp` | `X2AccessGeoScanner.uc`, `geoscape tray` | surfaces/strategy.md | `geoscape-recon.md` |
+| Region actions (contact, radio relay) | — | `X2AccessGeoScanner.uc`, `geoscape tray` stop 2 | surfaces/strategy.md | `geoscape-recon.md` §16 |
 | Skyranger briefing | `dropship.cpp` | `X2AccessDropshipReader.uc` | surfaces/strategy.md | `dropship-briefing-recon.md` |
 | Modals / alerts | `flash_shadow.cpp` (UIAlert words) | `X2AccessPopupReader.uc`, `popup` | surfaces/strategy.md | `popup-inventory.md` |
 | Commlink / toasts | `transient_reader.cpp` | `X2AccessTransientReader.uc` | surfaces/strategy.md | `popup-inventory.md` |
