@@ -70,6 +70,7 @@ private function PollCommLink()
 {
 	local UINarrativeCommLink CommLink;
 	local UINarrativeMgr Mgr;
+	local XComEngine kEngine;
 	local string Line;
 
 	// ⛔ `PRESBASE, not `PRES. The latter casts to XComPresentationLayer — the TACTICAL layer —
@@ -90,6 +91,35 @@ private function PollCommLink()
 	{
 		// Cleared rather than kept, so the SAME line delivered again later still announces. The
 		// game really does repeat a barks-style moment verbatim.
+		LastCommLinkText = "";
+		return;
+	}
+
+	// ⛔ THE SUBTITLE SETTING IS A SETTING ABOUT THIS TEXT, and turning it off is the player
+	// asking not to be given the dialogue in writing. Speech is our rendering of the subtitle,
+	// not a separate feature, so it obeys the same switch — otherwise the one option in the
+	// game that means "stop showing me the words" is the one option the mod ignores.
+	//
+	// This is the exact test the widget makes: UINarrativeCommLink.RefreshSubtitleVisibility
+	// calls AS_ShowSubtitles / AS_HideSubtitles off `XComEngine.bSubtitlesEnabled`, so with it
+	// clear the portrait and the speaker name stay on screen and the TEXT BLOCK is gone. One
+	// hop from the screen's own state, which is as close as the read-the-screen rule can get
+	// here — the visibility itself lives in Flash and nothing retains it.
+	//
+	// ⚠ The flag is the ENGINE's, not the profile's. `XPROFILESETTINGS.Data.m_bSubtitles is
+	// where the checkbox writes, and XComOnlineProfileSettings.ApplyOptions copies it into the
+	// engine — so the profile value can be a toggle ahead of what is actually being drawn, and
+	// the drawn one is the one parity is defined against.
+	//
+	// The PIE half of the game's condition (`|| WorldInfo.IsPlayInEditor()`) is deliberately
+	// not mirrored: it forces subtitles on for developers in the editor, which no player build
+	// ever reaches, and this class is a plain Object with no WorldInfo to hand.
+	kEngine = `XENGINE;
+	if (kEngine == none || !kEngine.bSubtitlesEnabled)
+	{
+		// Cleared for the same reason as above, and one more: the player can turn subtitles
+		// back on mid-conversation from the options screen, and the line still being spoken
+		// should then announce rather than be swallowed as already-said.
 		LastCommLinkText = "";
 		return;
 	}

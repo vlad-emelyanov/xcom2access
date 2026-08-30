@@ -394,6 +394,24 @@ button — and a recipe would claim Enter/Space/Escape, which are how the box is
 The anchored blade and every other flyover come from polling `UIWorldMessageMgr`. The
 bottom-right HUD blade goes straight into Flash and is recovered by the companion.
 
+⛔ **`UITutorialBox` is not a tutorial-mission screen, and gating it on `XComTutorialMgr` cost
+every one of the WOTC first-time popups.** That manager exists only in Tutorial_01, so
+`OnTick`'s "are we in the tutorial" early-return also skipped `PollModal` — and the boxes that
+actually matter are submitted on ORDINARY missions by
+`XComTacticalController.CheckForTutorialMoments` (`:298` — target preview, dazed, soldier bonds,
+Chosen tracking shot, Reaper, Templar, Templar momentum, Skirmisher),
+`XComGameState_Unit`'s ambush box (`:2094`), `UITacticalHUD_AbilityContainer`'s first-melee box
+(`:1138`) and `SeqAct_ShowTutorialBox`. Each sets its own `bHasSeen…` flag as it fires, so they
+are **one-shot per campaign**: silence there is not a bug the player can hit again. The modal
+poll now runs above the gate; only surfaces 2 and 3 stay behind it.
+
+**Nothing read wrong — that is the part worth keeping.** `/tutorial`'s `Describe()` printed the
+box's title and body perfectly throughout, the offsets were `static_assert`ed, the screen was in
+the tracked list. A gate standing in for the wrong question fails exactly this way, with every
+part it guards in perfect health, so `/tutorial` showing a surface is not evidence the poll that
+speaks it ever runs. Repeatable test without waiting for a campaign first: the retail binary has
+a CheatManager, so `just dev-exec "ShowModalTutorialDialogBox 0 0"` spawns one on demand.
+
 - **Markup is TRANSLATED, not stripped**: `%KEY:...%` already resolves to a bracketed,
   binding-aware key name, but mouse/arrow glyphs arrive as `<img src='rmb_icon'>` and
   `CleanText` would leave a hole exactly where the instruction is.

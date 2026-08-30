@@ -11,6 +11,13 @@
 //   3. the bottom-right HUD blade — Flash-only text; presence detected here, words recovered by
 //      the companion (X2AccessTutorial) out of the history that produced it
 //
+// ⛔ Surface 1 is NOT tutorial-only, whatever this file's name suggests, and OnTick polls it on
+// EVERY mission for that reason. The first-time-narrative popups — soldier bonds, ambush, dazed,
+// first melee, the Chosen and the three faction heroes — are all UITutorialBox, all submitted by
+// ordinary-mission code, and all one-shot per campaign. Surfaces 2 and 3 stay behind the
+// XComTutorialMgr gate, because outside the tutorial the companion's listeners narrate the same
+// events with attribution the flyover text does not carry.
+//
 // The fourth surface is the 3D world markers, and it belongs to the object scanner: they are
 // world-space things with a location, which is exactly what the scanner enumerates.
 //

@@ -138,6 +138,10 @@ add_library(X2Access SHARED
     src/text_input.cpp
     src/hacking_screen.cpp
     src/transient_reader.cpp
+    # The other subtitle system: what the engine draws over a full-screen .bk2. No UIScreen, no
+    # Flash, no companion — it reads the Bink player object directly, which is why it validates
+    # the one global it hard-codes before dereferencing anything through it.
+    src/movie_subtitles.cpp
     src/tutorial_reader.cpp
     src/narrator.cpp
     # Compile-time verification of hand-transcribed offsets against the generated SDK

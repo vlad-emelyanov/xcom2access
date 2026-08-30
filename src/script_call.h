@@ -46,6 +46,23 @@ void* FindScriptFunction(const char* className, const char* funcName);
 /// Game thread only.
 void* FindStateFunction(const char* className, const char* stateName, const char* funcName);
 
+// ---- outbound calls into the GAME's own script (not the companion's) ----
+
+/// `Object.Localize(SectionName, KeyName, PackageName)` — the game's own localization lookup.
+///
+/// Empty when the key is absent, which callers must treat as "the game has no words for this"
+/// rather than as an error: the engine's own consumers fall back to the raw key, and a caller
+/// that would rather stay silent than speak an asset name is making a different call. Use this
+/// wherever the words are in a loc FILE rather than on a widget — a built-in English table would
+/// be wrong the moment the player is not.
+std::string LocalizeString(const char* section, const char* key, const char* package);
+
+/// The game's Show Subtitles option, read off the ENGINE (`UEngine.bSubtitlesEnabled`) rather
+/// than off the profile, because the engine's copy is what the game itself tests before drawing
+/// a subtitle — the profile can be one toggle ahead of it. True when it cannot be determined:
+/// erring toward speaking beats a surface that goes silently missing.
+bool SubtitlesEnabled();
+
 // ---- and the cleaning every payload that comes back needs ----
 
 /// Minimal P10 text cleaning: strip markup tags, collapse whitespace.

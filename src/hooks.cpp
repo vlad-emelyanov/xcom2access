@@ -13,6 +13,7 @@
 #include "objective_reader.h"
 #include "hacking_screen.h"
 #include "transient_reader.h"
+#include "movie_subtitles.h"
 #include "tutorial_reader.h"
 #include "narrator.h"
 #include "process_event_hook.h"
@@ -120,6 +121,12 @@ static void RegisterEventHandlers() {
             // channel behind whatever the surfaces above have already said. Runs in every layer,
             // shell included, because story dialogue plays in all of them.
             TransientReader::OnTick();
+            // The OTHER subtitle system: what the engine draws over a full-screen .bk2. Next to
+            // TransientReader because the two divide the game's dialogue between them — the
+            // commlink for in-engine scenes, this for pre-rendered cinematics — and they can
+            // never both be showing, so their lines cannot collide. Costs one pointer read and a
+            // null check whenever no movie is up, which is nearly always.
+            MovieSubtitles::OnTick();
             // The Avenger's ant farm. Its gate is a plain "is UIFacilityGrid the current
             // screen", so outside the strategy layer this is one stack walk and no more.
             Avenger::OnTick();

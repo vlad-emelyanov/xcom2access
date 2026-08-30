@@ -70,9 +70,12 @@ int gLastFrame = 0;
 // Idempotent, and called on every tick outside the tutorial: what has been spoken must not
 // survive the mission it was spoken in, and the world-message slot map in particular would
 // otherwise silence a fresh mission's first messages by matching stale slots.
-void ResetSpokenState()
+// The replay-only state: everything that is meaningless once XComTutorialMgr is gone. gSpokenBox
+// is deliberately NOT cleared here — the modal outlives the tutorial mission (see OnTick), and
+// PollModal owns that string end to end, clearing it itself the moment no box is up. Wiping it
+// from here would re-announce the same popup every 150 ms for as long as it stayed on screen.
+void ResetReplayState()
 {
-    gSpokenBox.clear();
     gSlots.clear();
     gBladeShowing = false;
     gHaveInvalidBaseline = false;
@@ -618,6 +621,22 @@ void PollRejection(const GameUI::TutorialState& tut)
         Narrator::Say(Narrator::Channel::Alert, Vocab::TutorialRejected);
 }
 
+// The one place that flips the re-read claim's gate, so both of OnTick's paths log the transition
+// the same way. The tutorial mission has a frame and a controls owner worth naming; an ordinary
+// mission has neither, and saying so is what tells the log which path armed the key.
+void SetActive(bool active, const GameUI::TutorialState& tut)
+{
+    if (active == gActive)
+        return;
+    gActive = active;
+    if (tut.valid)
+        LOG_INFO("TutorialReader: %s (frame %d, controls %s)", active ? "active" : "inactive",
+            tut.historyFrame, tut.allowingControls ? "player" : "replay");
+    else
+        LOG_INFO("TutorialReader: %s (modal only — not the tutorial mission)",
+            active ? "active" : "inactive");
+}
+
 } // namespace
 
 void Init()
@@ -655,42 +674,69 @@ void OnTick()
     // tutorial" test — every other mission pays one cached pointer revalidation per tick.
     static bool sInTutorial = false;
     const GameUI::TutorialState tut = GameUI::ReadTutorialState();
-    if (!tut.valid) {
-        if (sInTutorial) {
-            sInTutorial = false;
-            LOG_INFO("TutorialReader: inactive — no tutorial manager");
-        }
-        ResetSpokenState();
-        gActive = false;
-        return;
-    }
-    sInTutorial = true;
+
+    // ⛔ THE MODAL IS NOT A TUTORIAL-MISSION SURFACE, and gating it on that manager left it silent
+    // on every real mission. UITutorialBox is spawned by X2Action_ShowTutorialPopup for any
+    // XComGameStateContext_TutorialBox, and the submitters are ordinary-mission code:
+    // XComTacticalController.CheckForTutorialMoments (:298 — target preview, dazed, soldier bonds,
+    // Chosen tracking shot, Reaper, Templar, Templar momentum, Skirmisher), XComGameState_Unit's
+    // ambush box (:2094), the ability container's first-melee box
+    // (UITacticalHUD_AbilityContainer:1138) and SeqAct_ShowTutorialBox in Kismet. Each writes its
+    // own bHasSeen... flag as it fires, so all of them are ONE-SHOT PER CAMPAIGN: a missed one is
+    // missed for good, which is what makes this worse than an ordinary silence.
+    //
+    // Note the shape of the failure, because it is the reason it survived so long: nothing READ
+    // wrong. Describe() printed the box's title and body correctly the whole time, the offsets
+    // were pinned, the screen was tracked — only the poll never ran. A gate that is a proxy for
+    // the wrong question fails exactly like this, with every part it guards in perfect health.
+    void* box = GameUI::FindTutorialBox();
 
     // Cheap once loaded, and it must run before anything is translated: the whole point is that
     // the first tutorial line already speaks the game's own words rather than our English ones.
-    LoadVocabulary();
+    // Asked for only when there is something to translate, so an ordinary mission does not retry
+    // the companion call ten times a second on behalf of a screen that is not up.
+    if (box || tut.valid)
+        LoadVocabulary();
 
-    // The KEY needs a gate; the narration does not. A tutorial message must still be spoken while
-    // the shot HUD is raised or a dialog is up — but claiming a key there would fight whoever owns
-    // the surface.
-    //
-    // A raised modal is its own answer, and has to be: UITutorialBox is pushed ABOVE the tactical
-    // HUD, so the tactical gate reports it as a BLOCKER, and it may be shown during a cinematic
-    // (OnInit calls AllowShowDuringCinematic), which trips the screen stack's own gate too. Either
-    // one would have taken the re-read key away at exactly the moment a player most wants it.
-    void* box = GameUI::FindTutorialBox();
-    const GameUI::TacticalGate gate = GameUI::ReadTacticalGate();
-    const GameUI::StackState stack = GameUI::ReadStackState();
-    const bool active
-        = box || (gate.hudOnStack && !gate.blocked && (!stack.valid || stack.Interactive()));
-    if (active != gActive) {
-        gActive = active;
-        LOG_INFO("TutorialReader: %s (frame %d, controls %s)", active ? "active" : "inactive",
-            tut.historyFrame, tut.allowingControls ? "player" : "replay");
+    if (tut.valid) {
+        sInTutorial = true;
+
+        // The KEY needs a gate; the narration does not. A tutorial message must still be spoken
+        // while the shot HUD is raised or a dialog is up — but claiming a key there would fight
+        // whoever owns the surface.
+        //
+        // A raised modal is its own answer, and has to be: UITutorialBox is pushed ABOVE the
+        // tactical HUD, so the tactical gate reports it as a BLOCKER, and it may be shown during a
+        // cinematic (OnInit calls AllowShowDuringCinematic), which trips the screen stack's own
+        // gate too. Either one would have taken the re-read key away at exactly the moment a
+        // player most wants it.
+        const GameUI::TacticalGate gate = GameUI::ReadTacticalGate();
+        const GameUI::StackState stack = GameUI::ReadStackState();
+        SetActive(box
+                || (gate.hudOnStack && !gate.blocked && (!stack.valid || stack.Interactive())),
+            tut);
+
+        PollRejection(tut);
+    } else {
+        if (sInTutorial) {
+            sInTutorial = false;
+            LOG_INFO("TutorialReader: replay surfaces inactive — no tutorial manager");
+        }
+        ResetReplayState();
+
+        // The re-read key still belongs to the modal wherever one is up. Outside the tutorial it
+        // is the only thing I can mean, and a box the player talked over has no other way back —
+        // the screen consumes all input and its button calls DisableNavigation().
+        SetActive(box != nullptr, tut);
     }
 
-    PollRejection(tut);
     PollModal(box);
+
+    // Everything below is the tutorial's alone. The world messenger retains flyovers on every
+    // mission, but outside the tutorial the companion's own listeners already narrate them WITH
+    // attribution, and speaking both would double every hit — see ConsiderWorldMessage.
+    if (!tut.valid)
+        return;
 
     void* mgr = GameUI::FindWorldMessageMgr();
     if (!mgr)

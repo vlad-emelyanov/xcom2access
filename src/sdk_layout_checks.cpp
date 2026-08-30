@@ -610,4 +610,16 @@ static_assert(offsetof(AUIStrategyMap_HUD, m_kChosenInfoButton) == 0x474, "chose
 static_assert(offsetof(AUIStrategyMap_HUD, m_kResistanceInfoButton) == 0x47C,
     "resistance orders button");
 
+// ---- UEngine's option flags (src/game_ui.cpp SubtitlesEnabled, src/movie_subtitles.cpp) ----
+//
+// bSubtitlesEnabled is bit 0x10 of the bitfield dword at 0x46C, so it is bracketed like every
+// other bitfield here: the FString ending exactly at 0x46C and the float starting after the
+// block. This is the flag the movie player itself tests before it lets a subtitle be drawn, and
+// getting its offset wrong would read some neighbouring option as the subtitle switch — which
+// fails SILENTLY in the direction that matters, by never speaking.
+static_assert(offsetof(UEngine, TangentColorMaterialName) == 0x45C,
+    "UEngine flag dword (bSubtitlesEnabled) follows TangentColorMaterialName at 0x46C");
+static_assert(offsetof(UEngine, MaxRMSDForCombiningMappings) == 0x474,
+    "UEngine flag dwords end before MaxRMSDForCombiningMappings");
+
 } // namespace

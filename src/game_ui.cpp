@@ -45,6 +45,16 @@ constexpr uint32_t kPanelFocused = 0x40;
 // bIsRemoved. A removed screen KEEPS its inited/visible/focused bits — the engine never clears
 // them — so this is the only flag that tells a corpse from the live screen.
 constexpr uint32_t kPanelRemoved = 0x80;
+// UEngine's flag dword. `bSubtitlesEnabled` (0x10) is the game's Show Subtitles option after
+// XComOnlineProfileSettings.ApplyOptions has copied the profile value onto the engine — the copy
+// the game itself tests before drawing any subtitle, so it is the one parity is defined against.
+constexpr int32_t kEngineFlagsOffset = 0x46C;
+constexpr uint32_t kEngineSubtitlesEnabled = 0x10;
+
+// A localized line is as long as the translator made it; this is the runaway guard on a count
+// read out of engine memory, not a working limit (the longest stock movie subtitle is ~250).
+constexpr int32_t kMaxPlausibleLocalizedChars = 1 << 16;
+
 constexpr int32_t kButtonTextOffset = 0x3D8;    // UIButton::Text (FString)
 constexpr int32_t kButtonFlagsOffset = 0x400;   // UIButton flag dword
 constexpr uint32_t kButtonDisabled = 0x01;      // IsDisabled
@@ -1750,6 +1760,96 @@ uint32_t ScreenStateBits(void* screen)
 void HintScreenChange()
 {
     gScanEpoch++;
+}
+
+// The Engine singleton, through its own `native static final function Engine GetEngine()`. Not
+// cached: it is one ProcessEvent on a static native, and the GC rule says a UObject pointer held
+// across frames must be revalidated anyway — asking again IS the revalidation.
+void* FindEngine()
+{
+    struct {
+        void* ReturnValue;
+    } params{};
+    if (!CallStaticNative("Engine", "GetEngine", &params))
+        return nullptr;
+    return params.ReturnValue;
+}
+
+bool SubtitlesEnabled()
+{
+    void* engine = FindEngine();
+    if (!engine)
+        return true; // unknown — err toward speaking rather than toward silent omission
+    return (ReadU32Raw(engine, kEngineFlagsOffset) & kEngineSubtitlesEnabled) != 0;
+}
+
+std::string LocalizeString(const char* section, const char* key, const char* package)
+{
+    if (!section || !key || !package || !key[0])
+        return {};
+
+    // Object.Localize(string SectionName, string KeyName, string PackageName) : string — the
+    // game's OWN localization lookup, so the answer comes back in the player's language with no
+    // table of ours to fall out of date. Layout from the SDK dump comments, PACK(4): three
+    // FStrings then the return, 0x10 apart.
+#pragma pack(push, 4)
+    struct LocalizeParams {
+        wchar_t* SectionData; // FString SectionName  @0x00
+        int32_t SectionCount;
+        int32_t SectionMax;
+        wchar_t* KeyData; // FString KeyName          @0x10
+        int32_t KeyCount;
+        int32_t KeyMax;
+        wchar_t* PackageData; // FString PackageName  @0x20
+        int32_t PackageCount;
+        int32_t PackageMax;
+        wchar_t* RetData; // FString ReturnValue      @0x30
+        int32_t RetCount;
+        int32_t RetMax;
+    };
+#pragma pack(pop)
+    static_assert(sizeof(LocalizeParams) == 0x40, "Object.Localize params must be 0x40 bytes");
+    static_assert(offsetof(LocalizeParams, KeyData) == 0x10, "Localize KeyName at 0x10");
+    static_assert(offsetof(LocalizeParams, PackageData) == 0x20, "Localize PackageName at 0x20");
+    static_assert(offsetof(LocalizeParams, RetData) == 0x30, "Localize ReturnValue at 0x30");
+
+    // Ours to keep alive across the call and nobody else's to free — ProcessEvent shallow-copies
+    // the block and its destroy pass skips everything below ParmsSize (see CLAUDE.md).
+    std::wstring wSection = Utf8ToWide(section);
+    std::wstring wKey = Utf8ToWide(key);
+    std::wstring wPackage = Utf8ToWide(package);
+
+    LocalizeParams params{};
+    params.SectionData = wSection.data();
+    params.SectionCount = static_cast<int32_t>(wSection.size()) + 1; // FString counts the NUL
+    params.SectionMax = params.SectionCount;
+    params.KeyData = wKey.data();
+    params.KeyCount = static_cast<int32_t>(wKey.size()) + 1;
+    params.KeyMax = params.KeyCount;
+    params.PackageData = wPackage.data();
+    params.PackageCount = static_cast<int32_t>(wPackage.size()) + 1;
+    params.PackageMax = params.PackageCount;
+
+    if (!CallStaticNative("Object", "Localize", &params))
+        return {};
+
+    // ⛔ Sized from the DATA. A localized line is whatever the translator wrote, so this is
+    // exactly the class of read the fixed-buffer hard rule is about — the count comes first and
+    // the buffer is built to fit.
+    const int32_t count = params.RetCount;
+    if (!params.RetData || count <= 1)
+        return {}; // no such key — the caller decides what that means
+    if (count > kMaxPlausibleLocalizedChars) {
+        LOG_WARN("GameUI: refusing implausible Localize length %d for %s.%s", count, package, key);
+        return {};
+    }
+    std::vector<wchar_t> buf(static_cast<size_t>(count));
+    const int len = CopyFStringRaw(&params.RetData, buf.data(), count);
+    if (len <= 0)
+        return {};
+    // Engine-allocated and deliberately leaked, the same trade ConsoleCommand documents: freeing
+    // it needs appFree, and this runs once per subtitle CUE rather than per frame.
+    return WcharToUtf8(buf.data(), len);
 }
 
 bool MoviePlaying()
