@@ -32,6 +32,19 @@ void* FindCompanionCDO(const char* className);
 /// `params` must match the UFunction's parameter layout. Game thread only.
 bool CallScriptFunction(void* obj, const char* funcName, void* params);
 
+/// The whole CDO-reader pattern in one call: find the companion CDO, ProcessEvent the entry
+/// point, read the payload back — the sequence every narrate-only surface used to hand-roll.
+/// `params` may be null for a no-parameter function (a zeroed block is supplied, because
+/// ProcessEvent copies ParmsSize bytes regardless). False when the CDO is missing
+/// (FindCompanionCDO logs that) or the call faulted or failed to resolve (logged here, with the
+/// class and function). On success `result`, when non-null, receives the RAW NativeResult
+/// payload — cleaning stays the CALLER's, deliberately: the tutorial reader must translate its
+/// <img> markup rather than strip it, and the wire parser takes CleanText as a function pointer.
+/// ⛔ Not for a consumer that must act BETWEEN the call and the read — the tile reader and the
+/// free-aim reader engage the mouse gate there and keep their own sequence. Game thread only.
+bool CallCompanion(const char* className, const char* funcName, void* params,
+    std::string* result);
+
 /// The UFunction object for `className.funcName`, resolved through the class object's field
 /// chain (supers included) — for callers that need the function OBJECT rather than a call
 /// (the mouse gate rewrites its dispatch fields). Cached; a missing class is retried at most

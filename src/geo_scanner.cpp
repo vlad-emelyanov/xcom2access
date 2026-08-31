@@ -31,17 +31,15 @@ constexpr const char* kScannerClass = "X2AccessGeoScanner";
 // in the scrollback ring, which a review key will need.
 void Call(const char* funcName, void* params)
 {
-    void* cdo = GameUI::FindCompanionCDO(kScannerClass);
-    if (!cdo) {
+    // The missing-companion case is checked FIRST so a pressed key is never silent — the shared
+    // helper would log it, but the player deserves the spoken line.
+    if (!GameUI::FindCompanionCDO(kScannerClass)) {
         Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable("Geoscape scanner"));
         return;
     }
-    if (!GameUI::CallScriptFunction(cdo, funcName, params)) {
-        LOG_WARN("GeoScanner: outbound call %s failed", funcName);
+    std::string result;
+    if (!GameUI::CallCompanion(kScannerClass, funcName, params, &result))
         return;
-    }
-    std::string result
-        = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
     if (!result.empty())
         Narrator::Say(Narrator::Channel::Aid, result);
 }

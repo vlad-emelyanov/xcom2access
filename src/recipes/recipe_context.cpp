@@ -25,17 +25,9 @@ namespace Recipes {
 // the loadout retains its rows but not the four things it computes and throws away.
 std::vector<WireRecord> FetchCompanionRecords(const char* className, const char* funcName)
 {
-    void* cdo = GameUI::FindCompanionCDO(className);
-    if (!cdo)
-        return {}; // FindCompanionCDO logs the miss (companion mod not loaded)
-
-    int64_t zeros[2] = {};
-    if (!GameUI::CallScriptFunction(cdo, funcName, zeros)) {
-        LOG_WARN("MenuNavigator: %s.%s failed", className, funcName);
-        return {};
-    }
-    const std::string raw
-        = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
+    std::string raw;
+    if (!GameUI::CallCompanion(className, funcName, nullptr, &raw))
+        return {}; // the shared helper logs both a missing companion and a failed call
     // CleanText is handed in rather than called inside the parser: one implementation of "strip
     // the markup the game colours its text with", shared with every other screen, and keeping it
     // out is what lets the parser stay engine-free.

@@ -140,34 +140,17 @@ void Flush()
 // line it produces goes out on this tick rather than waiting 100 ms for the next one.
 void PumpReplayNarration()
 {
-    void* cdo = GameUI::FindCompanionCDO(kReplayClass);
-    if (!cdo)
-        return;
-
-    int64_t zeros[2] = {};
-    if (!GameUI::CallScriptFunction(cdo, "PollReplay", zeros))
-        LOG_WARN("Narrator: outbound PollReplay failed");
+    // No result read: PollReplay produces through Combat()/Alert(), which the drain picks up.
+    GameUI::CallCompanion(kReplayClass, "PollReplay", nullptr, nullptr);
 }
 
 // One outbound call per drain, whatever the burst size — the payload is a single delimited string
 // precisely so a twelve-event frame does not become twelve ProcessEvents.
 void DrainCompanion()
 {
-    void* cdo = GameUI::FindCompanionCDO(kNarratorClass);
-    if (!cdo) {
-        // FindCompanionCDO logs the miss itself (companion mod not loaded).
-        return;
-    }
-
-    // No-parameter function, but ProcessEvent still copies ParmsSize bytes out of our block.
-    int64_t zeros[2] = {};
-    if (!GameUI::CallScriptFunction(cdo, "DrainNarration", zeros)) {
-        LOG_WARN("Narrator: outbound DrainNarration failed");
-        return;
-    }
-
-    std::string payload
-        = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
+    std::string payload;
+    if (!GameUI::CallCompanion(kNarratorClass, "DrainNarration", nullptr, &payload))
+        return; // the shared helper logs both a missing companion and a failed call
     if (payload.empty())
         return;
 
@@ -283,11 +266,7 @@ void DropPending()
         sPending.clear();
         sBatchInterrupts = false;
     }
-    void* cdo = GameUI::FindCompanionCDO(kNarratorClass);
-    if (cdo) {
-        int64_t zeros[2] = {};
-        (void)GameUI::CallScriptFunction(cdo, "ClearNarration", zeros);
-    }
+    (void)GameUI::CallCompanion(kNarratorClass, "ClearNarration", nullptr, nullptr);
 }
 
 std::vector<Line> History(size_t maxLines)

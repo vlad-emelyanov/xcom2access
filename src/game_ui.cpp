@@ -7,6 +7,7 @@
 #include "game_ui.h"
 #include "game_ui_internal.h"
 #include "log.h"
+#include "ue3_reflection.h"
 #include "Graph/GraphAnnouncer.hpp"
 
 #define WIN32_LEAN_AND_MEAN
@@ -2159,6 +2160,24 @@ void* FindCompanionCDO(const char* className)
 bool CallScriptFunction(void* obj, const char* funcName, void* params)
 {
     return CallNamedFunction(obj, funcName, params);
+}
+
+bool CallCompanion(const char* className, const char* funcName, void* params,
+    std::string* result)
+{
+    void* cdo = FindCompanionCDO(className);
+    if (!cdo)
+        return false; // FindCompanionCDO logs the miss (companion mod not loaded)
+
+    // A no-parameter function still gets a zeroed block — ProcessEvent copies ParmsSize bytes.
+    int64_t zeros[2] = {};
+    if (!CallScriptFunction(cdo, funcName, params ? params : zeros)) {
+        LOG_WARN("Companion: %s.%s failed", className, funcName);
+        return false;
+    }
+    if (result)
+        *result = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
+    return true;
 }
 
 std::string CleanText(const std::string& text)

@@ -38,20 +38,11 @@ bool gActive = false;
 // just pressed, and it outranks anything still queued behind it.
 void Call(const char* funcName, Narrator::Channel channel)
 {
-    void* cdo = GameUI::FindCompanionCDO(kReaderClass);
-    if (!cdo) {
-        // FindCompanionCDO already logs the miss (companion mod not loaded). Stay silent on the
-        // poll path; the key handler below is the one that owes the player an answer.
+    // The shared helper logs both a missing companion and a failed call. Stay silent on the
+    // poll path either way; the key handler below is the one that owes the player an answer.
+    std::string result;
+    if (!GameUI::CallCompanion(kReaderClass, funcName, nullptr, &result))
         return;
-    }
-    // No-parameter functions still get a zeroed buffer — ProcessEvent copies ParmsSize bytes.
-    int64_t zeros[2] = {};
-    if (!GameUI::CallScriptFunction(cdo, funcName, zeros)) {
-        LOG_WARN("Avenger: outbound call %s failed", funcName);
-        return;
-    }
-    std::string result
-        = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
 
     // Strip markup. The strategy layer's own text is COLOURED — GetQueueMessage hands the
     // Armory's crew line back as "Солдаты: <font color='#53b45e'>Доступно: 11, </font>…" and

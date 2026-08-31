@@ -61,18 +61,10 @@ constexpr uint64_t kBriefingRetryMs = 4000;
 /// the native half below still says that a load is running and when it is done.
 std::string ReadBriefingWords()
 {
-    void* cdo = GameUI::FindCompanionCDO(kReaderClass);
-    if (!cdo)
-        return {}; // FindCompanionCDO logs the miss
-
-    // No-parameter function; ProcessEvent still copies ParmsSize bytes, so it gets a zeroed block.
-    int64_t zeros[2] = {};
-    if (!GameUI::CallScriptFunction(cdo, "DescribeBriefing", zeros)) {
-        LOG_WARN("Dropship: DescribeBriefing failed");
-        return {};
-    }
-    return GameUI::CleanText(
-        UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult"));
+    std::string words;
+    if (!GameUI::CallCompanion(kReaderClass, "DescribeBriefing", nullptr, &words))
+        return {}; // the shared helper logs both a missing companion and a failed call
+    return GameUI::CleanText(words);
 }
 
 /// Append with the kernel's AppendPhrase rule. Every part here is a string the GAME wrote, and

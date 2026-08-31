@@ -73,20 +73,11 @@ bool ComputeUsable(bool* menuRaised, bool* missionActive)
 // calls route through the Narrator rather than TTS directly.
 void Call(const char* funcName, Narrator::Channel channel)
 {
-    void* cdo = GameUI::FindCompanionCDO(kReaderClass);
-    if (!cdo) {
-        // FindCompanionCDO already logs the miss (companion mod not loaded). Stay silent on the
-        // poll path; the key handlers below are the ones that owe the player an answer.
+    // The shared helper logs both a missing companion and a failed call. Stay silent on the
+    // poll path either way; the key handlers below are the ones that owe the player an answer.
+    std::string result;
+    if (!GameUI::CallCompanion(kReaderClass, funcName, nullptr, &result))
         return;
-    }
-    // No-parameter functions still get a zeroed buffer — ProcessEvent copies ParmsSize bytes.
-    int64_t zeros[2] = {};
-    if (!GameUI::CallScriptFunction(cdo, funcName, zeros)) {
-        LOG_WARN("TacticalHUD: outbound call %s failed", funcName);
-        return;
-    }
-    std::string result
-        = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
     if (!result.empty())
         Narrator::Say(channel, result);
 }

@@ -62,19 +62,9 @@ bool ScreenUp()
 // deliberate "nothing to say" — the poll answers that way on every tick after the first.
 bool Call(const char* funcName, Narrator::Channel channel)
 {
-    void* cdo = GameUI::FindCompanionCDO(kReaderClass);
-    if (!cdo)
-        return false; // FindCompanionCDO already logs the miss (companion mod not loaded)
-
-    // No-parameter functions still get a zeroed buffer — ProcessEvent copies ParmsSize bytes.
-    int64_t zeros[2] = {};
-    if (!GameUI::CallScriptFunction(cdo, funcName, zeros)) {
-        LOG_WARN("HackingScreen: outbound call %s failed", funcName);
-        return false;
-    }
-
-    std::string result
-        = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
+    std::string result;
+    if (!GameUI::CallCompanion(kReaderClass, funcName, nullptr, &result))
+        return false; // the shared helper logs both a missing companion and a failed call
     if (!result.empty())
         Narrator::Say(channel, result);
     return true;
