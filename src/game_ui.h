@@ -649,6 +649,58 @@ bool ActivateSquadControl(void* screen, const SquadSlot& slot, const SquadContro
 /// OnBoostSoldier). Game thread only.
 bool InvokeScreenVerb(void* screen, const char* funcName);
 
+// ---- after action (UIAfterAction) ----
+//
+// The post-mission squad walk-up — squad select's sibling, same division of labor: the widget
+// tree holds which card, whether it can promote, whether the soldier is dead, and where the two
+// buttons are; the companion (X2AccessAfterActionReader) re-derives every word from the
+// UnitReference the row retains. See docs/after-action-recon.md §3.
+
+/// A card's inner controls, the pair the game's own Up/Down toggles between. Promote and
+/// Memorial are the SAME widget (UpdateData reuses PromoteButton for a KIA card with the
+/// delegate swapped); m_bKIA decides which verb it means, and reading the widget's presence
+/// alone would call a memorial button "Повышение".
+enum class AfterActionControl {
+    Promote = 0,
+    Memorial = 1,
+    Bond = 2,
+};
+
+/// One soldier panel. List position IS visual position — UpdateData creates items only for
+/// occupied squad slots, in walk-up order, so unlike squad select there are no locked or empty
+/// cards and no SlotListOrder arithmetic on our side.
+struct AfterActionSlot {
+    void* handle = nullptr;      // UIAfterAction_ListItem
+    bool focused = false;        // bIsFocused — same authority squad select settled on
+    bool canPromote = false;     // m_bCanPromote — the screen's own cached ShowPromoteIcon()
+    bool kia = false;            // m_bKIA — PromoteButton means Memorialize
+    void* promoteButton = nullptr; // null when the card has neither promote nor memorial
+    void* bondIcon = nullptr;
+};
+
+struct AfterActionView {
+    std::vector<AfterActionSlot> slots; // m_kSlotList order == visual left-to-right
+    /// bRecievedShowHUDRemoteEvent — before PostM_ShowSoldierHUD the panels are hidden and the
+    /// screen swallows all input; do not attach (recon §5).
+    bool hudShown = false;
+};
+
+/// The focused UIAfterAction instance, or null. Game thread only.
+void* FindAfterAction();
+
+AfterActionView ReadAfterAction(void* screen);
+
+/// Focus write-back, exactly as the game's own path lands it: list selection + the card's
+/// OnReceiveFocus, then the promote-vs-bond inner focus placed DETERMINISTICALLY (never through
+/// OnUpDownInputHandler, which toggles from whatever state the game happens to be in).
+/// `control` may name a control the card lacks; the card focus alone is then the whole write.
+bool SetAfterActionFocus(void* screen, int visualIndex, AfterActionControl control);
+
+/// Activate one card control through its own handler: AfterActionPromote() (zero-param),
+/// OnClickedMemorialize (its UIButton param is never read), OnClickBondIcon (likewise).
+/// Continue is InvokeScreenVerb(screen, "OnContinue"). Game thread only.
+bool ActivateAfterActionControl(const AfterActionSlot& slot, AfterActionControl control);
+
 // ---- tactical HUD (UITacticalHUD) — tile reader support ----
 
 /// The tactical HUD screen instance, or null — same stack-first caching/validation contract as

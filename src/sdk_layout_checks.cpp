@@ -430,6 +430,26 @@ static_assert(offsetof(AUISquadSelect_UtilityItem, Button) == 0x3E0, "utility sl
 static_assert(offsetof(AUISquadSelect_UtilityItem, SlotIndex) == 0x3F0, "utility slot index");
 static_assert(offsetof(AUISquadSelect_UtilityItem, SlotType) == 0x3F4, "utility slot type");
 
+// ---- after action: UIAfterAction + its soldier panels ----
+//
+// The screen's flag dword (isBondIconFocused / bWalkupStarted / bRecievedShowHUDRemoteEvent /
+// bForceHelpActivate) is bitfields at 0x410; FlyoverPriorityLevel right after it pins it.
+static_assert(offsetof(AUIAfterAction, FlyoverPriorityLevel) == 0x414,
+    "UIAfterAction flag dword precedes FlyoverPriorityLevel at 0x410");
+static_assert(offsetof(AUIAfterAction, m_kSlotList) == 0x4E4, "after action card list");
+
+// The card's flag dword (bShowPortrait / m_bCanPromote / m_bKIA) is at 0x464, pinned by
+// MemorialButton before it and BondIcon after. MemorialButton itself is a dead field — never
+// assigned in either the vanilla or Highlander source; the KIA card reuses PromoteButton.
+static_assert(offsetof(AUIAfterAction_ListItem, UnitReference) == 0x3D8,
+    "after action card unit ref");
+static_assert(offsetof(AUIAfterAction_ListItem, PromoteButton) == 0x454,
+    "after action card promote/memorial button");
+static_assert(offsetof(AUIAfterAction_ListItem, MemorialButton) == 0x45C,
+    "UIAfterAction_ListItem flag dword sits between MemorialButton and BondIcon at 0x464");
+static_assert(offsetof(AUIAfterAction_ListItem, BondIcon) == 0x468, "after action card bond icon");
+static_assert(offsetof(AUIAfterAction_ListItem, Index) == 0x470, "after action card index");
+
 // ---- inside a room: UIFacility, the Avenger HUD's header and its shortcut submenu ----
 //
 // This layer reads ACROSS two screens: the room screen on top and UIAvengerHUD below it, which

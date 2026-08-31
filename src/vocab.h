@@ -98,6 +98,13 @@ inline constexpr const char* ScreenLoadoutFallback = "Loadout";
 /// resolve — so the emptiness is said out loud.
 inline constexpr const char* LoadoutEmptySlot = "empty";
 
+// After action (docs/after-action-recon.md). The screen names itself with its own header +
+// operation name, and — unlike the research report, whose Continue really is unreachable — the
+// companion reaches the game's own m_strGenericContinue as a class default, so both fallbacks
+// fire only in the window between attaching and the companion answering.
+inline constexpr const char* ScreenAfterActionFallback = "Mission results";
+inline constexpr const char* AfterActionContinueFallback = "Continue";
+
 // Save / load. Both screens carry their own localized title and reach these only if it reads
 // empty. The other three are the layer's own words for states the screen shows without text:
 // an empty list, a save or load in flight, and the key that reaches the row's delete verb —

@@ -51,8 +51,10 @@ What actually blocks a campaign, in rough play order:
 4. **`UIArmory_WeaponUpgrade`** + **`UIArmory_Implants`** — weapon mods and PCS.
 5. **`UIInventoryTactical`** — mid-mission loot pickup.
 6. **`UITacticalCharInfoScreen`** — F1 soldier details in tactical.
-7. **`UIMissionSummary`** + **`UIChosenMissionSummary`** + **`UIAfterAction`** — the
-   post-mission chain: stats, Chosen result, then the squad walk-up with wounds/promotions.
+7. **`UIMissionSummary`** + **`UIChosenMissionSummary`** — the front of the post-mission
+   chain: stats, then the Chosen result. The walk-up that follows them (`UIAfterAction`) is
+   built (`after-action-recon.md`), so these two are what still leave a blind player pressing
+   Enter into silence between the mission's last shot and the dropship briefing.
 8. **`UIResistanceReport`** (+ `_ChosenEvents`, `_FactionEvents`, `UIRewardsRecap`) — the
    monthly council report chain.
 9. **`UICovertActions`** + **`UICovertActionReport`** — the WOTC core loop. Surveyed:
@@ -211,7 +213,7 @@ launch/cancel), the single biggest unreadable surface left in the strategy layer
 | `UIMissionIntro` | mission-type intro banner | ⬜ P2 |
 | `UIMissionSummary` | post-mission stats | ⬜ **P1** |
 | `UIChosenMissionSummary` | Chosen encounter result | ⬜ **P1** |
-| `UIAfterAction` | post-mission squad walk-up (wounds, promotions) | ⬜ **P1** |
+| `UIAfterAction` | post-mission squad walk-up (wounds, promotions) | ◐ built — `after action` recipe + `X2AccessAfterActionReader` (`after-action-recon.md`); first live pass owed |
 | `UIResearchReport` | research complete | ✅ research report recipe (`research-report-recon.md`) |
 | `UIResearchUnlocked` | new research available | ⬜ P2 |
 | `UIEndGameStats` | campaign-end stats | ⬜ P3 |

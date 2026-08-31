@@ -34,6 +34,7 @@ extern const Recipe kSaveLoadRecipe;
 
 // ---- strategy (recipe_strategy.cpp) ----
 extern const Recipe kSquadSelectRecipe;
+extern const Recipe kAfterActionRecipe;
 extern const Recipe kArmoryLoadoutRecipe;
 extern const Recipe kGeoscapeRecipe;
 extern const Recipe kPopupRecipe;
@@ -50,7 +51,7 @@ extern const Recipe kChooseFacilityRecipe;
 extern const Recipe kResearchReportRecipe;
 
 // How many of the above kRecipes must list. Pinned by a static_assert next to the array.
-constexpr std::size_t kRecipeCount = 22;
+constexpr std::size_t kRecipeCount = 23;
 
 } // namespace Recipes
 } // namespace MenuNavigator

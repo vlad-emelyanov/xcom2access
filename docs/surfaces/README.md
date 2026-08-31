@@ -38,6 +38,7 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Commlink / toasts | `transient_reader.cpp` | `X2AccessTransientReader.uc` | strategy.md | `popup-inventory.md` |
 | Movie subtitles (`.bk2`) | `movie_subtitles.cpp` | — (no script surface exists) | strategy.md | — |
 | Squad select | — | `X2AccessSquadReader.uc`, `squad select` | strategy.md | `squad-select-recon.md` |
+| After action (post-mission walk-up) | `game_ui.cpp` | `X2AccessAfterActionReader.uc`, `after action` | — | `after-action-recon.md` |
 | Armory loadout | — | `X2AccessLoadoutReader.uc`, `armory loadout` | strategy.md | `loadout-recon.md` |
 | Covert actions | `game_ui.cpp` | `X2AccessCovertActionReader.uc`, `covert actions` | strategy.md | `covert-actions-recon.md` |
 | Resistance orders | `game_ui.cpp` | `X2AccessPolicyReader.uc`, `resistance orders` | strategy.md | — |

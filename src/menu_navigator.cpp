@@ -426,6 +426,10 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     // dialogs and alerts (both above it here), so nothing it opens competes with it.
     &kStrategyPolicyRecipe,
     &kSquadSelectRecipe,
+    // The post-mission walk-up. Everything it pushes — the promotion screens, dialogs, popups,
+    // the pause menu — resolves above it; squad select is its pre-mission twin and the two are
+    // never on the stack at once, so their relative order is free.
+    &kAfterActionRecipe,
     &kCommodityRecipe,
     &kRoomBuildRecipe, &kRoomRecipe, &kGeoscapeRecipe, &kMainMenuRecipe};
 static_assert(sizeof(kRecipes) / sizeof(kRecipes[0]) == Recipes::kRecipeCount,

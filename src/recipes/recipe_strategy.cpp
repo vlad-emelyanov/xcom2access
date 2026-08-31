@@ -450,6 +450,242 @@ std::string SquadSelectName()
     return Vocab::ScreenSquadSelectFallback;
 }
 
+// ---- after action recipe (UIAfterAction) ----
+//
+// The post-mission squad walk-up — squad select's sibling in layout and in division of labor
+// (docs/after-action-recon.md §6): soldier panels side by side whose words all went into Flash,
+// a mission block no focus ever visits, and the screen's main verb (Continue) reachable in
+// vanilla only as Escape's side effect or a mouse click on a nav-help button. This is also the
+// screen where promotions are SPENT, so the promote node is the whole reason a blind player
+// keeps the levels a mission earned. Native reads which card, m_bCanPromote / m_bKIA and the
+// two buttons; the companion (X2AccessAfterActionReader) re-derives every word from the
+// UnitReference each row retains.
+
+constexpr const char* kAfterActionReaderClass = "X2AccessAfterActionReader";
+
+// A panel's spoken context line — read when focus ENTERS the card, quiet while moving within
+// it. Reading order is the panel's own top-to-bottom order: the colored status header (with
+// days out), who this is, the two label+value pairs the panel draws, the bars, the markers.
+std::string AfterActionCardContext(const WireRecord& card, const WireRecord& mission,
+    int visualIndex)
+{
+    std::string line = JoinParts(card, {"status", "days", "rank", "name", "nick", "class"});
+    // ЗАДАНИЙ 4 / УБИТО 5 — the labels are class defaults, identical for every panel, so they
+    // ride on the MISSION record (strategy.md's label rule) and join their values here.
+    const std::string missions = RecField(card, "missions");
+    if (!missions.empty())
+        line = JoinPhrases(line, JoinPhrases(RecField(mission, "missionslabel"), missions));
+    const std::string kills = RecField(card, "kills");
+    if (!kills.empty())
+        line = JoinPhrases(line, JoinPhrases(RecField(mission, "killslabel"), kills));
+    line = JoinPhrases(line, JoinParts(card, {"hp", "will", "psi", "cohesion", "bond"}));
+    if (line.empty())
+        line = Vocab::SoldierFallback + (" " + std::to_string(visualIndex + 1));
+    return line;
+}
+
+std::unique_ptr<GraphRender> BuildAfterAction()
+{
+    GameUI::AfterActionView view = GameUI::ReadAfterAction(gScreen);
+    // ⛔ Before PostM_ShowSoldierHUD the panels are hidden for the fly-in matinee and the screen
+    // swallows every key. Refusing to build keeps the layer from narrating a screen the player
+    // cannot see yet — squad select's walk-up gate, same shape (recon §5).
+    if (!view.hudShown || view.slots.empty())
+        return nullptr;
+
+    const std::vector<WireRecord> words
+        = FetchCompanionRecords(kAfterActionReaderClass, "DescribeAfterAction");
+    const WireRecord* mission = FindRecord(words, "mission");
+    std::vector<const WireRecord*> cards;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") == "card")
+            cards.push_back(&rec);
+    }
+    static const WireRecord kEmptyRecord;
+    const WireRecord* missionRec = mission ? mission : &kEmptyRecord;
+
+    GraphBuilder b(&gState.Expanded);
+
+    // ---- the mission block: the top-left words no focus visits ----
+    if (mission) {
+        b.BeginStop("mission");
+        b.SetRegion("mission");
+        const std::string op = RecField(*mission, "op");
+        if (!op.empty())
+            b.AddLabel(ControlId::Structural("afteraction/mission/op"), [op]() { return op; });
+        const std::string objective
+            = JoinPhrases(RecField(*mission, "objlabel"), RecField(*mission, "objective"));
+        if (!objective.empty()) {
+            b.AddLabel(ControlId::Structural("afteraction/mission/objective"),
+                [objective]() { return objective; });
+        }
+    }
+
+    // ---- the soldier panels, in the list's own order (== visual left-to-right) ----
+    //
+    // Same arrow model as squad select, for the same geometric reason: panels sit SIDE BY SIDE
+    // and stack their (at most two) controls vertically, so Up/Down walks one soldier's panel
+    // and Left/Right steps to the soldier beside them, clamped to ragged columns, with explicit
+    // self-edge walls at the ends.
+    b.BeginStop("squad");
+    b.SetRegion("squad");
+    std::vector<std::vector<ControlId>> columns(view.slots.size());
+    for (size_t i = 0; i < view.slots.size(); i++) {
+        const GameUI::AfterActionSlot& slot = view.slots[i];
+        const WireRecord* cardRec = FindCardByPosition(cards, static_cast<int>(i));
+        if (!cardRec && !cards.empty()) {
+            // Both halves walk the same list in the same order, so a miss means the companion
+            // skipped this entry — the hole the position key exists to leave visible.
+            static int sWarned = 0;
+            if (sWarned++ < 3)
+                LOG_WARN("MenuNavigator: after action — no card record at position %zu of %zu",
+                    i, cards.size());
+        }
+        const WireRecord& card = cardRec ? *cardRec : kEmptyRecord;
+        const int visual = static_cast<int>(i);
+
+        // The soldier is named by the pure-structure parent; the controls under it stay short.
+        b.PushContext(AfterActionCardContext(card, *missionRec, visual));
+
+        // Promote and Memorialize are the SAME widget with the delegate swapped; m_bKIA decides
+        // which verb it means. Both flags are the screen's own cached answers, read natively.
+        if (slot.promoteButton && (slot.canPromote || slot.kia)) {
+            const GameUI::AfterActionControl control = slot.kia
+                ? GameUI::AfterActionControl::Memorial
+                : GameUI::AfterActionControl::Promote;
+            const std::string label
+                = RecField(*missionRec, slot.kia ? "memorial" : "promotelabel");
+            if (!label.empty()) {
+                ControlId id = ControlId::Structural(
+                    "afteraction/card/" + std::to_string(i) + "/promote");
+                columns[i].push_back(id);
+                gFocus[id.StructuralKey] = FocusTarget{-1, nullptr, false, [visual, control]() {
+                    GameUI::SetAfterActionFocus(gScreen, visual, control);
+                }};
+                NodeVtable vt;
+                vt.Type = &ButtonType();
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+                vt.Announcements.back().Kind = AnnouncementKinds::Label;
+                vt.OnActivate = [visual, control]() {
+                    GameUI::AfterActionView v = GameUI::ReadAfterAction(gScreen);
+                    if (visual < static_cast<int>(v.slots.size()))
+                        GameUI::ActivateAfterActionControl(v.slots[visual], control);
+                };
+                b.AddItem(std::move(id), std::move(vt));
+            }
+        }
+
+        // The bond icon exists on the companion's say-so — UpdateData parks it at
+        // SetBondLevel(-1) for a class that cannot bond and for KIA, and only the unit state
+        // knows which. The icon's own tooltip names it (the bondmate's, or the screen's bond
+        // title); the card's `bond` line carries the state, unlit state silent.
+        if (!RecField(card, "canbond").empty() && slot.bondIcon) {
+            const std::string label = GameUI::ReadPanelTooltip(slot.bondIcon);
+            if (!label.empty()) {
+                ControlId id = ControlId::Structural(
+                    "afteraction/card/" + std::to_string(i) + "/bond");
+                columns[i].push_back(id);
+                gFocus[id.StructuralKey] = FocusTarget{-1, nullptr, false, [visual]() {
+                    GameUI::SetAfterActionFocus(gScreen, visual,
+                        GameUI::AfterActionControl::Bond);
+                }};
+                NodeVtable vt;
+                vt.Type = &ButtonType();
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+                vt.Announcements.back().Kind = AnnouncementKinds::Label;
+                const std::string state = RecField(card, "bond");
+                if (!state.empty()) {
+                    vt.Announcements.emplace_back(NodeAnnouncement::Static(state));
+                    vt.Announcements.back().Kind = AnnouncementKinds::Value;
+                }
+                vt.OnActivate = [visual]() {
+                    GameUI::AfterActionView v = GameUI::ReadAfterAction(gScreen);
+                    if (visual < static_cast<int>(v.slots.size()))
+                        GameUI::ActivateAfterActionControl(v.slots[visual],
+                            GameUI::AfterActionControl::Bond);
+                };
+                b.AddItem(std::move(id), std::move(vt));
+            }
+        }
+
+        // A panel with no controls at all (cannot promote, cannot bond, not KIA) still gets one
+        // read-only node, or the soldier would be unreachable by arrow — a sighted player sees
+        // that panel like any other.
+        if (columns[i].empty()) {
+            ControlId id = ControlId::Referenced(slot.handle,
+                "afteraction/card/" + std::to_string(i));
+            columns[i].push_back(id);
+            gFocus[id.StructuralKey] = FocusTarget{-1, nullptr, false, [visual]() {
+                GameUI::SetAfterActionFocus(gScreen, visual,
+                    GameUI::AfterActionControl::Promote);
+            }};
+            const std::string label = AfterActionCardContext(card, *missionRec, visual);
+            b.AddLabel(std::move(id), [label]() { return label; });
+        }
+        b.PopContext();
+    }
+
+    // Up/Down inside one panel, Left/Right across the strip — SquadNeighbour clamps to the
+    // neighbour's last control and self-edges are walls, exactly as on squad select.
+    for (size_t c = 0; c < columns.size(); c++) {
+        for (size_t r = 0; r < columns[c].size(); r++) {
+            const ControlId& here = columns[c][r];
+            b.Connect(here, GraphDir::Up, columns[c][r > 0 ? r - 1 : r]);
+            b.Connect(here, GraphDir::Down, columns[c][r + 1 < columns[c].size() ? r + 1 : r]);
+            b.Connect(here, GraphDir::Left, SquadNeighbour(columns, c, -1, r));
+            b.Connect(here, GraphDir::Right, SquadNeighbour(columns, c, 1, r));
+        }
+    }
+
+    // ---- Continue: vanilla offers it as Escape's side effect and a mouse-only button ----
+    b.BeginStop("actions");
+    b.SetRegion("actions");
+    {
+        std::string label = RecField(*missionRec, "continue");
+        if (label.empty())
+            label = Vocab::AfterActionContinueFallback;
+        ControlId id = ControlId::Structural("afteraction/continue");
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        // The screen's own zero-param handler — the same one Escape and the nav-help button
+        // reach — so the After Action state, the exit cinematic and the loot screen all follow.
+        // The hudShown gate above stands in for the input handler's own flag check, which
+        // OnContinue itself does not repeat.
+        vt.OnActivate = []() {
+            if (gScreen)
+                GameUI::InvokeScreenVerb(gScreen, "OnContinue");
+        };
+        b.AddItem(std::move(id), std::move(vt));
+    }
+
+    return b.Build();
+}
+
+void* ProbeAfterAction()
+{
+    void* screen = GameUI::FindAfterAction();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+std::string AfterActionName()
+{
+    // The header a sighted player reads top-left ("РЕЗУЛЬТАТЫ ЗАДАНИЯ") plus the operation's
+    // own name; the fallback covers only the window between attach and the companion answering.
+    for (const WireRecord& rec
+        : FetchCompanionRecords(kAfterActionReaderClass, "DescribeAfterAction")) {
+        if (RecField(rec, "kind") != "mission")
+            continue;
+        const std::string name
+            = JoinPhrases(RecField(rec, "header"), RecField(rec, "op"));
+        if (!name.empty())
+            return name;
+        break;
+    }
+    return Vocab::ScreenAfterActionFallback;
+}
+
 // ---- armory loadout recipe (UIArmory_Loadout) ----
 //
 // The screen squad select hands the player to, and until now the only one in that flow with no
@@ -1891,6 +2127,11 @@ void ClearGeoscapeHover()
 
 const Recipe kSquadSelectRecipe{
     "squad select", ProbeSquadSelect, BuildSquadSelect, SquadSelectName};
+
+// Squad select's post-mission twin, and like it listed below everything it can push — the
+// promotion screens, the bond screen, the photobooth, dialogs and popups all resolve first.
+const Recipe kAfterActionRecipe{
+    "after action", ProbeAfterAction, BuildAfterAction, AfterActionName};
 
 const Recipe kArmoryLoadoutRecipe{
     "armory loadout", ProbeArmoryLoadout, BuildArmoryLoadout, ArmoryLoadoutName};

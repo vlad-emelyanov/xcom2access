@@ -379,6 +379,20 @@ constexpr int32_t kUtilButtonOffset = 0x3E0;    // Button (UIButton*) — carrie
 constexpr int32_t kUtilSlotIndexOffset = 0x3F0; // SlotIndex (int)
 constexpr int32_t kUtilSlotTypeOffset = 0x3F4;  // SlotType (byte, EInventorySlot)
 
+// ---- after action: UIAfterAction + its soldier panels (docs/after-action-recon.md §3) ----
+constexpr int32_t kAfterActionFlagsOffset = 0x410;  // UIAfterAction flag dword
+constexpr uint32_t kAfterActionHudShown = 0x0004;   // bRecievedShowHUDRemoteEvent — input gate
+constexpr int32_t kAfterActionSlotListOffset = 0x4E4; // m_kSlotList (UIList*)
+
+// UIAfterAction_ListItem — one soldier panel. The words all went into Flash; what it keeps is
+// the unit ref, two flags and the two buttons.
+constexpr int32_t kAAItemUnitRefOffset = 0x3D8;     // UnitReference (StateObjectReference, int)
+constexpr int32_t kAAItemPromoteButtonOffset = 0x454; // PromoteButton — ALSO the memorial button
+constexpr int32_t kAAItemFlagsOffset = 0x464;       // UIAfterAction_ListItem flag dword
+constexpr uint32_t kAAItemCanPromote = 0x0002;      // m_bCanPromote
+constexpr uint32_t kAAItemKIA = 0x0004;             // m_bKIA — PromoteButton means Memorialize
+constexpr int32_t kAAItemBondIconOffset = 0x468;    // BondIcon (UIBondIcon*)
+
 // Caps for the squad-select / armory list reads. Each is a bound WE chose rather than one the
 // game states, so each read goes through TakeListItemsRaw and says so if the game hands us more.
 constexpr int kMaxSquadCards = 16;   // the squad's slot cards
@@ -2276,6 +2290,7 @@ enum TrackedScreen {
     kScrTutorialBox,
     kScrArmoryLoadout,
     kScrSquadSelect,
+    kScrAfterAction,
     kScrLoadGame,
     kScrSaveGame,
     kScrTextInput,
@@ -2294,6 +2309,7 @@ const char* const kTrackedClassNames[kTrackedScreenCount] = {
     "UITutorialBox",
     "UIArmory_Loadout",
     "UISquadSelect",
+    "UIAfterAction",
     "UILoadGame",
     "UISaveGame",
     "UIInputDialogue",
@@ -2354,6 +2370,7 @@ constexpr bool (*kTrackedUsable[kTrackedScreenCount])(void*) = {
     /*TutorialBox*/ IsFocusedRaw,
     /*ArmoryLoadout*/ IsFocusedRaw,
     /*SquadSelect*/ IsFocusedRaw,
+    /*AfterAction*/ IsFocusedRaw,
     /*LoadGame*/ IsFocusedRaw,
     /*SaveGame*/ IsFocusedRaw,
     /*TextInput*/ IsFocusedRaw,
@@ -3322,6 +3339,109 @@ bool InvokeScreenVerb(void* screen, const char* funcName)
         return false;
     uint8_t noParams[16] = {};
     return CallNamedFunction(screen, funcName, noParams);
+}
+
+// ---- after action (UIAfterAction) ----
+
+void* FindAfterAction()
+{
+    return FindScreen(kScrAfterAction);
+}
+
+AfterActionView ReadAfterAction(void* screen)
+{
+    AfterActionView v;
+    if (!screen)
+        return v;
+
+    v.hudShown = (ReadU32Raw(screen, kAfterActionFlagsOffset) & kAfterActionHudShown) != 0;
+
+    void* list = ReadPtrRaw(screen, kAfterActionSlotListOffset);
+    void* cards[kMaxSquadCards] = {};
+    const int count = TakeListItemsRaw("AfterAction: soldier panels", list, cards,
+        kMaxSquadCards);
+    for (int i = 0; i < count; i++) {
+        AfterActionSlot slot;
+        slot.handle = cards[i];
+        slot.focused = (ReadU32Raw(cards[i], kPanelFlagsOffset) & kPanelFocused) != 0;
+        const uint32_t flags = ReadU32Raw(cards[i], kAAItemFlagsOffset);
+        slot.canPromote = (flags & kAAItemCanPromote) != 0;
+        slot.kia = (flags & kAAItemKIA) != 0;
+        slot.promoteButton = ReadPtrRaw(cards[i], kAAItemPromoteButtonOffset);
+        slot.bondIcon = ReadPtrRaw(cards[i], kAAItemBondIconOffset);
+        v.slots.push_back(slot);
+    }
+    return v;
+}
+
+bool SetAfterActionFocus(void* screen, int visualIndex, AfterActionControl control)
+{
+    void* list = ReadPtrRaw(screen, kAfterActionSlotListOffset);
+    void* cards[kMaxSquadCards] = {};
+    const int count = TakeListItemsRaw("AfterAction: soldier panels", list, cards,
+        kMaxSquadCards);
+    if (visualIndex < 0 || visualIndex >= count)
+        return false;
+
+    // Same order the game's own focus path uses: drop the old card, take the new one, then
+    // place the inner focus. OnReceiveFocus lands it on the promote button (or the bond icon
+    // when there is no promote), so only the disagreeing case needs correcting after.
+    for (int i = 0; i < count; i++) {
+        if (i == visualIndex)
+            continue;
+        if (ReadU32Raw(cards[i], kPanelFlagsOffset) & kPanelFocused) {
+            uint8_t none[16] = {};
+            CallNamedFunction(cards[i], "OnLoseFocus", none);
+        }
+    }
+
+    SetListIndex(list, visualIndex);
+    uint8_t noParams[16] = {};
+    CallNamedFunction(cards[visualIndex], "OnReceiveFocus", noParams);
+
+    // Deterministic inner focus — NOT OnUpDownInputHandler, which toggles from whatever state
+    // the game is in. Both calls are plain UIPanel focus functions; a control the card lacks
+    // (null widget) leaves the card focus as the whole write.
+    void* promote = ReadPtrRaw(cards[visualIndex], kAAItemPromoteButtonOffset);
+    void* bond = ReadPtrRaw(cards[visualIndex], kAAItemBondIconOffset);
+    if (control == AfterActionControl::Bond && bond) {
+        if (promote)
+            CallNamedFunction(promote, "OnLoseFocus", noParams);
+        CallNamedFunction(bond, "OnReceiveFocus", noParams);
+    } else if (control != AfterActionControl::Bond && promote) {
+        if (bond)
+            CallNamedFunction(bond, "OnLoseFocus", noParams);
+        CallNamedFunction(promote, "OnReceiveFocus", noParams);
+    }
+    return true;
+}
+
+bool ActivateAfterActionControl(const AfterActionSlot& slot, AfterActionControl control)
+{
+    if (!slot.handle)
+        return false;
+
+    uint8_t noParams[16] = {};
+    switch (control) {
+    case AfterActionControl::Promote:
+        // The zero-param wrapper the card's own Enter path lands on: calls
+        // UIAfterAction.OnPromote(UnitReference), which slides the pawns away and pushes
+        // UIArmory_Promotion with every side effect the game expects.
+        return CallNamedFunction(slot.handle, "AfterActionPromote", noParams);
+    case AfterActionControl::Memorial: {
+        // The KIA card's verb — the same widget as promote with the delegate swapped. Its
+        // UIButton parameter is never read; the real button rides along to keep the frame
+        // honest. Opens UIArmory_Photobooth.
+        void* parms[2] = {slot.promoteButton, nullptr};
+        return CallNamedFunction(slot.handle, "OnClickedMemorialize", parms);
+    }
+    case AfterActionControl::Bond: {
+        // OnClickBondIcon guards on bCanHaveBonds itself and never reads its parameter.
+        void* parms[2] = {slot.bondIcon, nullptr};
+        return CallNamedFunction(slot.handle, "OnClickBondIcon", parms);
+    }
+    }
+    return false;
 }
 
 // ---- tactical HUD (UITacticalHUD) — tile reader support ----

@@ -50,7 +50,12 @@ wires to no key; needs a save with `ResistanceRadio` researched, and its confirm
 Flash capture's `Alert_MakeContact` panel, also unexercised), resistance orders
 (`UIStrategyPolicy` — the pass must cover BOTH windows, the monthly report where cards can be
 played and the read-only visit, and must actually place a card, swap two, and take one back out
-with Backspace). Each needs a first pass against
+with Backspace), the **after-action walk-up** (`after-action-recon.md` — step 0 is DONE: every
+§3 offset plus both §5 predictions were read off a live walk-up 2026-08-31, with the OLD ASI
+deployed, so what remains is the recipe's own first pass — the promote → promotion screen →
+back loop, the bond icon into `UISoldierBondScreen` (which has no recipe: expect Escape-only),
+a KIA card's Memorialize into the photobooth (likewise uncovered), the wounded/days line
+against the panel, and Continue through to loot recovered). Each needs a first pass against
 `just dev-speech` and a shape-count of the speech ring afterwards. For the objectives readout the
 OFFSETS are already confirmed live (2026-08-23, `LostAndAbandonedB`) and the `static_assert`s
 pass — what is unexercised is the spoken COMPOSITION, plus the Avenger/dark-event and
