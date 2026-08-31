@@ -65,7 +65,17 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
         anyNode = true;
         b.BeginStop("abilities");
         b.PushContext(Vocab::StopAbilities);
+        // The bar is drawn HORIZONTAL — a strip of icons — so it is walked with Left/Right,
+        // and the game wraps it to a second row past MAX_NUM_ABILITIES_PER_ROW_BAR (15).
+        // Mirror both: rows of 15 sharing one row key, so Up/Down crosses rows
+        // column-preserving exactly when the game itself draws two.
+        constexpr size_t kBarRowLen = 15;
         for (size_t i = 0; i < bar.entries.size(); i++) {
+            if (i % kBarRowLen == 0) {
+                if (i)
+                    b.EndRow();
+                b.StartRow("abilities");
+            }
             const GameUI::AbilityBarEntry& e = bar.entries[i];
             // The antenna text is mouse-active-only in the game's own code paths; the mouse
             // gate deliberately preserves IsMouseActive so it stays fed, but an empty name
@@ -116,6 +126,7 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
                           "thud/ab/" + std::to_string(i) + "/" + name),
                 std::move(vt));
         }
+        b.EndRow();
         b.PopContext();
     }
 

@@ -419,6 +419,10 @@ the targeting poll's own narration is the next thing heard, and an exit line wou
 Stops in this pass: **Abilities** (pure widget read) and **Objectives** (via
 `ObjectiveReader::DescribeLine` — one composer with `Ctrl+X`, so the two surfaces cannot
 disagree about a row). Soldier / commands / enemies wait for the companion snapshot bridge.
+The abilities stop is HORIZONTAL, mirroring the strip the game draws — Left/Right walks it, and
+past 15 abilities it wraps to a second shared-key row (Up/Down, column-preserving) exactly where
+the game's own `MAX_NUM_ABILITIES_PER_ROW_BAR` wraps the icons. Objectives stay vertical, as the
+panel does.
 
 - ⛔ **The probe must refuse while a `UIDialogueBox` is showing, by its own hand.** While a
   recipe is attached the navigator re-probes only THAT recipe — a higher entry in `kRecipes`
