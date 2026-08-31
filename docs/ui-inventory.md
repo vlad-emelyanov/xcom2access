@@ -217,7 +217,7 @@ first-pass checklist in `mission-blade-recon.md`, live-run debt in `next-steps.m
 | `UIChosenMissionSummary` | Chosen encounter result | ⬜ **P1** |
 | `UIAfterAction` | post-mission squad walk-up (wounds, promotions) | ◐ built — `after action` recipe + `X2AccessAfterActionReader` (`after-action-recon.md`); first live pass owed |
 | `UIResearchReport` | research complete | ✅ research report recipe (`research-report-recon.md`) |
-| `UIResearchUnlocked` | new research available | ⬜ P2 |
+| `UIResearchUnlocked` | new research available | ◐ built — `research unlocked` recipe, Flash capture, no companion (`research-unlocked-recon.md`); first live pass owed |
 | `UIEndGameStats` | campaign-end stats | ⬜ P3 |
 | `UISoldierIntroCinematic` | soldier intro cinematic card | ⬜ P3 (mostly visual) |
 

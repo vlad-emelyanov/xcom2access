@@ -50,7 +50,13 @@ recipe, commlink transient reader, armory loadout, personnel roster, commodity l
 recipe, selected-unit readout, objectives readout (`Ctrl+X`), research report
 (`research-report-recon.md` §7 — the Flash capture's SECOND consumer, so the pass must also
 check `just dev-flashqueue` against `just dev-speech`, and must cover the Shadow Chamber path,
-which is the only one that puts this screen on the 2D movie), covert actions
+which is the only one that puts this screen on the 2D movie), **research unlocked**
+(`research-unlocked-recon.md` §5 — built 2026-08-31 with the game LIVE on the screen, so the
+capture, both offsets and the two-card deck are already confirmed; what is unexercised is the
+recipe itself: the flip announcement on Continue with ≥2 cards, the clean close into whatever
+follows — `UIRewardsRecap` on the tutorial-objective path is UNCOVERED and is this chain's next
+hole — and a shadow-project card, whose Flash styling nobody has seen beside the payload yet),
+covert actions
 (`covert-actions-recon.md` §9 — the checklist there is the pass, and its two live-only questions
 are whether `LaunchButton.Click()` really reaches the confirm popup and whether the destructive
 row selection behaves as the source says), the geoscape's **region actions** stop

@@ -32,6 +32,7 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Personnel roster | `game_ui.cpp` | `X2AccessPersonnelReader.uc`, `personnel roster` | avenger.md | `avenger-view-recon.md` §15 |
 | Choose facility | `game_ui.cpp` | `X2AccessBuildFacilityReader.uc`, `choose facility` | avenger.md | `avenger-view-recon.md` §16 |
 | Research report | `game_ui.cpp` (Flash capture) | — (no companion), `research report` | — | `research-report-recon.md` |
+| Research available (post-mission deck) | `game_ui.cpp` (Flash capture) | — (no companion), `research unlocked` | — | `research-unlocked-recon.md` |
 | Geoscape tray | `geo_scanner.cpp` | `X2AccessGeoScanner.uc`, `geoscape tray` | strategy.md | `geoscape-recon.md` |
 | Region actions (contact, radio relay) | — | `X2AccessGeoScanner.uc`, `geoscape tray` stop 2 | strategy.md | `geoscape-recon.md` §16 |
 | Skyranger briefing | `dropship.cpp` | `X2AccessDropshipReader.uc` | strategy.md | `dropship-briefing-recon.md` |

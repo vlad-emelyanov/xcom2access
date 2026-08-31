@@ -1237,6 +1237,47 @@ ResearchReportView ReadResearchReport(void* screen);
 /// XComHQPresentationLayer.
 void* FindResearchReportScreen();
 
+// ---- new research available (UIResearchUnlocked) — docs/research-unlocked-recon.md ----
+//
+// The post-mission deck of research cards: Tygan on the dais, one card per newly unlocked tech,
+// shown one at a time with the rest stacked behind, every accept key flipping to the next. Same
+// house style as the report — PopulateData resolves each tech into locals and pushes one
+// "addResearch" batch per card (header, title, image, description, shadow bool), retaining
+// none of it, not even the UnlockedTechs array it was called with.
+//
+// ✅ So the CARDS come from the Flash capture (matched by name — the screen's MC also pushes an
+// addTweenBetween animation, so "calls on this index" is not enough), and the two ints the
+// screen DOES retain answer the one question the capture cannot: which card is showing now.
+struct ResearchUnlockedCard {
+    std::string title; // the tech's display name (arg 1)
+    /// Arg 3, split on \n then cleaned — same split-before-cleaning rule as the report's
+    /// paragraphs (GetSummary is usually one paragraph, but the rule costs nothing).
+    std::vector<std::string> descriptionLines;
+    bool shadowProject = false; // arg 4 — captured, deliberately unspoken (recon §5.3)
+};
+
+struct ResearchUnlockedView {
+    void* screen = nullptr;
+    bool captured = false; // at least one addResearch batch was found
+
+    std::string header; // "RESEARCH AVAILABLE" (localized, arg 0 — identical on every card)
+
+    /// UIResearchUnlocked::CurrentTechIndex, CLAMPED into the deck: the game's own counter is a
+    /// safety net that sits one past the last card between the final flip and the close.
+    int current = 0;
+    /// UIResearchUnlocked::NumUnlockedTechs — the deck size a sighted player sees stacked behind
+    /// the top card. Normally equals cards.size(); a mismatch is logged.
+    int total = 0;
+
+    std::vector<ResearchUnlockedCard> cards; // capture order == tech order
+};
+
+/// Read the deck out of the Flash capture and the shown-card index off the screen. Game thread.
+ResearchUnlockedView ReadResearchUnlocked(void* screen);
+
+/// The screen, or null. Stack-managed — one call site pushes it, from the loot recap's close.
+void* FindResearchUnlockedScreen();
+
 // ---- the commodity list (UIInventory and everything derived from it) ----
 //
 // ONE view over about a dozen screens, because Firaxis built them as one: choose research,

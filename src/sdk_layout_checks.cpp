@@ -622,6 +622,14 @@ static_assert(offsetof(AUIPersonnel_DropDown, m_staff) == 0x3F8, "staff picker c
 // keep working across a Highlander bump or a mod that rebuilds it.
 static_assert(offsetof(AUIInventory, List) == 0x498, "commodity list");
 
+// ---- new research available (UIResearchUnlocked) ----
+// The deck's words come from the Flash capture; these two ints are the whole property read —
+// which card is showing and how many there are (game_ui.cpp's ReadResearchUnlocked).
+static_assert(offsetof(AUIResearchUnlocked, CurrentTechIndex) == 0x460,
+    "UIResearchUnlocked::CurrentTechIndex");
+static_assert(offsetof(AUIResearchUnlocked, NumUnlockedTechs) == 0x464,
+    "UIResearchUnlocked::NumUnlockedTechs");
+
 // ---- the geoscape: UIStrategyMap, its mission tray and the navigator behind it ----
 //
 // UINavigator is pinned here for the first time. Every other recipe reaches a list through

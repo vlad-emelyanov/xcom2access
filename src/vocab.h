@@ -91,6 +91,12 @@ inline constexpr const char* ReportBack = "Back";
 /// there is indistinguishable from no screen at all.
 inline constexpr const char* ReportNoText = "Report text unavailable";
 
+// New research available (docs/research-unlocked-recon.md). Same arrangement as the report: the
+// screen's own localized "RESEARCH AVAILABLE" rides in every card's payload and names the screen;
+// this fallback is reached only when the capture found nothing. The continue button and the
+// empty-capture line reuse the report's words above — same NavHelp widget, same failure.
+inline constexpr const char* ScreenResearchUnlocked = "Research available";
+
 // The in-game Escape menu. It carries its own localized title and only falls back to this.
 inline constexpr const char* ScreenPauseMenuFallback = "Pause menu";
 

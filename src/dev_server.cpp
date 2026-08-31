@@ -276,8 +276,12 @@ std::string FlashQueueText(int32_t index)
                 const FlashShadow::Value& v = call.args[i];
                 switch (v.type) {
                 case FlashShadow::ValueType::String:
-                    snprintf(buf, sizeof(buf), "    [%zu] push: \"%s\"\n", i, v.s.c_str());
-                    break;
+                    // Not through buf: a research summary runs past 512 bytes and snprintf's
+                    // silent clip cut one mid-UTF-8-sequence — which read as "the capture
+                    // truncates" until flash_shadow was checked. The capture was whole; the
+                    // DISPLAY was the fixed buffer (the size-from-the-data rule, dev edition).
+                    out += "    [" + std::to_string(i) + "] push: \"" + v.s + "\"\n";
+                    continue;
                 case FlashShadow::ValueType::Number:
                     snprintf(buf, sizeof(buf), "    [%zu] num:  %g\n", i, v.n);
                     break;

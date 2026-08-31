@@ -5163,6 +5163,87 @@ ResearchReportView ReadResearchReport(void* screen)
     return v;
 }
 
+// ---- new research available (UIResearchUnlocked) — see the header and the recon -----------------
+
+namespace {
+
+// addResearch's parameter order (UIResearchUnlocked.uc:199-208). Read by POSITION, the capture's
+// standing rule: arg 2 is an asset path that must never be spoken, and arg 4 is a boolean that
+// StringArgs() renders as an empty slot so nothing after it shifts.
+enum ResearchUnlockedArg {
+    kUnlockedHeader = 0,
+    kUnlockedTitle = 1,
+    kUnlockedImage = 2, // TechState.GetImage() — never spoken
+    kUnlockedDescription = 3,
+    kUnlockedShadow = 4, // bShadowProject — a boolean, not a string
+};
+
+// The two ints the screen retains (recon §3); both pinned in sdk_layout_checks.cpp.
+constexpr int32_t kUnlockedCurrentTechOffset = 0x460; // UIResearchUnlocked::CurrentTechIndex
+constexpr int32_t kUnlockedNumTechsOffset = 0x464;    // UIResearchUnlocked::NumUnlockedTechs
+
+} // namespace
+
+void* FindResearchUnlockedScreen()
+{
+    return FindStackScreenRaw("UIResearchUnlocked");
+}
+
+ResearchUnlockedView ReadResearchUnlocked(void* screen)
+{
+    ResearchUnlockedView v;
+    v.screen = screen;
+    if (!screen)
+        return v;
+
+    v.total = ReadI32Raw(screen, kUnlockedNumTechsOffset);
+    const int32_t shownIndex = ReadI32Raw(screen, kUnlockedCurrentTechOffset);
+
+    const int32_t index = FlashShadow::PanelCacheIndex(screen);
+    if (index < 0)
+        return v;
+
+    // ⛔ FILTER BY NAME over everything on the index: the screen's MC also pushes an
+    // addTweenBetween (the deck's fade-in), and GetCall's "most recent" would hand back only the
+    // LAST card of a multi-tech deck. GetCalls is oldest-first, which is PopulateData's loop
+    // order, which is the deck order Flash flips through — so card i really is push i.
+    for (const FlashShadow::Call& call : FlashShadow::GetCalls(index)) {
+        if (call.name != "addResearch")
+            continue;
+        const std::vector<std::string> args = call.StringArgs();
+        ResearchUnlockedCard card;
+        card.title = ReportArg(args, kUnlockedTitle);
+        card.descriptionLines = ReportArgLines(args, kUnlockedDescription);
+        card.shadowProject = kUnlockedShadow < call.args.size()
+            && call.args[kUnlockedShadow].type == FlashShadow::ValueType::Boolean
+            && call.args[kUnlockedShadow].b;
+        if (v.cards.empty())
+            v.header = ReportArg(args, kUnlockedHeader);
+        v.cards.push_back(std::move(card));
+    }
+    v.captured = !v.cards.empty();
+
+    // CurrentTechIndex is the game's own safety counter and legitimately sits one past the last
+    // card between the final flip and the NoMoreResearch close (recon §1) — clamp, don't trust.
+    const int last = v.captured ? static_cast<int>(v.cards.size()) - 1 : 0;
+    v.current = shownIndex < 0 ? 0 : (shownIndex > last ? last : shownIndex);
+
+    // Log on change, never per read — this runs from Build() and ScreenName() every poll. The
+    // shown index rides in the key so every flip logs once; the screen pointer is compared and
+    // never dereferenced.
+    static void* sLastScreen = nullptr;
+    static int sLastShown = -1;
+    if (screen != sLastScreen || v.current != sLastShown) {
+        sLastScreen = screen;
+        sLastShown = v.current;
+        const char* title = v.captured ? v.cards[v.current].title.c_str() : "(nothing captured)";
+        LOG_INFO("ResearchUnlocked: card %d of %d '%s' from cache index %d (%zu captured%s)",
+            v.current + 1, v.total, title, index, v.cards.size(),
+            v.total == static_cast<int>(v.cards.size()) ? "" : " — COUNT MISMATCH vs NumUnlockedTechs");
+    }
+    return v;
+}
+
 // ---- the commodity list (UIInventory and its dozen subclasses) ----
 //
 // The most reused screen shape in the strategy layer, and the one where the widget tree is

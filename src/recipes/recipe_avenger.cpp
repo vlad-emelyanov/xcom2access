@@ -1445,6 +1445,112 @@ std::string ResearchReportName()
     return view.header.empty() ? std::string(Vocab::ScreenResearchReport) : view.header;
 }
 
+// ---- new research available (UIResearchUnlocked) — docs/research-unlocked-recon.md ----
+//
+// The post-mission deck: one card per newly unlocked tech, one shown at a time, every accept key
+// flipping to the next, the screen closing itself after the last. Words from the Flash capture,
+// the shown-card index off the screen — GameUI::ReadResearchUnlocked is the whole reading.
+//
+// Three deliberate departures from the report recipe it otherwise copies:
+//
+// ⛔ EVERY NODE ID CARRIES THE CARD ORDINAL, the continue node included. A flip then invalidates
+// every identity at once, Reconcile falls through to the start node, and the differ speaks the
+// new card's title — that IS the flip announcement, and it costs nothing. A per-screen continue
+// id would instead keep focus parked on the button across the flip and card 2 would go unspoken.
+//
+// EVERY NODE ACTIVATES, not just the button. The game's own OnUnrealCommand answers Enter,
+// Escape, A, B and RMB alike with NextResearch (UIResearchUnlocked.uc:140-166) — "press anything
+// to continue" is the screen's real input contract, and a player flipping through a deck should
+// not walk back down to the button after every card. There is nothing else Enter could mean here.
+//
+// THE DECK POSITION IS HAND-STAMPED on the title node (current+1 of NumUnlockedTechs, only when
+// the deck holds more than one), through the node's PositionIndex/Count so it reads via the
+// kernel's own PositionText hook. The automatic stamp cannot say this: it counts nodes within
+// the stop — title plus description lines — not cards in the deck, and the document context
+// suppresses it anyway.
+
+std::unique_ptr<GraphRender> BuildResearchUnlocked()
+{
+    const GameUI::ResearchUnlockedView view = GameUI::ReadResearchUnlocked(gScreen);
+    const std::string key = "unlocked/" + std::to_string(view.current) + "/";
+
+    // gScreen is read AT ACTIVATION, not captured — the handler runs from the input drain, a
+    // frame or more after this render (the report recipe's rule).
+    const auto advance = []() { GameUI::SendScreenCommand(gScreen, GameUI::kCmdEnter); };
+
+    GraphBuilder b;
+    b.BeginStop("card");
+    // Empty-label context, for the report's reason: SuppressChildPositions, so description lines
+    // are not stamped "2 of 5" like menu rows. The header is the SCREEN NAME, spoken once on
+    // attach — as a context label too it would be said twice in a row.
+    b.PushContext("", "", /*positions*/ false);
+
+    int added = 0;
+    auto say = [&](const std::string& id, const std::string& text) {
+        if (text.empty())
+            return ControlId(); // an empty field is ordinary; an unlabelled node is a ghost
+        ControlId node = ControlId::Structural(key + id);
+        NodeVtable vt;
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(text));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.OnActivate = advance;
+        b.AddItem(node, std::move(vt));
+        added++;
+        return node;
+    };
+
+    ControlId title;
+    if (view.current >= 0 && view.current < static_cast<int>(view.cards.size())) {
+        const GameUI::ResearchUnlockedCard& card = view.cards[view.current];
+        title = say("title", card.title);
+        for (size_t i = 0; i < card.descriptionLines.size(); i++)
+            say("para/" + std::to_string(i), card.descriptionLines[i]);
+    }
+
+    if (added == 0) {
+        // Recognised the screen and captured nothing — say so, for PopupNoText's reason: the
+        // player still has to press something to leave, and silence reads as no screen at all.
+        say("empty", Vocab::ReportNoText);
+    } else if (title.IsValid()) {
+        b.SetStart(title); // land on the tech name; the description reads down from it
+    }
+
+    b.PopContext(); // the button is not part of the document
+    b.BeginStop("continue");
+    {
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::ReportContinue));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.OnActivate = advance;
+        b.AddItem(ControlId::Structural(key + "close"), std::move(vt));
+    }
+
+    std::unique_ptr<GraphRender> render = b.Build();
+    if (title.IsValid() && view.total > 1) {
+        if (GraphNode* node = render->NodeAt(title)) {
+            node->PositionIndex = view.current + 1;
+            node->PositionCount = view.total;
+        }
+    }
+    return render;
+}
+
+void* ProbeResearchUnlocked()
+{
+    void* screen = GameUI::FindResearchUnlockedScreen();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+std::string ResearchUnlockedName()
+{
+    // The screen's own localized "RESEARCH AVAILABLE", identical on every card of the deck, so
+    // it is spoken once on attach and never again across flips (the differ speaks titles, and
+    // the screen name is not re-announced while the recipe stays attached).
+    const GameUI::ResearchUnlockedView view = GameUI::ReadResearchUnlocked(gScreen);
+    return view.header.empty() ? std::string(Vocab::ScreenResearchUnlocked) : view.header;
+}
+
 } // namespace
 
 // ---- the recipes this file defines ----
@@ -1485,6 +1591,13 @@ const Recipe kChooseFacilityRecipe{"choose facility", ProbeChooseFacility, Build
 // screen has no UIList, and no navigable widget of any kind.
 const Recipe kResearchReportRecipe{
     "research report", ProbeResearchReport, BuildResearchReport, ResearchReportName};
+
+// HIGH, beside the report and for the same reason: a modal over the whole post-mission Avenger
+// sequence, with only the dialog and popup recipes above it. It never co-exists with the report
+// (one is post-mission, the other facility-raised), so their relative order is moot. No
+// SetListIndex — no UIList, no navigable widget of any kind.
+const Recipe kResearchUnlockedRecipe{"research unlocked", ProbeResearchUnlocked,
+    BuildResearchUnlocked, ResearchUnlockedName};
 
 } // namespace Recipes
 } // namespace MenuNavigator
