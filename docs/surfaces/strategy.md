@@ -350,10 +350,19 @@ plus a wild-card column, the hand of unplayed orders below, and Continue.
   `` `ISCONTROLLERACTIVE ``. Placing a card is **drag and drop** — `UIStrategyPolicy_Card.OnMouseEvent`
   is the only path into `SelectCard`. So this recipe is not narration over something that works;
   like the debris room, it is what makes the screen exist.
-- ✅ **The cards retain their STRUCTURE and none of their words.** `CardRef`, `ColumnIndex`,
-  `ColumnSlot`, `bLocked` and `bVital` are real fields, so native reads the board layout for
-  itself; `SetCardData(Title, Desc, Quote, Image, …)` takes every word as a parameter, so the
-  companion re-derives them from the `XComGameState_StrategyCard` the ref names.
+- ✅ **The cards retain their STRUCTURE and none of their words.** `CardRef`, `bLocked` and
+  `bVital` are real fields, so native reads the board layout for itself;
+  `SetCardData(Title, Desc, Quote, Image, …)` takes every word as a parameter, so the companion
+  re-derives them from the `XComGameState_StrategyCard` the ref names.
+- ⛔ **`ColumnIndex`/`ColumnSlot` are real fields and MUST NOT be read: the game assigns them only
+  in `RealizeColumn`'s slot loop.** `CreateLockedCard` — the locked placeholder appended AFTER
+  that loop on every met faction below Influential — leaves both at the default 0, so a column
+  with a real slot 0 holds two cards answering (column, slot) identically. Live, that was a
+  duplicate control id thrown from the build, and the navigator's throw-detach-reprobe loop made
+  the whole screen silently dead at ~4 exceptions a second. The address both halves use is the
+  LIST POSITION (column = the screen's `Columns[]` index, −1 the hand; slot = the item index in
+  whichever list holds it) — the same index the companion's `ResolveCard` hands to `GetItem()`,
+  which is what the "(column, slot)" in the rules above means.
 - ⛔ **The cards are walked off the SCREEN'S OWN lists, never off the game state.**
   `Screen.Columns[i]` and `Screen.Hand` are what the screen built, in the order it built them, and
   both halves address a card by `(column, slot)` — column −1 being the hand. Re-deriving the layout
@@ -382,6 +391,19 @@ plus a wild-card column, the hand of unplayed orders below, and Continue.
 - ⛔ **The held card is said with a plain Value part, NOT `AnnouncementKinds::Selected`.** Selected
   also makes a node its stop's LANDING node, which would silently reroute Tab past every card
   declared before it — the hazard the kernel's own comment names.
+- ⛔ **`SelectCard`'s refusal is SILENT — its final `else` plays a negative click and says
+  nothing — and a blind player cannot tell that from a dead key.** Found live: a player held a
+  Templar card over the Reapers empty slot pressing Enter into silence, with no way to even put
+  the card down (the mouse abandons a drag by releasing over nothing; a two-step selection has no
+  such gesture, and vanilla keyboard Escape LEAVES the screen). Three answers, all from the
+  game's own controller build, which had already solved each: while a card is held, every legal
+  drop slot says `Vocab::PolicyDropTarget` (the game highlights drop spots during a drag — this
+  is parity); `X2AccessPolicyReader.DropMarker` predicts refusals by mirroring `SelectCard`
+  branch for branch, and the recipe captions them (`PolicyCantPlace`, `PolicyCantPick`,
+  `PolicyCantMove`) **while still sending the verb — the game stays the authority, the caption
+  only covers its silence**; Enter on the held card puts it down (the `` `ISCONTROLLERACTIVE ``
+  branch at `UIStrategyPolicy.uc:1612`) and Backspace while holding is `ClearInspector` on every
+  node, replacing the remove verb for the duration (the controller's B/Escape at `:1253`).
 - **An empty slot is NAMED, never skipped.** `RealizeColumn` hints only the wild-card column's
   blanks, so most empty slots carry no text at all; an unnamed node is a control that silently
   ceases to exist, on the one screen where the empty slots are what the player is aiming at.

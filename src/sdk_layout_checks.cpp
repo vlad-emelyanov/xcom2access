@@ -574,8 +574,6 @@ static_assert(offsetof(AUIStrategyPolicy, Hand) == 0x4E0, "policy hand list");
 static_assert(offsetof(AUIStrategyPolicy, DeckCatcher) == 0x4F0, "policy flags precede 0x4F8");
 static_assert(offsetof(AUIStrategyPolicy, FilterFaction) == 0x4FC, "policy flags end at 0x4FC");
 static_assert(offsetof(AUIStrategyPolicy, InspectingCard) == 0x538, "policy picked-up card");
-static_assert(offsetof(AUIStrategyPolicy_Card, ColumnIndex) == 0x3E0, "policy card column");
-static_assert(offsetof(AUIStrategyPolicy_Card, ColumnSlot) == 0x3E4, "policy card slot");
 static_assert(offsetof(AUIStrategyPolicy_Card, CardRef) == 0x3E8, "policy card ref");
 static_assert(offsetof(AUIStrategyPolicy_Card, eFaction) == 0x3F0, "policy card flags end");
 

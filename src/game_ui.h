@@ -1517,10 +1517,14 @@ bool ActivateCovertActionLaunch(const CovertActionsView& view);
 // they can only leave.
 //
 // ✅ The card panels DO retain their structure, which is the half that makes this tractable:
-// `CardRef` (the join key), `ColumnIndex`, `ColumnSlot`, `bLocked`, `bVital` and the two enums are
-// all real fields on `UIStrategyPolicy_Card`. What they do NOT retain is a single word — title,
-// summary, quote and slot hint all go through `MC.BeginFunctionOp("SetCardData")` as parameters —
-// so X2AccessPolicyReader re-derives them from the `XComGameState_StrategyCard` the ref names.
+// `CardRef` (the join key), `bLocked` and `bVital` are real fields on `UIStrategyPolicy_Card`.
+// ⛔ `ColumnIndex`/`ColumnSlot` are real fields too and are NOT trusted: only `RealizeColumn`'s
+// slot loop assigns them, so the locked placeholder `CreateLockedCard` appends after that loop
+// reads (0, 0) — colliding with the wild-card column's real slot 0. The address is the LIST
+// POSITION, which is also how the companion's `ResolveCard` resolves every verb. What the panels
+// do NOT retain is a single word — title, summary, quote and slot hint all go through
+// `MC.BeginFunctionOp("SetCardData")` as parameters — so X2AccessPolicyReader re-derives them
+// from the `XComGameState_StrategyCard` the ref names.
 //
 // ⛔ `SelectCard` IS A TWO-STEP STATE MACHINE over the screen's `InspectingCard`, and that is
 // exactly the pick-up/put-down gesture a graph wants: the first call inspects, the second plays,
@@ -1529,9 +1533,10 @@ bool ActivateCovertActionLaunch(const CovertActionsView& view);
 
 struct PolicyCard {
     void* handle = nullptr; // UIStrategyPolicy_Card
-    /// The GAME's own coordinates, and what the verbs are addressed by: `column` is
-    /// `ColumnIndex` (0 = the wild-card column) or -1 for a hand card, `slot` is `ColumnSlot`
-    /// for a slot card and the hand list index for a hand card.
+    /// The address the verbs take, resolved by LIST POSITION on both halves: `column` is the
+    /// screen's Columns[] index (0 = the wild-card column) or -1 for a hand card, `slot` is the
+    /// card's index in whichever list holds it. Never the card's own `ColumnIndex`/`ColumnSlot`
+    /// fields — see the block comment above.
     int column = -1;
     int slot = 0;
     int cardId = 0;          // CardRef.ObjectID — 0 on an empty or locked slot

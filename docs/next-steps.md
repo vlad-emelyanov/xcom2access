@@ -63,9 +63,15 @@ row selection behaves as the source says), the geoscape's **region actions** sto
 (`geoscape-recon.md` §16 — make contact / install a radio relay, the two pin buttons vanilla
 wires to no key; needs a save with `ResistanceRadio` researched, and its confirm alert is the
 Flash capture's `Alert_MakeContact` panel, also unexercised), resistance orders
-(`UIStrategyPolicy` — the pass must cover BOTH windows, the monthly report where cards can be
-played and the read-only visit, and must actually place a card, swap two, and take one back out
-with Backspace), the **after-action walk-up** (`after-action-recon.md` — step 0 is DONE: every
+(`UIStrategyPolicy` — the PLAYABLE window ran live 2026-08-31: attach with 11 targets after the
+duplicate-id fix, board and hand walked, a card picked up, placed, and removed with Backspace,
+and Continue's orders-left dialog read and answered; what remains is the READ-ONLY visit, a
+direct swap of two slotted cards, and the whole second wave built the same day off that run's
+findings and not yet deployed: the `drop=` eligibility markers, the spoken refusals
+(`PolicyCantPlace`/`PolicyCantPick`/`PolicyCantMove`), Enter-on-held put-down, and
+Backspace-cancels-hold — `surfaces/strategy.md` has the rules; the pass is hearing "drop
+target" on legal slots while holding, a refusal caption on an illegal one, and Backspace
+putting the card back from anywhere), the **after-action walk-up** (`after-action-recon.md` — step 0 is DONE: every
 §3 offset plus both §5 predictions were read off a live walk-up 2026-08-31, with the OLD ASI
 deployed, so what remains is the recipe's own first pass — the promote → promotion screen →
 back loop, the bond icon into `UISoldierBondScreen` (which has no recipe: expect Escape-only),

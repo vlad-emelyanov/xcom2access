@@ -5669,10 +5669,14 @@ constexpr int32_t kPolicyInspectingOffset = 0x538;  // UIStrategyPolicy_Card*
 // UIStrategyPolicy_Card. AssociatedFactionName at 0x3D8 is an FName and is deliberately NOT read:
 // the companion has the faction from the card state, and an FName would be an untranslated
 // 'Faction_Reapers' at the player.
-constexpr int32_t kPolicyCardColumnOffset = 0x3E0; // ColumnIndex
-constexpr int32_t kPolicyCardSlotOffset = 0x3E4;   // ColumnSlot
-constexpr int32_t kPolicyCardRefOffset = 0x3E8;    // CardRef (ObjectID first)
-constexpr int32_t kPolicyCardFlagsOffset = 0x3EC;  // bLocked | bVital
+// ⛔ ColumnIndex (0x3E0) and ColumnSlot (0x3E4) are real fields and are deliberately NOT read:
+// only RealizeColumn's slot loop assigns them. CreateLockedCard — the locked placeholder appended
+// AFTER that loop — leaves both at the default 0, so a column with a real slot 0 holds two cards
+// answering (column, slot) identically, which live-crashed the build with a duplicate control id.
+// The address both halves agree on is the LIST POSITION — the same index the companion's
+// ResolveCard hands to GetItem().
+constexpr int32_t kPolicyCardRefOffset = 0x3E8;   // CardRef (ObjectID first)
+constexpr int32_t kPolicyCardFlagsOffset = 0x3EC; // bLocked | bVital
 constexpr uint32_t kPolicyCardLocked = 0x01;
 constexpr uint32_t kPolicyCardVital = 0x02;
 
@@ -5683,7 +5687,11 @@ constexpr int kMaxPolicySlots = 16;
 constexpr int kMaxPolicyHandCards = 64;
 constexpr int kPolicyColumnCount = 4;
 
-PolicyCard ReadPolicyCardRaw(void* handle, void* inspecting, bool inHand, int handIndex)
+// column/slot are the caller's list position (column -1 = the hand), never the card's own
+// ColumnIndex/ColumnSlot fields — see the offset block above for why those lie on a locked
+// placeholder. List order is slot order: RealizeColumn creates the real slots in index order and
+// appends the placeholder last, so the position is the truth the fields only approximate.
+PolicyCard ReadPolicyCardRaw(void* handle, void* inspecting, int column, int slot)
 {
     PolicyCard c;
     c.handle = handle;
@@ -5692,16 +5700,8 @@ PolicyCard ReadPolicyCardRaw(void* handle, void* inspecting, bool inHand, int ha
     c.locked = (flags & kPolicyCardLocked) != 0;
     c.vital = (flags & kPolicyCardVital) != 0;
     c.inspecting = handle == inspecting;
-    if (inHand) {
-        // A hand card is never given a ColumnIndex — CreateCard leaves it at the default 0, which
-        // is the WILD-CARD column's real index. Writing -1 here is what keeps the verbs' two-int
-        // address unambiguous; the hand's own list index takes the slot field.
-        c.column = -1;
-        c.slot = handIndex;
-    } else {
-        c.column = ReadI32Raw(handle, kPolicyCardColumnOffset);
-        c.slot = ReadI32Raw(handle, kPolicyCardSlotOffset);
-    }
+    c.column = column;
+    c.slot = slot;
     return c;
 }
 
@@ -5744,7 +5744,7 @@ StrategyPolicyView ReadStrategyPolicy(void* screen)
         const int n = TakeListItemsRaw("StrategyPolicy: slots", lists[i], cards, kMaxPolicySlots);
         for (int j = 0; j < n; j++) {
             if (cards[j])
-                col.cards.push_back(ReadPolicyCardRaw(cards[j], inspecting, /*inHand*/ false, j));
+                col.cards.push_back(ReadPolicyCardRaw(cards[j], inspecting, i, j));
         }
         v.columns.push_back(std::move(col));
     }
@@ -5756,7 +5756,7 @@ StrategyPolicyView ReadStrategyPolicy(void* screen)
             = TakeListItemsRaw("StrategyPolicy: hand", v.hand, cards, kMaxPolicyHandCards);
         for (int j = 0; j < n; j++) {
             if (cards[j])
-                v.handCards.push_back(ReadPolicyCardRaw(cards[j], inspecting, /*inHand*/ true, j));
+                v.handCards.push_back(ReadPolicyCardRaw(cards[j], inspecting, /*column*/ -1, j));
         }
     }
     return v;

@@ -2075,10 +2075,23 @@ const WireRecord* FindPolicyColumn(const std::vector<WireRecord>& words, int ind
     return nullptr;
 }
 
+// Backspace while a card is held: put it back where it was. The game's controller build has this
+// on B/Escape (UIStrategyPolicy.uc:1253); mouse+keyboard vanilla has NO way out of a pick-up at
+// all — the mouse abandons a drag by releasing over nothing, and a two-step selection has no
+// equivalent gesture unless we give it one. Installed on EVERY node while holding, in place of
+// the remove verb, so "Backspace takes it back" is one rule whatever is focused. Spoken here
+// because the rebuild only re-announces the FOCUSED node, and the change (the held marker, the
+// drop targets) is usually on other nodes.
+void PolicyCancelHold()
+{
+    TTS::SpeakInterrupt(Vocab::PolicyPutBack);
+    CallPolicyVerb("ClearPolicySelection", 0, 0);
+}
+
 // One card, whether it is an order, a locked slot or an empty one. The three read completely
 // differently and only the first has a name at all.
 NodeVtable PolicyCardNode(const GameUI::PolicyCard& card, const WireRecord* rec,
-    const std::string& removeLabel, bool canPlay)
+    const std::string& removeLabel, bool canPlay, bool holding)
 {
     const std::string name = rec ? RecField(*rec, "name") : std::string();
     const std::string hint = rec ? RecField(*rec, "hint") : std::string();
@@ -2122,18 +2135,48 @@ NodeVtable PolicyCardNode(const GameUI::PolicyCard& card, const WireRecord* rec,
         vt.Announcements.back().Kind = AnnouncementKinds::Value;
     }
 
+    // The companion's drop prediction (`drop=`, board cards only, only while holding): "1" is a
+    // slot the game would accept the held card into — said, because the game SHOWS its legal
+    // drop spots while a drag is live and a two-step selection has nothing to see.
+    const std::string drop
+        = (holding && rec) ? RecField(*rec, "drop") : std::string();
+    if (drop == "1") {
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::PolicyDropTarget));
+        vt.Announcements.back().Kind = AnnouncementKinds::Value;
+    }
+
     const int column = card.column;
     const int slot = card.slot;
-    // Offered even when the game will refuse: the refusal raises UICantChangeOrders(), which is
-    // the only statement anywhere of WHY, and the popup recipe reads it. The screen name already
-    // said so once on attach, so this is the player checking rather than being told twice.
-    vt.OnActivate = [column, slot]() { CallPolicyVerb("SelectPolicyCard", column, slot); };
+    // The refusals the game makes SILENTLY, captioned at the keypress. drop == "0" is
+    // SelectCard's wordless negative click; empty hands on a blank or locked slot (cardId 0) or
+    // a vital card is CanDragCard() refusing without a sound at all. ⛔ The verb is still sent
+    // in every case — the game stays the authority on what happens, the caption only covers its
+    // silence, and the read-only calendar gate keeps its own voice (UICantChangeOrders through
+    // the popup recipe, announced once on the screen name).
+    const char* refusal = nullptr;
+    if (holding) {
+        if (drop == "0")
+            refusal = Vocab::PolicyCantPlace;
+    } else if (canPlay) {
+        if (card.cardId == 0)
+            refusal = Vocab::PolicyCantPick;
+        else if (card.vital)
+            refusal = Vocab::PolicyCantMove;
+    }
+    vt.OnActivate = [column, slot, refusal]() {
+        if (refusal)
+            TTS::SpeakInterrupt(refusal);
+        CallPolicyVerb("SelectPolicyCard", column, slot);
+    };
 
-    // Backspace takes a card back out of a slot — vanilla's FXS_BUTTON_X, a gamepad button. Only
-    // where the game would allow it: a hand card has nowhere to go back to, and a vital order
-    // (MarkCardAsSpecial) cannot be removed at all.
-    if (canPlay && column >= 0 && !card.locked && !card.vital && card.cardId != 0
+    if (holding) {
+        // While holding, Backspace means "put it back" everywhere — see PolicyCancelHold.
+        vt.OnSecondary = []() { PolicyCancelHold(); };
+    } else if (canPlay && column >= 0 && !card.locked && !card.vital && card.cardId != 0
         && (!rec || RecField(*rec, "removable") != "0")) {
+        // Backspace takes a card back out of a slot — vanilla's FXS_BUTTON_X, a gamepad button.
+        // Only where the game would allow it: a hand card has nowhere to go back to, and a vital
+        // order (MarkCardAsSpecial) cannot be removed at all.
         vt.Announcements.emplace_back(NodeAnnouncement::Static(removeLabel));
         vt.Announcements.back().Kind = AnnouncementKinds::Value;
         vt.OnSecondary = [column, slot]() { CallPolicyVerb("RemovePolicyCard", column, slot); };
@@ -2151,6 +2194,7 @@ std::unique_ptr<GraphRender> BuildStrategyPolicy()
 
     GraphBuilder b;
     ControlId start;
+    const bool holding = view.inspectingId != 0;
 
     b.BeginStop("board");
     for (const GameUI::PolicyColumn& col : view.columns) {
@@ -2174,7 +2218,7 @@ std::unique_ptr<GraphRender> BuildStrategyPolicy()
                 start = id;
             b.AddItem(std::move(id),
                 PolicyCardNode(card, FindPolicyCard(words, col.index, card.slot), removeLabel,
-                    view.canPlay));
+                    view.canPlay, holding));
         }
         b.EndRow();
 
@@ -2197,7 +2241,7 @@ std::unique_ptr<GraphRender> BuildStrategyPolicy()
             gFocus[id.StructuralKey] = FocusTarget{-1, card.handle, false, nullptr};
             b.AddItem(std::move(id),
                 PolicyCardNode(card, FindPolicyCard(words, -1, card.slot), removeLabel,
-                    view.canPlay));
+                    view.canPlay, holding));
         }
         b.EndRow();
         if (!deck.empty())
@@ -2216,6 +2260,10 @@ std::unique_ptr<GraphRender> BuildStrategyPolicy()
             screenRec ? RecField(*screenRec, "continue") : std::string(Vocab::PopupContinue)));
         vt.Announcements.back().Kind = AnnouncementKinds::Label;
         vt.OnActivate = []() { CallPolicyVerb("ContinuePolicy", 0, 0); };
+        // "Backspace puts the held card back" holds on this node too — one rule, whatever is
+        // focused when the player changes their mind.
+        if (holding)
+            vt.OnSecondary = []() { PolicyCancelHold(); };
         b.AddItem(ControlId::Structural("policy/continue"), std::move(vt));
     }
 

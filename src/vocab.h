@@ -210,6 +210,24 @@ inline constexpr const char* PolicyHeld = "held";
 /// attempt. The cards keep their activation anyway, so pressing one still raises the game's own
 /// explanation.
 inline constexpr const char* PolicyReadOnly = "orders cannot be changed now";
+/// While a card is held, a board slot the game would ACCEPT it into. The game shows this — legal
+/// drop spots highlight while a drag is live — so saying it is parity. Value part, spoken after
+/// the slot's own words.
+inline constexpr const char* PolicyDropTarget = "drop target";
+/// The refusal SelectCard makes silently: its final `else` plays a negative click and says
+/// nothing, which a blind player cannot tell from a dead key. Spoken on activation, and the verb
+/// is still sent — the game stays the authority, this is a caption on its refusal, not a gate.
+inline constexpr const char* PolicyCantPlace = "cannot place here";
+/// Enter with empty hands on a slot that has nothing to pick up (a blank or a locked slot):
+/// CanDragCard() refuses and the companion returns without a word.
+inline constexpr const char* PolicyCantPick = "nothing to pick up";
+/// Enter with empty hands on a VITAL card (MarkCardAsSpecial) — there IS a card, it just cannot
+/// be moved, so "nothing to pick up" would be a lie.
+inline constexpr const char* PolicyCantMove = "cannot be moved";
+/// Backspace while holding: the held card returned to where it was (ClearInspector). The game's
+/// controller build puts this on B/Escape (UIStrategyPolicy.uc:1253); vanilla mouse+keyboard has
+/// no way to say it at all.
+inline constexpr const char* PolicyPutBack = "put back";
 
 // The personnel roster. Almost every word there is the game's own — the rows are re-derived from
 // the unit, the tab names and the sort captions are localized strings off the screen, and even

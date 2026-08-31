@@ -63,12 +63,19 @@ const FLD_SEP = "~:~";
 
 // Records:
 //   kind=screen  decktitle  influencelabel  changeable=0|1
+//   kind=card    column=<c>  slot=<s>  name  summary  quote  hint  attention  removable=0|1  drop=0|1
 //   kind=column  index=<i>  label  influence
-//   kind=card    column=<c>  slot=<s>  name  summary  quote  hint  attention  removable=0|1
 //
 // A HAND card carries column=-1 and slot=<its index in the hand list>; that pair is the address
 // native joins on and the same pair the verbs below take. ⛔ It is not the card's ObjectID: an
 // EMPTY slot has none, and empty slots are the things a player most needs to be able to aim at.
+//
+// `drop` appears on BOARD cards only while a card is HELD during the monthly report: 1 means
+// pressing Enter there changes the board (play or swap), 0 means SelectCard would fall through
+// to its silent `else` and refuse with nothing but a negative click. A sighted player is shown
+// this difference — the game highlights the legal drop spots while a drag is live — so saying
+// it is parity, not an aid. Hand cards and the held card itself carry no drop field: Enter
+// there switches or toggles the hold, which is never a refusal.
 function DescribePolicy()
 {
 	local UIStrategyPolicy Screen;
@@ -140,14 +147,24 @@ private function string ColumnRecord(UIStrategyPolicy Screen, int Index)
 private function string CardRecord(UIStrategyPolicy Screen, UIStrategyPolicy_Card Card, int Column, int Slot)
 {
 	local XComGameState_StrategyCard CardState;
-	local string Rec;
+	local string Rec, Drop;
 
 	Rec = "kind=card" $ FLD_SEP $ "column=" $ string(Column) $ FLD_SEP $ "slot=" $ string(Slot);
 	if (Card == none)
 		return Rec;
 
+	// The drop prediction rides on every BOARD record — the blanks and the locked slots
+	// included, because a blank is the thing a held card is usually aimed at and a locked slot
+	// is the refusal most worth saying.
+	if (Column >= 0 && Screen.bEnableDragging)
+	{
+		Drop = DropMarker(Screen, Screen.InspectingCard, Card);
+		if (Drop != "")
+			Drop = FLD_SEP $ "drop=" $ Drop;
+	}
+
 	if (Card.bLocked)
-		return Rec $ FLD_SEP $ "hint=" $ Screen.LockedSlotLabel;
+		return Rec $ FLD_SEP $ "hint=" $ Screen.LockedSlotLabel $ Drop;
 
 	CardState = Screen.GetCardState(Card.CardRef);
 	if (CardState == none)
@@ -158,7 +175,7 @@ private function string CardRecord(UIStrategyPolicy Screen, UIStrategyPolicy_Car
 		// cannot land on is an empty slot they cannot fill.
 		if (Column == 0)
 			Rec $= FLD_SEP $ "hint=" $ Screen.WildCardSlotLabel;
-		return Rec;
+		return Rec $ Drop;
 	}
 
 	Rec $= FLD_SEP $ "name=" $ CardState.GetDisplayName();
@@ -170,7 +187,43 @@ private function string CardRecord(UIStrategyPolicy Screen, UIStrategyPolicy_Car
 	// bVital is the screen's own record of the same answer (MarkCardAsSpecial), but only for cards
 	// in a slot; asking the CARD STATE covers a hand card too.
 	Rec $= FLD_SEP $ "removable=" $ (CardState.CanBeRemoved() ? "1" : "0");
-	return Rec;
+	return Rec $ Drop;
+}
+
+// Would Enter on Target change the board, with Held picked up? A prediction, never an action —
+// SelectCard stays the only mover — mirroring its branches line for line (UIStrategyPolicy.uc
+// numbers below), because the refusal it predicts is SILENT in the game: the final `else`
+// (:1674) plays a negative click and says nothing, which a blind player cannot tell from a
+// dead key. Returns "" where no drop question exists (nothing held, a hand target, the held
+// card itself), "1" for play or swap, "0" for the silent refusal AND for the :1651 inner
+// fall-through, which moves nothing either (it only clears the hold).
+private function string DropMarker(UIStrategyPolicy Screen, UIStrategyPolicy_Card Held, UIStrategyPolicy_Card Target)
+{
+	local XComGameState_ResistanceFaction ColumnFaction;
+
+	if (Held == none || Target == none || Target == Held)
+		return "";
+	if (Screen.IsInHand(Target))
+		return ""; // held from hand: switches the hold (:1616); held from a slot: returns it (:1668)
+
+	if (Screen.IsInHand(Held))
+		return Screen.IsAllowedToPlay(Held, Target) ? "1" : "0"; // :1627
+
+	// Both on the board (:1636). The game's disjunction dereferences GetColumnFaction(0) == none;
+	// reordered here so the prediction does not log an accessed-none per wild-card slot per fetch.
+	ColumnFaction = Screen.GetColumnFaction(Target.ColumnIndex);
+	if (Target.ColumnIndex == 0
+		|| (ColumnFaction != none && ColumnFaction.GetMyTemplateName() == Held.AssociatedFactionName))
+	{
+		if (Target.AssociatedFactionName == Held.AssociatedFactionName
+			|| Target.ColumnIndex == Held.ColumnIndex)
+			return "1"; // swap (:1638)
+		if (Screen.IsAllowedToPlay(Held, Target)
+			&& (Target.CanDragCard() || Target.eFaction == eUIStrategyPolicyCardFaction_Blank))
+			return "1"; // play (:1646)
+		return "0"; // the :1651 fall-through: nothing moves, the hold just clears
+	}
+	return "0"; // the silent else (:1674)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -204,6 +257,16 @@ function SelectPolicyCard(int Column, int Slot)
 
 	if (Screen.InspectingCard == none && !Card.CanDragCard())
 		return;
+
+	// Enter on the card already held puts it DOWN — the controller branch of SelectCard
+	// (UIStrategyPolicy.uc:1612), gated there behind `ISCONTROLLERACTIVE. The mouse path cannot
+	// say this (its second click is a drop onto itself, which the hand branch answers by
+	// re-inspecting), and toggle is what a two-step keyboard pick-up means.
+	if (Screen.InspectingCard != none && Screen.InspectingCard == Card)
+	{
+		Screen.ClearInspector();
+		return;
+	}
 
 	Screen.SelectCard(Card);
 }
