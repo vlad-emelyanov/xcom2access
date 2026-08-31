@@ -4540,6 +4540,36 @@ bool SendScreenCommand(void* screen, int cmd)
     return SendRowCommand(screen, cmd);
 }
 
+// ---- the mission blade family (UIMission + subclasses) — docs/mission-blade-recon.md ----
+
+namespace {
+
+// UIMission::MissionRef (StateObjectReference — its first int32 is the ObjectID). The ONE
+// hand-transcribed offset this family costs; everything else is companion-side. Pinned in
+// sdk_layout_checks.cpp.
+constexpr int32_t kUIMissionMissionRefOffset = 0x600;
+
+} // namespace
+
+void* FindMissionBladeScreen()
+{
+    // IsKindOf, not a name table: 14 shipped subclasses, two DLC ones and any mod's all extend
+    // UIMission, share the base skeleton the companion reads, and wire the same five button
+    // slots. UIMissionSummary and UIMissionIntro extend UIScreen directly, so the chain walk
+    // excludes them for free. TOPMOST only — a blade under another screen has already lost the
+    // keys (the popup finder's refusal rule; the sitrep popup and dialogs push over the blade).
+    return TopStackScreenRaw([](void* screen, const char*) {
+        return IsKindOfRaw(screen, "UIMission");
+    });
+}
+
+int32_t MissionBladeMissionId(void* screen)
+{
+    if (!screen)
+        return 0;
+    return static_cast<int32_t>(ReadU32Raw(screen, kUIMissionMissionRefOffset));
+}
+
 // ---- UIAlert's words, read back out of its Flash panel ----
 //
 // See the header for why this is the one deliberate exception to "verification only, never the

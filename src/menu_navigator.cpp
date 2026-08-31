@@ -522,6 +522,9 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     // never on the stack at once, so their relative order is free.
     &kAfterActionRecipe,
     &kCommodityRecipe,
+    // The mission blade: below every modal that pushes over it (dialogs, alerts, the sitrep
+    // detail popup — all listed above), above the geoscape tray it covers.
+    &kMissionBladeRecipe,
     &kRoomBuildRecipe, &kRoomRecipe, &kGeoscapeRecipe,
     // The ambient tactical recipe. Below every overlay a mission can raise (dialog, popup,
     // pause menu — all resolve above), and it can never contend with the strategy screens:

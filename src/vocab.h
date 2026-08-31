@@ -68,6 +68,14 @@ inline constexpr const char* PopupNoText = "No readable text";
 inline constexpr const char* PopupContinue = "Continue";
 inline constexpr const char* PopupDismiss = "Dismiss";
 
+// The mission blade family (docs/mission-blade-recon.md). Every blade carries its own localized
+// heading (the mission-type title plus the region) and the recipe reads that, so the fallback is
+// reached only when the companion answered nothing for a recognised blade.
+inline constexpr const char* ScreenMissionBlade = "Mission";
+// Same last-resort family as the popup's: a blade whose wire came back empty still holds the
+// keyboard, so the player is told a blade is up and offered the screen's own accept/cancel keys.
+inline constexpr const char* MissionBladeNoText = "No readable text";
+
 // The research report (docs/research-report-recon.md). The screen pushes its own localized
 // "RESEARCH REPORT" and we read that, so the fallback is reached only when the Flash capture
 // found nothing at all.

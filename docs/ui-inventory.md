@@ -181,13 +181,15 @@ the pool itself are not cosmetic — P2, and the voice picker matters most.
 | `UISkyrangerArrives` | squad-return overlay | ⬜ P3 |
 | `UIStrategyMap_BlackMarket`/`_BuyIntel`/`_Outpost`/`_PoiChoice`/`_VisitCommander` | EU/EW leftovers, zero references | 🚫 dead |
 
-## 10. Mission launch — `UIMission` family, ⬜ P1, 17 classes
+## 10. Mission launch — `UIMission` family, ◐ built, 17 classes
 
 `UIMission` (base) + `_GOps`, `_Council`, `_Retaliation`, `_SupplyRaid`, `_LandedUFO`,
 `_AlienFacility`, `_GoldenPath`, `_ResOps`, `_RescueSoldier`, `_ChosenAmbush`,
 `_ChosenStronghold`, `_ChosenAvengerAssault`, `_LostAndAbandoned`, `_GPIntelOptions`,
 DLC_2 `_AlienNest`, DLC_3 `_LostTowers`. One layout family (`UIX2SimpleScreen` panels +
-launch/cancel), the single biggest unreadable surface left in the strategy layer.
+launch/cancel). ◐ built 2026-08-31 — `mission blade` recipe + `X2AccessMissionReader`
+(probe is IsKindOf `UIMission`, so the DLC pair and mod blades match too); recon and the
+first-pass checklist in `mission-blade-recon.md`, live-run debt in `next-steps.md`.
 
 ## 11. Popups and alerts — ✅ popup recipe + transient reader
 

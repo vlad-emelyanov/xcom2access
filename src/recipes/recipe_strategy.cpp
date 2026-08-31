@@ -1461,6 +1461,155 @@ std::string PopupName()
     return Vocab::ScreenPopup;
 }
 
+// ---- the mission blade (UIMission family) — docs/mission-blade-recon.md ----
+//
+// The geoscape's commit-to-a-mission screen: one skeleton, 16 subclasses, and until now the
+// single biggest unreadable surface left in the strategy layer (popup-inventory.md G2). The
+// popup recipe's shape — lines to Tab through, then the buttons — fits it exactly, but its
+// activation rule does not: here every subclass wires REAL delegates onto its buttons, and two
+// controls exist that the screen-level keys can never reach (GOps' mission-selector buttons and
+// the locked blades' Back button — both mouse-only in vanilla, recon §3). So activation is
+// UIButton.Click() through the companion, which keeps the game's own visible/disabled gates and
+// every side effect of the delegate the game bound.
+//
+// Words come from X2AccessMissionReader calling the SCREEN'S OWN getters (the read-the-screen
+// precedence — GetMissionDescString even does the region param expansion), so every line is in
+// the player's language and no re-derivation can drift from what the blade shows.
+
+constexpr const char* kMissionReaderClass = "X2AccessMissionReader";
+
+// ⛔ The extra key is the MISSION, not just the screen: the GOps blade rewrites MissionRef IN
+// PLACE when a selector button switches the displayed op (OnMissionOneClicked → UpdateData, no
+// widget respawn), so the pointer key alone would keep serving the previous mission's words.
+WireCache gMissionBladeWords(kMissionReaderClass, "DescribeMissionBlade");
+
+const std::vector<WireRecord>& FetchMissionBladeWords()
+{
+    return gMissionBladeWords.Get({gScreen}, GameUI::MissionBladeMissionId(gScreen));
+}
+
+// One outbound call with a single int — the covert-actions slot-verb shape. The companion
+// resolves the screen fresh and Click()s the named button, so a stale index degrades to a no-op.
+void ClickMissionBladeButton(int index)
+{
+    void* cdo = GameUI::FindCompanionCDO(kMissionReaderClass);
+    if (!cdo)
+        return;
+    struct {
+        int32_t Index;
+    } params{index};
+    if (!GameUI::CallScriptFunction(cdo, "ActivateMissionButton", &params)) {
+        LOG_WARN("MenuNavigator: %s.ActivateMissionButton failed", kMissionReaderClass);
+        return;
+    }
+    // A selector click repopulates the blade in place; the uniform verb rule (WireCache's
+    // header) says invalidate by hand rather than trust the key. Launch and cancel close the
+    // screen, where Detach()'s InvalidateWireCaches covers it anyway.
+    gMissionBladeWords.Invalidate();
+}
+
+std::unique_ptr<GraphRender> BuildMissionBlade()
+{
+    // Nothing joins gFocus: RefreshNavigation keeps the game's own navigator, but its Enter
+    // never consults it (the screen's OnUnrealCommand fires Button1 first — recon §3), so
+    // pushing focus at the buttons would move a highlight no key can act on.
+    const std::vector<WireRecord>& words = FetchMissionBladeWords();
+
+    const WireRecord* header = FindRecord(words, "blade");
+    const std::string screenClass = header ? RecField(*header, "class") : std::string();
+
+    // Identity carries class + mission: a second blade replacing this one through the same
+    // screen slot, or a GOps selector switching the mission in place, must read as NEW nodes to
+    // the differ or the fresh words go unspoken (the popup recipe's reason).
+    const std::string key =
+        screenClass + "/" + std::to_string(GameUI::MissionBladeMissionId(gScreen)) + "/";
+
+    GraphBuilder b;
+    b.BeginStop("mission");
+
+    // Empty-label context, the research report's worked pattern: the heading is the SCREEN NAME
+    // (see MissionBladeName), spoken once on attach, and these lines are a briefing, not a menu
+    // — "ЗАДАЧА…, 3 of 7" is a position stamp on a sentence. The empty label contributes no
+    // words and no separator; only SuppressChildPositions.
+    b.PushContext("", "", /*positions*/ false);
+
+    int added = 0;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "line")
+            continue;
+        const std::string text = RecField(rec, "text");
+        if (text.empty())
+            continue;
+        b.AddLabel(ControlId::Structural(key + "line/" + std::to_string(added)),
+            [text]() { return text; });
+        added++;
+    }
+    if (added == 0) {
+        // Recognised the blade and got no words back. Say so — the screen still holds the
+        // keyboard, and silence here is indistinguishable from no screen at all.
+        b.AddLabel(ControlId::Structural(key + "line/none"),
+            []() { return std::string(Vocab::MissionBladeNoText); });
+    }
+
+    b.PopContext(); // the buttons are controls, not briefing lines — they keep their positions
+    b.BeginStop("buttons");
+    b.StartRow();
+    int buttons = 0;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "button")
+            continue;
+        const std::string label = RecField(rec, "label");
+        if (label.empty())
+            continue;
+        const int index = atoi(RecField(rec, "index").c_str());
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.OnActivate = [index]() { ClickMissionBladeButton(index); };
+        b.AddItem(ControlId::Structural(key + "button/" + std::to_string(index)), std::move(vt));
+        buttons++;
+    }
+    if (buttons == 0) {
+        // No live button came over the wire. The screen's own accept/cancel keys still work at
+        // screen level (base OnUnrealCommand), so offer them under our generic pair — a blade a
+        // blind player cannot leave is worse than one that reads badly.
+        NodeVtable accept;
+        accept.Type = &ButtonType();
+        accept.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::PopupContinue));
+        accept.Announcements.back().Kind = AnnouncementKinds::Label;
+        accept.OnActivate = []() { GameUI::SendScreenCommand(gScreen, GameUI::kCmdEnter); };
+        b.AddItem(ControlId::Structural(key + "button/accept"), std::move(accept));
+        NodeVtable cancel;
+        cancel.Type = &ButtonType();
+        cancel.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::PopupDismiss));
+        cancel.Announcements.back().Kind = AnnouncementKinds::Label;
+        cancel.OnActivate = []() { GameUI::SendScreenCommand(gScreen, GameUI::kCmdEscape); };
+        b.AddItem(ControlId::Structural(key + "button/cancel"), std::move(cancel));
+    }
+    b.EndRow();
+    return b.Build();
+}
+
+void* ProbeMissionBlade()
+{
+    void* screen = GameUI::FindMissionBladeScreen();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+// The blade's own localized heading plus the region — "ОТВЕТНЫЙ УДАР, Восточная Африка" — read
+// off the wire the way CovertActionsName reads its header. The lines below carry no repeat of
+// it (their context label is empty), so it is spoken exactly once.
+std::string MissionBladeName()
+{
+    const WireRecord* header = FindRecord(FetchMissionBladeWords(), "blade");
+    if (!header)
+        return Vocab::ScreenMissionBlade;
+    const std::string name =
+        JoinPhrases(RecField(*header, "title"), RecField(*header, "region"));
+    return name.empty() ? std::string(Vocab::ScreenMissionBlade) : name;
+}
+
 // ---- covert actions (UICovertActions) — docs/covert-actions-recon.md ----
 //
 // The WOTC core strategy loop, and the screen where the mod earns the most per node. Vanilla
@@ -2142,6 +2291,12 @@ const Recipe kArmoryLoadoutRecipe{
 const Recipe kGeoscapeRecipe{"geoscape tray", ProbeGeoscape, BuildGeoscape, GeoscapeName};
 
 const Recipe kPopupRecipe{"popup", ProbePopup, BuildPopup, PopupName};
+
+// Below the modals (a dialog, an alert, the sitrep detail popup all push OVER a blade and must
+// win while they are up) and above the geoscape tray the blade covers. ProbeMissionBlade insists
+// on being the topmost stack screen, which enforces the same thing from its own side.
+const Recipe kMissionBladeRecipe{
+    "mission blade", ProbeMissionBlade, BuildMissionBlade, MissionBladeName};
 
 // Above the Resistance Ring it is pushed over (the room recipe) and above the personnel roster's
 // family only in the sense that it can never be topmost at the same time — UIPersonnel_CovertAction

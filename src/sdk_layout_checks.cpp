@@ -674,6 +674,14 @@ static_assert(offsetof(AUIStrategyMap_HUD, m_kChosenInfoButton) == 0x474, "chose
 static_assert(offsetof(AUIStrategyMap_HUD, m_kResistanceInfoButton) == 0x47C,
     "resistance orders button");
 
+// ---- the mission blade family (UIMission — docs/mission-blade-recon.md) ----
+//
+// The family's ONE hand-transcribed offset: MissionRef, the wire-cache discriminator that
+// catches GOps rewriting the displayed mission in place. Everything else on these screens is
+// read companion-side through the screen's own getters, so no button or panel pointer is ever
+// dereferenced natively.
+static_assert(offsetof(AUIMission, MissionRef) == 0x600, "UIMission::MissionRef");
+
 // ---- UEngine's option flags (src/game_ui.cpp SubtitlesEnabled, src/movie_subtitles.cpp) ----
 //
 // bSubtitlesEnabled is bit 0x10 of the bitfield dword at 0x46C, so it is bracketed like every

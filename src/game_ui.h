@@ -1140,6 +1140,24 @@ bool IsPopupClass(const char* className);
 /// Game thread only.
 bool SendScreenCommand(void* screen, int cmd);
 
+// ---- the mission blade family (UIMission + subclasses) — docs/mission-blade-recon.md ----
+//
+// The geoscape's commit-to-a-mission screen: one base skeleton, 14 shipped subclasses plus two
+// DLC ones. Words come from X2AccessMissionReader (the screen's own getters); activation goes
+// through the reader's ActivateMissionButton (UIButton.Click(), which GOps' mission selectors
+// and the locked blades' Back button need — the popup family's screen-level keys cannot reach
+// them). Native's whole contribution is the finder and ONE offset.
+
+/// The topmost stack screen when it derives from UIMission (IsKindOf, so DLC and mod blades
+/// match) and is live. A blade under another screen has lost the keys — the popup finder's
+/// refusal rule. Game thread only.
+void* FindMissionBladeScreen();
+
+/// UIMission::MissionRef.ObjectID, or 0 on any fault. The recipe's wire-cache discriminator:
+/// the GOps blade rewrites MissionRef IN PLACE when a selector button switches the displayed
+/// mission (no widget respawn), so the screen pointer alone would serve stale words.
+int32_t MissionBladeMissionId(void* screen);
+
 // ---- UIAlert: the 118-variant strategy alert, read back out of Flash ----
 //
 // ⛔ This is the ONE place in the project that reads the speech text out of the movie, and it is

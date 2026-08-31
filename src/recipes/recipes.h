@@ -38,6 +38,7 @@ extern const Recipe kAfterActionRecipe;
 extern const Recipe kArmoryLoadoutRecipe;
 extern const Recipe kGeoscapeRecipe;
 extern const Recipe kPopupRecipe;
+extern const Recipe kMissionBladeRecipe;
 extern const Recipe kPromotionRecipe;
 extern const Recipe kCovertActionsRecipe;
 extern const Recipe kStrategyPolicyRecipe;
@@ -54,7 +55,7 @@ extern const Recipe kResearchReportRecipe;
 extern const Recipe kTacticalHudRecipe;
 
 // How many of the above kRecipes must list. Pinned by a static_assert next to the array.
-constexpr std::size_t kRecipeCount = 24;
+constexpr std::size_t kRecipeCount = 25;
 
 } // namespace Recipes
 } // namespace MenuNavigator

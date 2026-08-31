@@ -83,6 +83,25 @@ Show Subtitles setting (`surfaces/strategy.md`), so the same conversation must b
 with subtitles on and once with them off — off must be silent, and turning them back on
 mid-conversation must announce the line still in progress rather than swallow it.
 
+**The mission blade family** (2026-08-31, built — `mission-blade-recon.md`; the `mission blade`
+recipe + `X2AccessMissionReader`, covering all 16 `UIMission` subclasses through the base
+skeleton). The first pass RAN the same day, live on a Russian campaign: a retaliation blade
+end-to-end (attach → lines → Chosen strip → ПОДТВЕРДИТЬ → squad select), a locked alien
+facility (locked text + Back only), and an unlocked facility with a reward and a second Chosen —
+and it earned `PushValuePair` (recon §6: a caption whose value is absent is dropped whole; the
+locked blade spoke a naked "НАГРАДА"). ⚠ That fix is SOURCE-ONLY until the next companion
+compile, and re-checking the facility blade after it is part of closing this entry. Still
+unexercised: a GOps blade with 2+ missions (the selector buttons are mouse-only in vanilla, and
+clicking one must re-announce the switched mission via the MissionRef extra-key), the ambush
+blade (its Chosen strip must stay correctly SILENT), and the Shadow Chamber / sitrep sections
+(silent so far only because the campaign has neither — the gates themselves are untested in the
+positive direction). Known v1 gaps, each a deliberate punt: `UIMission_GPIntelOptions` reads its
+intel options (name + cost + totals) but cannot PURCHASE one yet (the rows are `UIMechaListItem`
+checkboxes; the toggle path and the purchased-state read are owed together), and the sitrep
+panel's mouse-only info button (opens `UISitRepInformation`, which the popup recipe already
+reads) has no node yet — low value, since the reader already speaks each sitrep's name AND
+description inline.
+
 **The tactical HUD graph** (2026-08-31, built, never run — `surfaces/tactical.md` "Tactical HUD
 graph" holds the design; this is the navigator's FIRST ambient recipe, so the focus split itself
 is also unexercised; all four stops are in: Soldier, Abilities, Commands, Objectives). The pass,
@@ -123,9 +142,9 @@ action running (name + days left) and none assigned.
 
 The tile cursor's **concealment readout** (2026-08-31, source-derived, never run):
 "Detection zone" / "Tower detection" per tile and "breaks concealment, noise" on the move
-preview. The pass is `concealment-recon.md` §6 — a Gatecrasher sweep across a visible pod's red
-paint, a window-smashing move preview concealed AND revealed, a tower ring before and after its
-hack — and §4 lists the four parity assumptions the pass exists to check, the squad-visibility
+preview (both concealment-gated — revealed, a window on the path is silent by design). The pass
+is `concealment-recon.md` §6 — a Gatecrasher sweep across a visible pod's red paint, a
+window-smashing move preview concealed AND revealed, a tower ring before and after its hack — and §4 lists the four parity assumptions the pass exists to check, the squad-visibility
 gate on detectors first (if the game paints red for enemies the squad cannot see, widen ours to
 match the overlay, not the other way round).
 
