@@ -429,12 +429,6 @@ std::unique_ptr<GraphRender> BuildSquadSelect()
     return b.Build();
 }
 
-void* ProbeSquadSelect()
-{
-    void* screen = GameUI::FindSquadSelect();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
-}
-
 std::string SquadSelectName()
 {
     // The operation's own name is what a sighted player reads at the top left; the fallback is
@@ -661,12 +655,6 @@ std::unique_ptr<GraphRender> BuildAfterAction()
     }
 
     return b.Build();
-}
-
-void* ProbeAfterAction()
-{
-    void* screen = GameUI::FindAfterAction();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
 }
 
 std::string AfterActionName()
@@ -904,12 +892,6 @@ std::unique_ptr<GraphRender> BuildArmoryLoadout()
     return b.Build();
 }
 
-void* ProbeArmoryLoadout()
-{
-    void* screen = GameUI::FindArmoryLoadout();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
-}
-
 std::string ArmoryLoadoutName()
 {
     // Whose loadout, which is the question two screens of arrowing makes urgent; the panel
@@ -1006,17 +988,12 @@ WireCache gGeoActions(kGeoScannerClass, "DescribeRegionActions");
 // the render that spoke a line and the Enter that acts on it.
 void CallGeoAction(int regionId, int verb)
 {
-    void* cdo = GameUI::FindCompanionCDO(kGeoScannerClass);
-    if (!cdo)
-        return;
     struct {
         int32_t RegionID;
         int32_t Verb;
     } params{regionId, verb};
-    if (!GameUI::CallScriptFunction(cdo, "ActivateRegionAction", &params)) {
-        LOG_WARN("MenuNavigator: %s.ActivateRegionAction failed", kGeoScannerClass);
+    if (!GameUI::CallCompanion(kGeoScannerClass, "ActivateRegionAction", &params, nullptr))
         return;
-    }
     // The alert this opens detaches us and invalidates every cache on the way out; do it here
     // too, for the path where the verb was refused and no alert appeared.
     gGeoActions.Invalidate();
@@ -1492,20 +1469,10 @@ const std::vector<WireRecord>& FetchMissionBladeWords()
 // resolves the screen fresh and Click()s the named button, so a stale index degrades to a no-op.
 void ClickMissionBladeButton(int index)
 {
-    void* cdo = GameUI::FindCompanionCDO(kMissionReaderClass);
-    if (!cdo)
-        return;
-    struct {
-        int32_t Index;
-    } params{index};
-    if (!GameUI::CallScriptFunction(cdo, "ActivateMissionButton", &params)) {
-        LOG_WARN("MenuNavigator: %s.ActivateMissionButton failed", kMissionReaderClass);
-        return;
-    }
     // A selector click repopulates the blade in place; the uniform verb rule (WireCache's
-    // header) says invalidate by hand rather than trust the key. Launch and cancel close the
-    // screen, where Detach()'s InvalidateWireCaches covers it anyway.
-    gMissionBladeWords.Invalidate();
+    // header) says invalidate by hand rather than trust the key — the helper does. Launch and
+    // cancel close the screen, where Detach()'s InvalidateWireCaches covers it anyway.
+    CallCompanionVerb(gMissionBladeWords, kMissionReaderClass, "ActivateMissionButton", index);
 }
 
 std::unique_ptr<GraphRender> BuildMissionBlade()
@@ -1591,12 +1558,6 @@ std::unique_ptr<GraphRender> BuildMissionBlade()
     return b.Build();
 }
 
-void* ProbeMissionBlade()
-{
-    void* screen = GameUI::FindMissionBladeScreen();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
-}
-
 // The blade's own localized heading plus the region — "ОТВЕТНЫЙ УДАР, Восточная Африка" — read
 // off the wire the way CovertActionsName reads its header. The lines below carry no repeat of
 // it (their context label is empty), so it is spoken exactly once.
@@ -1647,12 +1608,7 @@ WireCache gCovertActionWords(kCovertActionReaderClass, "DescribeCovertActions");
 
 const std::vector<WireRecord>& FetchCovertActionWords(const GameUI::CovertActionsView& view)
 {
-    std::vector<void*> key;
-    key.reserve(view.rows.size() + 1);
-    for (const GameUI::CovertActionRow& row : view.rows)
-        key.push_back(row.handle);
-    key.push_back(view.screen);
-    return gCovertActionWords.Get(std::move(key), view.actionId);
+    return FetchWordsKeyedOnRows(gCovertActionWords, view.screen, view.rows, view.actionId);
 }
 
 // One outbound call with a single int, the personnel verbs' shape. Both slot verbs resolve the
@@ -1660,20 +1616,10 @@ const std::vector<WireRecord>& FetchCovertActionWords(const GameUI::CovertAction
 // index — which is the ActionSlots array index the companion emitted.
 void CallCovertActionSlotVerb(const char* funcName, int index)
 {
-    void* cdo = GameUI::FindCompanionCDO(kCovertActionReaderClass);
-    if (!cdo)
-        return;
-    struct {
-        int32_t Index;
-    } params{index};
-    if (!GameUI::CallScriptFunction(cdo, funcName, &params)) {
-        LOG_WARN("MenuNavigator: %s.%s failed", kCovertActionReaderClass, funcName);
-        return;
-    }
     // Both verbs change the slots — one opens the personnel picker and the other the armory, and
     // clearing a slot rewrites the card and the risks in place without respawning a single row.
-    // The pointer key cannot see any of that, so the cache is dropped by hand.
-    gCovertActionWords.Invalidate();
+    // The pointer key cannot see any of that, so the helper's by-hand invalidation is the point.
+    CallCompanionVerb(gCovertActionWords, kCovertActionReaderClass, funcName, index);
 }
 
 const WireRecord* FindCovertRow(const std::vector<WireRecord>& words, int actionId)
@@ -1965,7 +1911,7 @@ std::unique_ptr<GraphRender> BuildCovertActions()
     return b.Build();
 }
 
-// ⚠ No second focus test here, unlike ProbeChooseFacility's: FindCovertActionsScreen already
+// ⚠ No second focus test here, unlike the choose-facility probe's: FindCovertActionsScreen already
 // applies it, and GameUI::IsScreenFocused is a null-guarded IsFocusedRaw — the same predicate.
 // The test is what keeps this recipe standing down under the personnel picker a slot opens, the
 // armory the EDIT verb opens, and the confirm popup, all of which push ON TOP of this screen.
@@ -2037,17 +1983,12 @@ const std::vector<WireRecord>& FetchPolicyWords(const GameUI::StrategyPolicyView
 // screen's own lists, which is what keeps them from ever disagreeing about which card is meant.
 void CallPolicyVerb(const char* funcName, int column, int slot)
 {
-    void* cdo = GameUI::FindCompanionCDO(kPolicyReaderClass);
-    if (!cdo)
-        return;
     struct {
         int32_t Column;
         int32_t Slot;
     } params{column, slot};
-    if (!GameUI::CallScriptFunction(cdo, funcName, &params)) {
-        LOG_WARN("MenuNavigator: %s.%s failed", kPolicyReaderClass, funcName);
+    if (!GameUI::CallCompanion(kPolicyReaderClass, funcName, &params, nullptr))
         return;
-    }
     // Every one of these rebuilds the board (RefreshAllDecks) or moves the held card, and a
     // respawn can land on the freed addresses of the cards it replaced.
     gPolicyWords.Invalidate();
@@ -2323,15 +2264,16 @@ void ClearGeoscapeHover()
 // below keeps the sentence that argues where in that order it belongs.
 
 const Recipe kSquadSelectRecipe{
-    "squad select", ProbeSquadSelect, BuildSquadSelect, SquadSelectName};
+    "squad select", ProbeFocused<GameUI::FindSquadSelect>, BuildSquadSelect, SquadSelectName};
 
 // Squad select's post-mission twin, and like it listed below everything it can push — the
 // promotion screens, the bond screen, the photobooth, dialogs and popups all resolve first.
 const Recipe kAfterActionRecipe{
-    "after action", ProbeAfterAction, BuildAfterAction, AfterActionName};
+    "after action", ProbeFocused<GameUI::FindAfterAction>, BuildAfterAction, AfterActionName};
 
 const Recipe kArmoryLoadoutRecipe{
-    "armory loadout", ProbeArmoryLoadout, BuildArmoryLoadout, ArmoryLoadoutName};
+    "armory loadout", ProbeFocused<GameUI::FindArmoryLoadout>, BuildArmoryLoadout,
+    ArmoryLoadoutName};
 
 // Above the ant farm and the Avenger HUD it sits over, below anything it pushes (a mission
 // briefing, the pause menu, a dialog) — which is what ProbeGeoscape's "must be the current
@@ -2341,10 +2283,11 @@ const Recipe kGeoscapeRecipe{"geoscape tray", ProbeGeoscape, BuildGeoscape, Geos
 const Recipe kPopupRecipe{"popup", ProbePopup, BuildPopup, PopupName};
 
 // Below the modals (a dialog, an alert, the sitrep detail popup all push OVER a blade and must
-// win while they are up) and above the geoscape tray the blade covers. ProbeMissionBlade insists
+// win while they are up) and above the geoscape tray the blade covers. The blade's probe insists
 // on being the topmost stack screen, which enforces the same thing from its own side.
 const Recipe kMissionBladeRecipe{
-    "mission blade", ProbeMissionBlade, BuildMissionBlade, MissionBladeName};
+    "mission blade", ProbeFocused<GameUI::FindMissionBladeScreen>, BuildMissionBlade,
+    MissionBladeName};
 
 // Above the Resistance Ring it is pushed over (the room recipe) and above the personnel roster's
 // family only in the sense that it can never be topmost at the same time — UIPersonnel_CovertAction
@@ -2708,18 +2651,13 @@ std::unique_ptr<GraphRender> BuildPromotion()
     return b.Build();
 }
 
-void* ProbePromotion()
-{
-    void* screen = GameUI::FindPromotionScreen();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
-}
-
 std::string PromotionName()
 {
     return Vocab::ScreenPromotion;
 }
 
-const Recipe kPromotionRecipe{"promotion", ProbePromotion, BuildPromotion, PromotionName};
+const Recipe kPromotionRecipe{
+    "promotion", ProbeFocused<GameUI::FindPromotionScreen>, BuildPromotion, PromotionName};
 
 } // namespace Recipes
 } // namespace MenuNavigator

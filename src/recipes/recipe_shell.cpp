@@ -293,12 +293,6 @@ std::unique_ptr<GraphRender> BuildOptions()
     return b.Build();
 }
 
-void* ProbeOptions()
-{
-    void* screen = GameUI::FindOptionsScreen();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
-}
-
 std::string OptionsName()
 {
     std::string title = GameUI::ReadOptions(gScreen).title;
@@ -494,12 +488,6 @@ std::unique_ptr<GraphRender> BuildDifficulty()
     return b.Build();
 }
 
-void* ProbeDifficulty()
-{
-    void* screen = GameUI::FindDifficultyScreen();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
-}
-
 std::string DifficultyName()
 {
     std::string title = GameUI::ReadDifficulty(gScreen).title;
@@ -520,12 +508,6 @@ std::unique_ptr<GraphRender> BuildIronMan()
         AddSetupButton(b, btn, "iron/" + btn.label, /*writeBackFocus*/ true);
     b.EndRow();
     return b.Build();
-}
-
-void* ProbeIronMan()
-{
-    void* screen = GameUI::FindIronManScreen();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
 }
 
 // The warning IS the screen — a sighted player reads it without hovering anything — so it is
@@ -570,12 +552,6 @@ std::unique_ptr<GraphRender> BuildNarrative()
     return b.Build();
 }
 
-void* ProbeNarrative()
-{
-    void* screen = GameUI::FindNarrativeScreen();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
-}
-
 std::string NarrativeName()
 {
     std::string title = GameUI::ReadNarrative(gScreen).title;
@@ -601,12 +577,6 @@ std::unique_ptr<GraphRender> BuildSoundtrack()
         AddSetupButton(b, view.start, "snd/start", /*writeBackFocus*/ false);
     }
     return b.Build();
-}
-
-void* ProbeSoundtrack()
-{
-    void* screen = GameUI::FindSoundtrackScreen();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
 }
 
 // Ours rather than the game's: this screen's localized title does not exist in the Community
@@ -659,12 +629,6 @@ std::unique_ptr<GraphRender> BuildPauseMenu()
         b.AddItem(std::move(id), std::move(vt));
     }
     return b.Build();
-}
-
-void* ProbePauseMenu()
-{
-    void* screen = GameUI::FindPauseMenu();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
 }
 
 std::string PauseMenuName()
@@ -918,12 +882,6 @@ std::unique_ptr<GraphRender> BuildSaveLoad()
     return b.Build();
 }
 
-void* ProbeSaveLoad()
-{
-    void* screen = GameUI::FindSaveLoadScreen();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
-}
-
 std::string SaveLoadName()
 {
     GameUI::SaveLoadView view = GameUI::ReadSaveLoad(gScreen);
@@ -956,24 +914,31 @@ std::string SaveLoadName()
 
 const Recipe kDialogRecipe{"dialog", ProbeDialog, BuildDialog, DialogName};
 const Recipe kNarrativeRecipe{
-    "narrative content", ProbeNarrative, BuildNarrative, NarrativeName, GameUI::SetNarrativeIndex};
-const Recipe kIronManRecipe{"ironman", ProbeIronMan, BuildIronMan, IronManName};
+    "narrative content", ProbeFocused<GameUI::FindNarrativeScreen>, BuildNarrative, NarrativeName,
+    GameUI::SetNarrativeIndex};
+const Recipe kIronManRecipe{
+    "ironman", ProbeFocused<GameUI::FindIronManScreen>, BuildIronMan, IronManName};
 const Recipe kSoundtrackRecipe{
-    "soundtrack", ProbeSoundtrack, BuildSoundtrack, SoundtrackName, GameUI::SetSoundtrackIndex};
+    "soundtrack", ProbeFocused<GameUI::FindSoundtrackScreen>, BuildSoundtrack, SoundtrackName,
+    GameUI::SetSoundtrackIndex};
 const Recipe kOptionsRecipe{
-    "settings", ProbeOptions, BuildOptions, OptionsName, GameUI::SetOptionsListIndex};
+    "settings", ProbeFocused<GameUI::FindOptionsScreen>, BuildOptions, OptionsName,
+    GameUI::SetOptionsListIndex};
 // The Second Wave list is the only UIList on the difficulty screen; the rest of its controls
 // hang off plain panels and take the SetSelectedNavigation path instead.
 const Recipe kDifficultyRecipe{
-    "difficulty", ProbeDifficulty, BuildDifficulty, DifficultyName, GameUI::SetSecondWaveIndex};
+    "difficulty", ProbeFocused<GameUI::FindDifficultyScreen>, BuildDifficulty, DifficultyName,
+    GameUI::SetSecondWaveIndex};
 // Below the setup screens it can open (difficulty, Second Wave, settings) and above nothing —
 // it is the bottom of the in-game stack the way the shell is the bottom of the menu stack.
 const Recipe kPauseMenuRecipe{
-    "pause menu", ProbePauseMenu, BuildPauseMenu, PauseMenuName, GameUI::SetPauseMenuIndex};
+    "pause menu", ProbeFocused<GameUI::FindPauseMenu>, BuildPauseMenu, PauseMenuName,
+    GameUI::SetPauseMenuIndex};
 const Recipe kMainMenuRecipe{"main menu", ProbeMainMenu, BuildMainMenu, MainMenuName};
 
 // Above the pause menu and the shell it is opened from, below any dialog it raises.
-const Recipe kSaveLoadRecipe{"save/load", ProbeSaveLoad, BuildSaveLoad, SaveLoadName};
+const Recipe kSaveLoadRecipe{
+    "save/load", ProbeFocused<GameUI::FindSaveLoadScreen>, BuildSaveLoad, SaveLoadName};
 
 } // namespace Recipes
 } // namespace MenuNavigator

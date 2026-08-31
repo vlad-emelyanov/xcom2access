@@ -220,6 +220,47 @@ private:
 // above for why a pointer key alone cannot be trusted across a screen change.
 void InvalidateWireCaches();
 
+// ---- the recipe boilerplate every family repeated ----
+
+// The probe almost every menu recipe shares: the screen's own finder, and only while the screen
+// is the FOCUSED one. A template over the finder so each instantiation is still a distinct,
+// capture-free function the Recipe struct can hold as its Probe pointer — seventeen recipes had
+// grown seventeen identical bodies of this.
+template <void* (*FindScreen)()>
+void* ProbeFocused()
+{
+    void* screen = FindScreen();
+    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
+}
+
+// The screen-name shape the wire-backed recipes share: the header record's title, its subtitle
+// joined on by the kernel's phrase rule, and the recipe's own fallback when the companion had
+// nothing (not loaded, or the screen mid-build).
+std::string NameFromHeader(const std::vector<WireRecord>& records, const char* fallback);
+
+// One companion verb carrying a single int, then the cache dropped — the pair every
+// companion-owned verb needs together: the verbs repopulate the screen's rows, and a fresh
+// widget landing on a freed address would otherwise serve the OLD words through a matching
+// pointer key (the WireCache hazard note above). False when the call could not be made; the
+// bridge logs why.
+bool CallCompanionVerb(WireCache& cache, const char* className, const char* funcName, int value);
+
+// The wire-cache key almost every wire-backed recipe builds: the row handles in order, then the
+// screen. The game respawns rows whenever their content changes, so this is the
+// self-invalidating key the WireCache comment describes; `extra` and `alwaysStale` pass through
+// for the recipes whose payload depends on more than the pointers.
+template <typename Row>
+const std::vector<WireRecord>& FetchWordsKeyedOnRows(WireCache& cache, void* screen,
+    const std::vector<Row>& rows, long long extra = 0, bool alwaysStale = false)
+{
+    std::vector<void*> key;
+    key.reserve(rows.size() + 1);
+    for (const Row& row : rows)
+        key.push_back(row.handle);
+    key.push_back(screen);
+    return cache.Get(std::move(key), extra, alwaysStale);
+}
+
 // Join the parts a card names, dropping the ones the game is not showing — through
 // AppendPhrase, never a bare ", ". See the definitions for what each one is for.
 std::string JoinParts(const WireRecord& rec, std::initializer_list<const char*> keys);

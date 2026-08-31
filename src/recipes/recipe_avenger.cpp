@@ -55,12 +55,7 @@ WireCache gFacilityWords(kFacilityReaderClass, "DescribeFacility");
 
 const std::vector<WireRecord>& FetchFacilityWords(const GameUI::RoomView& view)
 {
-    std::vector<void*> key;
-    key.reserve(view.funcs.size() + 1);
-    for (const GameUI::RoomFunc& f : view.funcs)
-        key.push_back(f.handle);
-    key.push_back(view.facility);
-    return gFacilityWords.Get(std::move(key));
+    return FetchWordsKeyedOnRows(gFacilityWords, view.facility, view.funcs);
 }
 
 // The room's own bottom-bar buttons, and the upgrade button beside them. Split out of BuildRoom
@@ -245,12 +240,6 @@ std::unique_ptr<GraphRender> BuildRoom()
         b.AddItem(std::move(id), std::move(vt));
     }
     return b.Build();
-}
-
-void* ProbeRoom()
-{
-    void* screen = GameUI::FindRoomScreen();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
 }
 
 std::string RoomName()
@@ -440,12 +429,6 @@ std::unique_ptr<GraphRender> BuildRoomBuild()
     return b.Build();
 }
 
-void* ProbeRoomBuild()
-{
-    void* screen = GameUI::FindRoomBuildScreen();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
-}
-
 std::string RoomBuildName()
 {
     GameUI::RoomBuildView view = GameUI::ReadRoomBuild(gScreen);
@@ -508,17 +491,12 @@ WireCache gCommodityWords(kCommodityReaderClass, "DescribeCommodity");
 
 const std::vector<WireRecord>& FetchCommodityWords(const GameUI::CommodityView& view)
 {
-    std::vector<void*> key;
-    key.reserve(view.rows.size() + 1);
-    for (const GameUI::CommodityRow& row : view.rows)
-        key.push_back(row.handle);
     // Switching a Build Items tab is USUALLY covered by the row pointers alone: SwitchTab calls
     // PopulateData, which runs List.ClearItems() and spawns a fresh panel per item. "Usually" is
     // the whole reason the tab verb calls Invalidate() as well — a respawn can land on the freed
-    // addresses. The screen pointer goes in too, so a second screen of the family can never
-    // inherit a warm cache from the one it replaced.
-    key.push_back(view.screen);
-    return gCommodityWords.Get(std::move(key), view.selected);
+    // addresses. The screen pointer is in the key too, so a second screen of the family can
+    // never inherit a warm cache from the one it replaced.
+    return FetchWordsKeyedOnRows(gCommodityWords, view.screen, view.rows, view.selected);
 }
 
 // The category strip, and it is the clearest small case of "reachable but unspeakable" in the
@@ -753,26 +731,13 @@ std::unique_ptr<GraphRender> BuildCommodity()
     return b.Build();
 }
 
-void* ProbeCommodity()
-{
-    void* screen = GameUI::FindCommodityScreen();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
-}
-
 std::string CommodityName()
 {
     // The header the screen itself is drawing. UIX2PanelHeader retains both strings under a
     // dirty check right before the Flash op, so this is what is on screen — including the
     // EMPTY-LIST subtitle, which PopulateData swaps in when the list came back with nothing.
-    const std::vector<WireRecord>& records = FetchCommodityWords(GameUI::ReadCommodity(gScreen));
-    std::string name;
-    if (const WireRecord* header = FindRecord(records, "header")) {
-        name = RecField(*header, "title");
-        AppendPhrase(name, RecField(*header, "subtitle"));
-    }
-    if (name.empty())
-        name = Vocab::ScreenCommodityFallback;
-    return name;
+    return NameFromHeader(FetchCommodityWords(GameUI::ReadCommodity(gScreen)),
+        Vocab::ScreenCommodityFallback);
 }
 
 // P11 write-back. Only the row nodes carry a listIndex — the tab strip and the card
@@ -824,12 +789,7 @@ WireCache gPersonnelWords(kPersonnelReaderClass, "DescribePersonnel");
 
 const std::vector<WireRecord>& FetchPersonnelWords(const GameUI::PersonnelView& view)
 {
-    std::vector<void*> key;
-    key.reserve(view.rows.size() + 1);
-    for (const GameUI::PersonnelRow& row : view.rows)
-        key.push_back(row.handle);
-    key.push_back(view.screen);
-    return gPersonnelWords.Get(std::move(key));
+    return FetchWordsKeyedOnRows(gPersonnelWords, view.screen, view.rows);
 }
 
 // One outbound call with a single int, for the two verbs the companion owns. Both resolve the
@@ -837,21 +797,10 @@ const std::vector<WireRecord>& FetchPersonnelWords(const GameUI::PersonnelView& 
 // pass but the index.
 bool CallPersonnelVerb(const char* funcName, int value)
 {
-    void* cdo = GameUI::FindCompanionCDO(kPersonnelReaderClass);
-    if (!cdo)
-        return false;
-    struct {
-        int32_t Value;
-    } params{value};
-    if (!GameUI::CallScriptFunction(cdo, funcName, &params)) {
-        LOG_WARN("MenuNavigator: %s.%s failed", kPersonnelReaderClass, funcName);
-        return false;
-    }
     // Both verbs respawn the rows, so the key USUALLY changes on its own — but the fresh
     // pointers can land on the freed addresses of the old ones, and a key that happens to match
-    // would keep the previous tab's words on screen.
-    gPersonnelWords.Invalidate();
-    return true;
+    // would keep the previous tab's words on screen. The helper's invalidation is the guard.
+    return CallCompanionVerb(gPersonnelWords, kPersonnelReaderClass, funcName, value);
 }
 
 void BuildPersonnelTabs(GraphBuilder& b, const std::vector<WireRecord>& records)
@@ -1118,12 +1067,6 @@ std::unique_ptr<GraphRender> BuildPersonnel()
     return b.Build();
 }
 
-void* ProbePersonnel()
-{
-    void* screen = GameUI::FindPersonnelScreen();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
-}
-
 std::string PersonnelName()
 {
     // UIPersonnel.Title is retained under a dirty check — but SetScreenHeader is called ONLY by
@@ -1174,12 +1117,7 @@ WireCache gBuildFacilityWords(kBuildFacilityReaderClass, "DescribeFacilityChoice
 
 const std::vector<WireRecord>& FetchBuildFacilityWords(const GameUI::ChooseFacilityView& view)
 {
-    std::vector<void*> key;
-    key.reserve(view.choices.size() + 1);
-    for (const GameUI::FacilityChoice& choice : view.choices)
-        key.push_back(choice.handle);
-    key.push_back(view.screen);
-    return gBuildFacilityWords.Get(std::move(key), view.selected);
+    return FetchWordsKeyedOnRows(gBuildFacilityWords, view.screen, view.choices, view.selected);
 }
 
 void BuildFacilityCard(GraphBuilder& b, const WireRecord& card)
@@ -1284,24 +1222,10 @@ std::unique_ptr<GraphRender> BuildChooseFacility()
     return b.Build();
 }
 
-void* ProbeChooseFacility()
-{
-    void* screen = GameUI::FindChooseFacilityScreen();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
-}
-
 std::string ChooseFacilityName()
 {
-    const std::vector<WireRecord>& records
-        = FetchBuildFacilityWords(GameUI::ReadChooseFacility(gScreen));
-    std::string name;
-    if (const WireRecord* header = FindRecord(records, "header")) {
-        name = RecField(*header, "title");
-        AppendPhrase(name, RecField(*header, "subtitle"));
-    }
-    if (name.empty())
-        name = Vocab::ScreenChooseFacilityFallback;
-    return name;
+    return NameFromHeader(FetchBuildFacilityWords(GameUI::ReadChooseFacility(gScreen)),
+        Vocab::ScreenChooseFacilityFallback);
 }
 
 bool SetChooseFacilityListIndex(void* screen, int index)
@@ -1430,12 +1354,6 @@ std::unique_ptr<GraphRender> BuildResearchReport()
     return b.Build();
 }
 
-void* ProbeResearchReport()
-{
-    void* screen = GameUI::FindResearchReportScreen();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
-}
-
 std::string ResearchReportName()
 {
     // The screen's OWN localized letterhead ("RESEARCH REPORT"), which the capture hands us along
@@ -1536,12 +1454,6 @@ std::unique_ptr<GraphRender> BuildResearchUnlocked()
     return render;
 }
 
-void* ProbeResearchUnlocked()
-{
-    void* screen = GameUI::FindResearchUnlockedScreen();
-    return (screen && GameUI::IsScreenFocused(screen)) ? screen : nullptr;
-}
-
 std::string ResearchUnlockedName()
 {
     // The screen's own localized "RESEARCH AVAILABLE", identical on every card of the deck, so
@@ -1562,26 +1474,31 @@ std::string ResearchUnlockedName()
 // below keeps the sentence that argues where in that order it belongs.
 
 // Above the ant farm it is entered from, below anything the room's own verbs push over it
-// (choose-research, the facility summary, a dialog) — which is also why ProbeRoom insists the
+// (choose-research, the facility summary, a dialog) — which is also why the room probe insists the
 // facility screen is TOPMOST rather than merely present.
-const Recipe kRoomRecipe{"avenger room", ProbeRoom, BuildRoom, RoomName, SetRoomListIndex};
+const Recipe kRoomRecipe{"avenger room", ProbeFocused<GameUI::FindRoomScreen>, BuildRoom,
+    RoomName, SetRoomListIndex};
 
 const Recipe kRoomBuildRecipe{
-    "avenger debris room", ProbeRoomBuild, BuildRoomBuild, RoomBuildName, SetRoomBuildListIndex};
+    "avenger debris room", ProbeFocused<GameUI::FindRoomBuildScreen>, BuildRoomBuild,
+    RoomBuildName, SetRoomBuildListIndex};
 
 // Below anything its own rows push (the build-item confirmation, the black market's dialog) and
 // below the pause menu, but above the room screen it is opened from — the Research lab's
 // UIFacility is still on the stack underneath and probes ready.
 const Recipe kCommodityRecipe{
-    "commodity list", ProbeCommodity, BuildCommodity, CommodityName, SetCommodityListIndex};
+    "commodity list", ProbeFocused<GameUI::FindCommodityScreen>, BuildCommodity, CommodityName,
+    SetCommodityListIndex};
 
 // Above every screen it is opened from — the room, the armory, squad select, the debris room's
 // build slots — and below any dialog it raises.
 const Recipe kPersonnelRecipe{
-    "personnel roster", ProbePersonnel, BuildPersonnel, PersonnelName, SetPersonnelListIndex};
+    "personnel roster", ProbeFocused<GameUI::FindPersonnelScreen>, BuildPersonnel, PersonnelName,
+    SetPersonnelListIndex};
 
 // Above the facility grid and UIBuildFacilities it is opened from, below any dialog it raises.
-const Recipe kChooseFacilityRecipe{"choose facility", ProbeChooseFacility, BuildChooseFacility,
+const Recipe kChooseFacilityRecipe{"choose facility",
+    ProbeFocused<GameUI::FindChooseFacilityScreen>, BuildChooseFacility,
     ChooseFacilityName, SetChooseFacilityListIndex};
 
 // HIGH — above every screen it can be raised over, which is an unusually wide set: the Labs and
@@ -1590,13 +1507,15 @@ const Recipe kChooseFacilityRecipe{"choose facility", ProbeChooseFacility, Build
 // against each of them; only the dialog and popup recipes sit above it. No SetListIndex — the
 // screen has no UIList, and no navigable widget of any kind.
 const Recipe kResearchReportRecipe{
-    "research report", ProbeResearchReport, BuildResearchReport, ResearchReportName};
+    "research report", ProbeFocused<GameUI::FindResearchReportScreen>, BuildResearchReport,
+    ResearchReportName};
 
 // HIGH, beside the report and for the same reason: a modal over the whole post-mission Avenger
 // sequence, with only the dialog and popup recipes above it. It never co-exists with the report
 // (one is post-mission, the other facility-raised), so their relative order is moot. No
 // SetListIndex — no UIList, no navigable widget of any kind.
-const Recipe kResearchUnlockedRecipe{"research unlocked", ProbeResearchUnlocked,
+const Recipe kResearchUnlockedRecipe{"research unlocked",
+    ProbeFocused<GameUI::FindResearchUnlockedScreen>,
     BuildResearchUnlocked, ResearchUnlockedName};
 
 } // namespace Recipes

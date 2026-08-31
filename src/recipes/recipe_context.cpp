@@ -39,6 +39,31 @@ void InvalidateWireCaches()
     WireCache::InvalidateAll();
 }
 
+std::string NameFromHeader(const std::vector<WireRecord>& records, const char* fallback)
+{
+    std::string name;
+    if (const WireRecord* header = FindRecord(records, "header")) {
+        name = RecField(*header, "title");
+        AppendPhrase(name, RecField(*header, "subtitle"));
+    }
+    if (name.empty())
+        name = fallback;
+    return name;
+}
+
+bool CallCompanionVerb(WireCache& cache, const char* className, const char* funcName, int value)
+{
+    struct {
+        int32_t Value;
+    } params{value};
+    if (!GameUI::CallCompanion(className, funcName, &params, nullptr))
+        return false;
+    // The verb respawned the rows; a fresh panel landing on a freed address must not let a
+    // matching pointer key keep the previous words on screen.
+    cache.Invalidate();
+    return true;
+}
+
 // Join the parts a card names, dropping the ones the game is not showing. The companion sends
 // identity as four SEPARATE fields for exactly this: joining them there meant a value that
 // CleanText later reduced to nothing still left its comma behind, and every rookie read
