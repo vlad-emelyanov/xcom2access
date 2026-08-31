@@ -32,6 +32,31 @@ focus.
   always: never read the cursor pawn back (it sits at body-center heights and is
   repositioned natively every frame). `XCom3DCursorMouse.CursorSnapToFloor` is
   overridden to a no-op, so floor keys must set exact Z themselves.
+- ⛔ **The game's FLOOR is shared, load-bearing state — never bypass it, never
+  duplicate it.** Four consumers key on `m_iRequestedFloor`: the camera band,
+  the building cutaway, `WorldCascadeZ`, and `XComPathingPawn:991`, which caps
+  the destination search at that floor's ceiling whenever the cursor is inside
+  a `XComBuildingVolume` — so a position-only push onto a roof leaves the pawn
+  clamped to a lower tile and the move key refusing a tile the reachable cache
+  itself calls Dash (measured live 2026-08-31: cursor Z=13, pawn destination
+  Z=9, floor still 1 — the evac-zone roof). No mouse player can produce that
+  contradiction: the cutaway hides a roof until the wheel raises the floor
+  first. The clamp masks as "genuinely out of range" whenever the tile IS out
+  of range, which is why it survived every ground-level test. Three
+  consequences, all in `X2AccessTileReader`: every `SetCursorTile` syncs the
+  floor — the field write from `WorldZToFloor` (the programmatic-move idiom,
+  `X2MeleePathingPawn:188`) is only HALF the sync; `CursorSnapToFloor` is what
+  derives camera band, cutdown height and effective floor from it, and on the
+  mouse cursor moves nothing (`XCom3DCursorMouse:11`), so position is pushed
+  LAST. The floor KEYS drive the game's own `AscendFloor`/`DescendFloor` (one
+  press = one 4-tile band, announced as "Floor N of M" in the game's numbering)
+  rather than an invented per-column Z hop — the class-scope versions are empty
+  stubs, the real bodies live in `state CursorMode_NoCollision`, and script
+  dispatch reaches them. And the reverse direction is POLLED
+  (`CursorFloorPoll`, 150 ms from `TileReader::OnTick`, only while the layer
+  owns world mode): the wheel or the game itself re-flooring on a soldier
+  switch is spoken once and the planted cursor re-landed in the new band, so
+  the two can never stay diverged.
 - **A LEDGE outranks "Impassable"**: a tile with no floor of its own but ground
   below is the railing a sighted player sees, and "Impassable" described it
   identically to a wall. Both halves of the test are the engine's: `IsFloorTile`

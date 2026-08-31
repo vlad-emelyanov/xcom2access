@@ -84,6 +84,31 @@ the text-entry reader's own announcements (`just dev-log` should carry `TextInpu
 caret N, selection A..B)`); the Resistance Ring's covert-op status line, in BOTH branches — an
 action running (name + days left) and none assigned.
 
+The tile cursor's **concealment readout** (2026-08-31, source-derived, never run):
+"Detection zone" / "Tower detection" per tile and "breaks concealment, noise" on the move
+preview. The pass is `concealment-recon.md` §6 — a Gatecrasher sweep across a visible pod's red
+paint, a window-smashing move preview concealed AND revealed, a tower ring before and after its
+hack — and §4 lists the four parity assumptions the pass exists to check, the squad-visibility
+gate on detectors first (if the game paints red for enemies the squad cannot see, widen ours to
+match the overlay, not the other way round).
+
+The tile cursor's **floor redesign** (2026-08-31, built from a live diagnosis but not yet run —
+`surfaces/tactical.md` holds the rule): every cursor push now syncs the game's floor state, the
+floor keys drive `AscendFloor`/`DescendFloor` instead of a per-column Z hop, and
+`CursorFloorPoll` announces external floor changes. The pass: (a) with a soldier who can reach a
+roof, cursor up to a tile that reads "Dash" and confirm the two-press move now COMMITS instead of
+refusing "Out of range"; (b) `Ctrl+.`/`Ctrl+,` speak "Floor N of M" plus the landed tile, clamp
+at "Top floor"/"Bottom floor", and reach a 2-story roof in two presses; (c) the mouse wheel and a
+soldier switch across levels each speak the new floor ONCE and re-land the cursor — and neither
+babbles at mission start, before the cursor is planted, or on same-level soldier switches (the
+shape-count audit is the tool); (d) ground-level stepping is unchanged (every earlier test was
+ground-level, which is what masked the clamp). And the same question for TARGETING mode,
+deliberately left unchanged: `X2AccessTacticalReader`'s `PushAim`/`EnsureAimPlanted` push
+position without floor state too — the pathing-pawn clamp does not apply there, but whether any
+targeting method or the melee pathing pawn cares about `m_iRequestedFloor` across floors has
+never been exercised (throw a grenade onto a roof from the ground and compare the spoken land
+tile with `GetTargetLocations`).
+
 The WOTC **first-time popups** now that `TutorialReader::OnTick` polls the modal outside the
 tutorial (`surfaces/tactical.md`). This one needs no campaign luck: `just dev-exec
 "ShowModalTutorialDialogBox 0 0"` spawns a `UITutorialBox` on demand. Check that the line carries
@@ -105,6 +130,24 @@ a repeating announcement.
   before those screens have recipes of their own. Its screen lookup caches the newest box, which a
   presentation-layer change could leave stale; covering dialogs outside the shell should switch that
   to a screen-stack walk.
+- **Dev-server connections are intermittently RST mid-serve — the request still EXECUTES, only the
+  response is lost.** Measured live 2026-08-31, mid-tactical: curl reports `(56) Recv failure:
+  Connection was reset` after `upload completely sent off`, yet every such `/exec` command appears
+  in Launch.log ("Command not recognized: X2AccessProbe1..6" for six requests of which five
+  "failed"). So a `just dev-exec` that errors has usually still run the command — ⚠ blind-retrying a
+  TOGGLE (TakeNoDamage, ToggleUnlimitedActions…) flips it again; verify state via `/props` instead
+  of retrying. What is ruled out: not curl/just/pwsh quoting (identical bytes succeed and fail); not
+  close-with-unread-data (the GET form resets too); not our `gClient` handling (single-threaded, one
+  close per socket); not mere connection lifetime (a socket held open 5 s by an incomplete request
+  survives and gets its response through the same SendResponse+close path). Incidence varies over
+  time and eventually hit `/health` itself, so it is server-wide; `/exec`'s ~300 ms serve
+  (`Sleep(250)`) just has the widest exposure window. Best theory: something in the game process
+  sporadically closes a socket handle it no longer owns, and whether it collides with our live
+  client handle is handle-recycling luck — `SendAll` then fails silently (`n<=0` return eats the
+  error) and `closesocket` on the dead handle hides the rest. Next steps: log `WSAGetLastError` on
+  `SendAll` failure so the server SEES the kill; Frida-hook `ws2_32!closesocket` logging caller
+  module + handle to catch the strayer (needs a session where the game may be driven — not while
+  the user is playing).
 
 ## Queued work
 
@@ -137,7 +180,13 @@ a repeating announcement.
    ⚠ Three voices can land on the hack outcome — the reveal line (everywhere), the `UIWorldMessageMgr`
    flyover poll (tutorial only today) and `X2AccessTacticalEvents`/`X2AccessReplayNarration` — and
    they do not all fire on the same mission, so check each where it actually fires.
-6. Strategy-layer surfaces still unread, in value order: the staff drop-down (`UIPersonnel_DropDown`,
+6. The path-marker exact-parity read (`concealment-recon.md` §5): native, by-name reflection of
+   `XComPathingPawn`'s five private marker arrays — no offsets or `static_assert`s needed for a
+   by-name `TArray<TTile>` read. It is the audit tool for the recon's §4 assumptions (game markers
+   vs our recompute on the same settled hover) and the only route to `LaserScopeMarkers` /
+   `KillZoneMarkers`, two warnings the companion recompute does not attempt. Read it only where
+   the path has settled — `CursorMoveTo`, or the queued `/tile` endpoint (item 4).
+7. Strategy-layer surfaces still unread, in value order: the staff drop-down (`UIPersonnel_DropDown`,
    a `UIPanel` and NOT part of the personnel family), `UIFacility.m_kResearchProgressBar` (the last
    of the room's Flash-only status panels — `m_kCovertOpsStatus` is done, `surfaces/avenger.md`),
    the resource strip, the to-do widget and the event queue (`avenger-view-recon.md` §2 —

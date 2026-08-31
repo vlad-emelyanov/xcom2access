@@ -57,6 +57,12 @@ var int PlantedMissionID;
 var bool bMovePending;
 var TTile PendingMoveTile;
 
+// The floor value the player last heard (or our own code last set), CursorFloorPoll's change
+// detector. -1 until the first observation. The game's m_iRequestedFloor is the truth; this
+// only remembers what was spoken, so external changes — the mouse wheel, the game re-flooring
+// on a soldier switch — announce exactly once. Every SetCursorTile adopts it silently.
+var int LastSpokenFloor;
+
 // ---------------------------------------------------------------------------
 // Entry points (called from native)
 // ---------------------------------------------------------------------------
@@ -102,15 +108,22 @@ function CursorStep(int Cardinal)
 	NativeResult = DescribeTile(Target, false);
 }
 
-// Step one floor level up (+1) or down (-1): find the next Z in this column that has a floor
-// tile and jump the cursor there. Says so when there is none.
+// Step one floor level up (+1) or down (-1) by driving the game's OWN floor verbs — the same
+// AscendFloor/DescendFloor the mouse wheel and the controller D-pad call. The floor is shared,
+// load-bearing state with four consumers (the camera band, the building cutaway, WorldCascadeZ,
+// and the pathing pawn's MaxZ destination clamp, XComPathingPawn:991), so an invented per-column
+// Z hop that bypassed it left the pawn refusing tiles the reachable cache called Dash (live
+// 2026-08-31, the evac-zone roof). One press = one 4-tile band, the game's own granularity.
+// After the game accepts the change, land our cursor in the new band of the current column and
+// read it out; the only refusal in X2 is the game's own top/bottom clamp (DisableFloorChanges
+// is hardwired false).
 function CursorFloor(int Delta)
 {
 	local XComTacticalController TC;
 	local XCom3DCursor Cursor;
 	local XComWorldData WorldData;
-	local TTile Probe;
-	local int Z;
+	local TTile Target;
+	local int OldFloor;
 
 	NativeResult = "";
 	if (!GetContext(TC, Cursor, WorldData))
@@ -120,25 +133,55 @@ function CursorFloor(int Delta)
 
 	bMovePending = false;
 
-	Probe.X = CurX;
-	Probe.Y = CurY;
-	for (Z = CurZ + Delta; Z >= 0 && Z < WorldData.NumZ; Z += Delta)
-	{
-		Probe.Z = Z;
-		if (WorldData.IsFloorTile(Probe))
-		{
-			SetCursorTile(Cursor, WorldData, Probe);
-			if (Delta > 0)
-				NativeResult = "Up." @ DescribeTile(Probe, false);
-			else
-				NativeResult = "Down." @ DescribeTile(Probe, false);
-			return;
-		}
-	}
+	OldFloor = Cursor.m_iRequestedFloor;
 	if (Delta > 0)
-		NativeResult = "No floor above";
+		Cursor.AscendFloor();
 	else
-		NativeResult = "No floor below";
+		Cursor.DescendFloor();
+
+	if (Cursor.m_iRequestedFloor == OldFloor)
+	{
+		if (Delta > 0)
+			NativeResult = "Top floor";
+		else
+			NativeResult = "Bottom floor";
+		return;
+	}
+
+	Target = FloorBandTile(Cursor, WorldData, Cursor.m_iRequestedFloor);
+	SetCursorTile(Cursor, WorldData, Target);
+	NativeResult = FloorWord(Cursor) $ "." @ DescribeTile(Target, false);
+}
+
+// Passive poll — native calls this on its tick while the tile cursor owns world mode. When the
+// game's floor changed OUTSIDE our own pushes (the mouse wheel, the game re-flooring on a
+// soldier switch via MoveToUnit's GetIdealPawnFloor), speak it and pull the planted cursor into
+// the new band, so the game's floor and our cursor can never stay diverged — the exact
+// contradiction the pathing clamp punishes. Our own writes adopt LastSpokenFloor inside
+// SetCursorTile and never echo here. Before the cursor is planted there is nothing to sync,
+// and announcing the game's own camera housekeeping would be noise: adopt silently.
+function CursorFloorPoll()
+{
+	local XComTacticalController TC;
+	local XCom3DCursor Cursor;
+	local XComWorldData WorldData;
+	local TTile Target;
+
+	NativeResult = "";
+	if (!GetContext(TC, Cursor, WorldData))
+		return;
+	if (Cursor.m_iRequestedFloor == LastSpokenFloor)
+		return;
+	if (LastSpokenFloor < 0 || !bPlanted || PlantedMissionID != CurrentMissionID())
+	{
+		LastSpokenFloor = Cursor.m_iRequestedFloor;
+		return;
+	}
+
+	bMovePending = false;
+	Target = FloorBandTile(Cursor, WorldData, Cursor.m_iRequestedFloor);
+	SetCursorTile(Cursor, WorldData, Target);
+	NativeResult = FloorWord(Cursor) $ "." @ DescribeTile(Target, false);
 }
 
 // Recenter the cursor on the active unit and read its tile.
@@ -254,6 +297,9 @@ function CursorMoveTo()
 		Cost = ActiveUnit.m_kReachableTilesCache.GetPathCostToTile(Dest);
 		if (Cost >= 0 && Cost > ActiveUnit.GetMobility())
 			Desc $= ", dash";
+		// The path-marker warnings, BEFORE the commit prompt — a blind player must hear "breaks
+		// concealment" while the second press is still theirs to withhold.
+		class'X2AccessHelper'.static.AppendComma(Desc, DescribePathRisks(PathingPawn, UnitState));
 		AppendPart(Desc, DescribeCoverEdges(WorldData.GetPositionFromTileCoordinates(Dest), true));
 		AppendPart(Desc, "Press again to move");
 		NativeResult = Desc;
@@ -327,6 +373,14 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 
 	AppendPart(Result, DescribeInteractives(Tile));
 	AppendPart(Result, DescribeCoverEdges(TilePos, bVerbose));
+
+	// The red detection overlay, per tile (docs/concealment-recon.md §3). No FOW gate of our own:
+	// the game paints red over explored fog too, and a never-seen tile already returned above.
+	// The helper itself goes silent the moment the active unit is not concealed — the same edge
+	// on which the game hides the overlay. Impassable tiles skip it for the same reason they skip
+	// reachability: nobody can stand there, so the warning has no move to warn about.
+	if (!bImpassable)
+		AppendPart(Result, class'X2AccessHelper'.static.DescribeDetection(ActiveUnitState(), Tile));
 
 	if (FOW == eFOWTileStatus_Seen)
 		AppendPart(Result, class'X2AccessHelper'.static.DescribeHazards(WorldData, Tile));
@@ -445,6 +499,64 @@ private function string DescribeReachability(TTile Tile)
 	if (Cost > ActiveUnit.GetMobility())
 		return "Dash";
 	return "1 action";
+}
+
+// The spoken form of the path preview's warning icons (docs/concealment-recon.md §3): "noise"
+// where the game would pin its noise marker, "breaks concealment" where it would pin the eye.
+// Both from the game's own primitives rather than the pawn's marker arrays, which are private
+// to script — and one hover STALE at step time anyway, since the pawn rebuilds its path on its
+// own Tick after our cursor push. By the time this runs, CursorMoveTo has already proven the
+// path settled (LastDestinationTile agreed with the cursor).
+//
+// "Noise" is spoken concealed or not, like the game's marker — a revealed squad smashing glass
+// still calls patrols. The concealment half only while concealed, and destruction implies it
+// directly (XComGameState_Unit.uc:8940 — no enemy required), so the per-tile oracle is only
+// consulted when no smashed window already answered.
+private function string DescribePathRisks(XComPathingPawn PathingPawn, XComGameState_Unit UnitState)
+{
+	local XComWorldData WorldData;
+	local XComDestructibleActor Destructible;
+	local array<TTile> Tiles;
+	local string Result;
+	local bool bLarge, bNoise, bBreaks;
+	local int i, Kind;
+
+	if (UnitState == none)
+		return "";
+
+	WorldData = `XWORLD;
+	Tiles = PathingPawn.PathTiles;
+	bLarge = UnitState.GetMyTemplate().UnitSize > 1;
+
+	// Pairwise traversal destructibles — the same per-edge query the game runs when it marks the
+	// real move's Destructibles at click time (XComTacticalController.uc:1230), '_Pristine'
+	// meaning "still intact, this traversal smashes it".
+	for (i = 1; i < Tiles.Length; i++)
+	{
+		Destructible = XComDestructibleActor(
+			WorldData.GetPathObjectFromTraversalToNeighbor(Tiles[i - 1], Tiles[i], bLarge));
+		if (Destructible != none && Destructible.IsInState('_Pristine'))
+		{
+			bNoise = true;
+			break;
+		}
+	}
+
+	if (UnitState.IsConcealed())
+	{
+		bBreaks = bNoise;
+		for (i = 1; i < Tiles.Length && !bBreaks; i++)
+		{
+			bBreaks = class'X2AccessHelper'.static.TileBreaksConcealment(
+				UnitState, Tiles[i], Kind);
+		}
+	}
+
+	if (bBreaks)
+		Result = "breaks concealment";
+	if (bNoise)
+		class'X2AccessHelper'.static.AppendComma(Result, "noise");
+	return Result;
 }
 
 // Offset from the active unit in compass words ("3 north, 2 east, 1 up"). Always spoken — it
@@ -647,6 +759,8 @@ private static function int CurrentMissionID()
 // 2026-08-20), and the pathing pawn must preview exactly the tile the reader spoke.
 private function SetCursorTile(XCom3DCursor Cursor, XComWorldData WorldData, TTile Tile)
 {
+	local vector Pos;
+
 	CurX = Tile.X;
 	CurY = Tile.Y;
 	CurZ = Tile.Z;
@@ -658,7 +772,22 @@ private function SetCursorTile(XCom3DCursor Cursor, XComWorldData WorldData, TTi
 	// raised, so this can never loosen an active targeting method's own clamp.
 	Cursor.m_fMaxChainedDistance = 0;
 	Cursor.m_fMinChainedDistance = 0;
-	Cursor.CursorSetLocation(WorldData.GetPositionFromTileCoordinates(Tile), false, false);
+	Pos = WorldData.GetPositionFromTileCoordinates(Tile);
+	// The FLOOR STATE has to travel with the position. XComPathingPawn:991 caps its
+	// destination search at m_iRequestedFloor's ceiling whenever the cursor is inside a
+	// building volume, so a push onto a roof with the floor state still at ground makes the
+	// pawn clamp to a lower tile and the move key refuse a tile the reachable cache itself
+	// calls Dash (measured live 2026-08-31: cursor at Z=13, pawn destination Z=9,
+	// m_iRequestedFloor 1). No mouse player can produce that contradiction — the cutaway
+	// hides a roof until camera-level-up raises the floor. The field write alone is only half
+	// the sync: CursorSnapToFloor is what derives the camera band, the building-cutdown height
+	// and the effective floor from m_iRequestedFloor — on the mouse cursor it moves nothing
+	// (XCom3DCursorMouse:11). The exact position is pushed LAST, so a base-class snap (which
+	// does move the cursor) could never displace the tile the reader spoke.
+	Cursor.m_iRequestedFloor = Cursor.WorldZToFloor(Pos);
+	Cursor.CursorSnapToFloor(Cursor.m_iRequestedFloor, eCursorSearch_ExactFloor);
+	LastSpokenFloor = Cursor.m_iRequestedFloor;
+	Cursor.CursorSetLocation(Pos, false, false);
 }
 
 private function TTile CurTile()
@@ -669,6 +798,52 @@ private function TTile CurTile()
 	T.Y = CurY;
 	T.Z = CurZ;
 	return T;
+}
+
+// The tile our cursor should occupy in floor band FloorIdx of the current column: the lowest
+// tile of the band with a real floor (the walking surface of that level), else the band's
+// lowest tile, left hanging — which reads as a ledge or impassable, the honest answer for a
+// level this column has nothing on, and the same "feel the edge" rule stepping off a roof
+// follows. Band membership is asked of the engine (WorldZToFloor) per tile rather than derived
+// from the 4-tiles-per-band constant, so a map with an offset ground plane cannot skew it.
+private function TTile FloorBandTile(XCom3DCursor Cursor, XComWorldData WorldData, int FloorIdx)
+{
+	local TTile T, FirstInBand;
+	local bool bFoundBand;
+	local int Z;
+
+	T.X = CurX;
+	T.Y = CurY;
+	for (Z = 0; Z < WorldData.NumZ; Z++)
+	{
+		T.Z = Z;
+		if (Cursor.WorldZToFloor(WorldData.GetPositionFromTileCoordinates(T)) != FloorIdx)
+		{
+			if (bFoundBand)
+				break; // past the band's top — bands are contiguous in Z
+			continue;
+		}
+		if (!bFoundBand)
+		{
+			bFoundBand = true;
+			FirstInBand = T;
+		}
+		if (WorldData.IsFloorTile(T))
+			return T;
+	}
+	if (bFoundBand)
+		return FirstInBand;
+	// The requested band holds no tile of this map at all (asked above NumZ); stay put.
+	T.Z = Clamp(CurZ, 0, WorldData.NumZ - 1);
+	return T;
+}
+
+// "Floor N of M" in the game's own numbering — m_iRequestedFloor is what the camera band, the
+// cutaway and the pathing clamp all key on, so the spoken number is the one every consumer
+// agrees about. Read AFTER SetCursorTile, which re-derives it from the landed tile.
+private function string FloorWord(XCom3DCursor Cursor)
+{
+	return "Floor" @ string(Cursor.m_iRequestedFloor) @ "of" @ string(Cursor.GetMaxFloor());
 }
 
 // How far the ground is below a tile that has no floor of its own — 0 when this is not a ledge.
@@ -761,4 +936,9 @@ private function AppendPart(out string Result, string Part)
 private static function AppendComma(out string Result, string Part)
 {
 	class'X2AccessHelper'.static.AppendComma(Result, Part);
+}
+
+defaultproperties
+{
+	LastSpokenFloor=-1
 }

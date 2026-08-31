@@ -229,6 +229,26 @@ void OnTick()
     if (!hudOnStack)
         gUsedThisTactical = false;
     MouseGate::SetSwallow(gActive && gUsedThisTactical);
+
+    // Floor poll: the game's floor level can change under the layer — the mouse wheel, the
+    // game re-flooring on a soldier switch — and the pathing pawn clamps move destinations by
+    // it, so the companion announces the change and re-lands the cursor in the new band
+    // (CursorFloorPoll early-outs on an unchanged floor). Deliberately NOT through Call():
+    // a passive poll must not arm the mouse gate, and a missing CDO here is silence, not an
+    // error to speak. Alert channel: it queues behind whatever a keypress just said instead
+    // of cutting it off mid-word the way Focus/Aid would.
+    if (gActive && gUsedThisTactical) {
+        void* cdo = GameUI::FindCompanionCDO(kReaderClass);
+        if (cdo) {
+            int64_t zeros[2] = {};
+            if (GameUI::CallScriptFunction(cdo, "CursorFloorPoll", zeros)) {
+                std::string result = UE3Reflect::ReadStringProperty(
+                    reinterpret_cast<UObject*>(cdo), "NativeResult");
+                if (!result.empty())
+                    Narrator::Say(Narrator::Channel::Alert, result);
+            }
+        }
+    }
 }
 
 } // namespace TileReader
