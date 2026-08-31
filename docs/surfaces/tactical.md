@@ -477,7 +477,10 @@ the icons. Soldier and objectives stay vertical, as their panels do.
   when striding is the engine's business, so `ReadMouseControls` asks the live `UArrayProperty`
   for `Inner->ElementSize` (`UE3Reflect::ArrayElementSize`), sanity-bounds it, and logs it once
   — the `static_assert` pins only the intra-element offsets (Label 0x00 / key 0x10 / state
-  0x20) and documents the compiled sizeof (0x24) it deliberately does not use.
+  0x20) and documents the compiled sizeof it deliberately does not use. Measured live
+  2026-08-31: the engine answers **0x24**, agreeing with the pack(4) compiled sizeof — so the
+  engine does round, but the reflection read stays, because it is the read that would have been
+  RIGHT either way.
 - **Command activation is the panel's own click**: write `m_iCurrentSelection`, call
   `OnAccept()` — the set-selection-first rule, byte-for-byte the `FXS_L_MOUSE_UP` path. A
   disabled button (any non-Normal `UIState`, OnAccept's own test) gets no `OnActivate` and is
