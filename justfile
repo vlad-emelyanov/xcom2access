@@ -133,7 +133,7 @@ disarm:
 
 # GET any harness endpoint: `just dev status`, `just dev 'speech?since=12'`, `just dev health`.
 dev endpoint="health":
-    @& "{{ curl }}" -s --max-time 20 "http://127.0.0.1:{{ devserver_port }}/{{ endpoint }}"
+    @& "{{ curl }}" -sS --max-time 20 "http://127.0.0.1:{{ devserver_port }}/{{ endpoint }}"
 
 # Liveness + build stamp + how long ago the game thread last pumped.
 dev-health: (dev "health")
@@ -149,26 +149,30 @@ dev-status: (dev "status")
 
 # Run a console command and get back whatever it wrote to the game's Launch.log.
 # All 1246 SDK exec functions are reachable, cheat managers included: `just dev-exec "StartLadder 0 1"`.
+# ⚠ A `curl: (56) Connection was reset` here does NOT mean the command didn't run — it almost
+# always DID; only the response was lost (docs/next-steps.md, known defects). Never blind-retry a
+# toggle (TakeNoDamage, ToggleUnlimitedActions...); verify the flag via dev-props instead, e.g.
+# `just dev-props "instance=XComTacticalCheatManager" bInvincible`.
 dev-exec cmd:
-    @& "{{ curl }}" -s --max-time 30 --data-binary "{{ cmd }}" "http://127.0.0.1:{{ devserver_port }}/exec"
+    @& "{{ curl }}" -sS --max-time 30 --data-binary "{{ cmd }}" "http://127.0.0.1:{{ devserver_port }}/exec"
 
 # Synthetic keys. Default tier is SendInput (drives the WHOLE game, needs the window foreground);
 # mode=kernel injects into our own arbiter queue instead, which drives ONLY our layer and works
 # with the game backgrounded: `just dev-input Left,Left,Delete kernel`.
 dev-input keys mode="send":
-    @& "{{ curl }}" -s --max-time 30 "http://127.0.0.1:{{ devserver_port }}/input?keys={{ keys }}&mode={{ mode }}"
+    @& "{{ curl }}" -sS --max-time 30 "http://127.0.0.1:{{ devserver_port }}/input?keys={{ keys }}&mode={{ mode }}"
 
 # The widget tree of a screen: class, address, state bits and the text each panel carries.
 # Default target is the topmost screen; `just dev-gui 10 "screen=UIPauseMenu"` picks another,
 # and `instance=` / `ptr=0x...` reach objects the screen stack never holds.
 dev-gui depth="8" select="":
-    @& "{{ curl }}" -s --max-time 30 "http://127.0.0.1:{{ devserver_port }}/gui?depth={{ depth }}&{{ select }}"
+    @& "{{ curl }}" -sS --max-time 30 "http://127.0.0.1:{{ devserver_port }}/gui?depth={{ depth }}&{{ select }}"
 
 # One object's properties with their LIVE offsets, types and values — the replacement for
 # reading SrcOrig and transcribing offsets out of the SDK dump. Same selector as dev-gui:
 # `just dev-props "screen=UIShellDifficulty" SecondWave`, `just dev-props "ptr=0x000002..."`.
 dev-props select="" filter="":
-    @& "{{ curl }}" -s --max-time 30 "http://127.0.0.1:{{ devserver_port }}/props?{{ select }}&filter={{ filter }}"
+    @& "{{ curl }}" -sS --max-time 30 "http://127.0.0.1:{{ devserver_port }}/props?{{ select }}&filter={{ filter }}"
 
 # Invoke a script function on a live object — the third verb on the dev-gui selector. Built for
 # the controller-gated function: code the game already has and only calls from a branch a
@@ -178,7 +182,7 @@ dev-props select="" filter="":
 # zero, i.e. a null deref inside script) and prints the signature it refused, so a wrong guess
 # costs a line instead of the session.
 dev-call fn select="":
-    @& "{{ curl }}" -s --max-time 30 "http://127.0.0.1:{{ devserver_port }}/call?fn={{ fn }}&{{ select }}"
+    @& "{{ curl }}" -sS --max-time 30 "http://127.0.0.1:{{ devserver_port }}/call?fn={{ fn }}&{{ select }}"
 
 # The same verb WITH arguments, url-encoded — which is how the Scaleform side is read, since
 # everything about a live movie goes through GFxMoviePlayer's path-string API:
@@ -187,7 +191,7 @@ dev-call fn select="":
 # The movie is the default selector because UIMovie_2D is where the 2D screens live; override it
 # to reach another one.
 dev-flash fn arg select="instance=UIMovie_2D":
-    @& "{{ curl }}" -s --max-time 30 -G --data-urlencode "arg={{ arg }}" "http://127.0.0.1:{{ devserver_port }}/call?fn={{ fn }}&{{ select }}"
+    @& "{{ curl }}" -sS --max-time 30 -G --data-urlencode "arg={{ arg }}" "http://127.0.0.1:{{ devserver_port }}/call?fn={{ fn }}&{{ select }}"
 
 # The same read, PANEL-RELATIVE — the harness verb for "what did the game actually put on
 # screen?". It resolves the selected panel's own MCPath and reads <MCPath>.<field>, so a screen
@@ -202,7 +206,7 @@ dev-flash fn arg select="instance=UIMovie_2D":
 #
 # Read a Flash field of the selected panel: what the game actually put on screen.
 dev-field select="" field="" fn="":
-    @& "{{ curl }}" -s --max-time 30 -G --data-urlencode "field={{ field }}" "http://127.0.0.1:{{ devserver_port }}/flash?fn={{ fn }}&{{ select }}"
+    @& "{{ curl }}" -sS --max-time 30 -G --data-urlencode "field={{ field }}" "http://127.0.0.1:{{ devserver_port }}/flash?fn={{ fn }}&{{ select }}"
 
 # What panels PUSHED into Scaleform, captured in flight — the other half of dev-field, and the
 # one that is not verification-only. dev-field asks Flash what it currently HOLDS (blocking, and
@@ -215,11 +219,11 @@ dev-field select="" field="" fn="":
 #   just dev-flashqueue 42        # just that cache index, all recorded calls in order
 # Answers off the game thread, so it still works when the game thread is the broken thing.
 dev-flashqueue index="":
-    @& "{{ curl }}" -s --max-time 30 "http://127.0.0.1:{{ devserver_port }}/flashqueue?index={{ index }}"
+    @& "{{ curl }}" -sS --max-time 30 "http://127.0.0.1:{{ devserver_port }}/flashqueue?index={{ index }}"
 
 # PNG of the monitor the game is on (Desktop Duplication). Defaults beside the .asi.
 dev-shot path="":
-    @& "{{ curl }}" -s --max-time 60 "http://127.0.0.1:{{ devserver_port }}/screenshot?path={{ path }}"
+    @& "{{ curl }}" -sS --max-time 60 "http://127.0.0.1:{{ devserver_port }}/screenshot?path={{ path }}"
 
 # ---- SDK regeneration -------------------------------------------------------
 #

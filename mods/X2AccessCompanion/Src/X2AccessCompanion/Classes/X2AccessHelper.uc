@@ -227,6 +227,118 @@ static function string DescribeHazards(XComWorldData WorldData, TTile Tile)
 	return Result;
 }
 
+// ---------------------------------------------------------------------------
+// Concealment detection — the red tile overlay, recomputed (docs/concealment-recon.md)
+// ---------------------------------------------------------------------------
+
+// Would moving ConcealedUnit onto Tile break its concealment? The spoken form of the game's red
+// detection overlay, recomputed from the same rules OnUnitEnteredTile enforces
+// (XComGameState_Unit.uc:8960-9058) because the native tile cache and the pathing pawn's marker
+// arrays are both unreachable from script. OutKind: bit 1 = an enemy unit detects, bit 2 = an
+// unhacked tower's radius. Kept as ONE oracle so the tile readout and the move preview can never
+// disagree about which tiles are red.
+//
+// Sighted parity, not mechanics, picks the detector set: only enemies the SQUAD can see
+// contribute (the same CanXComSquadSeeTarget gate as the object scanner's enemy ring) — walking
+// into an unseen pod's range reveals you with no warning for a sighted player too. Which units
+// count as detectors at all is the game's own UnitBreaksConcealment; the distance is the game's
+// own GetConcealmentDetectionDistance (called on the CONCEALED unit, detector as argument — the
+// orientation :9017 uses). The LOS trace runs LAST: it is the expensive term, and the cheap
+// distance gate rejects most of the map first.
+static function bool TileBreaksConcealment(XComGameState_Unit ConcealedUnit, TTile Tile,
+	out int OutKind)
+{
+	local XComGameStateHistory History;
+	local XComWorldData WorldData;
+	local XComGameState_Unit Detector;
+	local XComGameState_InteractiveObject Obj;
+	local GameRulesCache_VisibilityInfo VisInfo;
+	local FOWTileStatus FOW;
+	local byte GameplayFlags;
+	local vector TilePos, DetectorPos;
+	local name RetainName;
+	local bool bRetainVsInteractives;
+
+	OutKind = 0;
+	if (ConcealedUnit == none || !ConcealedUnit.IsConcealed())
+		return false;
+
+	History = `XCOMHISTORY;
+	WorldData = `XWORLD;
+	TilePos = WorldData.GetPositionFromTileCoordinates(Tile);
+
+	foreach History.IterateByClassType(class'XComGameState_Unit', Detector)
+	{
+		if (Detector.ObjectID == ConcealedUnit.ObjectID)
+			continue;
+		if (!Detector.IsAlive() || Detector.bRemovedFromPlay)
+			continue;
+		if (!ConcealedUnit.UnitBreaksConcealment(Detector))
+			continue;
+		if (!class'X2TacticalVisibilityHelpers'.static.CanXComSquadSeeTarget(Detector.ObjectID))
+			continue;
+
+		if (!Detector.DoesUnitBreaksConcealmentIgnoringDistance())
+		{
+			DetectorPos = WorldData.GetPositionFromTileCoordinates(Detector.TileLocation);
+			if (VSizeSq(TilePos - DetectorPos)
+				> Square(ConcealedUnit.GetConcealmentDetectionDistance(Detector)))
+				continue;
+		}
+		if (!WorldData.CanSeeTileToTile(Detector.TileLocation, Tile, VisInfo))
+			continue;
+
+		OutKind = OutKind | 1;
+		break;
+	}
+
+	// Towers: pure radius, no LOS (XComGameState_Unit.uc:8983), void for a unit carrying an
+	// AbilityRetainsConcealmentVsInteractives ability (:8963). FOW-latched like the scanner's
+	// tower category: an unseen tower detects mechanically, but its ring is invisible to a
+	// sighted player too, so speaking it would leak the map.
+	foreach class'X2AbilityTemplateManager'.default.AbilityRetainsConcealmentVsInteractives(RetainName)
+	{
+		if (ConcealedUnit.HasSoldierAbility(RetainName))
+		{
+			bRetainVsInteractives = true;
+			break;
+		}
+	}
+	if (!bRetainVsInteractives)
+	{
+		foreach History.IterateByClassType(class'XComGameState_InteractiveObject', Obj)
+		{
+			if (Obj.bRemovedFromPlay || Obj.bHasBeenHacked || Obj.DetectionRange <= 0)
+				continue;
+			WorldData.GetTileFOWValue(Obj.TileLocation, FOW, GameplayFlags);
+			if (FOW == eFOWTileStatus_NeverSeen)
+				continue;
+			DetectorPos = WorldData.GetPositionFromTileCoordinates(Obj.TileLocation);
+			if (VSizeSq(TilePos - DetectorPos) <= Square(Obj.DetectionRange))
+			{
+				OutKind = OutKind | 2;
+				break;
+			}
+		}
+	}
+
+	return OutKind != 0;
+}
+
+// The word form of TileBreaksConcealment — "" when nothing detects (or the unit is not
+// concealed, matching the game hiding the overlay the moment concealment is gone). An enemy
+// outranks a tower in the wording because the tower is the escapable half (hack it).
+static function string DescribeDetection(XComGameState_Unit ConcealedUnit, TTile Tile)
+{
+	local int Kind;
+
+	if (!TileBreaksConcealment(ConcealedUnit, Tile, Kind))
+		return "";
+	if ((Kind & 1) != 0)
+		return "Detection zone";
+	return "Tower detection";
+}
+
 // Return description of units on a tile (e.g. "Enemy: Sectoid" or "Ally: Sgt. Kelly").
 static function string DescribeUnitsOnTile(TTile Tile)
 {
