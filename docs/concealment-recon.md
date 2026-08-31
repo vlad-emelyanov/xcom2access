@@ -83,10 +83,15 @@ Companion-only; the C++ layer is untouched.
   tower-only. `DescribeDetection` is the word form: "Detection zone" / "Tower detection".
 - **`X2AccessTileReader.DescribeTile`** speaks it per tile, after cover and before hazards, gated
   on the active unit being concealed — the game hides the overlay when revealed, and so do we.
-- **`X2AccessTileReader.CursorMoveTo`** (first press) speaks the path-marker facts: walks
-  `PathingPawn.PathTiles` pairwise through `GetPathObjectFromTraversalToNeighbor` for "noise"
-  (spoken concealed or not, like the game's noise marker), and — while concealed — through the
-  per-tile oracle for "breaks concealment", with destruction implying the break directly (§2).
+- **`X2AccessTileReader.CursorMoveTo`** (first press) speaks the path-marker facts, only while the
+  moving unit is concealed (`IsConcealed()` is per-unit, so a Phantom Ranger keeps them after the
+  squad is revealed): walks `PathingPawn.PathTiles` pairwise through
+  `GetPathObjectFromTraversalToNeighbor` for "noise", and through the per-tile oracle for "breaks
+  concealment", with destruction implying the break directly (§2). Revealed, a window on the path
+  is something a sighted player simply sees — the tile readout already names it — so no push.
+  Whether the game's native `UpdateNoiseMarkerInfo` still pins the sound-wave icon for a revealed
+  unit is UNVERIFIED (the script calls it unconditionally; the gate, if any, is native — §5's
+  marker-array read answers it); if it does, that is a deliberate divergence, chosen for brevity.
 
 Why recompute instead of reading the game's own marker arrays: they are `private` to script (§1.2),
 and at `CursorStep` time they are also one tile STALE — the pathing pawn rebuilds its path on its
@@ -124,7 +129,7 @@ settled: `CursorMoveTo`, or a `/tile` dev endpoint. Filed in `next-steps.md`.
 - Sweep the cursor across a visible pod's red zone: "Detection zone" must appear on entry and stop
   on exit; ask the sighted check whether the boundary matches the paint (assumptions §4.1/§4.2).
 - Preview a move THROUGH a window: first Backspace press must say "breaks concealment, noise"
-  while concealed; the same path revealed must say only "noise".
+  while concealed; the same path revealed must say neither (path risks are concealment-gated).
 - Preview a safe move inside a red zone's reach but out of LOS: must stay silent on both facts.
 - A tower mission (any city map): "Tower detection" inside the ring, silence after hacking it.
 - Shape-count the ring afterwards (`CLAUDE.md`, the distribution rule): "Detection zone" must be

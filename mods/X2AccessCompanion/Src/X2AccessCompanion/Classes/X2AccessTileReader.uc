@@ -508,10 +508,11 @@ private function string DescribeReachability(TTile Tile)
 // own Tick after our cursor push. By the time this runs, CursorMoveTo has already proven the
 // path settled (LastDestinationTile agreed with the cursor).
 //
-// "Noise" is spoken concealed or not, like the game's marker — a revealed squad smashing glass
-// still calls patrols. The concealment half only while concealed, and destruction implies it
-// directly (XComGameState_Unit.uc:8940 — no enemy required), so the per-tile oracle is only
-// consulted when no smashed window already answered.
+// Both are spoken only while the moving unit is concealed. Revealed, a window on the path is
+// something a sighted player simply sees — and our tile readout already names it — so pushing
+// "noise" on every routine dash through glass is chatter, not parity. Destruction implies the
+// break directly (XComGameState_Unit.uc:8940 — no enemy required), so the per-tile oracle is
+// only consulted when no smashed window already answered.
 private function string DescribePathRisks(XComPathingPawn PathingPawn, XComGameState_Unit UnitState)
 {
 	local XComWorldData WorldData;
@@ -521,7 +522,7 @@ private function string DescribePathRisks(XComPathingPawn PathingPawn, XComGameS
 	local bool bLarge, bNoise, bBreaks;
 	local int i, Kind;
 
-	if (UnitState == none)
+	if (UnitState == none || !UnitState.IsConcealed())
 		return "";
 
 	WorldData = `XWORLD;
@@ -542,14 +543,11 @@ private function string DescribePathRisks(XComPathingPawn PathingPawn, XComGameS
 		}
 	}
 
-	if (UnitState.IsConcealed())
+	bBreaks = bNoise;
+	for (i = 1; i < Tiles.Length && !bBreaks; i++)
 	{
-		bBreaks = bNoise;
-		for (i = 1; i < Tiles.Length && !bBreaks; i++)
-		{
-			bBreaks = class'X2AccessHelper'.static.TileBreaksConcealment(
-				UnitState, Tiles[i], Kind);
-		}
+		bBreaks = class'X2AccessHelper'.static.TileBreaksConcealment(
+			UnitState, Tiles[i], Kind);
 	}
 
 	if (bBreaks)
