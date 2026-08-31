@@ -3,6 +3,7 @@
 #ifdef X2ACCESS_DEVSERVER
 
 #include "game_ui.h"
+#include "game_ui_internal.h"
 #include "log.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -32,6 +33,13 @@
 
 namespace GuiDump {
 
+// The raw primitives this dumper carried private copies of until the game_ui split exposed the
+// shared set behind game_ui_internal.h. FNameAtAnsiRaw prints the engine's own "_N" instance
+// suffix, which is exactly what the dumper wants a live panel's name to read as.
+using GameUI::CopyFStringRaw;
+using GameUI::FNameAtAnsiRaw;
+using GameUI::ReadPtrRaw;
+
 namespace {
 
 constexpr int kMaxPropsPerClass = 768;
@@ -49,44 +57,18 @@ constexpr int kMaxStructMembers = 12; // members printed inline per struct
 constexpr int kMaxStructDepth = 2;    // how far struct-inside-struct is expanded
 constexpr int kValueChars = 160;  // per-value truncation
 
-// ---- raw, SEH-safe primitives -------------------------------------------------------------
+// ---- raw, SEH-safe helpers over the shared primitives ---------------------------------------
 //
 // Same contract as game_ui.cpp's: no C++ objects with destructors inside a __try body, so
 // everything here traffics in PODs and the std::string building happens in the callers.
-
-// The ANSI text of the FName stored at `addr` (entry id, then instance number). The engine
-// prints the instance as "_N" with N one lower than the stored number, which is what makes a
-// live screen read "UIFinalShell_0" rather than "UIFinalShell_1".
-bool FNameTextRaw(const void* addr, char* buf, int bufLen)
-{
-    __try {
-        const int32_t id = *reinterpret_cast<const int32_t*>(addr);
-        const int32_t instance = *(reinterpret_cast<const int32_t*>(addr) + 1);
-        TArray<FNameEntry*>* names = FName::Names();
-        if (!names || id < 0 || id >= names->size())
-            return false;
-        FNameEntry* entry = names->at(id);
-        if (!entry)
-            return false;
-        const char* ansi = entry->GetAnsiName();
-        if (!ansi)
-            return false;
-        int i = 0;
-        for (; i < bufLen - 1 && ansi[i]; i++)
-            buf[i] = ansi[i];
-        buf[i] = '\0';
-        if (instance > 0 && i < bufLen - 1)
-            snprintf(buf + i, static_cast<size_t>(bufLen - i), "_%d", instance - 1);
-        return true;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
-    }
-}
+// Names come through FNameAtAnsiRaw so a live panel prints with the engine's own "_N" instance
+// suffix ("UIFinalShell_0") — the dumper's whole vocabulary, unlike the finders' plain
+// ObjNameAnsiRaw.
 
 bool ObjNameRaw(void* obj, char* buf, int bufLen)
 {
     __try {
-        return FNameTextRaw(&reinterpret_cast<UObject*>(obj)->Name, buf, bufLen);
+        return FNameAtAnsiRaw(&reinterpret_cast<UObject*>(obj)->Name, buf, bufLen);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
@@ -96,41 +78,9 @@ bool ObjClassNameRaw(void* obj, char* buf, int bufLen)
 {
     __try {
         UClass* cls = reinterpret_cast<UObject*>(obj)->Class;
-        return cls && FNameTextRaw(&reinterpret_cast<UObject*>(cls)->Name, buf, bufLen);
+        return cls && FNameAtAnsiRaw(&reinterpret_cast<UObject*>(cls)->Name, buf, bufLen);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
-    }
-}
-
-// FString is TArray<wchar_t> at runtime despite the SDK declaring char:
-// [wchar_t* data 0x00][int32 count 0x08][int32 max 0x0C].
-int CopyFStringRaw(const void* fstr, wchar_t* buf, int bufWchars)
-{
-    __try {
-        auto* raw = reinterpret_cast<const uint8_t*>(fstr);
-        auto* data = *reinterpret_cast<wchar_t* const*>(raw);
-        const int32_t count = *reinterpret_cast<const int32_t*>(raw + 8);
-        if (!data || count <= 1)
-            return 0;
-        int len = count - 1; // count includes the terminator
-        if (len >= bufWchars)
-            len = bufWchars - 1;
-        memcpy(buf, data, static_cast<size_t>(len) * sizeof(wchar_t));
-        buf[len] = L'\0';
-        return len;
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        buf[0] = L'\0';
-        return 0;
-    }
-}
-
-void* ReadPtrAt(const void* obj, int32_t offset)
-{
-    __try {
-        return *reinterpret_cast<void* const*>(
-            reinterpret_cast<const uint8_t*>(obj) + offset);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return nullptr;
     }
 }
 
@@ -155,7 +105,7 @@ int ReadClassChainRaw(void* obj, void** outStructs, char (*outNames)[64], int ma
              s = reinterpret_cast<UStruct*>(s->SuperField)) {
             outStructs[n] = s;
             outNames[n][0] = '\0';
-            FNameTextRaw(&reinterpret_cast<UObject*>(s)->Name, outNames[n], 64);
+            FNameAtAnsiRaw(&reinterpret_cast<UObject*>(s)->Name, outNames[n], 64);
             n++;
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -175,7 +125,7 @@ int ReadOwnPropsRaw(void* structObj, RawProp* out, int maxOut)
             RawProp& p = out[n];
             p.name[0] = '\0';
             p.type[0] = '\0';
-            if (!FNameTextRaw(&field->Name, p.name, sizeof(p.name)))
+            if (!FNameAtAnsiRaw(&field->Name, p.name, sizeof(p.name)))
                 continue;
             if (!ObjClassNameRaw(field, p.type, sizeof(p.type)))
                 continue;
@@ -249,7 +199,7 @@ void* FindFunctionOnChainRaw(void* obj, const char* funcName, char* outOwner, in
             for (UField* field = st->Children; field; field = field->Next) {
                 char name[64] = "";
                 char cls[64] = "";
-                if (!FNameTextRaw(&field->Name, name, sizeof(name)))
+                if (!FNameAtAnsiRaw(&field->Name, name, sizeof(name)))
                     continue;
                 if (strcmp(name, funcName) != 0)
                     continue;
@@ -292,7 +242,7 @@ int ReadFunctionParmsRaw(void* fn, RawParm* out, int maxOut)
             RawProp& p = out[n].prop;
             p.name[0] = '\0';
             p.type[0] = '\0';
-            if (!FNameTextRaw(&field->Name, p.name, sizeof(p.name)))
+            if (!FNameAtAnsiRaw(&field->Name, p.name, sizeof(p.name)))
                 continue;
             if (!ObjClassNameRaw(field, p.type, sizeof(p.type)))
                 continue;
@@ -393,7 +343,7 @@ bool EnumLiteralRaw(void* byteProp, int64_t value, char* buf, int bufLen)
         UEnum* e = reinterpret_cast<UByteProperty*>(byteProp)->Enum;
         if (!e || value < 0 || value >= e->Names.size())
             return false;
-        return FNameTextRaw(&e->Names.at(static_cast<int32_t>(value)), buf, bufLen);
+        return FNameAtAnsiRaw(&e->Names.at(static_cast<int32_t>(value)), buf, bufLen);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
@@ -438,7 +388,7 @@ void ReadValueRaw(void* obj, const RawProp& p, int index, RawValue& v)
             CopyFStringRaw(addr, v.wide, static_cast<int>(sizeof(v.wide) / sizeof(wchar_t)));
             break;
         case Kind::Name:
-            FNameTextRaw(addr, v.text, sizeof(v.text));
+            FNameAtAnsiRaw(addr, v.text, sizeof(v.text));
             break;
         case Kind::Object:
             v.ptr = *reinterpret_cast<void* const*>(addr);
@@ -447,7 +397,7 @@ void ReadValueRaw(void* obj, const RawProp& p, int index, RawValue& v)
             // The DECLARED type is worth printing even when the value is null — that is exactly
             // the case where a recipe author needs to know what belongs there.
             if (UClass* declared = reinterpret_cast<UObjectProperty*>(p.prop)->PropertyClass)
-                FNameTextRaw(&reinterpret_cast<UObject*>(declared)->Name, v.decl, sizeof(v.decl));
+                FNameAtAnsiRaw(&reinterpret_cast<UObject*>(declared)->Name, v.decl, sizeof(v.decl));
             break;
         case Kind::Delegate:
             // A delegate's VALUE is an FScriptDelegate — { UObject* Object; FName FunctionName; }
@@ -456,7 +406,7 @@ void ReadValueRaw(void* obj, const RawProp& p, int index, RawValue& v)
             v.ptr = *reinterpret_cast<void* const*>(addr);
             if (v.ptr)
                 ObjClassNameRaw(v.ptr, v.text, sizeof(v.text));
-            FNameTextRaw(addr + 8, v.decl, sizeof(v.decl));
+            FNameAtAnsiRaw(addr + 8, v.decl, sizeof(v.decl));
             break;
         case Kind::Array:
             v.ptr = *reinterpret_cast<void* const*>(addr);
@@ -470,7 +420,7 @@ void ReadValueRaw(void* obj, const RawProp& p, int index, RawValue& v)
             break;
         case Kind::Struct:
             if (UStruct* s = reinterpret_cast<UStructProperty*>(p.prop)->Struct) {
-                FNameTextRaw(&reinterpret_cast<UObject*>(s)->Name, v.text, sizeof(v.text));
+                FNameAtAnsiRaw(&reinterpret_cast<UObject*>(s)->Name, v.text, sizeof(v.text));
                 v.count = s->PropertySize;
                 v.strct = s;
             }
@@ -509,15 +459,7 @@ bool ArrayElemRaw(void* data, int32_t stride, int index, bool objects, RawValue&
 
 std::string Utf8(const wchar_t* wide)
 {
-    if (!wide || !wide[0])
-        return {};
-    const int len = static_cast<int>(wcslen(wide));
-    const int need = WideCharToMultiByte(CP_UTF8, 0, wide, len, nullptr, 0, nullptr, nullptr);
-    if (need <= 0)
-        return {};
-    std::string out(static_cast<size_t>(need), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, wide, len, &out[0], need, nullptr, nullptr);
-    return out;
+    return wide ? GameUI::WcharToUtf8(wide, static_cast<int>(wcslen(wide))) : std::string();
 }
 
 std::string Truncate(std::string s, size_t max)
@@ -894,7 +836,7 @@ void WalkTree(void* panel, int depth, int maxDepth, int indexInParent, std::vect
         // UIStatList that really hangs four levels down inside the shot HUD). Deeper panels list
         // only their own children. ParentPanel is the link that means the same thing everywhere,
         // so the walk filters on it and the tree comes out actually nested.
-        if (gParentOffset >= 0 && ReadPtrAt(children[i], gParentOffset) != panel)
+        if (gParentOffset >= 0 && ReadPtrRaw(children[i], gParentOffset) != panel)
             continue;
         bool repeat = false;
         for (void* v : seen) {
@@ -971,7 +913,7 @@ std::string Tree(const Selector& sel, int maxDepth)
                 continue;
             count++;
             if (count <= 24) {
-                void* parent = ReadPtrAt(registry[i], gParentOffset);
+                void* parent = ReadPtrRaw(registry[i], gParentOffset);
                 orphans += "  " + DescribeObject(registry[i]) + "  parent="
                     + (parent ? DescribeObject(parent) : std::string("null")) + "\n";
             }
@@ -1076,19 +1018,6 @@ uint32_t BoolBitMaskRaw(void* prop)
     }
 }
 
-std::wstring Utf8ToWideLocal(const std::string& text)
-{
-    if (text.empty())
-        return {};
-    int needed = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()),
-        nullptr, 0);
-    if (needed <= 0)
-        return {};
-    std::wstring out(static_cast<size_t>(needed), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), &out[0], needed);
-    return out;
-}
-
 // Write one text argument into the parameter block, by the declared property's kind. Returns an
 // empty string on success, or why it refused.
 //
@@ -1130,7 +1059,7 @@ std::string WriteArg(unsigned char* block, size_t blockSize, const RawProp& p,
     case Kind::Str: {
         // TArray<wchar_t>: data pointer, Num, Max — and Num COUNTS THE TERMINATOR, which is what
         // CopyFStringRaw's `count - 1` on the way out is the mirror of.
-        owned.push_back(std::make_unique<std::wstring>(Utf8ToWideLocal(text)));
+        owned.push_back(std::make_unique<std::wstring>(GameUI::Utf8ToWide(text)));
         std::wstring& buf = *owned.back();
         const int32_t num = static_cast<int32_t>(buf.size()) + 1;
         *reinterpret_cast<const wchar_t**>(addr) = buf.c_str();
@@ -1284,7 +1213,7 @@ std::string Flash(const Selector& sel, const std::string& field, const std::stri
     const int32_t movieOff = FindPropOffsetRaw(obj, "Movie");
     void* movie = obj;
     if (movieOff >= 0) {
-        movie = ReadPtrAt(obj, movieOff);
+        movie = ReadPtrRaw(obj, movieOff);
         if (!movie) {
             snprintf(line, sizeof(line),
                 "movie:    Movie is NULL at +0x%X — this panel has not been inited into a "
@@ -1301,12 +1230,12 @@ std::string Flash(const Selector& sel, const std::string& field, const std::stri
 
     // The panel's own path INTO that movie. MCPath is composed by the game as ONE FName
     // (`name(ParentPanel.MCPath $ "." $ MCName)`), so a path ending in _0 really is an FName
-    // instance number and FNameTextRaw prints it back the way the game wrote it.
+    // instance number and FNameAtAnsiRaw prints it back the way the game wrote it.
     std::string base;
     const int32_t mcOff = FindPropOffsetRaw(obj, "MCPath");
     if (mcOff >= 0) {
         char name[256] = "";
-        if (FNameTextRaw(reinterpret_cast<const uint8_t*>(obj) + mcOff, name, sizeof(name)))
+        if (FNameAtAnsiRaw(reinterpret_cast<const uint8_t*>(obj) + mcOff, name, sizeof(name)))
             base = name;
         if (base.empty() || base == "None") {
             snprintf(line, sizeof(line),
