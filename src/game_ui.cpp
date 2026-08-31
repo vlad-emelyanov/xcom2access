@@ -2726,6 +2726,7 @@ PauseMenuView ReadPauseMenu(void* screen)
     for (int i = 0; i < count; i++) {
         MenuItem item;
         item.handle = items[i];
+        item.index = i;
         item.label = CleanText(ReadFStringField(items[i], kStringItemTextOffset));
         if (item.label.empty())
             continue;
@@ -2739,7 +2740,19 @@ PauseMenuView ReadPauseMenu(void* screen)
 
 bool SetPauseMenuIndex(void* screen, int index)
 {
-    return SetListIndex(ReadPtrRaw(screen, kPauseListOffset), index);
+    void* list = ReadPtrRaw(screen, kPauseListOffset);
+    if (!list)
+        return false;
+    // The screen's own SetSelected, not a bare list poke: it also writes m_iCurrentSelection,
+    // the copy the screen's OWN Enter/Space handling acts on, and the two must never disagree
+    // (the accept-handler-reads-its-own-selection rule). Parameter block is (UIList*, int)
+    // padded to the engine's 4-byte pack.
+    struct {
+        void* ContainerList;
+        int32_t ItemIndex;
+        int32_t pad;
+    } params{list, index, 0};
+    return CallNamedFunction(screen, "SetSelected", &params);
 }
 
 bool ActivatePauseMenuItem(void* screen, int index)
@@ -2747,16 +2760,15 @@ bool ActivatePauseMenuItem(void* screen, int index)
     void* list = ReadPtrRaw(screen, kPauseListOffset);
     if (!list)
         return false;
-    // OnChildClicked is the screen's own click target: it sets m_iCurrentSelection (which its
-    // switch reads, so poking the list alone would activate the WRONG entry), plays the menu
-    // sound, and runs the confirmation dialogs. The parameter block matches its signature
-    // (UIList*, int) padded to the engine's 4-byte pack.
-    struct {
-        void* ContainerList;
-        int32_t ItemIndex;
-        int32_t pad;
-    } params{list, index, 0};
-    return CallNamedFunction(screen, "OnChildClicked", &params);
+    // Select, then send Enter to the LIST — never the screen's OnChildClicked by name. The
+    // click target the game honours is the list's OnItemClicked/OnItemDoubleClicked delegate,
+    // and mods that add pause-menu rows (Remove Missing Mods) install themselves by WRAPPING
+    // that delegate and dispatching on the row's Tag; OnChildClicked itself switches on the
+    // m_opt* indices and drops a row it did not build into its default-warn branch, which is
+    // why Enter on a mod row did nothing. The delegate path runs the wrapper when one is
+    // installed and vanilla OnChildClicked (sound, confirmation dialogs) when not.
+    SetPauseMenuIndex(screen, index);
+    return SendRowCommand(list, kCmdEnter);
 }
 
 // ---- modal dialog (UIDialogueBox) ----

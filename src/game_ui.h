@@ -23,6 +23,10 @@ namespace GameUI {
 struct MenuItem {
     void* handle = nullptr; // AUIButton* — opaque
     std::string label;      // P10-cleaned display text
+    int index = -1;         // the row's REAL UIList index where the producer walks one (-1
+                            // elsewhere): options positions drift past a skipped unlabeled
+                            // row, so selection and activation must use this, never the
+                            // vector position
     bool focused = false;   // the game's own focus bit (drives the kernel's selected part)
     bool disabled = false;
     bool attention = false; // the game's "!" badge (UIButton.bNeedsAttention)

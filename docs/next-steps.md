@@ -36,6 +36,15 @@ Activation no longer consults that state at all: it is now the mouse's own click
 `SetSelectedMapItem` now, but only for the 3D cursor and nav-help. The pass that closes this
 must actually fly the Avenger to a POI.
 
+**The pause menu's mod-row activation fix is UNVERIFIED** (2026-08-31): `ActivatePauseMenuItem`
+now sends Enter to the LIST (`SendRowCommand`) instead of calling `OnChildClicked` by name, so a
+mod-wrapped `OnItemClicked` delegate finally runs — found live on Remove Missing Mods Redux's
+"Remove Missing Mods" row (6 of 8, tactical pause), where Enter did nothing. The pass: with that
+workshop mod enabled, Enter on its row must raise its confirm dialog, and every VANILLA row
+(return, save, load, options, exit) must still activate — the same call now also routes through
+`UIPauseMenu.SetSelected`, which is new for those. `SetPauseMenuIndex` keeping
+`m_iCurrentSelection` in sync is part of the same change.
+
 **Not yet run live** (builds clean, unexercised): Skyranger briefing, modal/popup
 recipe, commlink transient reader, armory loadout, personnel roster, commodity list, inside-a-room
 recipe, selected-unit readout, objectives readout (`Ctrl+X`), research report

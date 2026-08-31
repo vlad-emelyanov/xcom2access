@@ -632,7 +632,9 @@ std::unique_ptr<GraphRender> BuildPauseMenu()
     b.BeginStop("options");
     for (size_t i = 0; i < view.options.size(); i++) {
         const GameUI::MenuItem& opt = view.options[i];
-        const int index = static_cast<int>(i);
+        // The row's LIST index, not the options position — the two drift apart past a skipped
+        // unlabeled row, and selection and activation both address the list.
+        const int index = opt.index;
 
         ControlId id = ControlId::Referenced(opt.handle, "pause/" + opt.label);
         gFocus[id.StructuralKey] = FocusTarget{index, nullptr, false};

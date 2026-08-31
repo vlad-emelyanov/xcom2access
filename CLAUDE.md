@@ -447,7 +447,11 @@ path-API survey, the field maps — is **`docs/engine-notes.md`**. What it oblig
   fires `OnItemClicked(self, SelectedIndex)` whatever row the caller had in mind. A click sent
   while the two disagreed would overwrite or delete the WRONG SAVE. Prefer the game's own path
   (`AcceptButton.Click()`, `SendRowCommand`) over poking state, and send it only once the selection
-  has landed.
+  has landed. **And the game's path means the INPUT path, not the handler at its end**: mods
+  interpose by wrapping a list's `OnItemClicked`/`OnItemDoubleClicked` delegates (Remove Missing
+  Mods dispatches on the row's `Tag` there), so calling the pause menu's `OnChildClicked` by name
+  activated every vanilla row and silently skipped every mod-added one — send Enter to the LIST
+  and let whatever delegate chain is installed decide.
 - ⛔ **An empty answer is indistinguishable from "the game is not showing this", so a wire format
   that drops empties must never carry positional data.** A field looked up in the wrong place
   answers `""`, the build skips an unlabelled node, and a whole control silently ceases to exist —
