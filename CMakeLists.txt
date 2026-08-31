@@ -107,7 +107,16 @@ add_library(X2Access SHARED
     src/event_dispatch.cpp
     src/process_event_hook.cpp
     src/ue3_reflection.cpp
+    # GameUI: the core TU holds the SEH primitives, stack walkers and call plumbing (interface:
+    # src/game_ui_internal.h); the per-screen readers sit one TU per surface family — the same
+    # axis as src/recipes/ and docs/surfaces/. Only the core (and the dev half below) includes
+    # the generated SDK; the family TUs read engine memory purely through the primitives.
     src/game_ui.cpp
+    src/game_ui_shell.cpp
+    src/game_ui_strategy.cpp
+    src/game_ui_popup.cpp
+    src/game_ui_avenger.cpp
+    src/game_ui_tactical.cpp
     src/menu_navigator.cpp
     # The screen recipes, one TU per surface family — the axis docs/surfaces/*.md already uses.
     # They see the navigator only through src/recipes/recipe_context.h, and their probe ORDER
@@ -175,7 +184,8 @@ target_link_libraries(X2Access PRIVATE prism::prism)
 # D3D/GDI+ includes). The define is target-wide because log.cpp's /log ring, tts.cpp's /speech
 # tap and the arbiter's synthetic injection are gated on it too — all free in a release build.
 if(X2ACCESS_DEVSERVER)
-    target_sources(X2Access PRIVATE src/dev_server.cpp src/screen_capture.cpp src/gui_dump.cpp)
+    target_sources(X2Access PRIVATE
+        src/dev_server.cpp src/screen_capture.cpp src/gui_dump.cpp src/game_ui_dev.cpp)
     target_compile_definitions(X2Access PRIVATE X2ACCESS_DEVSERVER)
     target_link_libraries(X2Access PRIVATE ws2_32 shell32 d3d11 dxgi gdiplus)
     message(STATUS "X2Access: dev harness ENABLED (loopback HTTP, marker-gated at runtime)")
@@ -244,6 +254,7 @@ if(MSVC)
         src/event_dispatch.cpp
         src/process_event_hook.cpp
         src/gui_dump.cpp
+        src/game_ui_dev.cpp
         src/sdk_impl.cpp
         src/ue3_reflection.cpp
         PROPERTIES COMPILE_FLAGS "/wd4244"
