@@ -137,7 +137,7 @@ private function string DescribeCard(UIAfterAction Screen, UIAfterAction_ListIte
 	// run over each — the pre-join left a stray separator when a nickname cleaned to nothing.
 	AddField(Rec, "rank", class'X2ExperienceConfig'.static.GetRankName(Unit.GetRank(),
 		Unit.GetSoldierClassTemplateName()));
-	AddField(Rec, "name", DescribeName(Unit));
+	AddField(Rec, "name", class'X2AccessHelper'.static.DescribeSoldierName(Unit));
 	AddField(Rec, "nick", Unit.GetName(eNameType_Nick));
 	// Rookies are told their rank and nothing else — UpdateData's own duplicate-string rule.
 	if (Unit.GetRank() > 0 && Unit.GetSoldierClassTemplate() != none)
@@ -145,12 +145,13 @@ private function string DescribeCard(UIAfterAction Screen, UIAfterAction_ListIte
 
 	AddField(Rec, "missions", string(Unit.GetNumMissions()));
 	AddField(Rec, "kills", string(Unit.GetNumKills()));
-	AddField(Rec, "hp", DescribeHealth(Unit));
-	AddField(Rec, "will", DescribeWill(Unit));
+	AddField(Rec, "hp", class'X2AccessHelper'.static.DescribeSoldierHealth(Unit));
+	// Skip the will bar for a KIA or captured soldier: on the walk-up it means nothing.
+	AddField(Rec, "will", class'X2AccessHelper'.static.DescribeSoldierWill(Unit, true));
 
 	// The psi markup is shown in UpdateData's ALIVE branch only.
 	if (Unit.IsAlive() && !Unit.bCaptured && Unit.HasPsiGift())
-		AddField(Rec, "psi", PsiWord());
+		AddField(Rec, "psi", class'X2AccessHelper'.static.PsiWord());
 
 	// The walk-up's own "НАИБОЛЬШАЯ СПЛОЧЕННОСТЬ" flyover, persistent instead of transient.
 	if (Card.UnitReference.ObjectID > 0
@@ -206,58 +207,8 @@ private function AddStatus(out string Rec, XComGameState_Unit Unit)
 	AddField(Rec, "status", class'UIAfterAction_ListItem'.default.m_strActive);
 }
 
-// The name line, falling back to the first name the way the squad-select card does. This
-// screen's UpdateData passes the last name alone, but an empty line here would cost the join.
-private function string DescribeName(XComGameState_Unit Unit)
-{
-	local string NameStr;
-
-	NameStr = Unit.GetName(eNameType_Last);
-	if (NameStr == "")
-		NameStr = Unit.GetName(eNameType_First);
-	return NameStr;
-}
-
-// The word for the psi markup: the game's own name for what the icon means.
-private function string PsiWord()
-{
-	local X2SoldierClassTemplate Psi;
-
-	Psi = class'X2SoldierClassTemplateManager'.static.GetSoldierClassTemplateManager()
-		.FindSoldierClassTemplate('PsiOperative');
-	return Psi != none ? Psi.DisplayName : "";
-}
-
-// The health bar, in the same numbers AS_SetUnitHealth is handed, worded as the squad reader
-// words it so a soldier reads the same on both bookends of the mission.
-private function string DescribeHealth(XComGameState_Unit Unit)
-{
-	local int Cur, Max;
-
-	Cur = class'UIUtilities_Strategy'.static.GetUnitCurrentHealth(Unit);
-	Max = class'UIUtilities_Strategy'.static.GetUnitMaxHealth(Unit);
-	if (Max <= 0)
-		return "";
-
-	return string(Cur) @ "of" @ string(Max) @ "health";
-}
-
-// The will bar plus the mental-state label. The label doubles as the walk-up's tired/shaken
-// flyover (AddWillStateFlyovers speaks GetMentalStateLabel for BelowReadyWillState), so folding
-// it here is the persistent form of the same banner.
-private function string DescribeWill(XComGameState_Unit Unit)
-{
-	local string Result;
-
-	if (!Unit.UsesWillSystem() || !Unit.IsAlive() || Unit.bCaptured)
-		return "";
-
-	Result = string(class'UIUtilities_Strategy'.static.GetUnitWillPercent(Unit)) $ "% will";
-	if (Unit.BelowReadyWillState())
-		AppendComma(Result, Unit.GetMentalStateLabel());
-
-	return Result;
-}
+// The name / psi / health / will wording lives on X2AccessHelper's shared soldier block, so a
+// soldier reads the same on both bookends of the mission by construction.
 
 // The bond icon's states, in this screen's own words: the walk-up flyovers m_strBondAvailable /
 // m_strBondLevelUpAvailable for the available states, and UpdateData draws the level for a

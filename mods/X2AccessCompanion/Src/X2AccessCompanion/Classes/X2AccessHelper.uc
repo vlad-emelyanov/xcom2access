@@ -178,25 +178,76 @@ static function string GetItemValueString(UIMechaListItem Item)
 	return "";
 }
 
-// Return tile coordinates as "X, Y" string.
-static function string FormatTileCoordinates(TTile Tile)
+// ---------------------------------------------------------------------------
+// The soldier identity block both mission bookends share
+// ---------------------------------------------------------------------------
+//
+// Squad select and after action describe the same soldiers, and until this block existed the
+// sameness was maintained by a COMMENT in each file promising to match the other. One
+// implementation is the two-surfaces-must-agree rule (the cover-readout lesson) applied to
+// people. Tactical health is deliberately NOT this: X2AccessTacticalReader words HP off
+// GetMaxStat, a different source answering a different screen.
+
+// The name line, falling back to the first name exactly as the cards' UpdateData does — an
+// empty line here would cost the join its field.
+static function string DescribeSoldierName(XComGameState_Unit Unit)
 {
-	return string(Tile.X) $ ", " $ string(Tile.Y);
+	local string NameStr;
+
+	NameStr = Unit.GetName(eNameType_Last);
+	if (NameStr == "")
+		NameStr = Unit.GetName(eNameType_First);
+	return NameStr;
+}
+
+// The word for the psi-gift markup. That icon has no caption anywhere, so the honest label is
+// the game's own name for what it means — the Psi Operative class — rather than a coinage of
+// ours.
+static function string PsiWord()
+{
+	local X2SoldierClassTemplate Psi;
+
+	Psi = class'X2SoldierClassTemplateManager'.static.GetSoldierClassTemplateManager()
+		.FindSoldierClassTemplate('PsiOperative');
+	return Psi != none ? Psi.DisplayName : "";
+}
+
+// The health bar, in the same numbers UIUtilities_Strategy hands the bar itself.
+static function string DescribeSoldierHealth(XComGameState_Unit Unit)
+{
+	local int Cur, Max;
+
+	Cur = class'UIUtilities_Strategy'.static.GetUnitCurrentHealth(Unit);
+	Max = class'UIUtilities_Strategy'.static.GetUnitMaxHealth(Unit);
+	if (Max <= 0)
+		return "";
+
+	return string(Cur) @ "of" @ string(Max) @ "health";
+}
+
+// The will bar plus the mental-state label (the persistent form of the walk-up's tired/shaken
+// flyover — AddWillStateFlyovers speaks GetMentalStateLabel for BelowReadyWillState).
+// `bSkipDeadOrCaptured` is after action's reading, where a KIA or captured soldier's will bar
+// means nothing; squad select never shows such a card and passes false.
+static function string DescribeSoldierWill(XComGameState_Unit Unit, bool bSkipDeadOrCaptured)
+{
+	local string Result;
+
+	if (!Unit.UsesWillSystem())
+		return "";
+	if (bSkipDeadOrCaptured && (!Unit.IsAlive() || Unit.bCaptured))
+		return "";
+
+	Result = string(class'UIUtilities_Strategy'.static.GetUnitWillPercent(Unit)) $ "% will";
+	if (Unit.BelowReadyWillState())
+		AppendComma(Result, Unit.GetMentalStateLabel());
+
+	return Result;
 }
 
 // ---------------------------------------------------------------------------
 // Tactical tile description helpers
 // ---------------------------------------------------------------------------
-
-// Return "Full cover", "Half cover", or "No cover" for a world position.
-static function string DescribeCover(XComWorldData WorldData, vector TilePos)
-{
-	if (WorldData.IsLocationHighCover(TilePos))
-		return "Full cover";
-	if (WorldData.IsLocationLowCover(TilePos))
-		return "Half cover";
-	return "No cover";
-}
 
 // Return period-separated hazard names for a tile (e.g. "Fire. Poison.").
 static function string DescribeHazards(XComWorldData WorldData, TTile Tile)

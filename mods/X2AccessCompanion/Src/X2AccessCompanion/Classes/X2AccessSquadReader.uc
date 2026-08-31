@@ -179,14 +179,14 @@ private function string DescribeCard(UISquadSelect Screen, UISquadSelect_ListIte
 	// separator behind — live 2026-08-21 every rookie read "Новобранец, Sokolova,,".
 	AddField(Rec, "rank", class'X2ExperienceConfig'.static.GetRankName(Unit.GetRank(),
 		Unit.GetSoldierClassTemplateName()));
-	AddField(Rec, "name", DescribeName(Unit));
+	AddField(Rec, "name", class'X2AccessHelper'.static.DescribeSoldierName(Unit));
 	AddField(Rec, "nick", Unit.GetName(eNameType_Nick));
 	// Rookies are told their rank and nothing else — see the header note.
 	if (Unit.GetRank() > 0 && Unit.GetSoldierClassTemplate() != none)
 		AddField(Rec, "class", Unit.GetSoldierClassTemplate().DisplayName);
 
-	AddField(Rec, "hp", DescribeHealth(Unit));
-	AddField(Rec, "will", DescribeWill(Unit));
+	AddField(Rec, "hp", class'X2AccessHelper'.static.DescribeSoldierHealth(Unit));
+	AddField(Rec, "will", class'X2AccessHelper'.static.DescribeSoldierWill(Unit, false));
 	AddField(Rec, "weapon", DescribeWeapon(Unit, eInvSlot_PrimaryWeapon));
 	AddField(Rec, "weaponlabel",
 		class'UIArmory_Loadout'.default.m_strInventoryLabels[eInvSlot_PrimaryWeapon]);
@@ -219,7 +219,7 @@ private function string DescribeCard(UISquadSelect Screen, UISquadSelect_ListIte
 	// them. PsiMarkup.SetVisible(HasPsiGift()) is the psi one; the faction crest is drawn whenever
 	// the soldier belongs to a faction, which on a Reaper also explains the missing utility slot.
 	if (Unit.HasPsiGift())
-		AddField(Rec, "psi", PsiWord());
+		AddField(Rec, "psi", class'X2AccessHelper'.static.PsiWord());
 	if (Unit.GetResistanceFaction() != none)
 		AddField(Rec, "faction", Unit.GetResistanceFaction().GetFactionTitle());
 
@@ -227,27 +227,8 @@ private function string DescribeCard(UISquadSelect Screen, UISquadSelect_ListIte
 	return Rec;
 }
 
-// The name line, falling back to the first name exactly as UpdateData does.
-private function string DescribeName(XComGameState_Unit Unit)
-{
-	local string NameStr;
-
-	NameStr = Unit.GetName(eNameType_Last);
-	if (NameStr == "")
-		NameStr = Unit.GetName(eNameType_First);
-	return NameStr;
-}
-
-// The word for the psi-gift markup. That icon has no caption anywhere, so the honest label is the
-// game's own name for what it means — the Psi Operative class — rather than a coinage of ours.
-private function string PsiWord()
-{
-	local X2SoldierClassTemplate Psi;
-
-	Psi = class'X2SoldierClassTemplateManager'.static.GetSoldierClassTemplateManager()
-		.FindSoldierClassTemplate('PsiOperative');
-	return Psi != none ? Psi.DisplayName : "";
-}
+// The name / psi / health / will wording lives on X2AccessHelper's shared soldier block, so a
+// soldier reads the same here as on the after-action walk-up by construction.
 
 // "4 of 6" — how many of the mission's slots hold a soldier. A sighted player counts the filled
 // cards at a glance; serially, the empty ones are several arrow presses apart.
@@ -299,38 +280,6 @@ private function string DescribeSitReps(UISquadSelect Screen)
 			Result $= ". ";
 		Result $= SitRepTemplate.GetFriendlyName() $ ":" @ SitRepTemplate.Description;
 	}
-	return Result;
-}
-
-// The health bar, in the same numbers UIUtilities_Strategy hands the bar itself. Worded exactly
-// as X2AccessTacticalReader.DescribeTargetHealth words it, so a soldier reads the same here as
-// in the mission that follows.
-private function string DescribeHealth(XComGameState_Unit Unit)
-{
-	local int Cur, Max;
-
-	Cur = class'UIUtilities_Strategy'.static.GetUnitCurrentHealth(Unit);
-	Max = class'UIUtilities_Strategy'.static.GetUnitMaxHealth(Unit);
-	if (Max <= 0)
-		return "";
-
-	return string(Cur) @ "of" @ string(Max) @ "health";
-}
-
-// The will bar plus the warning line under the name. The label is spoken only while the game
-// draws it (AS_SetUnitStatus is called with "" otherwise), but the PERCENT is on screen as a
-// bar whenever the unit uses the will system, so it is always worth saying.
-private function string DescribeWill(XComGameState_Unit Unit)
-{
-	local string Result;
-
-	if (!Unit.UsesWillSystem())
-		return "";
-
-	Result = string(class'UIUtilities_Strategy'.static.GetUnitWillPercent(Unit)) $ "% will";
-	if (Unit.BelowReadyWillState())
-		AppendComma(Result, Unit.GetMentalStateLabel());
-
 	return Result;
 }
 
