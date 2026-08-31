@@ -47,7 +47,12 @@ bool ComputeUsable(bool* menuRaised, bool* missionActive)
     *menuRaised = false;
     GameUI::TacticalGate gate = GameUI::ReadTacticalGate();
     *missionActive = gate.missionActive;
-    if (MenuNavigator::IsAttached())
+    // A MENU recipe attached (a dialog over tactical — the pause menu already clears
+    // hudOnStack) stands this layer down. The ambient tactical recipe does not, focused or
+    // not: it being attached is this layer's normal state for a whole mission, and the poll
+    // must keep running under it so activating an ability from the HUD graph narrates its
+    // default target the moment targeting raises.
+    if (MenuNavigator::MenuAttached())
         return false;
     if (!gate.hudOnStack || gate.blocked)
         return false;

@@ -189,6 +189,21 @@ constexpr int32_t kSndStartButtonOffset = 0x418;    // m_StartButton (UILargeBut
 constexpr int32_t kTacHudFlagsOffset = 0x410;       // flag dword holding m_isMenuRaised
 constexpr uint32_t kTacHudMenuRaised = 0x02;        // m_isMenuRaised (shot HUD up)
 constexpr int32_t kTacHudObjectivesOffset = 0x444;  // m_kObjectivesControl (UIObjectiveList*)
+constexpr int32_t kTacHudAbilityHudOffset = 0x42C;  // m_kAbilityHUD (UITacticalHUD_AbilityContainer*)
+
+// ---- the ability bar (UITacticalHUD_AbilityContainer / UITacticalHUD_Ability) ----
+constexpr int32_t kAbilityBarCurrentOffset = 0x3DC;   // m_iCurrentIndex
+constexpr int32_t kAbilityBarActiveOffset = 0x3EC;    // ActiveAbilities (live icon count)
+constexpr int32_t kAbilityBarWidgetsOffset = 0x408;   // m_arrUIAbilities (TArray<UITacticalHUD_Ability*>)
+constexpr int32_t kAbilityIconCooldownOffset = 0x3F8; // m_strCooldown
+constexpr int32_t kAbilityIconChargeOffset = 0x408;   // m_strCharge
+constexpr int32_t kAbilityIconAntennaOffset = 0x418;  // m_strAntennaText (ability name, PC only)
+constexpr int32_t kAbilityIconHotkeyOffset = 0x428;   // m_strHotkeyLabel
+constexpr int32_t kAbilityIconFlagsOffset = 0x438;    // dword holding IsAvailable / bIsShiney
+constexpr uint32_t kAbilityIconAvailable = 0x01;      // IsAvailable
+// The game's own bar capacity (UITacticalHUD_AbilityContainer.MAX_NUM_ABILITIES) — m_arrUIAbilities
+// is created once at that length, so a structural cap two above it can only clip if the game does.
+constexpr int kAbilityBarMax = 32;
 
 // ---- the objectives list (UIObjectiveList / UIObjectiveListItem) ----
 // Verified live 2026-08-23 against the running class on LostAndAbandonedB: m_kObjectivesControl
@@ -3454,6 +3469,64 @@ void* FindTacticalHUD()
 bool TacticalHUDMenuRaised(void* screen)
 {
     return screen && (ReadU32Raw(screen, kTacHudFlagsOffset) & kTacHudMenuRaised) != 0;
+}
+
+// ---- the ability bar ----
+
+AbilityBarView ReadAbilityBar(void* screen)
+{
+    AbilityBarView v;
+    if (!screen)
+        return v;
+    void* container = ReadPtrRaw(screen, kTacHudAbilityHudOffset);
+    if (!container)
+        return v;
+
+    void* widgets[kAbilityBarMax] = {};
+    int held = TakeArrayRaw("ability bar", container, kAbilityBarWidgetsOffset, widgets,
+        kAbilityBarMax);
+
+    // ⛔ The live count is the container's own ActiveAbilities, clamped to the widgets actually
+    // held — never the widget array's length (a constant 30) and never "which icons hold text"
+    // (ClearData leaves the previous soldier's antenna text behind). See game_ui.h.
+    int active = ReadI32Raw(container, kAbilityBarActiveOffset);
+    if (active < 0)
+        active = 0;
+    if (active > held)
+        active = held;
+
+    v.valid = true;
+    v.selected = ReadI32Raw(container, kAbilityBarCurrentOffset);
+    v.entries.reserve(static_cast<size_t>(active));
+    for (int i = 0; i < active; i++) {
+        AbilityBarEntry e;
+        e.handle = widgets[i];
+        e.name = ReadFStringField(widgets[i], kAbilityIconAntennaOffset);
+        e.hotkey = ReadFStringField(widgets[i], kAbilityIconHotkeyOffset);
+        e.cooldown = ReadFStringField(widgets[i], kAbilityIconCooldownOffset);
+        e.charges = ReadFStringField(widgets[i], kAbilityIconChargeOffset);
+        e.available = (ReadU32Raw(widgets[i], kAbilityIconFlagsOffset) & kAbilityIconAvailable) != 0;
+        v.entries.push_back(std::move(e));
+    }
+    return v;
+}
+
+bool ActivateBarAbility(void* screen, int index)
+{
+    if (!screen || index < 0)
+        return false;
+    void* container = ReadPtrRaw(screen, kTacHudAbilityHudOffset);
+    if (!container)
+        return false;
+    // The game's own mouse path for an icon click. Its parameter block is the int plus the bool
+    // return slot, in declaration order — the same hand-rolled layout every outbound call uses.
+    struct {
+        int32_t Index;
+        uint32_t ReturnValue;
+    } params{index, 0};
+    if (!CallNamedFunction(container, "AbilityClicked", &params))
+        return false;
+    return params.ReturnValue != 0;
 }
 
 // ---- the objectives list (UIObjectiveList) ----

@@ -3,6 +3,7 @@
 #include "input_arbiter.h"
 #include "recipes/recipe_context.h"
 #include "recipes/recipes.h"
+#include "tactical_hud.h"
 #include "tts.h"
 #include "ue3_reflection.h"
 #include "vocab.h"
@@ -136,6 +137,20 @@ const ControlType& TextType()
     return type;
 }
 
+// A tactical-bar ability icon. No role word — the stop's own heading already says what these
+// are, and thirty "button"s a mission would be pure noise. Value (cooldown / charges / hotkey)
+// reads right after the name, availability after that.
+const ControlType& AbilityType()
+{
+    static const ControlType type{
+        /*Key*/ "ability",
+        /*Order*/ {AnnouncementKinds::Label, AnnouncementKinds::Value, AnnouncementKinds::Enabled,
+            AnnouncementKinds::Reason},
+        /*Common*/ nullptr,
+    };
+    return type;
+}
+
 // ---- the attach state a recipe builder reads ----
 //
 // Three of this file's globals, and only three, are part of the recipe contract: the screen a
@@ -183,6 +198,13 @@ std::function<void()> ListItemTooltipAction(void* handle)
 namespace {
 
 bool gAttached = false;
+// The claims' other half: attached AND focused. Every menu recipe is focused for its whole
+// attach, so for them this bit shadows gAttached exactly. An AMBIENT recipe (the tactical HUD)
+// attaches with it FALSE — the gameplay layer keeps the keyboard — and Ctrl+Tab toggles it.
+// While false, the navigator holds no claims, runs no differ and speaks nothing: attached means
+// only "this recipe would win the probe", which is what lets the graph keep its position and
+// its wire caches across a whole mission without ever contending with the tile cursor.
+bool gFocused = false;
 const Recipe* gActive = nullptr;   // the attached recipe
 const Recipe* gPending = nullptr;  // the recipe currently settling toward attach
 int gSettle = 0;             // consecutive ready polls before attach (§9 native settle debounce)
@@ -307,6 +329,7 @@ void Detach()
     // call per screen entry, which the first render was going to make anyway.
     InvalidateWireCaches();
     gAttached = false;
+    gFocused = false;
     gActive = nullptr;
     gPending = nullptr;
     gGraph.reset();
@@ -321,6 +344,23 @@ void Detach()
     // this, the next screen is found only when the finder's own second happens to elapse.
     GameUI::HintScreenChange();
     LOG_INFO("MenuNavigator: detached from %s", name);
+}
+
+// Screen name first (interrupting — the user just landed here), then the landing readout
+// queued behind it (§9 standardized first-focus). Shared by a menu recipe's attach and an
+// ambient recipe's Ctrl+Tab focus entry, which are the same moment to the player.
+void AnnounceEntry()
+{
+    TTS::SpeakInterrupt(gActive->ScreenName());
+    GraphNode* landing = gGraph->CurrentNode();
+    if (landing) {
+        std::string line = GraphAnnouncer::ComposeFull(landing);
+        if (!line.empty())
+            TTS::Speak(line, /*interrupt*/ false);
+        gLastSpoken = landing->Id;
+        RefreshLiveBaseline(landing);
+        WriteBackFocus(landing);
+    }
 }
 
 void Attach()
@@ -345,28 +385,79 @@ void Attach()
         return; // screen not actually readable yet — stay detached, poll again
     }
     gAttached = true;
+    gFocused = !gActive->ambient;
 
-    // Screen name first (interrupting — the user just landed here), then the landing readout
-    // queued behind it (§9 standardized first-focus).
-    TTS::SpeakInterrupt(gActive->ScreenName());
-    GraphNode* landing = gGraph->CurrentNode();
-    if (landing) {
-        std::string line = GraphAnnouncer::ComposeFull(landing);
-        if (!line.empty())
-            TTS::Speak(line, /*interrupt*/ false);
-        gLastSpoken = landing->Id;
-        RefreshLiveBaseline(landing);
-        WriteBackFocus(landing);
-    }
+    // An ambient attach is SILENT and unfocused: it happens the moment a mission's HUD settles,
+    // mid-gameplay, and announcing a screen the player did not navigate to would be noise. The
+    // player hears it when they ask for it (Ctrl+Tab → AnnounceEntry).
+    if (gFocused)
+        AnnounceEntry();
     if (gDetachMs) {
-        LOG_INFO("MenuNavigator: attached to %s (%zu focus targets) — %llu ms after detach",
-            gActive->logName, gFocus.size(),
+        LOG_INFO("MenuNavigator: attached to %s%s (%zu focus targets) — %llu ms after detach",
+            gActive->logName, gFocused ? "" : " (ambient, unfocused)", gFocus.size(),
             static_cast<unsigned long long>(GetTickCount64() - gDetachMs));
         gDetachMs = 0;
     } else {
-        LOG_INFO(
-            "MenuNavigator: attached to %s (%zu focus targets)", gActive->logName, gFocus.size());
+        LOG_INFO("MenuNavigator: attached to %s%s (%zu focus targets)", gActive->logName,
+            gFocused ? "" : " (ambient, unfocused)", gFocus.size());
     }
+}
+
+// ---- the ambient recipe's focus toggle (Ctrl+Tab / Escape / targeting yield) ----
+
+// Ctrl+Tab into the HUD graph. The rebuild comes first because the graph was last rendered at
+// attach (or the previous focus), possibly minutes of gameplay ago — every widget pointer and
+// every word in it is suspect until Rerender() replaces them.
+void EnterAmbientFocus()
+{
+    if (!gGraph || !gGraph->Rerender()) {
+        // The screen emptied under the attach (should have detached already; the next tick
+        // will). A pressed mode key must not be silent about refusing.
+        TTS::SpeakInterrupt(Vocab::SurfaceUnavailable(Vocab::ScreenTacticalHud));
+        return;
+    }
+    gFocused = true;
+    AnnounceEntry();
+    LOG_INFO("MenuNavigator: %s focused (HUD mode)", gActive->logName);
+}
+
+// Back to the gameplay layer. Silent on a YIELD (the game raised its own UI over the keys; its
+// narration speaks next) — spoken on a player exit, because a mode change they asked for must
+// answer.
+void ExitAmbientFocus(bool silent)
+{
+    if (!gFocused)
+        return;
+    gFocused = false;
+    if (!silent)
+        TTS::SpeakInterrupt(Vocab::TacticalWorldMode);
+    LOG_INFO("MenuNavigator: %s unfocused (%s)", gActive ? gActive->logName : "?",
+        silent ? "yielded to the game" : "player exit");
+}
+
+// The Ctrl+Tab handler. Claimed whenever a mission is active — broader than "attached", because
+// an UNCLAIMED Ctrl+Tab is not a dead key: UE3's lenient modifier matching fires the bare Tab
+// binding (next soldier / next target) under it, which is exactly the double-fire the input map
+// warns about. So the chord is swallowed mission-wide and the handler decides, and a refusal is
+// spoken — a blind player cannot otherwise tell "refused" from "broken".
+void OnLayerToggle()
+{
+    if (!gAttached || !gActive->ambient) {
+        TTS::SpeakInterrupt(Vocab::SurfaceUnavailable(Vocab::ScreenTacticalHud));
+        return;
+    }
+    if (gFocused) {
+        ExitAmbientFocus(/*silent*/ false);
+        return;
+    }
+    // Entering a focus the game would take straight back (the shot HUD is raised — the yield
+    // test already says so) would announce a landing and then strip its keys 100 ms later.
+    // Refuse up front instead, in the same words as any other unavailable surface.
+    if (gActive->YieldFocus && gActive->YieldFocus()) {
+        TTS::SpeakInterrupt(Vocab::SurfaceUnavailable(Vocab::ScreenTacticalHud));
+        return;
+    }
+    EnterAmbientFocus();
 }
 
 // After an adjust/activate that may have changed state: revalidate the screen (the action may
@@ -431,7 +522,11 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     // never on the stack at once, so their relative order is free.
     &kAfterActionRecipe,
     &kCommodityRecipe,
-    &kRoomBuildRecipe, &kRoomRecipe, &kGeoscapeRecipe, &kMainMenuRecipe};
+    &kRoomBuildRecipe, &kRoomRecipe, &kGeoscapeRecipe,
+    // The ambient tactical recipe. Below every overlay a mission can raise (dialog, popup,
+    // pause menu — all resolve above), and it can never contend with the strategy screens:
+    // its probe requires a tactical gate no strategy stack can satisfy.
+    &kTacticalHudRecipe, &kMainMenuRecipe};
 static_assert(sizeof(kRecipes) / sizeof(kRecipes[0]) == Recipes::kRecipeCount,
     "a recipe was declared in recipes.h and not listed above — it would never be probed");
 
@@ -556,8 +651,11 @@ void Init()
         return type == &TabType();
     };
 
-    auto attached = []() { return gAttached; };
-    auto optionsAttached = []() { return gAttached && gActive == &kOptionsRecipe; };
+    // ⛔ Attached is NOT the claims' gate any more — FOCUSED is. For every menu recipe the two
+    // are the same bit; the ambient tactical recipe spends most of a mission attached with the
+    // claims off, which is the whole point of the split (the tile cursor keeps the arrows).
+    auto attached = []() { return gAttached && gFocused; };
+    auto optionsAttached = []() { return gAttached && gFocused && gActive == &kOptionsRecipe; };
 
     // ⛔ THE GEOSCAPE KEEPS SPACE, and Space alone.
     //
@@ -585,7 +683,8 @@ void Init()
     // The general test, which the Enter and Tab rulings each failed once before landing: a key is
     // takeable when the ACTION behind it survives losing it AND the layer has parity-legitimate
     // work for it. Space fails the first — ToggleScan has no other key once Enter is spent.
-    auto attachedNotGeoscape = []() { return gAttached && gActive != &kGeoscapeRecipe; };
+    auto attachedNotGeoscape
+        = []() { return gAttached && gFocused && gActive != &kGeoscapeRecipe; };
     auto onDown = [](void (*fn)()) {
         return [fn](const KeyEvent& e) {
             if (e.down)
@@ -627,6 +726,28 @@ void Init()
         "settings: previous tab"});
     RegisterClaim({VK_NEXT, ModNone, optionsAttached, onDown([]() { OnTabPage(1); }),
         "settings: next tab"});
+
+    // ---- the ambient (tactical HUD) layer's own keys ----
+    //
+    // Ctrl+Tab enters/exits the HUD graph. Claimed on MISSION ACTIVE, not on attached: UE3's
+    // lenient modifier matching means an unclaimed Ctrl+Tab fires the bare Tab binding (next
+    // soldier in world mode, next target while the shot HUD is raised), so a chord we advertise
+    // must be swallowed everywhere the player might try it — the handler owns the refusal.
+    // IsMissionActive is a plain flag published from TacticalHUD's tick, which is what a
+    // predicate evaluated inside the window procedure is allowed to read.
+    auto missionActive = []() { return TacticalHUD::IsMissionActive(); };
+    // No auto-repeat: a held chord flapping the mode would leave the player unable to tell
+    // which side of it they ended on.
+    RegisterClaim({VK_TAB, ModCtrl, missionActive,
+        [](const KeyEvent& e) { if (e.down && !e.repeat) OnLayerToggle(); },
+        "tactical: enter/exit the HUD layer"});
+
+    // Escape backs out of the HUD graph to world mode. Only while an ambient recipe is focused —
+    // on every menu recipe Escape stays the game's own close key, unclaimed.
+    auto ambientFocused = []() { return gAttached && gFocused && gActive->ambient; };
+    RegisterClaim({VK_ESCAPE, ModNone, ambientFocused,
+        [](const KeyEvent& e) { if (e.down && !e.repeat) ExitAmbientFocus(/*silent*/ false); },
+        "tactical: leave the HUD layer"});
 
     LOG_INFO("MenuNavigator: initialized (%zu screen recipes)",
         sizeof(kRecipes) / sizeof(kRecipes[0]));
@@ -723,6 +844,18 @@ void OnTick()
             return;
         }
 
+        // The ambient recipe's two extra states. Focused: the yield test hands input back the
+        // moment the game raises its own UI over the keys (targeting). Unfocused: the layer is
+        // DORMANT — no rebuilds, no differ, no live watch — because ten widget-tree reads a
+        // second for a graph nobody is in would be pure cost, and every pointer in the stale
+        // render is refreshed by the Rerender() that focus entry starts with.
+        if (gActive->ambient) {
+            if (gFocused && gActive->YieldFocus && gActive->YieldFocus())
+                ExitAmbientFocus(/*silent*/ true);
+            if (!gFocused)
+                return;
+        }
+
         // The frame differ (spec §7.3): rebuild, reconcile, and speak only if the focused
         // identity differs from the identity last spoken (game-driven changes, content shifts).
         // On a held identity, the live-part watch reports value changes instead.
@@ -751,6 +884,16 @@ void OnTick()
 bool IsAttached()
 {
     return gAttached;
+}
+
+bool OwnsInput()
+{
+    return gAttached && gFocused;
+}
+
+bool MenuAttached()
+{
+    return gAttached && !gActive->ambient;
 }
 
 const char* AttachedRecipeName()

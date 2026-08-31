@@ -74,6 +74,23 @@ Show Subtitles setting (`surfaces/strategy.md`), so the same conversation must b
 with subtitles on and once with them off — off must be silent, and turning them back on
 mid-conversation must announce the line still in progress rather than swallow it.
 
+**The tactical HUD graph** (2026-08-31, built, never run — `surfaces/tactical.md` "Tactical HUD
+graph" holds the design; this is the navigator's FIRST ambient recipe, so the focus split itself
+is also unexercised). The pass, on Gatecrasher with the harness armed: (a) mission start attaches
+silently (`/health` navigator line reads `attached (tactical HUD, unfocused)`) and the tile
+cursor still works — the split's whole point; (b) `Ctrl+Tab` speaks "HUD" + the first ability
+with its cooldown/charges/hotkey, arrows and Tab walk Abilities and Objectives, and the
+objectives stop reads word-for-word what `Ctrl+X` reads; (c) `Escape` speaks "Map" and the
+arrows drive the cursor again; (d) Enter on an available ability raises targeting, the targeting
+poll announces ability + default target, and the layer is UNFOCUSED afterwards (no arrow
+swallowing — the game cycles targets); (e) Enter on an unavailable one says "unavailable" and
+raises nothing; (f) a soldier switch while focused re-lands cleanly with the NEW soldier's
+abilities (the stale-antenna trap — count the bar against the sighted icon count); (g) a pause
+menu and a modal dialog over tactical still attach their own recipes (the dialog is the
+load-bearing one — the probe's own refusal is all that yields it); (h) `Shift+Tab` inside the
+HUD does NOT cycle the soldier on release (the widened Shift swallow). Then shape-count the
+speech ring as always.
+
 ## Unexercised paths inside surfaces that HAVE run
 
 Tactical narration's panic / shields / evac
@@ -121,10 +138,6 @@ a repeating announcement.
 - Two wording defects: the no-target readout doubles a full stop and repeats the same fact in
   two languages (the localized string already ends in a period and carries the meaning); recentering
   says the unit's name three times.
-- ⚠ `TileReader::ComputeActive` still stands down on `MenuNavigator::IsAttached()` — right for
-  menus, wrong for the tactical layer, where the recipe must be ATTACHED BUT UNFOCUSED while the
-  cursor keeps the arrows (`CLAUDE.md`, *The tactical layer: input ownership*): the navigator needs
-  an explicit focused state and the tile reader has to gate on that instead.
 - The dialog recipe attaches wherever a `UIDialogueBox` shows, including in the strategy and tactical
   layers — deliberate (a modal must be readable), but it means the layer takes over input there
   before those screens have recipes of their own. Its screen lookup caches the newest box, which a
@@ -191,4 +204,9 @@ a repeating announcement.
    of the room's Flash-only status panels — `m_kCovertOpsStatus` is done, `surfaces/avenger.md`),
    the resource strip, the to-do widget and the event queue (`avenger-view-recon.md` §2 —
    note §2.5 was CORRECTED: the event queue IS retained, `UIEventQueue_ListItem.Title` /
-   `DaysValue`). Then the tactical HUD recipe itself.
+   `DaysValue`).
+8. The tactical HUD recipe's remaining stops — soldier, commands, enemies — which are the ones
+   that need the companion snapshot bridge (`X2AccessTacticalReader.BuildSnapshot()`, one wire
+   payload per rebuild; the plan doc's Phase 3 list). Abilities and objectives shipped without it.
+   Also owed from that pass: the spoken REASON on an unavailable ability (`AvailableCode` needs
+   the companion vocabulary — the FName must never be spoken raw).

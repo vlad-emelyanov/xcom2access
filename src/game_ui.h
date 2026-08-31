@@ -738,6 +738,44 @@ struct TacticalGate {
 /// Game thread only.
 TacticalGate ReadTacticalGate();
 
+// ---- the ability bar (UITacticalHUD_AbilityContainer + UITacticalHUD_Ability) ----
+//
+// The one tactical panel besides objectives that IS readable from widgets (engine-notes: the
+// bar "needs NO companion call"). Each icon retains the strings the game last pushed:
+// m_strAntennaText (the ability's localized friendly name — refreshed only while
+// Movie.IsMouseActive(), which the mouse gate deliberately preserves), m_strHotkeyLabel,
+// m_strCooldown / m_strCharge (localized prefixes baked in by the game), and IsAvailable.
+//
+// ⛔ The live icon count is the container's own ActiveAbilities, never "how many widgets hold
+// text": ClearData() clears availability, cooldown and charge but NOT the antenna text, so a
+// soldier switch leaves the previous soldier's ability names sitting on the trailing icons.
+// ActiveAbilities is written by the same PopulateFlash pass that feeds the icons, and the
+// widgets [0, ActiveAbilities) map 1:1 onto m_arrAbilities — commander abilities are compacted
+// out into the mouse-controls panel by that same pass.
+struct AbilityBarEntry {
+    void* handle = nullptr;  // UITacticalHUD_Ability — opaque
+    std::string name;        // m_strAntennaText, cleaned; may be empty (see the view note)
+    std::string hotkey;      // m_strHotkeyLabel ("1".."0"); empty on unbound slots
+    std::string cooldown;    // m_strCooldown — "" unless cooling down
+    std::string charges;     // m_strCharge — "" when the ability has no charge count
+    bool available = false;  // IsAvailable (AvailableCode == 'AA_Success')
+};
+
+struct AbilityBarView {
+    bool valid = false;              // the container was found and read
+    int selected = -1;               // m_iCurrentIndex — -1 while the shot HUD is down
+    std::vector<AbilityBarEntry> entries; // the bar's live icons, [0, ActiveAbilities)
+};
+
+/// Read the bar off a UITacticalHUD screen. Game thread only.
+AbilityBarView ReadAbilityBar(void* screen);
+
+/// Activate bar slot `index` through the container's own AbilityClicked — the mouse path, with
+/// every side effect a click has: the input-gate check (PreProcessCheckGameLogic refuses when
+/// it is not the player's moment), the tutorial's disabled-trigger check, the select sound, and
+/// SelectAbility raising the targeting UI. Returns the game's own answer. Game thread only.
+bool ActivateBarAbility(void* screen, int index);
+
 // ---- the objectives list (UIObjectiveList) ----
 //
 // The panel that draws "ЗАДАЧИ / OBJECTIVES" and the mission's objective lines under it. Unlike

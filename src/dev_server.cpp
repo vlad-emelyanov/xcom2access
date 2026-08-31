@@ -338,7 +338,10 @@ std::string StatusText()
     out += "navigator: ";
     if (MenuNavigator::IsAttached()) {
         const char* recipe = MenuNavigator::AttachedRecipeName();
-        out += std::string("attached (") + (recipe ? recipe : "?") + ")\n";
+        // The focus split: an ambient recipe (tactical HUD) is routinely attached UNFOCUSED,
+        // and eyes-free debugging has to tell that apart from a menu holding the keys.
+        out += std::string("attached (") + (recipe ? recipe : "?")
+            + (MenuNavigator::OwnsInput() ? ", focused" : ", unfocused") + ")\n";
     } else {
         out += "detached\n";
     }

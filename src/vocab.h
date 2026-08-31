@@ -325,6 +325,33 @@ inline constexpr const char* Loading = "Loading";
 inline constexpr const char* GroupDifficulty = "Difficulty";
 inline constexpr const char* GroupCampaignOptions = "Campaign options";
 
+// ---- the tactical HUD graph (the ambient recipe, Ctrl+Tab) ----
+
+// Spoken on Ctrl+Tab into the HUD layer, and by its refusal ("HUD unavailable.").
+inline constexpr const char* ScreenTacticalHud = "HUD";
+
+// Spoken when Ctrl+Tab or Escape hands the keys back to the tile cursor. "Map" rather than
+// "world mode" because it names what the arrows now drive, not an internal state.
+inline constexpr const char* TacticalWorldMode = "Map";
+
+// The HUD graph's stop headings. Our own structure words, same standing as the role words above.
+inline constexpr const char* StopAbilities = "Abilities";
+inline constexpr const char* StopObjectives = "Objectives";
+
+// An ability icon whose antenna text read empty (the game populates it only while the mouse is
+// active, and a stale-cleared icon holds ""), so the node still gets a name a player can act on.
+inline std::string AbilityFallback(int index)
+{
+    return "Ability " + std::to_string(index + 1);
+}
+
+// The hotkey label drawn on an ability icon ("1".."0"), phrased so a bare digit at the end of
+// the readout cannot be mistaken for a count or a position.
+inline std::string AbilityHotkey(const std::string& label)
+{
+    return "key " + label;
+}
+
 // ---- tutorial mission (Tutorial_01) ----
 
 // The glyphs the game splices into tutorial text as <img src='...'> markup. Speech has to

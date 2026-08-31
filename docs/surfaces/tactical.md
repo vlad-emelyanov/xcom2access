@@ -408,6 +408,50 @@ step); `CAT_EVAC` stays for asking about the zone alone. **When adding a contrib
 a player will actually press to ask that question** — not which category it taxonomically belongs
 to.
 
+## Tactical HUD graph (the ambient recipe)
+
+The mod's first AMBIENT recipe (`recipes/recipe_tactical.cpp`): attached silently for the whole
+mission, UNFOCUSED by default, so the tile cursor keeps the arrows while the graph keeps its
+position and its render machinery warm. `Ctrl+Tab` focuses it (HUD mode — the navigator's claims
+come alive: arrows, Tab/Shift+Tab between stops, Enter, Home/End), `Escape` or `Ctrl+Tab` again
+returns to world mode ("Map"), and the shot HUD raising takes focus back WITHOUT a spoken exit —
+the targeting poll's own narration is the next thing heard, and an exit line would talk over it.
+Stops in this pass: **Abilities** (pure widget read) and **Objectives** (via
+`ObjectiveReader::DescribeLine` — one composer with `Ctrl+X`, so the two surfaces cannot
+disagree about a row). Soldier / commands / enemies wait for the companion snapshot bridge.
+
+- ⛔ **The probe must refuse while a `UIDialogueBox` is showing, by its own hand.** While a
+  recipe is attached the navigator re-probes only THAT recipe — a higher entry in `kRecipes`
+  gets its chance only after a detach — and the dialog is the one overlay the tactical gate
+  cannot see, because `UIRaiseDialog` pushes no screen. Every other mission overlay (pause menu,
+  hacking screen, tutorial box) is a real stack entry and detaches us through
+  `hudOnStack`/`blocked`. Without the refusal the player answers the modal blind, with our
+  claims eating the keys.
+- ⛔ **The bar's live icon count is the container's own `ActiveAbilities` — never the widget
+  array's length and never "which icons hold text".** `UITacticalHUD_Ability.ClearData()` clears
+  availability, cooldown and charge but NOT `m_strAntennaText` or the hotkey label, so a soldier
+  switch leaves the previous soldier's ability names sitting on the trailing icons, readable and
+  wrong. `ActiveAbilities` is written by the same `PopulateFlash` pass that feeds the icons, and
+  the widgets `[0, ActiveAbilities)` map 1:1 onto `m_arrAbilities` (commander abilities sort to
+  the tail and are compacted out — the same assumption the game's own `AbilityClicked` makes).
+- **Activation is `AbilityClicked(index)`** — the mouse path, with the input gate
+  (`PreProcessCheckGameLogic` refuses outside the player's moment), the tutorial's
+  disabled-trigger check and the select sound. It returns false SILENTLY, so the recipe speaks
+  the refusal ("unavailable") itself; on success targeting raises, the navigator yields focus on
+  its next tick, and the targeting poll announces ability and default target.
+- The unavailability REASON is not spoken yet: `AvailableCode` is an FName
+  (`AA_CannotAfford_ActionPoints`) with no localized form the widgets retain, and speaking it
+  would hand a Russian player an internal identifier. It waits for the companion vocabulary; the
+  node is marked "unavailable" meanwhile.
+- **The Shift swallow is wider than the tile cursor now**: the arbiter's `LeftShift` claim holds
+  while the HUD graph is focused too (`object_scanner.cpp`), because the graph's `Shift+Tab`
+  has the same problem the scanner's chords had — a Shift release reaching the engine at the end
+  of the chord fires `PrevUnit()`.
+- While unfocused the navigator runs NO rebuilds and no differ — the graph is dormant, and every
+  pointer in its stale render is refreshed by the `Rerender()` that focus entry starts with. A
+  mid-mission cinematic detaches and silently re-attaches the recipe; stop positions reset there
+  (GraphState is per-attach), which is the accepted cost until a live run says otherwise.
+
 ## Tutorial message reader
 
 The tutorial is a REPLAY (`XComTutorialMgr extends XComReplayMgr`): it plays a recording

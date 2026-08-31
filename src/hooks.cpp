@@ -175,8 +175,11 @@ static void RegisterEventHandlers() {
         sActiveListener = obj;
 
         // The legacy ownership gate (spec §10.5): while a graph screen owns the surface, the
-        // UnrealScript narration stands down — one keypress, one voice.
-        if (MenuNavigator::IsAttached())
+        // UnrealScript narration stands down — one keypress, one voice. OwnsInput, not
+        // IsAttached: the ambient tactical recipe is attached for a whole mission while
+        // claiming nothing, and muting every legacy listener for that long would be a
+        // regression the split never asked for.
+        if (MenuNavigator::OwnsInput())
             return;
 
         std::string text = UE3Reflect::ReadStringProperty(obj, "AccessibilityData");

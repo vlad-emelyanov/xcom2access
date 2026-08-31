@@ -116,9 +116,13 @@ std::string DescribeCounter(const GameUI::ObjectiveLine& line)
     return out;
 }
 
+} // namespace
+
 // One row, spoken. The state words are OURS and therefore English — the game conveys completed
 // and failed with a tick and a colour and no words at all, so there is nothing localized to
 // borrow, and a blind player who is told neither cannot tell a finished objective from a live one.
+// Exported (with DescribeMissionCounter below) for the tactical HUD recipe's Objectives stop —
+// one composer is what keeps Ctrl+X and the graph from ever disagreeing about a row.
 std::string DescribeLine(const GameUI::ObjectiveLine& line)
 {
     std::string out;
@@ -150,6 +154,8 @@ std::string DescribeLine(const GameUI::ObjectiveLine& line)
     EndSentence(out);
     return out;
 }
+
+namespace {
 
 std::string Compose(const GameUI::ObjectiveListView& view)
 {
@@ -191,6 +197,8 @@ std::string Compose(const GameUI::ObjectiveListView& view)
     return out;
 }
 
+} // namespace
+
 // "Приведите солдат на запасной маршрут, Осталось солдат 3."
 //
 // The sub-label and the number are ONE phrase, not two: "Осталось солдат" and "3" only mean
@@ -217,6 +225,8 @@ std::string DescribeMissionCounter(const GameUI::MissionCounter& c)
     EndSentence(out);
     return out;
 }
+
+namespace {
 
 // A pressed key must never be silent, so every path here ends in speech — including the one where
 // the list vanished between the gate saying yes and the handler running, which is a real race:

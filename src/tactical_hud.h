@@ -13,9 +13,10 @@
 // STRUCTURE and SELECTION while the companion CDO X2AccessTacticalReader supplies the WORDS,
 // re-resolved from XCOMHISTORY. C++ owns the gate, the keys and the speech.
 //
-// Deliberately NOT a Graph recipe: nothing here is navigable. The navigable HUD (ability bar,
-// enemy strip, objectives as tab stops) is a later phase and will attach unfocused so the tile
-// cursor keeps the arrows.
+// Deliberately NOT a Graph recipe: nothing here is navigable. The navigable HUD is the ambient
+// recipe (recipes/recipe_tactical.cpp), attached unfocused so the tile cursor keeps the arrows;
+// this module keeps running under it — its gate is MenuNavigator::MenuAttached(), not
+// IsAttached(), precisely so that recipe's permanent attachment does not stand it down.
 
 namespace TacticalHUD {
 

@@ -579,9 +579,15 @@ Three modes, and the layer must always know which one it is in:
   LIST**: in free aim the arrows steer nothing, so there the rule inverts and the arrows are ours.
   The principle is "do not take a key the game is using to steer", not "do not take arrows".
 
-So the recipe must be ATTACHED BUT UNFOCUSED while the cursor keeps the arrows — which needs an
-explicit focused state on the navigator, since gating the tile reader on mere attachment is right
-for menus and wrong here (`docs/next-steps.md`, known defects).
+So the tactical recipe is ATTACHED BUT UNFOCUSED while the cursor keeps the arrows — the
+navigator's focus split (`Recipe::ambient`; `MenuNavigator::OwnsInput()` = attached AND focused).
+⛔ **Gate on the right export**: the tile cursor and the legacy-listener mute stand down on
+`OwnsInput()`, the tactical layer's own producers on `MenuAttached()` (a NON-ambient recipe took
+the surface — the ambient recipe being attached is their normal state for a whole mission), and
+`IsAttached()` is diagnostics plus surfaces the ambient recipe can never share a screen with.
+Gating on mere attachment is right for menus and wrong here. An ambient recipe's probe must also
+refuse BY ITS OWN HAND any overlay the screen stack cannot show it (`UIDialogueBox` pushes no
+screen), because an attached recipe is the only one the navigator re-probes.
 
 ⛔ **UE3 matches modifiers LENIENTLY**: a `KeyBind`'s `Control`/`Shift`/`Alt` are modifiers the chord
 REQUIRES, while modifiers the player merely happens to hold are NOT checked, so **a bare vanilla

@@ -16,9 +16,24 @@ void Init();
 /// internally — safe to call many times per frame.
 void OnTick();
 
-/// True while a graph screen owns the surface. The legacy UnrealScript narration gate (spec
-/// §10.5): while true, X2Access_Speak events from the companion mod are dropped.
+/// True while a recipe is attached — INCLUDING the ambient tactical recipe, which is attached
+/// for a whole mission while claiming nothing. Callers that mean "may I read this surface" or
+/// "is the graph taking the keys" want OwnsInput() or MenuAttached() below; this stays the raw
+/// attach bit for diagnostics and for surfaces the ambient recipe can never share a screen with.
 bool IsAttached();
+
+/// A recipe is attached AND focused — the graph's claims are live and the arrows, Tab, Enter and
+/// Space belong to it. For every menu recipe this equals IsAttached(); the ambient tactical
+/// recipe attaches unfocused and only owns input after Ctrl+Tab. This is the gate the tile
+/// cursor and the legacy X2Access_Speak mute key off: a graph that is not consuming keys and not
+/// speaking is not "owning the surface", however long it stays attached.
+bool OwnsInput();
+
+/// A NON-AMBIENT recipe is attached — a menu or modal took the surface outright (pause menu,
+/// dialog, hacking never comes here). The tactical layer's own producers (the targeting poll,
+/// free aim) gate on this rather than IsAttached(), because the ambient tactical recipe being
+/// attached is their NORMAL state, not a takeover.
+bool MenuAttached();
 
 /// The attached recipe's log name ("main menu", "settings", …), or null when detached.
 /// Diagnostics: IsAttached() alone cannot tell "the right recipe took the screen" from "a recipe

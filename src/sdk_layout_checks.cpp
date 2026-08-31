@@ -362,6 +362,27 @@ static_assert(offsetof(AXComTutorialMgr, NextPlayerAbilityContext) == 0x338,
 static_assert(offsetof(AUITacticalHUD, CachedVisibility) == 0x414,
     "UITacticalHUD::CachedVisibility (m_isMenuRaised dword precedes it at 0x410)");
 
+// ---- the ability bar (UITacticalHUD_AbilityContainer / UITacticalHUD_Ability) ----
+// The icon's IsAvailable/bIsShiney dword at 0x438 is bitfields and cannot be offsetof'd; the
+// hotkey string before it and Index after it bracket it.
+static_assert(offsetof(AUITacticalHUD, m_kAbilityHUD) == 0x42C, "UITacticalHUD::m_kAbilityHUD");
+static_assert(offsetof(AUITacticalHUD_AbilityContainer, m_iCurrentIndex) == 0x3DC,
+    "UITacticalHUD_AbilityContainer::m_iCurrentIndex");
+static_assert(offsetof(AUITacticalHUD_AbilityContainer, ActiveAbilities) == 0x3EC,
+    "UITacticalHUD_AbilityContainer::ActiveAbilities");
+static_assert(offsetof(AUITacticalHUD_AbilityContainer, m_arrUIAbilities) == 0x408,
+    "UITacticalHUD_AbilityContainer::m_arrUIAbilities");
+static_assert(offsetof(AUITacticalHUD_Ability, m_strCooldown) == 0x3F8,
+    "UITacticalHUD_Ability::m_strCooldown");
+static_assert(offsetof(AUITacticalHUD_Ability, m_strCharge) == 0x408,
+    "UITacticalHUD_Ability::m_strCharge");
+static_assert(offsetof(AUITacticalHUD_Ability, m_strAntennaText) == 0x418,
+    "UITacticalHUD_Ability::m_strAntennaText");
+static_assert(offsetof(AUITacticalHUD_Ability, m_strHotkeyLabel) == 0x428,
+    "UITacticalHUD_Ability::m_strHotkeyLabel");
+static_assert(offsetof(AUITacticalHUD_Ability, Index) == 0x43C,
+    "UITacticalHUD_Ability::Index (the IsAvailable dword precedes it at 0x438)");
+
 // ---- squad select (docs/squad-select-recon.md §3) ----
 // The screen's own bitfield sits at 0x478 (bLaunched / bReceivedWalkupEvent / bNoCancel /
 // bDisableLoadout); SquadMinimums is the plain member before it and SoldierSlotCount the one

@@ -21,6 +21,10 @@
 // This is PARITY, not an aid: the stop list mirrors what is on screen, and every word spoken here
 // is one the game is already drawing. Nothing is derived that a sighted player cannot see.
 
+#include "game_ui.h"
+
+#include <string>
+
 namespace ObjectiveReader {
 
 /// Register the Ctrl+X claim. Call during init, BEFORE the game hooks go live.
@@ -29,5 +33,12 @@ void Init();
 /// Game-tick pump: refreshes the cached gate the claim's activeWhen reads. Throttled internally.
 /// Game thread only.
 void OnTick();
+
+/// One objective row, spoken — and one stage counter. Exported for the tactical HUD recipe's
+/// Objectives stop: two of our surfaces answer this question (Ctrl+X and the graph), and the
+/// cheap corollary of the audit rule is to make them agree by construction — one composer,
+/// however the row is reached. Pure functions of the line; no engine access.
+std::string DescribeLine(const GameUI::ObjectiveLine& line);
+std::string DescribeMissionCounter(const GameUI::MissionCounter& c);
 
 } // namespace ObjectiveReader

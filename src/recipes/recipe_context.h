@@ -57,6 +57,19 @@ struct Recipe {
     // The screen's UIList row selector, for FocusTarget::listIndex write-back; null on screens
     // whose controls all hang off plain panels (the shell, the Ironman choice, dialogs).
     bool (*SetListIndex)(void* screen, int index) = nullptr;
+
+    // An AMBIENT recipe sits under a GAMEPLAY layer that keeps the keyboard: it attaches
+    // SILENTLY and UNFOCUSED (no claims live, no differ running, no attach speech), and only
+    // Ctrl+Tab focuses it. That is the tactical HUD's required state — attached-but-unfocused
+    // while the tile cursor owns the arrows (CLAUDE.md, "The tactical layer: input ownership").
+    // Every menu recipe leaves this false and behaves exactly as before.
+    bool ambient = false;
+
+    // Ambient recipes only, evaluated each tick WHILE FOCUSED: true means the game has taken
+    // the input surface back (the shot HUD raised — targeting owns the arrows, Tab and F1-F8),
+    // and the navigator unfocuses silently. The game's own UI change speaks next (the targeting
+    // poll), so a spoken exit here would talk over it.
+    bool (*YieldFocus)() = nullptr;
 };
 
 // Where the game's focus should follow ours (P11 write-back), per node.
@@ -96,6 +109,7 @@ const ControlType& SliderType();
 const ControlType& SpinnerType();
 const ControlType& DropdownType();
 const ControlType& TextType();
+const ControlType& AbilityType();
 
 // ---- what a node's action reaches back for (defined in menu_navigator.cpp) ----
 

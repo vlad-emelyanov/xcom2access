@@ -22,6 +22,7 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Free aim / AoE | `free_aim.cpp` | `X2AccessTacticalReader.uc` | tactical.md | `free-aim-recon.md` |
 | Selected unit | `unit_info.cpp` | `X2AccessUnitReader.uc` | tactical.md | — |
 | Objectives list | `objective_reader.cpp` | — (native reads the widget) | tactical.md | — |
+| Tactical HUD graph (Ctrl+Tab layer) | `game_ui.cpp` (ability bar) | — (native), `recipes/recipe_tactical.cpp` | tactical.md | — |
 | Tutorial messages + first-time popups | `tutorial_reader.cpp` | `X2AccessTutorial.uc` | tactical.md | — |
 | Hacking screen | `hacking_screen.cpp` | `X2AccessHackingReader.uc` | tactical.md | `hacking-screen-recon.md` |
 | Avenger ant farm | `avenger.cpp` | `X2AccessAvengerReader.uc` | avenger.md | `avenger-view-recon.md` §11 |

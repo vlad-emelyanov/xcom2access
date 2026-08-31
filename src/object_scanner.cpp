@@ -2,6 +2,7 @@
 #include "free_aim.h"
 #include "script_call.h"
 #include "input_arbiter.h"
+#include "menu_navigator.h"
 #include "narrator.h"
 #include "tile_reader.h"
 #include "ue3_reflection.h"
@@ -203,7 +204,17 @@ void Init()
     // ⚠ RightShift is deliberately NOT claimed: it carries no binding in the tactical section, so
     // it was never part of the problem — and leaving it alone keeps a vanilla escape hatch, since
     // Key_Tab checks for RightShift in PressedKeys too.
-    RegisterClaim({VK_LSHIFT, ModNone, active, nullptr, "scanner: own Shift (suppress PrevUnit)"});
+    // ⚠ Wider than the other claims by design: the HUD graph's Shift+Tab (previous stop) has
+    // the same problem this swallow solves — a Shift release reaching the engine at the end of
+    // the chord cycles the soldier — so the swallow holds while the ambient tactical recipe is
+    // focused too, not only while the tile cursor is active. MenuAttached() keeps it OFF under
+    // an ordinary menu recipe (a dialog over tactical), same as today.
+    auto tacticalOwnsShift = [] {
+        return TileReader::IsActive()
+            || (MenuNavigator::OwnsInput() && !MenuNavigator::MenuAttached());
+    };
+    RegisterClaim({VK_LSHIFT, ModNone, tacticalOwnsShift, nullptr,
+        "scanner: own Shift (suppress PrevUnit)"});
 
     // What the swallow costs, paid straight back. Key_Tab's own prev-soldier branch reads
     // PressedKeys, which no longer contains LeftShift while we hold the key — so Shift+Tab would

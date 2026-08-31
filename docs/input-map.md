@@ -22,9 +22,22 @@ Three modes, and the layer must always know which one it is in:
   just chose. There the rule inverts and the arrows are ours — the principle was "do not take a key
   the game is using to steer", and here it is not.
 
-So the recipe must be ATTACHED BUT UNFOCUSED while the cursor keeps the arrows — which needs an
-explicit focused state on the navigator, since gating the tile reader on mere attachment is right
-for menus and wrong here (`next-steps.md`, known defects).
+The recipe is ATTACHED BUT UNFOCUSED while the cursor keeps the arrows — the navigator's focus
+split (`Recipe::ambient` + `MenuNavigator::OwnsInput()`): the tile reader and the legacy-listener
+mute gate on OWNS INPUT, the targeting poll on `MenuAttached()` (a non-ambient recipe took the
+surface), and every navigator claim on attached-AND-focused. Gating the tile reader on mere
+attachment is right for menus and was wrong here.
+
+HUD mode's own keys: `Ctrl+Tab` toggles the layer — claimed whenever a mission is active, not
+merely while attached, because an UNCLAIMED Ctrl+Tab is not a dead key (leniency fires the bare
+Tab binding under it — next soldier, or next target while the shot HUD is raised), so the chord
+is swallowed mission-wide and the handler speaks its refusals ("HUD unavailable."). `Escape`
+while HUD-focused exits to world mode ("Map") and is claimed only then — on every menu recipe
+Escape stays the game's own close key. While focused the navigator's generic set applies
+(arrows, Tab/Shift+Tab between stops, Enter, Space, Home/End), which displaces vanilla Tab =
+next soldier for exactly as long as the player stays in the layer. The `LeftShift` swallow also
+holds while HUD-focused (see below), or the Shift release at the end of Shift+Tab would fire
+`PrevUnit()`.
 
 **UE3 matches modifiers LENIENTLY.** A `KeyBind`'s `Control`/`Shift`/`Alt` are modifiers the chord
 REQUIRES; modifiers the player merely happens to hold are NOT checked.
