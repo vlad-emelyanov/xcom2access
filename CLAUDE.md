@@ -96,7 +96,10 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
     owes the same call** — the ant farm is narrate-only and had to be given it by
     hand; the companion mirrors the same set in `X2AccessHelper.AppendJoined`.
     Four kernel tests pin it.
-- **UI reading**: `src/game_ui.cpp` reads `UIScreen`/`UIPanel`/`UIList` object
+- **UI reading**: the `src/game_ui*.cpp` family — one core TU (`game_ui.cpp`: SEH primitives,
+  stack walkers, call plumbing, behind `src/game_ui_internal.h`) plus one reader TU per surface
+  family (`game_ui_shell/strategy/popup/avenger/tactical.cpp`, mirroring `src/recipes/`; the dev
+  half compiles only into a dev build) — reads `UIScreen`/`UIPanel`/`UIList` object
   trees through EXPLICIT field offsets (never the generated class layouts) and
   `src/recipes/` turns them into GraphRenders — one *recipe* per screen
   (probe → build → name), one attached at a time, listed in `kRecipes` TOPMOST
@@ -402,7 +405,7 @@ path-API survey, the field maps — is **`docs/engine-notes.md`**. What it oblig
   from the truth and therefore never reported as a bug. The length is now read first
   (`FStringLengthRaw`), the buffer sized to it, and an implausible count refused with a log line.
   **Any fixed-size read of something whose length the GAME decides is this bug waiting to happen** —
-  the remaining `wchar_t[256]`/`[512]` buffers in `game_ui.cpp` are per-WIDGET fields bounded by what
+  the remaining `wchar_t[256]`/`[512]` buffers in the `game_ui*.cpp` family are per-WIDGET fields bounded by what
   fits on screen; the payload paths are not, and must never go back to a fixed buffer.
 - **When a control seems not to respond, prove which HALF is broken before fixing either.** The
   Second Wave bug cost a full cycle spent on the write path — reading the game's source for
@@ -554,7 +557,8 @@ any one endpoint:
    actually reach. Watch for controls the game reaches only by mouse (its own keyboard path may be a
    dead end) and for `DisableNavigation()`, which means focus write-back there would be pushing focus
    somewhere the game refuses to keep it.
-2. Transcribe field offsets from the generated SDK's dump comments into `game_ui.cpp`, add a matching
+2. Transcribe field offsets from the generated SDK's dump comments into the surface family's
+   `game_ui_*.cpp` (generic widget offsets live in `game_ui_internal.h`), add a matching
    `static_assert` per offset to `sdk_layout_checks.cpp`, and expose a `Read<Screen>` view struct.
 3. Add the recipe to its family's TU in `src/recipes/`, declare it in `recipes.h` (bumping
    `kRecipeCount`), and list it in `kRecipes` in `menu_navigator.cpp`, TOPMOST SCREEN FIRST —

@@ -9,10 +9,9 @@
 // between two and three of the declarations below and were including all ~1460 lines of the UI
 // interface to get them; now the include graph says what each layer is allowed to know.
 //
-// CLAUDE.md's "Current state / next steps" §1 names the eventual module ("generic
-// find-function-by-name + game-thread call"). This header is its interface; the implementation
-// still lives in game_ui.cpp, where the SEH-guarded reflection primitives it is built on are.
-// Splitting the .cpp is a separate move and needs the raw primitives extracted first.
+// This header is the script-bridge module's interface; the implementation lives in game_ui.cpp
+// (the GameUI core TU), next to the SEH-guarded reflection primitives it is built on, which the
+// family split extracted behind game_ui_internal.h.
 //
 // ⛔ EVERYTHING HERE IS GAME THREAD ONLY — outbound ProcessEvent from the Tick drain, never from
 // the WNDPROC or the init thread (CLAUDE.md, Hard rules).

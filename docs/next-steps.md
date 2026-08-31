@@ -214,10 +214,7 @@ a repeating announcement.
 
 ## Queued work
 
-1. `ScriptCall` module (generic find-function-by-name + game-thread call). `game_ui.cpp` hand-rolls
-   this per call site and exports the first pieces (`FindCompanionCDO`, `CallScriptFunction`); the
-   module is the generalization, not a prerequisite.
-2. `Narrator::Say` adoption: the menu navigator — `menu_navigator.cpp` plus the recipe TUs under
+1. `Narrator::Say` adoption: the menu navigator — `menu_navigator.cpp` plus the recipe TUs under
    `src/recipes/` — is the last surface still calling `TTS` directly,
    and finishing it is a design step rather than a swap — its `TTS::Speak(line, false)` sites mean
    "queued, non-interrupting, focus-owned", which no current channel expresses (`Focus`/`Aid`
@@ -230,11 +227,11 @@ a repeating announcement.
    unmigrated for so long: it rested on `TacticalHUD::OnTick` dropping the queue, which fires only
    on the tactical layer's FALLING EDGE — nothing dropped it under the tile cursor or the object
    scanner, and the geoscape is not tactical at all.
-3. Events NOT yet narrated, in rough value order: reinforcement drops, the Chosen arriving, objective
+2. Events NOT yet narrated, in rough value order: reinforcement drops, the Chosen arriving, objective
    completion, will/panic thresholds, loot. Each is one more `AddCHEvent` line; the cost is judgement
    about spam, not code. `UnitMoveFinished` was deliberately dropped — the shipped sources trigger it
    only from `DLC_2`'s Alien Ruler code, so it is not a base-game event.
-4. Dev harness: `/tile` (the tile reader's state as structured data) and `/tactical` (mode, gate
+3. Dev harness: `/tile` (the tile reader's state as structured data) and `/tactical` (mode, gate
    reasons, last narration lines) are the remaining endpoints. `just dev-speech` covers most of the
    latter already, since it marks interrupting lines with `!`.
 5. Hacking phase 4: a pre-commit odds read via
