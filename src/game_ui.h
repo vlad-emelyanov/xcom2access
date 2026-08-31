@@ -780,6 +780,46 @@ AbilityBarView ReadAbilityBar(void* screen);
 /// SelectAbility raising the targeting UI. Returns the game's own answer. Game thread only.
 bool ActivateBarAbility(void* screen, int index);
 
+// ---- the command buttons (UITacticalHUD_MouseControls) ----
+//
+// The bottom-right strip — end turn, prev/next soldier, camera, evac/mission commands, Chosen
+// info — and on mouse/keyboard that strip IS the HUD's command surface (the controller hotlink
+// buttons are never spawned; see the sighted-parity hard rule). Unlike the rest of the tactical
+// HUD it RETAINS its words: SetButtonItem assigns each button's localized Label, the player's
+// actual bound-key string and its UIState into ButtonItems before pushing to Flash.
+//
+// ⛔ The VISIBLE set is not retained (SetNumActiveControls goes straight to Flash), so the read
+// reconstructs it from the same three inputs UpdateControls used: buttons 0-4 always, slot 5
+// only when CommandAbilities is non-empty, slot 6 only while a Chosen is activated
+// (GetActivatedChosen — the game's own gate, asked fresh). Reading ButtonItems[0..N] raw would
+// resurrect stale labels: an unused slot keeps whatever was last written to it, forever.
+struct CommandButtonEntry {
+    int index = -1;      // the game's own button index — what m_iCurrentSelection must be set to
+    std::string label;   // ButtonItems[i].Label, cleaned; may be empty (caller supplies fallback)
+    std::string key;     // ButtonItems[i].key — the player's current binding, already localized
+    bool enabled = false; // UIState == eUIState_Normal, the exact test OnAccept applies
+};
+
+struct MouseControlsView {
+    bool valid = false;
+    // The panel's localized "no key bound" string. When a button's key slot holds THIS, the
+    // game is saying the action is unbound — it is a sentence of its own, not a key name, so a
+    // caller must not phrase it as one ("key KEY NOT BOUND").
+    std::string noKeyBound;
+    std::vector<CommandButtonEntry> buttons;
+};
+
+/// Read the world-mode button strip off a UITacticalHUD screen. Only meaningful while the shot
+/// HUD is DOWN — while it is raised the strip shows Cancel Shot and slot 0's retained label is
+/// that, not End Turn (callers gate on menuRaised). Game thread only.
+MouseControlsView ReadMouseControls(void* screen);
+
+/// Activate button `index` exactly the way the game's own mouse click does: write
+/// m_iCurrentSelection FIRST, then call OnAccept() — the screen-accept-trap rule, and OnAccept
+/// is also where a disabled button gets the game's own negative sound. Returns false only when
+/// the call could not be made at all. Game thread only.
+bool ActivateMouseControl(void* screen, int index);
+
 // ---- the objectives list (UIObjectiveList) ----
 //
 // The panel that draws "ЗАДАЧИ / OBJECTIVES" and the mission's objective lines under it. Unlike

@@ -53,6 +53,13 @@ class X2AccessUnitReader extends Object;
 // Written by every entry point; read by native immediately after the ProcessEvent returns.
 var string NativeResult;
 
+// The wire format for BuildSoldierRecords: records joined by REC_SEP, fields within a record by
+// FLD_SEP, each field key=value. PRINTABLE separators — UnrealScript string literals do not
+// process escapes, so a "backslash n" would be those two literal characters and split on
+// nothing. Same pair every X2Access*Reader declares; changing one is changing all.
+const REC_SEP = "~|~";
+const FLD_SEP = "~:~";
+
 // Change detection for the automatic poll. An ObjectID only (a value type — CDO rule).
 // 0 means "nothing announced yet", which is also the reset state.
 var int LastSelectedID;
@@ -129,6 +136,184 @@ function AnnounceUnit()
 	LastSelectedID = UnitState.ObjectID;
 
 	NativeResult = DescribeUnit(UnitState);
+}
+
+// The HUD graph's Soldier stop: one wire record per FACT the tactical HUD shows about the
+// selected soldier, in spoken order. Called by native once per graph rebuild (the plan's
+// one-call-per-rebuild budget); the graph makes one label node of each record.
+//
+// SIGHTED PARITY, same audit as the header's table plus the two panels the `;` line does not
+// cover: the WEAPON readout (UITacticalHUD_Inventory.Update — primary weapon name — and
+// UITacticalHUD_Weapon.SetWeaponAndAmmo — Ammo of GetClipSize, hidden for infinite-ammo
+// weapons), and the soldier panel's aim number, promotion arrow, focus meter, bond icon and
+// hack-reward icons (UITacticalHUD_SoldierInfo.SetStats / UpdateFocusLevelVisibility /
+// SetHackingInfo — each fact mirrored from the exact branch that draws it).
+//
+// Enemies-visible is deliberately NOT a record here: the switch line and `;` carry the count,
+// and the individual enemies are the queued Enemies stop's business.
+//
+// Facts that overlap the `;` readout go through the SAME composers (DescribeTargetHealth,
+// DescribeActions, effect names from GetUISummary_UnitEffectsByCategory), so the stop and the
+// key can never disagree — the shared-oracle rule.
+function BuildSoldierRecords()
+{
+	local XComGameState_Unit UnitState;
+	local string Recs;
+
+	NativeResult = "";
+
+	UnitState = class'X2AccessTileReader'.static.ActiveUnitState();
+	if (UnitState == none)
+		return;
+	// Same leak guard as PollSelection: a unit the player does not command is not "the
+	// selection", and describing it would hand out enemy state the game shows nobody.
+	if (UnitState.GetTeam() != eTeam_XCom)
+		return;
+
+	AddFactRecord(Recs, UnitState.ObjectID, "who", DescribeWho(UnitState));
+	AddFactRecord(Recs, UnitState.ObjectID, "health",
+		class'X2AccessTacticalReader'.static.DescribeTargetHealth(UnitState));
+	AddFactRecord(Recs, UnitState.ObjectID, "actions", DescribeActions(UnitState));
+	AddFactRecord(Recs, UnitState.ObjectID, "aim", DescribeAim(UnitState));
+	AddFactRecord(Recs, UnitState.ObjectID, "promotion", DescribePromotion(UnitState));
+	AddFactRecord(Recs, UnitState.ObjectID, "weapon", DescribeWeapon(UnitState));
+	AddFactRecord(Recs, UnitState.ObjectID, "concealment", DescribeConcealment(UnitState));
+	AddFactRecord(Recs, UnitState.ObjectID, "focus", DescribeFocus(UnitState));
+	AddFactRecord(Recs, UnitState.ObjectID, "bond", DescribeBond(UnitState));
+	AddHackRecords(Recs, UnitState);
+	AddEffectRecords(Recs, UnitState);
+
+	NativeResult = Recs;
+}
+
+// One fact record. An empty text is a fact that does not apply (no concealment, no bond) — the
+// record is simply not emitted, which is safe here because nothing positional rides on record
+// order: every record names its own kind, and the graph ids carry it.
+private function AddFactRecord(out string Recs, int ObjectID, string Kind, string Text)
+{
+	if (Text == "")
+		return;
+	if (Recs != "")
+		Recs $= REC_SEP;
+	Recs $= "kind=" $ Kind $ FLD_SEP $ "text=" $ Text $ FLD_SEP $ "oid=" $ string(ObjectID);
+}
+
+// Name and class — the `;` line's own first two parts, through the same composers.
+private function string DescribeWho(XComGameState_Unit UnitState)
+{
+	local string Result;
+
+	Result = class'X2AccessTacticalEvents'.static.UnitName(UnitState);
+	AppendPart(Result, DescribeType(UnitState));
+	return Result;
+}
+
+// The aim number beside the class icon — SetStats queues it for soldiers only (aimPercent is -1
+// for civilians and enemies, which hides it), so the same gate applies. The caption is the
+// game's own localized stat label, confirmed populated on the live CDO 2026-08-31 ("Меткость").
+private function string DescribeAim(XComGameState_Unit UnitState)
+{
+	if (!UnitState.IsSoldier())
+		return "";
+	return class'X2TacticalGameRulesetDataStructures'.default.m_aCharStatLabels[eStat_Offense]
+		@ string(int(UnitState.GetCurrentStat(eStat_Offense)));
+}
+
+// The panel's level-up arrow (SetStats' isLeveledUp), in the exact localized word squad select's
+// promote button uses — the same source X2AccessAfterActionReader ships.
+private function string DescribePromotion(XComGameState_Unit UnitState)
+{
+	if (UnitState.CanRankUpSoldier())
+		return class'UISquadSelect_ListItem'.default.m_strPromote;
+	return "";
+}
+
+// The weapon readout: UITacticalHUD_Inventory.Update shows the PRIMARY weapon's localized name
+// and UITacticalHUD_Weapon.SetWeaponAndAmmo its Ammo of GetClipSize — with the ammo pips
+// suppressed for an infinite-ammo weapon, mirrored here by dropping the clause. The "ammo"
+// lead-in is ours and English, same standing as the tactical reader's "damage"/"cooldown".
+private function string DescribeWeapon(XComGameState_Unit UnitState)
+{
+	local XComGameState_Item Weapon;
+	local string Result;
+
+	Weapon = UnitState.GetPrimaryWeapon();
+	if (Weapon == none || !Weapon.ShouldDisplayWeaponAndAmmo())
+		return "";
+
+	Result = Weapon.GetMyTemplate().GetItemFriendlyName(Weapon.ObjectID);
+	if (!Weapon.HasInfiniteAmmo())
+		class'X2AccessHelper'.static.AppendComma(Result,
+			"ammo" @ string(Weapon.Ammo) @ "of" @ string(Weapon.GetClipSize()));
+	return Result;
+}
+
+// The focus meter, through the SAME tuple the panel reads (CHHelpers.GetFocusTuple — Highlander
+// #257), so a mod that overrides the focus UI overrides this line with it. Data[6] is the
+// localized label ("FOCUS" for a Templar), Data[1]/Data[2] the level and its max.
+private function string DescribeFocus(XComGameState_Unit UnitState)
+{
+	local XComLWTuple Tup;
+
+	Tup = class'CHHelpers'.static.GetFocusTuple(UnitState);
+	if (Tup == none || !Tup.Data[0].b)
+		return "";
+	return Tup.Data[6].s @ string(Tup.Data[1].i) @ "of" @ string(Tup.Data[2].i);
+}
+
+// The bond icon: level, and who with — the half a sighted player gets from the icon's tooltip.
+// "Bond" is ours and English (the game localizes bond text as full sentences, none of them a
+// caption), same open decision as the effect lead-ins.
+private function string DescribeBond(XComGameState_Unit UnitState)
+{
+	local StateObjectReference BondmateRef;
+	local SoldierBond BondInfo;
+	local XComGameState_Unit Bondmate;
+	local string Result;
+
+	if (!UnitState.HasSoldierBond(BondmateRef, BondInfo))
+		return "";
+
+	Result = "Bond" @ string(BondInfo.BondLevel);
+	Bondmate = XComGameState_Unit(`XCOMHISTORY.GetGameStateForObjectID(BondmateRef.ObjectID));
+	if (Bondmate != none)
+		class'X2AccessHelper'.static.AppendComma(Result,
+			class'X2AccessTacticalEvents'.static.UnitName(Bondmate));
+	return Result;
+}
+
+// The hack-reward icons (SetHackingInfo): up to three, localized friendly names, present only
+// while a hack bonus is actually active on this unit.
+private function AddHackRecords(out string Recs, XComGameState_Unit UnitState)
+{
+	local X2HackRewardTemplateManager Mgr;
+	local X2HackRewardTemplate Template;
+	local int i;
+
+	Mgr = class'X2HackRewardTemplateManager'.static.GetHackRewardTemplateManager();
+	for (i = 0; i < UnitState.CurrentHackRewards.Length && i < 3; ++i)
+	{
+		Template = Mgr.FindHackRewardTemplate(UnitState.CurrentHackRewards[i]);
+		if (Template != none)
+			AddFactRecord(Recs, UnitState.ObjectID, "hack", Template.GetFriendlyName());
+	}
+}
+
+// One record per buff arrow, category first — the panel keeps bonuses and penalties apart
+// (green vs red arrow), so which of the two an effect is counts as something on screen. Same
+// list, same filter as DescribeEffects (the `;` composer); only the granularity differs.
+private function AddEffectRecords(out string Recs, XComGameState_Unit UnitState)
+{
+	local array<UISummary_UnitEffect> Effects;
+	local int i;
+
+	Effects = UnitState.GetUISummary_UnitEffectsByCategory(ePerkBuff_Bonus);
+	for (i = 0; i < Effects.Length; i++)
+		AddFactRecord(Recs, UnitState.ObjectID, "bonus", "Bonus:" @ Effects[i].Name);
+
+	Effects = UnitState.GetUISummary_UnitEffectsByCategory(ePerkBuff_Penalty);
+	for (i = 0; i < Effects.Length; i++)
+		AddFactRecord(Recs, UnitState.ObjectID, "penalty", "Penalty:" @ Effects[i].Name);
 }
 
 // ---------------------------------------------------------------------------

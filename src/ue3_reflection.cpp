@@ -67,6 +67,53 @@ static FString* FindStringPropertyRaw(UObject* obj, const char* propName) {
     return nullptr;
 }
 
+// SEH-safe: walk the class chain for a named UArrayProperty and return its Inner->ElementSize —
+// the stride the ENGINE itself uses to index the array. Same walk as FindStringPropertyRaw; kept
+// separate because that one returns a value pointer and this one returns metadata, and merging
+// them would force both callers through an out-parameter for the other's answer.
+static int32_t ArrayElementSizeRaw(UObject* obj, const char* propName) {
+    __try {
+        UClass* cls = obj->Class;
+        if (!cls)
+            return 0;
+
+        for (UStruct* curStruct = reinterpret_cast<UStruct*>(cls);
+             curStruct;
+             curStruct = reinterpret_cast<UStruct*>(curStruct->SuperField))
+        {
+            for (UField* field = curStruct->Children; field; field = field->Next)
+            {
+                FName& fname = field->Name;
+                if (!fname.IsValid())
+                    continue;
+
+                FNameEntry* entry = FName::Names()->at(fname.GetDisplayIndex());
+                if (!entry)
+                    continue;
+
+                const char* fieldName = entry->GetAnsiName();
+                if (!fieldName || strcmp(fieldName, propName) != 0)
+                    continue;
+
+                UProperty* inner = reinterpret_cast<UArrayProperty*>(field)->Inner;
+                if (!inner)
+                    return 0;
+                return inner->ElementSize;
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        // Access violation — silently fail
+    }
+
+    return 0;
+}
+
+int32_t ArrayElementSize(UObject* obj, const char* propName) {
+    if (!obj || !propName || !propName[0])
+        return 0;
+    return ArrayElementSizeRaw(obj, propName);
+}
+
 // SEH-safe: the FString's length in wchars, EXCLUDING the null. 0 if it is empty or unreadable.
 // Read before the copy so the buffer can be sized to the string rather than the other way round.
 static int FStringLengthRaw(FString* fstr) {

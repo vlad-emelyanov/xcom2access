@@ -85,20 +85,31 @@ mid-conversation must announce the line still in progress rather than swallow it
 
 **The tactical HUD graph** (2026-08-31, built, never run — `surfaces/tactical.md` "Tactical HUD
 graph" holds the design; this is the navigator's FIRST ambient recipe, so the focus split itself
-is also unexercised). The pass, on Gatecrasher with the harness armed: (a) mission start attaches
+is also unexercised; all four stops are in: Soldier, Abilities, Commands, Objectives). The pass,
+on Gatecrasher with the harness armed: (a) mission start attaches
 silently (`/health` navigator line reads `attached (tactical HUD, unfocused)`) and the tile
-cursor still works — the split's whole point; (b) `Ctrl+Tab` speaks "HUD" + the first ability
-with its cooldown/charges/hotkey, arrows and Tab walk Abilities and Objectives, and the
-objectives stop reads word-for-word what `Ctrl+X` reads; (c) `Escape` speaks "Map" and the
+cursor still works — the split's whole point; (b) `Ctrl+Tab` speaks "HUD" + the Soldier stop's
+first line (rank + name), arrows walk the facts (health, actions, aim, weapon + ammo, effects)
+and Tab reaches Abilities, Commands and Objectives — the objectives stop must read word-for-word
+what `Ctrl+X` reads, the soldier facts word-for-word what `;` says where they overlap, and the
+abilities row Left/Right with cooldown/charges/hotkey per icon; (c) `Escape` speaks "Map" and the
 arrows drive the cursor again; (d) Enter on an available ability raises targeting, the targeting
 poll announces ability + default target, and the layer is UNFOCUSED afterwards (no arrow
 swallowing — the game cycles targets); (e) Enter on an unavailable one says "unavailable" and
 raises nothing; (f) a soldier switch while focused re-lands cleanly with the NEW soldier's
-abilities (the stale-antenna trap — count the bar against the sighted icon count); (g) a pause
-menu and a modal dialog over tactical still attach their own recipes (the dialog is the
-load-bearing one — the probe's own refusal is all that yields it); (h) `Shift+Tab` inside the
-HUD does NOT cycle the soldier on release (the widened Shift swallow). Then shape-count the
-speech ring as always.
+abilities (the stale-antenna trap — count the bar against the sighted icon count) AND the new
+soldier's facts (the Soldier stop's ObjectID-keyed identities — watch for a stale weapon line);
+(g) a pause menu and a modal dialog over tactical still attach their own recipes (the dialog is
+the load-bearing one — the probe's own refusal is all that yields it); (h) `Shift+Tab` inside the
+HUD does NOT cycle the soldier on release (the widened Shift swallow). Commands-stop specifics:
+(i) the strip reads its five fixed buttons with the player's ACTUAL bound keys (the log carries
+the one-time `TButtonItems stride 0x..` line — 0x21 vs 0x24 is the open layout question the
+first pass settles); (j) on a mission with evac available, slot 6 appears ("Place evac zone"-
+family label) and Enter on it raises free aim; (k) Enter on End Turn ends the turn — and note
+whether staying HUD-focused through the enemy turn is livable or the stop should hand back to
+Map mode on its own (a design question only a live run can answer); (l) Enter on Next/Prev
+soldier moves the selection and the switch line speaks. Then shape-count the speech ring as
+always.
 
 ## Unexercised paths inside surfaces that HAVE run
 
@@ -214,8 +225,11 @@ a repeating announcement.
    the resource strip, the to-do widget and the event queue (`avenger-view-recon.md` §2 —
    note §2.5 was CORRECTED: the event queue IS retained, `UIEventQueue_ListItem.Title` /
    `DaysValue`).
-8. The tactical HUD recipe's remaining stops — soldier, commands, enemies — which are the ones
-   that need the companion snapshot bridge (`X2AccessTacticalReader.BuildSnapshot()`, one wire
-   payload per rebuild; the plan doc's Phase 3 list). Abilities and objectives shipped without it.
-   Also owed from that pass: the spoken REASON on an unavailable ability (`AvailableCode` needs
-   the companion vocabulary — the FName must never be spoken raw).
+8. The tactical HUD recipe's last stop — **Enemies** (the `m_arrTargets` strip, distance and
+   bearing appended as a labelled aid, Enter → `DirectTargetObject`). Soldier (2026-08-31,
+   `X2AccessUnitReader.BuildSoldierRecords` — the wire bridge went in that class, next to its
+   composers, not in `X2AccessTacticalReader` as the plan sketched) and Commands (native —
+   `GameUI::ReadMouseControls`) are built and ride the live-run-debt checklist above. Still owed:
+   the spoken REASON on an unavailable ability (`AvailableCode` needs the companion vocabulary —
+   the FName must never be spoken raw), and a decision on End Turn's focus hand-back (checklist
+   item (k)).

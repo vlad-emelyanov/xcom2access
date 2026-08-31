@@ -416,13 +416,15 @@ position and its render machinery warm. `Ctrl+Tab` focuses it (HUD mode — the 
 come alive: arrows, Tab/Shift+Tab between stops, Enter, Home/End), `Escape` or `Ctrl+Tab` again
 returns to world mode ("Map"), and the shot HUD raising takes focus back WITHOUT a spoken exit —
 the targeting poll's own narration is the next thing heard, and an exit line would talk over it.
-Stops in this pass: **Abilities** (pure widget read) and **Objectives** (via
-`ObjectiveReader::DescribeLine` — one composer with `Ctrl+X`, so the two surfaces cannot
-disagree about a row). Soldier / commands / enemies wait for the companion snapshot bridge.
-The abilities stop is HORIZONTAL, mirroring the strip the game draws — Left/Right walks it, and
-past 15 abilities it wraps to a second shared-key row (Up/Down, column-preserving) exactly where
-the game's own `MAX_NUM_ABILITIES_PER_ROW_BAR` wraps the icons. Objectives stay vertical, as the
-panel does.
+Stops, in on-screen order: **Soldier** (companion-backed — one label node per fact off
+`X2AccessUnitReader.BuildSoldierRecords`, fetched once per rebuild), **Abilities** (pure widget
+read), **Commands** (the `UITacticalHUD_MouseControls` strip, native — the one other tactical
+panel that RETAINS its words), and **Objectives** (via `ObjectiveReader::DescribeLine` — one
+composer with `Ctrl+X`, so the two surfaces cannot disagree about a row). The enemies stop is
+still queued. The abilities and commands stops are HORIZONTAL, mirroring the strips the game
+draws — Left/Right walks them, and past 15 abilities the bar wraps to a second shared-key row
+(Up/Down, column-preserving) exactly where the game's own `MAX_NUM_ABILITIES_PER_ROW_BAR` wraps
+the icons. Soldier and objectives stay vertical, as their panels do.
 
 - ⛔ **The probe must refuse while a `UIDialogueBox` is showing, by its own hand.** While a
   recipe is attached the navigator re-probes only THAT recipe — a higher entry in `kRecipes`
@@ -451,6 +453,37 @@ panel does.
   while the HUD graph is focused too (`object_scanner.cpp`), because the graph's `Shift+Tab`
   has the same problem the scanner's chords had — a Shift release reaching the engine at the end
   of the chord fires `PrevUnit()`.
+- **Soldier stop**: one node per fact, all through the `;` readout's own composers where the two
+  overlap (`DescribeTargetHealth`, `DescribeActions`, the effect lists) so the stop and the key
+  cannot disagree, plus the facts `;` never carried: the weapon readout (primary weapon's
+  localized name + `Ammo` of `GetClipSize`, the ammo clause dropped for infinite-ammo weapons,
+  mirroring `UITacticalHUD_Weapon.SetWeaponAndAmmo`), the aim number (localized
+  `m_aCharStatLabels[eStat_Offense]`, confirmed populated live), the promotion arrow
+  (`UISquadSelect_ListItem.m_strPromote`), the focus meter (through `CHHelpers.GetFocusTuple`,
+  the SAME HL tuple the panel reads, so a focus-UI override carries over), the bond icon and the
+  hack-reward icons. The unit's ObjectID rides every node identity so a soldier SWITCH reads as
+  new nodes to the differ, while damage or a spent point on the same soldier is a value change
+  under a held identity.
+- ⛔ **The commands stop's VISIBLE set is reconstructed, never read.** `SetNumActiveControls`
+  goes straight to Flash and is retained nowhere, and a `ButtonItems` slot outside the visible
+  set keeps its last-written label FOREVER — an unused command slot, a Chosen button after the
+  Chosen left. Membership therefore comes from the same three inputs `UpdateControls` used:
+  buttons 0-4 always, slot 5 iff `CommandAbilities.Length > 0`, slot 6 iff
+  `GetActivatedChosen() != none` (the game's own gate, asked fresh per rebuild) — and the stop
+  is built only while the shot HUD is DOWN, because raised, slot 0's retained label is
+  legitimately "cancel shot" and the layer is yielding focus anyway.
+- **The `TButtonItems` element stride is the live engine's, not the compiled SDK's.** The
+  ScriptStruct's runtime `PropertiesSize` is 0x21 and whether `UStructProperty` rounds that to 4
+  when striding is the engine's business, so `ReadMouseControls` asks the live `UArrayProperty`
+  for `Inner->ElementSize` (`UE3Reflect::ArrayElementSize`), sanity-bounds it, and logs it once
+  — the `static_assert` pins only the intra-element offsets (Label 0x00 / key 0x10 / state
+  0x20) and documents the compiled sizeof (0x24) it deliberately does not use.
+- **Command activation is the panel's own click**: write `m_iCurrentSelection`, call
+  `OnAccept()` — the set-selection-first rule, byte-for-byte the `FXS_L_MOUSE_UP` path. A
+  disabled button (any non-Normal `UIState`, OnAccept's own test) gets no `OnActivate` and is
+  spoken "unavailable"; the key string each button retains is the player's ACTUAL binding, so
+  the stop doubles as where the vanilla hotkeys get taught — except the localized "no key
+  bound" line, which is a sentence of its own and is spoken without the "key" prefix.
 - While unfocused the navigator runs NO rebuilds and no differ — the graph is dormant, and every
   pointer in its stale render is refreshed by the `Rerender()` that focus entry starts with. A
   mid-mission cinematic detaches and silently re-attaches the recipe; stop positions reset there

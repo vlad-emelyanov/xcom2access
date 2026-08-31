@@ -383,6 +383,29 @@ static_assert(offsetof(AUITacticalHUD_Ability, m_strHotkeyLabel) == 0x428,
 static_assert(offsetof(AUITacticalHUD_Ability, Index) == 0x43C,
     "UITacticalHUD_Ability::Index (the IsAvailable dword precedes it at 0x438)");
 
+// ---- the command buttons (UITacticalHUD_MouseControls) ----
+// The one tactical panel besides objectives that RETAINS its words: SetButtonItem assigns
+// Label/key/UIState into ButtonItems before the Flash push. All four offsets confirmed live
+// 2026-08-31 via /props against the running class.
+static_assert(offsetof(AUITacticalHUD, m_kMouseControls) == 0x44C,
+    "UITacticalHUD::m_kMouseControls");
+static_assert(offsetof(AUITacticalHUD_MouseControls, m_iCurrentSelection) == 0x46C,
+    "UITacticalHUD_MouseControls::m_iCurrentSelection (OnAccept reads THIS, not a parameter)");
+static_assert(offsetof(AUITacticalHUD_MouseControls, ButtonItems) == 0x474,
+    "UITacticalHUD_MouseControls::ButtonItems");
+static_assert(offsetof(AUITacticalHUD_MouseControls, CommandAbilities) == 0x484,
+    "UITacticalHUD_MouseControls::CommandAbilities");
+// The element layout is solid; the element STRIDE is not derivable from this compiled struct
+// alone — the ScriptStruct's runtime PropertiesSize is 0x21 and whether the engine's
+// UStructProperty aligns that to 4 is its business, so ReadMouseControls takes the stride from
+// the live UArrayProperty's own ElementSize (UE3Reflect::ArrayElementSize) and only sanity-bounds
+// it. sizeof here documents what the pack(4) compile believes; it is deliberately NOT used as
+// the stride.
+static_assert(offsetof(FTButtonItems, Label) == 0x00, "TButtonItems::Label");
+static_assert(offsetof(FTButtonItems, Key) == 0x10, "TButtonItems::Key");
+static_assert(offsetof(FTButtonItems, uistate) == 0x20, "TButtonItems::uistate");
+static_assert(sizeof(FTButtonItems) == 0x24, "TButtonItems compiled size (see stride note)");
+
 // ---- squad select (docs/squad-select-recon.md §3) ----
 // The screen's own bitfield sits at 0x478 (bLaunched / bReceivedWalkupEvent / bNoCancel /
 // bDisableLoadout); SquadMinimums is the plain member before it and SoldierSlotCount the one

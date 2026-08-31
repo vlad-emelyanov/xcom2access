@@ -8,10 +8,12 @@
 // shot HUD takes them back without asking (YieldFocus — targeting owns the arrows, and the
 // targeting poll's narration speaks next, so the yield is silent).
 //
-// The stops mirror what is ON SCREEN, in the parity-audited order the plan fixed: abilities and
-// objectives ship first because they are the two panels the widget tree itself can answer
-// (engine-notes: everything else on this HUD is a write-only pipe into Flash). The soldier,
-// command and enemy stops come with the companion snapshot bridge, not before.
+// The stops mirror what is ON SCREEN, in the parity-audited order the plan fixed: SOLDIER (the
+// bottom-left panel plus the weapon/ammo readout — companion-backed, because those panels are
+// write-only pipes into Flash and the facts live only in XCOMHISTORY), ABILITIES (pure widget
+// read), COMMANDS (the mouse-controls strip, the one other tactical panel that RETAINS its
+// words — label, bound key and state per button), OBJECTIVES (retained widget data through the
+// Ctrl+X composers). The enemy stop is still queued work.
 //
 // ⛔ Probe subtlety that is easy to lose: while ATTACHED, the navigator re-probes only THIS
 // recipe — a higher recipe gets its chance only after a detach. Every menu that can appear over
@@ -56,9 +58,39 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
     GameUI::AbilityBarView bar = GameUI::ReadAbilityBar(gScreen);
     if (!bar.valid)
         return nullptr;
+    GameUI::TacticalGate gate = GameUI::ReadTacticalGate();
 
     GraphBuilder b;
     bool anyNode = false;
+
+    // ---- Soldier: the selected unit's stat block, one node per fact ----
+    //
+    // Companion-backed: the soldier panel, the unit flag and the weapon/ammo readout are all
+    // write-only pipes into Flash, so the words come from X2AccessUnitReader — the SAME class
+    // that composes the `;` readout, so the stop and the key cannot disagree about a fact
+    // (the shared-oracle rule). One outbound call per rebuild, the plan's stated budget.
+    std::vector<WireRecord> soldier
+        = FetchCompanionRecords("X2AccessUnitReader", "BuildSoldierRecords");
+    if (!soldier.empty()) {
+        anyNode = true;
+        b.BeginStop("soldier");
+        b.PushContext(Vocab::StopSoldier);
+        // The unit's ObjectID rides every identity: a soldier SWITCH must read to the differ as
+        // new nodes, where damage or a spent action on the same soldier is a text change under a
+        // held identity (the live-part watch's business, not a focus jump).
+        std::string oid = RecField(soldier.front(), "oid");
+        int n = 0;
+        for (const WireRecord& rec : soldier) {
+            std::string text = RecField(rec, "text");
+            if (text.empty())
+                continue; // a fact that does not apply is a record the companion never emits;
+                          // nothing positional rides on the index (each id carries its kind)
+            b.AddLabel(ControlId::Structural("thud/sol/" + oid + "/" + std::to_string(n++) + "/"
+                           + RecField(rec, "kind")),
+                [text]() { return text; });
+        }
+        b.PopContext();
+    }
 
     // ---- Abilities: one node per live bar icon, a pure widget read (T2) ----
     if (!bar.entries.empty()) {
@@ -128,6 +160,69 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
         }
         b.EndRow();
         b.PopContext();
+    }
+
+    // ---- Commands: the mouse-controls strip, the game's own answer to "what does this HUD
+    // offer" (the sighted-parity hard rule names this exact panel) ----
+    //
+    // Only while the shot HUD is DOWN: raised, the strip shows Cancel Shot alone and slot 0's
+    // retained label IS "cancel shot" — and the layer is yielding focus then anyway, so the
+    // stop would never be walked. The read reconstructs the visible set from the same inputs
+    // UpdateControls used; see game_ui.h.
+    if (!gate.menuRaised) {
+        GameUI::MouseControlsView ctl = GameUI::ReadMouseControls(gScreen);
+        if (ctl.valid && !ctl.buttons.empty()) {
+            anyNode = true;
+            b.BeginStop("commands");
+            b.PushContext(Vocab::StopCommands);
+            b.StartRow("commands"); // drawn as one horizontal row of icon buttons
+            for (const GameUI::CommandButtonEntry& e : ctl.buttons) {
+                std::string name = e.label.empty() ? Vocab::CommandFallback(e.index) : e.label;
+
+                NodeVtable vt;
+                vt.Type = &ButtonType();
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(name));
+                vt.Announcements.back().Kind = AnnouncementKinds::Label;
+
+                // The player's actual binding, as the hover help gives it — this stop doubles
+                // as the place the vanilla hotkeys get taught. The game's "no key bound" line
+                // is a sentence of its own and must not be phrased as a key name.
+                std::string value;
+                if (!e.key.empty()) {
+                    value = (!ctl.noKeyBound.empty() && e.key == ctl.noKeyBound)
+                        ? e.key
+                        : Vocab::AbilityHotkey(e.key);
+                }
+                if (!value.empty()) {
+                    vt.Announcements.emplace_back(NodeAnnouncement::Static(value));
+                    vt.Announcements.back().Kind = AnnouncementKinds::Value;
+                }
+
+                if (!e.enabled) {
+                    // Disabled by OnAccept's own test (any non-Normal UIState), so the spoken
+                    // state and the activation gate cannot disagree.
+                    vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+                    vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+                } else {
+                    const int index = e.index;
+                    vt.OnActivate = [index]() {
+                        // The panel's own click path: selection first, then OnAccept — which
+                        // owns the refusal sound. False means the call itself could not be
+                        // made, and a pressed key must never be silent.
+                        if (!GameUI::ActivateMouseControl(gScreen, index))
+                            TTS::SpeakInterrupt(Vocab::Disabled);
+                    };
+                }
+
+                // Label in the identity: slot 5 changes with the soldier's command abilities
+                // and slot 6 appears with a Chosen — both must read as new nodes.
+                b.AddItem(
+                    ControlId::Structural("thud/cmd/" + std::to_string(e.index) + "/" + name),
+                    std::move(vt));
+            }
+            b.EndRow();
+            b.PopContext();
+        }
     }
 
     // ---- Objectives: the panel that retains its words, through the Ctrl+X composers ----

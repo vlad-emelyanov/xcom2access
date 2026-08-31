@@ -335,7 +335,9 @@ inline constexpr const char* ScreenTacticalHud = "HUD";
 inline constexpr const char* TacticalWorldMode = "Map";
 
 // The HUD graph's stop headings. Our own structure words, same standing as the role words above.
+inline constexpr const char* StopSoldier = "Soldier";
 inline constexpr const char* StopAbilities = "Abilities";
+inline constexpr const char* StopCommands = "Commands";
 inline constexpr const char* StopObjectives = "Objectives";
 
 // An ability icon whose antenna text read empty (the game populates it only while the mouse is
@@ -346,10 +348,19 @@ inline std::string AbilityFallback(int index)
 }
 
 // The hotkey label drawn on an ability icon ("1".."0"), phrased so a bare digit at the end of
-// the readout cannot be mistaken for a count or a position.
+// the readout cannot be mistaken for a count or a position. The command buttons reuse it for
+// their bound-key strings, which arrive already localized from the game's keybinding data.
 inline std::string AbilityHotkey(const std::string& label)
 {
     return "key " + label;
+}
+
+// A command button whose retained label read empty — same degradation as AbilityFallback, so the
+// node still exists and still activates (the empty-answer trap: dropping it would silently
+// renumber nothing, but it WOULD make a control cease to exist).
+inline std::string CommandFallback(int index)
+{
+    return "Button " + std::to_string(index + 1);
 }
 
 // ---- tutorial mission (Tutorial_01) ----

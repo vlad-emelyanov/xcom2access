@@ -205,6 +205,27 @@ constexpr uint32_t kAbilityIconAvailable = 0x01;      // IsAvailable
 // is created once at that length, so a structural cap two above it can only clip if the game does.
 constexpr int kAbilityBarMax = 32;
 
+// ---- the command buttons (UITacticalHUD_MouseControls) ----
+// All four confirmed live 2026-08-31 via /props against the running class.
+constexpr int32_t kTacHudMouseControlsOffset = 0x44C;  // UITacticalHUD::m_kMouseControls
+constexpr int32_t kMouseCtlSelectionOffset = 0x46C;    // m_iCurrentSelection (OnAccept reads it)
+constexpr int32_t kMouseCtlButtonItemsOffset = 0x474;  // ButtonItems (TArray<TButtonItems>)
+constexpr int32_t kMouseCtlCommandsOffset = 0x484;     // CommandAbilities (TArray<AvailableAction>)
+// Inside one TButtonItems element. The element STRIDE is deliberately not a constant here: the
+// ScriptStruct's runtime size is 0x21 and whether the engine rounds it to 4 when striding is the
+// engine's call, so ReadMouseControls asks the live UArrayProperty for its Inner->ElementSize.
+constexpr int32_t kMouseCtlNoKeyOffset = 0x408;        // m_strNoKeyBoundString (localized)
+constexpr int32_t kButtonItemLabelOffset = 0x00;       // Label (FString)
+constexpr int32_t kButtonItemKeyOffset = 0x10;         // key (FString)
+constexpr int32_t kButtonItemStateOffset = 0x20;       // UIState (byte; 0 = eUIState_Normal)
+// The world-mode button indices, from the class defaults (m_opt*): 0-4 fixed, 5 the first
+// command-ability slot, 6 Chosen info. InitMouseControls sets ButtonItems.Length = 10 and
+// nothing ever resizes it — the count doubles as the is-this-panel-sane check.
+constexpr int kMouseCtlFixedButtons = 5;               // end turn, prev, next, cam left, cam right
+constexpr int kMouseCtlCommandSlot = 5;                // m_optCallSkyranger
+constexpr int kMouseCtlChosenSlot = 6;                 // m_optChosenInfo
+constexpr int kMouseCtlButtonCount = 10;               // ButtonItems.Length, set once at init
+
 // ---- the objectives list (UIObjectiveList / UIObjectiveListItem) ----
 // Verified live 2026-08-23 against the running class on LostAndAbandonedB: m_kObjectivesControl
 // 0x444, Items 0x3D8 (4 entries), Data 0x3DC. The Avenger's owner offset is from the dump only —
@@ -3539,6 +3560,128 @@ bool ActivateBarAbility(void* screen, int index)
     if (!CallNamedFunction(container, "AbilityClicked", &params))
         return false;
     return params.ReturnValue != 0;
+}
+
+// ---- the command buttons (UITacticalHUD_MouseControls) ----
+
+namespace {
+
+// PODs only (SEH): the ButtonItems span. The count is set once at InitMouseControls (Length =
+// 10) and nothing ever resizes it, so any other count means the panel — or our offset — is not
+// what we think it is, and the read refuses rather than stride into it.
+bool MouseControlSpanRaw(const void* controls, const uint8_t** outData)
+{
+    __try {
+        auto* arr = reinterpret_cast<const uint8_t*>(controls) + kMouseCtlButtonItemsOffset;
+        auto* data = *reinterpret_cast<const uint8_t* const*>(arr);
+        int32_t n = *reinterpret_cast<const int32_t*>(arr + 8);
+        if (!data || n != kMouseCtlButtonCount)
+            return false;
+        *outData = data;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// The engine's OWN stride over TButtonItems, from the live UArrayProperty. Metadata on the
+// class, so resolved once and kept — but only an IMPLAUSIBLE answer is latched as refusal,
+// because the plausible band [script size .. one padded pointer over] is where the truth must
+// live whichever way the engine rounds. -1 = resolved and refused, 0 = not yet resolved.
+int32_t ButtonItemStride(void* controls)
+{
+    static int32_t sStride = 0;
+    if (sStride == 0) {
+        int32_t stride = UE3Reflect::ArrayElementSize(
+            reinterpret_cast<UObject*>(controls), "ButtonItems");
+        if (stride < 0x21 || stride > 0x30) {
+            LOG_WARN("GameUI: TButtonItems stride reads 0x%X — implausible, command buttons "
+                     "disabled",
+                stride);
+            sStride = -1;
+        } else {
+            LOG_INFO("GameUI: TButtonItems stride 0x%X (compiled sizeof 0x24)", stride);
+            sStride = stride;
+        }
+    }
+    return sStride;
+}
+
+// Is a Chosen activated on this map — the exact gate UpdateControls runs before it shows the
+// Chosen Info button, asked of the same static.
+bool ChosenActivatedRawCall()
+{
+    struct {
+        void* ReturnValue;
+    } params{nullptr};
+    if (!CallStaticNative("XComGameState_Unit", "GetActivatedChosen", &params))
+        return false;
+    return params.ReturnValue != nullptr;
+}
+
+} // namespace
+
+MouseControlsView ReadMouseControls(void* screen)
+{
+    MouseControlsView v;
+    if (!screen)
+        return v;
+    void* controls = ReadPtrRaw(screen, kTacHudMouseControlsOffset);
+    if (!controls)
+        return v;
+
+    const uint8_t* data = nullptr;
+    if (!MouseControlSpanRaw(controls, &data))
+        return v;
+    int32_t stride = ButtonItemStride(controls);
+    if (stride <= 0)
+        return v;
+
+    // The visible set, reconstructed from the same three inputs UpdateControls used (the count
+    // itself is pushed straight to Flash and retained nowhere). Slots outside this set retain
+    // stale labels forever — an unused command slot, a Chosen button after the Chosen left —
+    // so membership comes from the inputs, never from "does the slot hold text".
+    int indices[kMouseCtlFixedButtons + 2];
+    int count = 0;
+    for (int i = 0; i < kMouseCtlFixedButtons; i++)
+        indices[count++] = i;
+    if (ReadI32Raw(controls, kMouseCtlCommandsOffset + 8) > 0)
+        indices[count++] = kMouseCtlCommandSlot;
+    if (ChosenActivatedRawCall())
+        indices[count++] = kMouseCtlChosenSlot;
+
+    v.valid = true;
+    v.noKeyBound = ReadFStringField(controls, kMouseCtlNoKeyOffset);
+    v.buttons.reserve(static_cast<size_t>(count));
+    for (int k = 0; k < count; k++) {
+        const uint8_t* el = data + static_cast<size_t>(indices[k]) * stride;
+        CommandButtonEntry e;
+        e.index = indices[k];
+        e.label = ReadFStringField(el, kButtonItemLabelOffset);
+        e.key = ReadFStringField(el, kButtonItemKeyOffset);
+        // OnAccept's own test is != eUIState_Normal (0), not == eUIState_Disabled — mirror the
+        // gate the activation will actually hit so the spoken state can never disagree with it.
+        e.enabled = ReadU8Raw(el, kButtonItemStateOffset) == 0;
+        v.buttons.push_back(std::move(e));
+    }
+    return v;
+}
+
+bool ActivateMouseControl(void* screen, int index)
+{
+    if (!screen || index < 0 || index >= kMouseCtlButtonCount)
+        return false;
+    void* controls = ReadPtrRaw(screen, kTacHudMouseControlsOffset);
+    if (!controls)
+        return false;
+    // Selection FIRST, then the click — OnAccept acts on m_iCurrentSelection and ignores
+    // everything else (the screen-accept-trap rule). This is byte-for-byte what the panel's own
+    // FXS_L_MOUSE_UP handler does.
+    WriteI32Raw(controls, kMouseCtlSelectionOffset, index);
+    struct {
+        uint32_t ReturnValue;
+    } params{0};
+    return CallNamedFunction(controls, "OnAccept", &params);
 }
 
 // ---- the objectives list (UIObjectiveList) ----
