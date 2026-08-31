@@ -501,9 +501,7 @@ private function UICovertActionSlot ResolveSlot(int Index)
 
 private function Emit(string Rec)
 {
-	if (NativeResult != "")
-		NativeResult $= REC_SEP;
-	NativeResult $= Rec;
+	class'X2AccessWire'.static.AddRecord(NativeResult, Rec);
 }
 
 defaultproperties

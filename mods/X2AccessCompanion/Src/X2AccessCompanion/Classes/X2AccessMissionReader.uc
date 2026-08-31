@@ -557,7 +557,5 @@ private function PushButton(int Index, string Label)
 
 private function Push(string Rec)
 {
-	if (NativeResult != "")
-		NativeResult = NativeResult $ REC_SEP;
-	NativeResult = NativeResult $ Rec;
+	class'X2AccessWire'.static.AddRecord(NativeResult, Rec);
 }

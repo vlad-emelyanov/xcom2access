@@ -364,10 +364,7 @@ private function UIAfterAction GetAfterAction()
 // is not showing this". No field on this screen repeats, so there is no positional exception.
 private function AddField(out string Rec, string Key, string Value)
 {
-	if (Value == "")
-		return;
-	// Markup is left in: native runs every value through GameUI::CleanText on the way out.
-	Rec $= FLD_SEP $ Key $ "=" $ Value;
+	class'X2AccessWire'.static.AddField(Rec, Key, Value);
 }
 
 // Call-site sugar over X2AccessHelper.AppendComma, which owns the never-a-bare-separator rule.

@@ -268,7 +268,5 @@ private function AppendCandidates(UIRoom Room)
 
 private function Push(string Rec)
 {
-	if (NativeResult != "")
-		NativeResult = NativeResult $ REC_SEP;
-	NativeResult = NativeResult $ Rec;
+	class'X2AccessWire'.static.AddRecord(NativeResult, Rec);
 }

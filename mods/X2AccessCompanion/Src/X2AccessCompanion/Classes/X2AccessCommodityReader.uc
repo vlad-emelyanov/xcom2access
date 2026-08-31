@@ -398,19 +398,10 @@ private function string FormatReq(string Requirements)
 
 private function Emit(string Rec)
 {
-	if (NativeResult != "")
-		NativeResult $= REC_SEP;
-	NativeResult $= Rec;
+	class'X2AccessWire'.static.AddRecord(NativeResult, Rec);
 }
 
-// Empty values are DROPPED rather than written as an empty field: a missing key means "the
-// screen is not showing this", which is exactly the distinction the recipe needs — and it is
-// what keeps an empty label from voicing a bare separator.
 private function AddField(out string Rec, string Key, string Value)
 {
-	if (Value == "")
-		return;
-	// Markup is left in: native runs every value through GameUI::CleanText on the way out, so
-	// there is exactly one implementation of "strip the HTML the game colours its text with".
-	Rec $= FLD_SEP $ Key $ "=" $ Value;
+	class'X2AccessWire'.static.AddField(Rec, Key, Value);
 }

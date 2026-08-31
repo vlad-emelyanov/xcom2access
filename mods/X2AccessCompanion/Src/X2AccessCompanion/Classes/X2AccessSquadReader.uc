@@ -477,11 +477,7 @@ private function UISquadSelect GetSquadSelect()
 // node exists at all.
 private function AddField(out string Rec, string Key, string Value)
 {
-	if (Value == "")
-		return;
-	// Markup is left in: native runs every value through GameUI::CleanText on the way out, so
-	// there is exactly one implementation of "strip the HTML the game colours its text with".
-	Rec $= FLD_SEP $ Key $ "=" $ Value;
+	class'X2AccessWire'.static.AddField(Rec, Key, Value);
 }
 
 // The exception to the drop-empties rule, for the one field that repeats: `util` is POSITIONAL
@@ -491,7 +487,7 @@ private function AddField(out string Rec, string Key, string Value)
 // blank and let native decide what to say about it.
 private function AddPositionalField(out string Rec, string Key, string Value)
 {
-	Rec $= FLD_SEP $ Key $ "=" $ Value;
+	class'X2AccessWire'.static.AddPositionalField(Rec, Key, Value);
 }
 
 // Call-site sugar over X2AccessHelper.AppendComma, which owns the ⛔ never-a-bare-separator rule.

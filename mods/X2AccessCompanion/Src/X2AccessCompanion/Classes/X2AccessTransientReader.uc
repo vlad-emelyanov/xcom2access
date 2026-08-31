@@ -231,9 +231,8 @@ private function PollTutorialBox()
 // Wire
 // ---------------------------------------------------------------------------------------
 
+// LINE_SEP is the wire's REC_SEP by value; the shared appender is the same logic either way.
 private function Push(string Line)
 {
-	if (NativeResult != "")
-		NativeResult = NativeResult $ LINE_SEP;
-	NativeResult = NativeResult $ Line;
+	class'X2AccessWire'.static.AddRecord(NativeResult, Line);
 }

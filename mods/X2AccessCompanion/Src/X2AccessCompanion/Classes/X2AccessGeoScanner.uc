@@ -491,11 +491,7 @@ private function string ETAWords(int MinDays, int MaxDays, bool bContact)
 
 private function Emit(string Rec)
 {
-	if (NativeResult != "")
-	{
-		NativeResult $= REC_SEP;
-	}
-	NativeResult $= Rec;
+	class'X2AccessWire'.static.AddRecord(NativeResult, Rec);
 }
 
 // ---------------------------------------------------------------------------

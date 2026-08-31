@@ -174,9 +174,5 @@ private function string FormatTime(string HeaderTime)
 // is not showing this", which is exactly the distinction the recipe needs.
 private function AddField(out string Rec, string Key, string Value)
 {
-	if (Value == "")
-		return;
-	// Markup is left in: native runs every value through GameUI::CleanText on the way out, so
-	// there is exactly one implementation of "strip the HTML the game colours its text with".
-	Rec $= FLD_SEP $ Key $ "=" $ Value;
+	class'X2AccessWire'.static.AddField(Rec, Key, Value);
 }
