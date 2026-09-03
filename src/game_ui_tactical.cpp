@@ -7,6 +7,13 @@
 #include "game_ui_internal.h"
 #include "log.h"
 #include "ue3_reflection.h"
+#include "flash_shadow.h"
+
+// The kernel's phrase-join rule. The mission bookends compose several operands of ONE Flash
+// push into one spoken line, and every label on them already ends in ':' — a bare ", " would
+// voice a doubled stop (CLAUDE.md, AppendPhrase). Same use game_ui.cpp makes of it for
+// tooltips; nothing else here reaches into the kernel.
+#include "Graph/GraphAnnouncer.hpp"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -706,6 +713,268 @@ TutorialState ReadTutorialState()
     s.invalidSubmissions = static_cast<int>(ReadU32Raw(mgr, kTutInvalidCountOffset));
     s.nextAbilityContext = ReadPtrRaw(mgr, kTutNextAbilityCtxOffset);
     return s;
+}
+
+// ---- the mission bookends (UIMissionSummary / UIChosenMissionSummary) --------------------
+//
+// See the header and docs/mission-summary-recon.md. Words from the Flash capture; two plain
+// offset reads on the mission summary and none at all on the Chosen one.
+
+namespace {
+
+// UIMissionSummary's two retained fields, from the regenerated dump, pinned in
+// sdk_layout_checks.cpp.
+constexpr int32_t kSummaryPosterButtonOffset = 0x464; // m_PosterButton (UIButton*)
+constexpr int32_t kSummaryContinueOffset = 0x4C4;     // m_strContinue (localized FString)
+
+// SetMissionInfo's parameter order (UIMissionSummary.uc:533-575), read BY POSITION — operands
+// 0, 19 and 20 are numbers, which StringArgs() renders as empty slots precisely so nothing
+// after them shifts. 19/20 duplicate the enemies-killed value and are not spoken.
+enum SummaryArg {
+    kSumStatus = 0, // MissionStatus — a number
+    kSumResult = 1,
+    kSumOpName = 2,
+    kSumTypeLabel = 3,
+    kSumObjectiveLabel = 5,
+    kSumTurnsLabel = 7,
+    kSumLootLabel = 9, // ALWAYS "" at both call sites — see below
+    kSumEnemiesLabel = 11,
+    kSumWoundedLabel = 13,
+    kSumKilledLabel = 15,
+    kSumRatingLabel = 17,
+};
+
+// Every label/value pair the call carries, in drawn order. Each pair is (label index, id); the
+// value always sits at label + 1.
+//
+// ⛔ THE LOOT PAIR IS LISTED and then drops out by the empty rule, deliberately rather than by
+// omission. `m_strLootRecoveredLabel` ("ITEMS RECOVERED:") is declared, localized and passed ""
+// by BOTH call sites — loot is reported two screens later — so a reader sourcing labels from
+// the loc file would invent a row the screen does not draw. Keeping the slot here documents
+// that, and costs one skipped iteration.
+struct SummaryPairSpec {
+    SummaryArg label;
+    const char* id;
+};
+
+constexpr SummaryPairSpec kSummaryPairs[] = {
+    {kSumTypeLabel, "type"},
+    {kSumObjectiveLabel, "objective"}, // "OBJECTIVE:" or "CIVILIANS RESCUED:" — the label the
+                                       // screen chose, never one we picked
+    {kSumTurnsLabel, "turns"},
+    {kSumLootLabel, "loot"},
+    {kSumEnemiesLabel, "enemies"},
+    {kSumWoundedLabel, "wounded"},
+    {kSumKilledLabel, "killed"},
+    {kSumRatingLabel, "rating"},
+};
+
+// SetChosenData's parameter order (UIChosenMissionSummary.uc:118-131).
+enum ChosenDataArg {
+    kChosenTitle = 0,
+    kChosenSubtitle = 1,
+    kChosenClass = 2,
+    kChosenName = 3,
+    kChosenNickname = 4,
+    kChosenFlavor = 5,
+    kChosenStrengthsLabel = 6,
+    kChosenStrengths = 7,
+    kChosenWeaknessesLabel = 8,
+    kChosenWeaknesses = 9,
+};
+
+// The remaining four calls. ⛔ Every index NOT named here is an asset path: SetChosenImage's
+// operand 0 is the portrait, SetSoldierCapture's 1, 2 and 6 are the class icon, the rank icon
+// and the headshot, and SetChosenIcon is nothing but "img:///" paths and is never read at all.
+enum ChosenImageArg {
+    kChosenDefeated = 1, // 0 is the portrait path
+};
+
+enum ChosenRewardArg {
+    kChosenRewardLabel = 0,
+    kChosenRewardValue = 1,
+    kChosenRewardType = 2,
+};
+
+enum ChosenKnowledgeArg {
+    kChosenKnowledgeLabel = 0,
+    kChosenKnowledgeStart = 1, // QueueNumber — read off args[i].n, empty in StringArgs()
+    kChosenKnowledgeEnd = 2,   // QueueNumber
+    kChosenKnowledgeText = 3,
+};
+
+enum ChosenCaptureArg {
+    kChosenCaptureLabel = 0,
+    kChosenCaptureRank = 3,
+    kChosenCaptureName = 4,
+    kChosenCaptureClass = 5,
+};
+
+// A number operand as an integer, or -1 when the slot is missing or is not a number. The two
+// knowledge percentages are the only numbers either screen means for the player.
+int FlashNumber(const FlashShadow::Call& call, size_t index)
+{
+    if (index >= call.args.size() || call.args[index].type != FlashShadow::ValueType::Number)
+        return -1;
+    return static_cast<int>(call.args[index].n);
+}
+
+// Two spoken phrases joined by the kernel's rule, never a bare ", ": every label on these
+// screens ends in ':' already, which AppendPhrase answers with a plain space.
+std::string JoinPhrase(const std::string& first, const std::string& second)
+{
+    std::string out = first;
+    X2Access::Graph::AppendPhrase(out, second);
+    return out;
+}
+
+} // namespace
+
+void* FindMissionSummary()
+{
+    return FindStackScreenRaw("UIMissionSummary");
+}
+
+MissionSummaryView ReadMissionSummary(void* screen)
+{
+    MissionSummaryView v;
+    v.screen = screen;
+    if (!screen)
+        return v;
+
+    // Read regardless of the capture: these two are the screen's own properties, and a capture
+    // that came back empty is exactly when the Continue label matters most.
+    v.continueLabel = ReadFStringField(screen, kSummaryContinueOffset);
+    v.photobooth = ReadButtonField(screen, kSummaryPosterButtonOffset);
+
+    // The screen pushes through its OWN MC (MCName "theMissionSummary"), so the identity the
+    // command stream is keyed by is the screen's own cache index — no library panel involved.
+    const int32_t index = FlashShadow::PanelCacheIndex(screen);
+    if (index < 0)
+        return v;
+
+    FlashShadow::Call call;
+    if (!FlashShadow::GetCall(index, "SetMissionInfo", call))
+        return v;
+
+    const std::vector<std::string> args = call.StringArgs();
+    v.captured = true;
+    v.result = FlashArg(args, kSumResult);
+    v.opName = FlashArg(args, kSumOpName);
+    for (const SummaryPairSpec& spec : kSummaryPairs) {
+        SummaryStat stat;
+        stat.id = spec.id;
+        stat.label = FlashArg(args, spec.label);
+        stat.value = FlashArg(args, spec.label + 1);
+        // A pair the screen drew nothing for is not a row. Both halves are tested, not just the
+        // value: a label with no value is just as absent, and an empty answer here is ordinary
+        // rather than a failure.
+        if (!stat.label.empty() || !stat.value.empty())
+            v.stats.push_back(std::move(stat));
+    }
+
+    // ⛔ LOG ON CHANGE, NEVER PER READ — this runs from Build() AND ScreenName(), so about
+    // twenty times a second. The screen pointer is COMPARED and never dereferenced, and the
+    // result rides in the key so a second mission landing on a reused address still logs.
+    static void* sLastScreen = nullptr;
+    static std::string sLastResult;
+    if (screen != sLastScreen || v.result != sLastResult) {
+        sLastScreen = screen;
+        sLastResult = v.result;
+        LOG_INFO("MissionSummary: '%s' / '%s' from cache index %d — %zu operand(s), %zu stat "
+                 "row(s), photobooth %s",
+            v.result.c_str(), v.opName.c_str(), index, args.size(), v.stats.size(),
+            v.photobooth.handle ? "shown" : "hidden");
+    }
+    return v;
+}
+
+void* FindChosenSummary()
+{
+    return FindStackScreenRaw("UIChosenMissionSummary");
+}
+
+ChosenSummaryView ReadChosenSummary(void* screen)
+{
+    ChosenSummaryView v;
+    v.screen = screen;
+    if (!screen)
+        return v;
+
+    const int32_t index = FlashShadow::PanelCacheIndex(screen);
+    if (index < 0)
+        return v;
+
+    FlashShadow::Call call;
+    if (FlashShadow::GetCall(index, "SetChosenData", call)) {
+        const std::vector<std::string> args = call.StringArgs();
+        v.captured = true;
+        v.title = FlashArg(args, kChosenTitle);
+        v.subtitle = FlashArg(args, kChosenSubtitle);
+        // Class, name and nickname are three fields of one identity and are read as one line —
+        // joined AFTER cleaning, so a nickname that cleans away leaves no separator behind.
+        v.identity = JoinPhrase(
+            JoinPhrase(FlashArg(args, kChosenClass), FlashArg(args, kChosenName)),
+            FlashArg(args, kChosenNickname));
+        v.flavorLines = FlashArgLines(args, kChosenFlavor);
+        v.strengths.id = "strengths";
+        v.strengths.label = FlashArg(args, kChosenStrengthsLabel);
+        v.strengths.value = FlashArg(args, kChosenStrengths);
+        v.weaknesses.id = "weaknesses";
+        v.weaknesses.label = FlashArg(args, kChosenWeaknessesLabel);
+        v.weaknesses.value = FlashArg(args, kChosenWeaknesses);
+    }
+
+    // Operand 0 is the portrait asset path and is never touched; operand 1 is the badge, which
+    // is "" unless the Chosen died on this mission.
+    if (FlashShadow::GetCall(index, "SetChosenImage", call))
+        v.defeated = FlashArg(call.StringArgs(), kChosenDefeated);
+
+    // The three outcome blocks are mutually exclusive in OnInit, but SetChosenReward is ALSO
+    // pushed with three empty strings on the plain-encounter branch — so the empty test, not
+    // the call's presence, is what says a reward was given.
+    if (FlashShadow::GetCall(index, "SetChosenReward", call)) {
+        const std::vector<std::string> args = call.StringArgs();
+        v.reward.id = "reward";
+        v.reward.label = FlashArg(args, kChosenRewardLabel);
+        v.reward.value = JoinPhrase(
+            FlashArg(args, kChosenRewardValue), FlashArg(args, kChosenRewardType));
+    }
+
+    if (FlashShadow::GetCall(index, "SetChosenKnowledge", call)) {
+        const std::vector<std::string> args = call.StringArgs();
+        v.knowledge.id = "knowledge";
+        v.knowledge.label = FlashArg(args, kChosenKnowledgeLabel);
+        v.knowledge.value = FlashArg(args, kChosenKnowledgeText);
+        // Both percentages are QueueNumber operands, so they are absent from StringArgs() by
+        // design and come off the typed values instead.
+        v.knowledgeBefore = FlashNumber(call, kChosenKnowledgeStart);
+        v.knowledgeAfter = FlashNumber(call, kChosenKnowledgeEnd);
+    }
+
+    if (FlashShadow::GetCall(index, "SetSoldierCapture", call)) {
+        const std::vector<std::string> args = call.StringArgs();
+        v.capturedSoldier = JoinPhrase(
+            JoinPhrase(JoinPhrase(FlashArg(args, kChosenCaptureLabel),
+                           FlashArg(args, kChosenCaptureRank)),
+                FlashArg(args, kChosenCaptureName)),
+            FlashArg(args, kChosenCaptureClass));
+    }
+
+    // Log on change, never per read — same reason as above; the identity rides in the key so a
+    // second Chosen on a reused address still logs.
+    static void* sLastScreen = nullptr;
+    static std::string sLastIdentity;
+    if (screen != sLastScreen || v.identity != sLastIdentity) {
+        sLastScreen = screen;
+        sLastIdentity = v.identity;
+        LOG_INFO("ChosenSummary: '%s' from cache index %d — %s%s%s%s",
+            v.identity.c_str(), index, v.captured ? "data" : "NOTHING CAPTURED",
+            v.defeated.empty() ? "" : ", defeated",
+            v.knowledge.label.empty() && v.knowledge.value.empty() ? "" : ", knowledge extracted",
+            v.capturedSoldier.empty() ? "" : ", soldier captured");
+    }
+    return v;
 }
 
 } // namespace GameUI

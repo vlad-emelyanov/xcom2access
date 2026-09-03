@@ -527,6 +527,10 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     // detail popup — all listed above), above the geoscape tray it covers.
     &kMissionBladeRecipe,
     &kRoomBuildRecipe, &kRoomRecipe, &kGeoscapeRecipe,
+    // The mission bookends, ABOVE the ambient tactical recipe they are pushed over. Sequential
+    // with each other (the Chosen screen pops itself before pushing the summary), so their
+    // relative order is free; below every modal a mission can still raise, all listed earlier.
+    &kChosenSummaryRecipe, &kMissionSummaryRecipe,
     // The ambient tactical recipe. Below every overlay a mission can raise (dialog, popup,
     // pause menu — all resolve above), and it can never contend with the strategy screens:
     // its probe requires a tactical gate no strategy stack can satisfy.

@@ -81,6 +81,27 @@ OFFSETS are already confirmed live (2026-08-23, `LostAndAbandonedB`) and the `st
 pass — what is unexercised is the spoken COMPOSITION, plus the Avenger/dark-event and
 counter-row branches, which need the ship and a Retaliation-style mission respectively.
 
+**The mission bookends** (2026-09-03, built, never run — `mission-summary-recon.md`; the
+`mission summary` and `chosen summary` recipes, both Flash-capture-only, no companion). This is
+the last hole in the post-mission chain, so the pass is one mission end walked all the way
+through. It needs a **tutorial-off** campaign: `X2TacticalGameRuleset` skips both screens on the
+tutorial, the final mission and Lost and Abandoned, and a LOSS that offers a restart goes to
+`UICombatLose` (already the popup recipe's) instead. The full checklist is recon §7; its three
+load-bearing items are (a) **does the navigator attach at all** — nothing yet says what
+`IsInputBlocked` / `ScreensVisible` / `bCinematicMode` read during the end-of-mission fade, and
+if the stack is gated here the way the hacking screen's is, the fix is the hacking screen's and
+everything below it is moot; (b) `just dev-flashqueue` must show `SetMissionInfo` with **21
+operands** on the screen's cache index — an empty capture is the LRU question, not an offset
+question; (c) Enter on Continue must run the auto-photo and hand over to `UIAfterAction` with no
+second press and no stall on `bWaitingForMissionSummary`. Then: the objective label switching to
+"CIVILIANS RESCUED:" on a Terror or Chosen-retaliation mission, the photobooth node appearing on
+a normal win and being ABSENT after a total squad wipe, and nothing anywhere speaking an asset
+path (`grep -n 'img:///\|UILibrary\|\.tga'` over the speech ring — the Chosen screen pushes six
+of them). ⚠ The Chosen screen's three outcome branches are three separate missions — a plain
+encounter (its `SetChosenReward` is pushed with three EMPTY strings and must stay silent), a
+knowledge extraction, and a soldier kidnapped — and the reward branch needs a Chosen actually
+killed, which is the rarest of the four.
+
 ⚠ The popup recipe has a NEW first-pass question on top of the usual one: `UIAlert`'s words now
 come from the Flash command-queue capture, so the pass must check `just dev-flashqueue` against
 `just dev-speech` for the same alert, and grep the log for `dropped asset-looking operand` —

@@ -54,9 +54,11 @@ extern const Recipe kResearchUnlockedRecipe;
 
 // ---- tactical (recipe_tactical.cpp) ----
 extern const Recipe kTacticalHudRecipe;
+extern const Recipe kMissionSummaryRecipe;
+extern const Recipe kChosenSummaryRecipe;
 
 // How many of the above kRecipes must list. Pinned by a static_assert next to the array.
-constexpr std::size_t kRecipeCount = 26;
+constexpr std::size_t kRecipeCount = 28;
 
 } // namespace Recipes
 } // namespace MenuNavigator

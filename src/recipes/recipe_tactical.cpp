@@ -1,4 +1,7 @@
-// The tactical HUD recipe — the mod's first AMBIENT recipe (plan phase 3, the HUD graph).
+// The TACTICAL family's recipes: the ambient HUD graph, and the two mission bookends that open
+// the instant a mission ends (docs/mission-summary-recon.md — the second half of this file).
+//
+// ---- the tactical HUD recipe — the mod's first AMBIENT recipe (plan phase 3, the HUD graph).
 //
 // Everything about how this recipe holds input is INVERTED from the menu recipes, and the
 // Recipe::ambient flag is what expresses it: it attaches SILENTLY the moment a mission's HUD
@@ -274,6 +277,212 @@ bool YieldTacticalFocus()
     return GameUI::ReadTacticalGate().menuRaised;
 }
 
+// ---- the mission bookends (UIMissionSummary / UIChosenMissionSummary) ----
+//
+// docs/mission-summary-recon.md. The two windows that open the instant a mission ends, ahead of
+// the after-action walk-up — until now the only part of the post-mission chain with no reader at
+// all, and the first thing a blind player meets after a fight they just won. Words from the
+// Flash capture; the reading is entirely GameUI::ReadMissionSummary / ReadChosenSummary.
+//
+// ⛔ ONLY THE BUTTON NODES ACTIVATE, and this is the deliberate difference from the research
+// deck, whose every node advances. The game's own OnUnrealCommand does answer Enter anywhere
+// with Continue on both screens — but unlike the deck these windows carry TWO verbs (Continue
+// and the photobooth hotlink), so "Enter means the first one, wherever you are" would be a
+// guess. Continue also COMMITS the map unload and cannot be taken back, which is not something
+// to hand to a stray keypress while the player is reading the rating.
+//
+// Escape is consumed by both screens by design ("so there is no UI functionality in Mission
+// Summary" — UIMissionSummary.uc:650), so the layer offers no close verb either: Continue is the
+// only way out, exactly as for a sighted player.
+
+// One label/value row as a node. The label carries the game's own trailing ':' and the two are
+// joined by the announcer's phrase rule, never by us — see AppendPhrase. A row whose label is
+// missing degrades to the value alone rather than to a Value announcement with nothing to label.
+// Returns an INVALID id when nothing was added, so callers never have to duplicate the test.
+ControlId AddStatNode(GraphBuilder& b, const std::string& id, const GameUI::SummaryStat& stat)
+{
+    if (stat.label.empty() && stat.value.empty())
+        return ControlId();
+    NodeVtable vt;
+    vt.Announcements.emplace_back(
+        NodeAnnouncement::Static(stat.label.empty() ? stat.value : stat.label));
+    vt.Announcements.back().Kind = AnnouncementKinds::Label;
+    if (!stat.label.empty() && !stat.value.empty()) {
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(stat.value));
+        vt.Announcements.back().Kind = AnnouncementKinds::Value;
+    }
+    ControlId node = ControlId::Structural(id);
+    b.AddItem(node, std::move(vt));
+    return node;
+}
+
+// A read-only line. Returns the id so a caller can hand it to SetStart; invalid when the text
+// was empty, because an unlabelled node is a ghost the player can land on and hear nothing from.
+ControlId AddLine(GraphBuilder& b, const std::string& id, const std::string& text)
+{
+    if (text.empty())
+        return ControlId();
+    ControlId node = ControlId::Structural(id);
+    b.AddLabel(node, [text]() { return text; });
+    return node;
+}
+
+// The Continue node both screens end on. `label` is the game's own where it has one.
+void AddContinueStop(GraphBuilder& b, const std::string& key, const std::string& label)
+{
+    b.BeginStop("actions");
+    NodeVtable vt;
+    vt.Type = &ButtonType();
+    vt.Announcements.emplace_back(
+        NodeAnnouncement::Static(label.empty() ? Vocab::SummaryContinueFallback : label));
+    vt.Announcements.back().Kind = AnnouncementKinds::Label;
+    // The screen's own INPUT path, not its handler: OnUnrealCommand is where the auto-photo,
+    // the camera fade and bWaitingForMissionSummary all sequence from (the hard rule about
+    // preferring the game's path, and about it meaning the input path).
+    vt.OnActivate = []() { GameUI::SendScreenCommand(gScreen, GameUI::kCmdEnter); };
+    b.AddItem(ControlId::Structural(key + "continue"), std::move(vt));
+}
+
+std::unique_ptr<GraphRender> BuildMissionSummary()
+{
+    const GameUI::MissionSummaryView view = GameUI::ReadMissionSummary(gScreen);
+
+    GraphBuilder b;
+    b.BeginStop("summary");
+    // Empty-label context with positions suppressed, the research report's arrangement and for
+    // its reason: this is a document, and stamping "3 of 9" onto "TURNS TAKEN: 12" would read
+    // as part of the statistic.
+    b.PushContext("", "", /*positions*/ false);
+
+    // The result is also the screen name, so it is NOT the landing node — but it IS in the
+    // graph, which is the deliberate departure from the report recipe. There the header was a
+    // generic "RESEARCH REPORT" and losing it cost nothing; here it is whether the player won,
+    // and it has to stay re-readable after they have arrowed down to the rating.
+    AddLine(b, "missionsummary/result", view.result);
+    AddLine(b, "missionsummary/op", view.opName);
+
+    ControlId firstStat;
+    for (const GameUI::SummaryStat& stat : view.stats) {
+        // ⛔ NAMED ids, never the loop index: a pair the screen drew nothing for is dropped by
+        // the reader, and a numbered id would silently renumber every row after it — the
+        // empty-answer trap in its positional form.
+        ControlId node = AddStatNode(b, std::string("missionsummary/stat/") + stat.id, stat);
+        if (node.IsValid() && !firstStat.IsValid())
+            firstStat = node;
+    }
+
+    if (view.result.empty() && view.opName.empty() && view.stats.empty()) {
+        // Recognised the screen and captured nothing. Said out loud for PopupNoText's reason —
+        // the player still has to press Continue to leave, and silence here is indistinguishable
+        // from the mission having ended into nothing at all.
+        AddLine(b, "missionsummary/empty", Vocab::SummaryNoText);
+    } else if (firstStat.IsValid()) {
+        // Land past the two headline lines: both are already in the screen name, and repeating
+        // one of them as the landing announcement would say it twice in a row.
+        b.SetStart(firstStat);
+    }
+    b.PopContext();
+
+    AddContinueStop(b, "missionsummary/", view.continueLabel);
+
+    // The photobooth hotlink. Vanilla reaches it by mouse click or the gamepad's Y and by no
+    // keyboard route at all — but it is ON SCREEN, which is what decides (sighted parity), and
+    // ReadButtonField has already answered "absent, hidden or unlabelled" in one: Hide() is
+    // exactly how the game suppresses it in multiplayer and after a total squad wipe.
+    //
+    // ⚠ It opens UIPhotographerScreen, which has no reader — the same deliberate hole the
+    // after-action screen's Memorialize button has, and the same answer: a sighted player can
+    // walk into it too, so the node exists and the screen behind it is a separate entry.
+    if (view.photobooth.handle) {
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(view.photobooth.label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        // The screen's own zero-parameter verb — the one the button's OnClickedDelegate wraps,
+        // so the camera-fade release and the particle cleanup it does first both still run.
+        vt.OnActivate = []() {
+            GameUI::InvokeScreenVerb(gScreen, "CloseThenOpenPhotographerScreen");
+        };
+        b.AddItem(ControlId::Structural("missionsummary/photobooth"), std::move(vt));
+    }
+
+    return b.Build();
+}
+
+std::string MissionSummaryName()
+{
+    // The headline a sighted player takes in at a glance: the result, then the operation's own
+    // name — the same shape AfterActionName uses one screen later, so the two bookends of the
+    // post-mission chain announce themselves alike.
+    const GameUI::MissionSummaryView view = GameUI::ReadMissionSummary(gScreen);
+    const std::string name = JoinPhrases(view.result, view.opName);
+    return name.empty() ? std::string(Vocab::ScreenMissionSummaryFallback) : name;
+}
+
+std::unique_ptr<GraphRender> BuildChosenSummary()
+{
+    const GameUI::ChosenSummaryView view = GameUI::ReadChosenSummary(gScreen);
+
+    GraphBuilder b;
+    b.BeginStop("chosen");
+    b.PushContext("", "", /*positions*/ false);
+
+    int added = 0;
+    auto line = [&](const std::string& id, const std::string& text) {
+        if (AddLine(b, "chosensummary/" + id, text).IsValid())
+            added++;
+    };
+    auto stat = [&](const GameUI::SummaryStat& s) {
+        if (AddStatNode(b, std::string("chosensummary/") + s.id, s).IsValid())
+            added++;
+    };
+
+    // The title is the screen name and is not repeated here; the subtitle ships empty in every
+    // localization we have, so it is read rather than assumed absent.
+    line("subtitle", view.subtitle);
+    line("identity", view.identity);
+    // Only when the Chosen actually died on this mission — the badge is "" otherwise, and an
+    // icon in its unlit state gets no words.
+    line("defeated", view.defeated);
+    for (size_t i = 0; i < view.flavorLines.size(); i++)
+        line("flavor/" + std::to_string(i), view.flavorLines[i]);
+    stat(view.strengths);
+    stat(view.weaknesses);
+
+    // Exactly one outcome block, or none. ⛔ SetChosenReward is pushed with three EMPTY strings
+    // on the plain-encounter branch, so it is the emptiness that decides, never the call's
+    // presence — which is why the reader hands these over as plain fields to test.
+    stat(view.reward);
+    if (!view.knowledge.label.empty() || !view.knowledge.value.empty()) {
+        GameUI::SummaryStat knowledge = view.knowledge;
+        if (view.knowledgeBefore >= 0 && view.knowledgeAfter >= 0) {
+            // The bar's two ends are the block's whole content; the wording is ours because the
+            // game draws the change rather than saying it.
+            knowledge.value = JoinPhrases(
+                Vocab::KnowledgeChange(view.knowledgeBefore, view.knowledgeAfter),
+                knowledge.value);
+        }
+        stat(knowledge);
+    }
+    line("captured", view.capturedSoldier);
+
+    if (added == 0)
+        line("empty", Vocab::SummaryNoText);
+    b.PopContext();
+
+    // The Chosen screen has no m_strContinue of its own — its Continue is a UINavigationHelp
+    // widget whose label lives in the movie — so this one really does fall back to our word.
+    AddContinueStop(b, "chosensummary/", std::string());
+
+    return b.Build();
+}
+
+std::string ChosenSummaryName()
+{
+    const GameUI::ChosenSummaryView view = GameUI::ReadChosenSummary(gScreen);
+    return view.title.empty() ? std::string(Vocab::ScreenChosenSummaryFallback) : view.title;
+}
+
 } // namespace
 
 // Probed near the end of kRecipes: nothing it can share a stack with is below it there — every
@@ -281,6 +490,22 @@ bool YieldTacticalFocus()
 // resolves above, and the strategy screens can never probe ready while a tactical gate is.
 const Recipe kTacticalHudRecipe{"tactical HUD", ProbeTacticalHud, BuildTacticalHud,
     TacticalHudName, /*SetListIndex*/ nullptr, /*ambient*/ true, YieldTacticalFocus};
+
+// ⛔ ABOVE the ambient tactical recipe, both of them. They are pushed over UITacticalHUD while
+// the map is still loaded, and the gate already treats them the way this needs — an unknown
+// screen above the HUD raises `blocked`, which is exactly what kTacticalPassives' own comment
+// says about the mission summary. Below every modal a mission can still raise (the pause menu
+// answers Start on both screens), all of which resolve earlier in kRecipes. No SetListIndex on
+// either: neither screen has a UIList, and the mission summary ends OnInit with Navigator.Clear()
+// — there is no navigable widget for focus write-back to write to.
+//
+// Their order relative to EACH OTHER is free: the Chosen screen pops itself before pushing the
+// mission summary, so the two are sequential and never stacked.
+const Recipe kChosenSummaryRecipe{"chosen summary",
+    ProbeFocused<GameUI::FindChosenSummary>, BuildChosenSummary, ChosenSummaryName};
+
+const Recipe kMissionSummaryRecipe{"mission summary",
+    ProbeFocused<GameUI::FindMissionSummary>, BuildMissionSummary, MissionSummaryName};
 
 } // namespace Recipes
 } // namespace MenuNavigator

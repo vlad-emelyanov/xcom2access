@@ -51,18 +51,14 @@ What actually blocks a campaign, in rough play order:
 4. **`UIArmory_WeaponUpgrade`** + **`UIArmory_Implants`** — weapon mods and PCS.
 5. **`UIInventoryTactical`** — mid-mission loot pickup.
 6. **`UITacticalCharInfoScreen`** — F1 soldier details in tactical.
-7. **`UIMissionSummary`** + **`UIChosenMissionSummary`** — the front of the post-mission
-   chain: stats, then the Chosen result. The walk-up that follows them (`UIAfterAction`) is
-   built (`after-action-recon.md`), so these two are what still leave a blind player pressing
-   Enter into silence between the mission's last shot and the dropship briefing.
-8. **`UIResistanceReport`** (+ `_ChosenEvents`, `_FactionEvents`, `UIRewardsRecap`) — the
+7. **`UIResistanceReport`** (+ `_ChosenEvents`, `_FactionEvents`, `UIRewardsRecap`) — the
    monthly council report chain.
-9. **`UICovertActions`** + **`UICovertActionReport`** — the WOTC core loop. Surveyed:
+8. **`UICovertActions`** + **`UICovertActionReport`** — the WOTC core loop. Surveyed:
    `covert-actions-recon.md`. The soldier picker and the confirm modal are already covered by the
    personnel and popup recipes, so this is two screens, not four — and `CONFIRM ACTION` is
    MOUSE-ONLY in vanilla (§4).
-10. **`UIStrategyPolicy`** — resistance orders (WOTC's card system).
-11. **`UIRecruitSoldiers`**, **`UIBlackMarket`** + **`UIBlackMarket_Sell`** — recruiting and
+9. **`UIStrategyPolicy`** — resistance orders (WOTC's card system).
+10. **`UIRecruitSoldiers`**, **`UIBlackMarket`** + **`UIBlackMarket_Sell`** — recruiting and
     selling. (`_Sell` is explicitly NOT in the commodity family — own list, own card call;
     `avenger-view-recon.md` §14.1.)
 
@@ -213,8 +209,8 @@ first-pass checklist in `mission-blade-recon.md`, live-run debt in `next-steps.m
 | `UIDropShipBriefingBase` + `_MissionStart` / `_MissionEnd` | Skyranger briefings | ✅ |
 | `UIDropshipHUD` | interactive loading-screen HUD | ⚠ P3 — measure overlap with the briefing screens |
 | `UIMissionIntro` | mission-type intro banner | ⬜ P2 |
-| `UIMissionSummary` | post-mission stats | ⬜ **P1** |
-| `UIChosenMissionSummary` | Chosen encounter result | ⬜ **P1** |
+| `UIMissionSummary` | post-mission stats | ◐ built — `mission summary` recipe, Flash capture, no companion (`mission-summary-recon.md`); first live pass owed |
+| `UIChosenMissionSummary` | Chosen encounter result | ◐ built — `chosen summary` recipe, Flash capture, no companion (`mission-summary-recon.md`); first live pass owed |
 | `UIAfterAction` | post-mission squad walk-up (wounds, promotions) | ◐ built — `after action` recipe + `X2AccessAfterActionReader` (`after-action-recon.md`); first live pass owed |
 | `UIResearchReport` | research complete | ✅ research report recipe (`research-report-recon.md`) |
 | `UIResearchUnlocked` | new research available | ◐ built — `research unlocked` recipe, Flash capture, no companion (`research-unlocked-recon.md`); first live pass owed |

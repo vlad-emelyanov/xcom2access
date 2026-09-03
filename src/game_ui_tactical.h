@@ -286,4 +286,80 @@ struct TutorialState {
 /// Game thread only.
 TutorialState ReadTutorialState();
 
+// ---- the mission bookends (UIMissionSummary / UIChosenMissionSummary) ----
+//
+// docs/mission-summary-recon.md. The two windows that open the instant a tactical mission ends,
+// before the map unloads — the front of the post-mission chain, ahead of the after-action
+// walk-up. They live in this family rather than the strategy one because
+// XComPresentationLayer pushes them while the tactical map is still loaded, and
+// UIMissionSummary.CloseScreen branches on whether the presentation layer is the HQ's.
+//
+// ⛔ BOTH SCREENS RETAIN NOTHING. Every visible word goes out through MC.BeginFunctionOp /
+// QueueString and is kept in no property, so the words come from the Flash command-queue
+// capture (flash_shadow.cpp), read POSITIONALLY out of the pushes the screens made at OnInit.
+// Two fields are exceptions and are plain offset reads: the photobooth button (whose VISIBILITY
+// is the fact — Hide() is how the game suppresses it) and the Continue label, which
+// XComGame.int really does populate under [UIMissionSummary].
+//
+// The alternative — ProcessEvent'ing the screen's own pure getters — was rejected in recon §3:
+// the labels would still have to come off the CDO (the UITacticalHUD_InfoPanel trap), and
+// GetObjectiveLabel SWITCHES between two labels on the mission family, so only the push knows
+// which one was drawn.
+
+/// One drawn label/value row of the mission summary. Emitted only when the screen pushed
+/// something for it — the loot pair is passed "" / "" at both call sites and draws no row, and
+/// a reader that spoke it because the loc file has a label would invent a row.
+struct SummaryStat {
+    const char* id = "";  // stable node key ("rating"); NEVER an index — an absent pair must
+                          // not renumber the ones after it
+    std::string label;    // the game's own, trailing ':' included
+    std::string value;
+};
+
+struct MissionSummaryView {
+    void* screen = nullptr;
+    bool captured = false;      // SetMissionInfo was found on the screen's cache index
+    std::string result;         // "MISSION COMPLETE" / "MISSION FAILED" / "MISSION ABORTED"
+    std::string opName;         // BattleData.m_strOpName (the MP mode name in multiplayer)
+    std::vector<SummaryStat> stats; // in drawn order, empty pairs dropped
+    std::string continueLabel;  // m_strContinue; empty only if the field reads empty
+    MenuItem photobooth;        // m_PosterButton — handle null when hidden (MP, squad wiped)
+};
+
+/// The focused UIMissionSummary, or null. Game thread only.
+void* FindMissionSummary();
+
+/// Game thread only.
+MissionSummaryView ReadMissionSummary(void* screen);
+
+/// The Chosen encounter summary. Five separate Flash pushes rather than one, three of them
+/// mutually exclusive outcome blocks, and six operands across them are ASSET PATHS that must
+/// never be spoken — so this reads by NAME to find each call and by POSITION within it.
+struct ChosenSummaryView {
+    void* screen = nullptr;
+    bool captured = false;
+    std::string title;      // "CHOSEN ENCOUNTER" — also the screen name
+    std::string subtitle;   // ships empty in every loc we have seen
+    std::string identity;   // class, name and nickname, already joined
+    std::string defeated;   // "DEFEATED", only when the Chosen died on this mission
+    std::vector<std::string> flavorLines;
+    SummaryStat strengths;  // label + comma-joined list; label empty when not pushed
+    SummaryStat weaknesses;
+    // Exactly one of the three blocks below is populated, or none on a plain encounter.
+    SummaryStat reward;          // "REWARDS:" + "+N ABILITY POINTS" (Chosen defeated)
+    SummaryStat knowledge;       // "CHOSEN KNOWLEDGE" + the block's body text
+    // ⛔ The two percentages stay NUMBERS here. Phrasing a delta needs a word of our own
+    // ("to"), and inventing vocabulary is the recipe's job, not the reader's — the reader owns
+    // what the game pushed. -1 means the operand was absent or was not a number.
+    int knowledgeBefore = -1;    // what the Chosen knew before this mission
+    int knowledgeAfter = -1;     // …and after the extraction
+    std::string capturedSoldier; // "SOLDIER CAPTURED:" + rank, name and class
+};
+
+/// The focused UIChosenMissionSummary, or null. Game thread only.
+void* FindChosenSummary();
+
+/// Game thread only.
+ChosenSummaryView ReadChosenSummary(void* screen);
+
 } // namespace GameUI

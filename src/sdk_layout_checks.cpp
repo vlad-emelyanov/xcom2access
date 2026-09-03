@@ -628,6 +628,19 @@ static_assert(offsetof(AUIResearchUnlocked, CurrentTechIndex) == 0x460,
 static_assert(offsetof(AUIResearchUnlocked, NumUnlockedTechs) == 0x464,
     "UIResearchUnlocked::NumUnlockedTechs");
 
+// ---- the mission bookends (UIMissionSummary) ----
+//
+// Two offsets for both screens put together: everything else either screen shows went into
+// Flash and comes back from the capture (docs/mission-summary-recon.md §3), and
+// UIChosenMissionSummary needs no property read at all. m_PosterButton is read for its
+// VISIBILITY as much as its label — Hide() is how the game suppresses the photobooth hotlink in
+// multiplayer and after a total squad wipe — and m_strContinue is the one localized string on
+// either screen that XComGame.int really does populate on the class that declares it.
+static_assert(offsetof(AUIMissionSummary, m_PosterButton) == 0x464,
+    "UIMissionSummary::m_PosterButton");
+static_assert(offsetof(AUIMissionSummary, m_strContinue) == 0x4C4,
+    "UIMissionSummary::m_strContinue");
+
 // ---- the geoscape: UIStrategyMap, its mission tray and the navigator behind it ----
 //
 // UINavigator is pinned here for the first time. Every other recipe reaches a list through

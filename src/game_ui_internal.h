@@ -275,6 +275,21 @@ std::string ReadFStringField(const void* obj, int32_t offset);
 // one.
 std::string ReadFStringFieldRaw(const void* obj, int32_t offset);
 
+// ---- reading a Flash capture's operands by POSITION ----
+//
+// Every consumer of FlashShadow::Call::StringArgs() reads by index, because the capture's
+// contract is positional (non-string operands are kept as empty slots so nothing after them
+// shifts). These two are that read: an out-of-range index is an ordinary empty answer, not an
+// error, since a panel legitimately pushes shorter argument lists on some branches.
+
+// Operand `index`, cleaned. Empty when the call carried fewer operands than that.
+std::string FlashArg(const std::vector<std::string>& args, size_t index);
+
+// The same operand split into its lines, each cleaned, empties dropped. ⛔ Split FIRST, then
+// clean: CleanText collapses whitespace, so cleaning the whole blob would fuse the paragraphs a
+// "\n\n" break is there to separate.
+std::vector<std::string> FlashArgLines(const std::vector<std::string>& args, size_t index);
+
 // ---- generic widget → view-struct helpers ----
 //
 // MenuItem / OptionRow / OptionWidget are the public row shapes (game_ui_core.h, via the public

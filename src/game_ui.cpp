@@ -1189,6 +1189,32 @@ std::string ReadFStringFieldRaw(const void* obj, int32_t offset)
     return len > 0 ? WcharToUtf8(buf, len) : std::string();
 }
 
+// ---- Flash capture operands, by position (see the header) ----
+
+std::string FlashArg(const std::vector<std::string>& args, size_t index)
+{
+    return index < args.size() ? CleanText(args[index]) : std::string();
+}
+
+std::vector<std::string> FlashArgLines(const std::vector<std::string>& args, size_t index)
+{
+    std::vector<std::string> lines;
+    if (index >= args.size())
+        return lines;
+    const std::string& raw = args[index];
+    size_t start = 0;
+    for (;;) {
+        const size_t hit = raw.find('\n', start);
+        std::string line
+            = CleanText(raw.substr(start, hit == std::string::npos ? hit : hit - start));
+        if (!line.empty())
+            lines.push_back(std::move(line));
+        if (hit == std::string::npos)
+            return lines;
+        start = hit + 1;
+    }
+}
+
 // ---- small scalar reads ----
 
 uint8_t ReadU8Raw(const void* obj, int32_t offset)

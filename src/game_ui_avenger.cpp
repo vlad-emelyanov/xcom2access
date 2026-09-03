@@ -400,31 +400,6 @@ enum ResearchReportArg {
     kReportGreeble = 7,
 };
 
-std::string ReportArg(const std::vector<std::string>& args, size_t index)
-{
-    return index < args.size() ? CleanText(args[index]) : std::string();
-}
-
-// Split on newlines FIRST, then clean each line — see the header. Empty lines go: the description's
-// paragraph break is "\n\n", which yields one, and a tech with no unlocks yields nothing at all.
-std::vector<std::string> ReportArgLines(const std::vector<std::string>& args, size_t index)
-{
-    std::vector<std::string> lines;
-    if (index >= args.size())
-        return lines;
-    const std::string& raw = args[index];
-    size_t start = 0;
-    for (;;) {
-        const size_t hit = raw.find('\n', start);
-        std::string line = CleanText(raw.substr(start, hit == std::string::npos ? hit : hit - start));
-        if (!line.empty())
-            lines.push_back(std::move(line));
-        if (hit == std::string::npos)
-            return lines;
-        start = hit + 1;
-    }
-}
-
 } // namespace
 
 void* FindResearchReportScreen()
@@ -460,13 +435,13 @@ ResearchReportView ReadResearchReport(void* screen)
 
     const std::vector<std::string> args = call.StringArgs();
     v.captured = true;
-    v.header = ReportArg(args, kReportHeader);
-    v.project = ReportArg(args, kReportProject);
-    v.code = ReportArg(args, kReportCode);
-    v.date = ReportArg(args, kReportDate);
-    v.greeble = ReportArg(args, kReportGreeble);
-    v.unlockLines = ReportArgLines(args, kReportUnlocks);
-    v.descriptionLines = ReportArgLines(args, kReportDescription);
+    v.header = FlashArg(args, kReportHeader);
+    v.project = FlashArg(args, kReportProject);
+    v.code = FlashArg(args, kReportCode);
+    v.date = FlashArg(args, kReportDate);
+    v.greeble = FlashArg(args, kReportGreeble);
+    v.unlockLines = FlashArgLines(args, kReportUnlocks);
+    v.descriptionLines = FlashArgLines(args, kReportDescription);
 
     // ⛔ LOG ON CHANGE, NEVER PER READ. This is called from Build() AND ScreenName(), so twice a
     // poll — about twenty times a second — and the first live run wrote the same line 20+ times
@@ -537,13 +512,13 @@ ResearchUnlockedView ReadResearchUnlocked(void* screen)
             continue;
         const std::vector<std::string> args = call.StringArgs();
         ResearchUnlockedCard card;
-        card.title = ReportArg(args, kUnlockedTitle);
-        card.descriptionLines = ReportArgLines(args, kUnlockedDescription);
+        card.title = FlashArg(args, kUnlockedTitle);
+        card.descriptionLines = FlashArgLines(args, kUnlockedDescription);
         card.shadowProject = kUnlockedShadow < call.args.size()
             && call.args[kUnlockedShadow].type == FlashShadow::ValueType::Boolean
             && call.args[kUnlockedShadow].b;
         if (v.cards.empty())
-            v.header = ReportArg(args, kUnlockedHeader);
+            v.header = FlashArg(args, kUnlockedHeader);
         v.cards.push_back(std::move(card));
     }
     v.captured = !v.cards.empty();

@@ -2,7 +2,7 @@
 
 // What a screen recipe is, and everything it is allowed to reach back into the navigator for.
 //
-// The eighteen recipes live in src/recipes/recipe_{shell,strategy,avenger}.cpp — one TU per
+// The recipes live in src/recipes/recipe_{shell,strategy,avenger,tactical}.cpp — one TU per
 // surface family, the same axis docs/surfaces/*.md uses. They shared one 4168-line file with
 // the attach state machine, and the coupling was invisible because everything was in one
 // anonymous namespace: a recipe could reach any global in the file and nothing said which of

@@ -119,6 +119,22 @@ inline constexpr const char* LoadoutEmptySlot = "empty";
 inline constexpr const char* ScreenAfterActionFallback = "Mission results";
 inline constexpr const char* AfterActionContinueFallback = "Continue";
 
+// The mission bookends (docs/mission-summary-recon.md) — the two windows that open the instant a
+// mission ends, ahead of the after-action walk-up. Both name themselves out of their own Flash
+// push (the result headline, "CHOSEN ENCOUNTER"), so these two are reached only when the capture
+// came back with nothing at all.
+inline constexpr const char* ScreenMissionSummaryFallback = "Mission summary";
+inline constexpr const char* ScreenChosenSummaryFallback = "Chosen encounter";
+/// The mission summary's Continue. Unlike the research report's, the game's own word IS
+/// reachable — XComGame.int populates m_strContinue under [UIMissionSummary] — so this fires
+/// only if that field reads empty.
+inline constexpr const char* SummaryContinueFallback = "Continue";
+/// Recognised the screen, captured nothing. Said out loud for ReportNoText's reason: the player
+/// is looking at a window they still have to dismiss, and silence there is indistinguishable
+/// from no screen at all. ⚠ It must NOT read as "the mission had no result" — hence "readout",
+/// which names OUR failure rather than the game's outcome.
+inline constexpr const char* SummaryNoText = "Mission summary readout unavailable";
+
 // Save / load. Both screens carry their own localized title and reach these only if it reads
 // empty. The other three are the layer's own words for states the screen shows without text:
 // an empty list, a save or load in flight, and the key that reaches the row's delete verb —
@@ -461,6 +477,14 @@ inline std::string Position(int index, int count)
 inline std::string Percent(int value)
 {
     return std::to_string(value) + " percent";
+}
+
+// The Chosen's knowledge meter after an extraction. Flash draws a bar filling from one value to
+// the other, so the DELTA is the whole content of that block and both ends are said; Percent()
+// is reused so neither number can read as a count or a position.
+inline std::string KnowledgeChange(int before, int after)
+{
+    return Percent(before) + " to " + Percent(after);
 }
 
 // Fallback tab name for when the screen's localized string reads empty (should not happen on a
