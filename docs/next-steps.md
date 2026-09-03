@@ -146,10 +146,9 @@ and every screen below that carries a `X2Access*Reader` reads as bare fallbacks 
 - **Recruits** (`recruits`, `recruit-recap-recon.md` §1.6): a row must read `name, country`, the
   details stop the bio, and Enter with supplies short must raise the game's dialog and land back
   on the list afterwards.
-- **The rewards recap** (`rewards recap`, `recruit-recap-recon.md` §2.6): needs a mission end
-  with the tutorial objective past `T0_M8_ReturnToAvengerPt2`. Must attach as the operation and
-  land on MISSION COMPLETE / FAILED; Enter on Continue must reach the geoscape with no companion
-  error logged after it.
+- **The rewards recap** — ✅ heard 2026-09-04: attached as the operation, landed on ЗАДАНИЕ
+  ЗАВЕРШЕНО, read the region, the paragraph and two rewards, and Continue handed over cleanly.
+  Still unheard: a mission with global effects (the GLOBAL EFFECTS: context) and a failed one.
 - **The covert action result** (`covert report`, `covert-actions-recon.md` §8b): needs an action
   to complete. RESULTS must carry one node per soldier with the XP and cohesion lines, and a risk
   that fired must be the LAST value on that soldier's node.
@@ -157,9 +156,11 @@ and every screen below that carries a `X2Access*Reader` reads as bare fallbacks 
   layer must detach, the receipt attach under the corpse's name, and Enter on OK must release the
   visualizer. ⚠ The screen appears unprompted at the end of a move, so a silent stall on a
   mission is the symptom of this recipe not attaching.
-- **The soldier sheet** (`soldier info`, `tactical-modals-recon.md` §2.5): Ctrl+Tab, Tab to the
-  soldier stop, Down to the info button, Enter — the sheet must open, the seven stats read with
-  `none` for a zero, the headings become contexts, and Escape must bring the HUD back.
+- **The soldier sheet** — ◐ heard 2026-09-04: opened from the HUD stop, read the seven stats
+  with `none` for a zero, Escape brought the HUD back. Fixed from that run: the class label
+  (written with `SetHTMLText`, so the html field is the read). Still unheard: the EFFECTS stop —
+  Tab past the stats on a soldier with a passive and confirm the PASSIVES / BONUSES / PENALTIES
+  contexts and one node per effect with its description.
 - **Weapon upgrades** (`weapon upgrades`, `armory-recon.md` §2.6): the pin on
   `WeaponViewOffsets` is the Highlander detector, so a build that fails there is a vanilla dump.
   Enter on a slot must open the picker with the slots re-read as `current slots`; arrowing the
@@ -222,16 +223,19 @@ confirmed in play):
   that pushes an image path MID-LIST (`BuildGOpsAlert` / retaliation / supply raid), and an
   alert whose confirm label has to be matched out of the prose by the button filter. Grep the
   log for that line and check `just dev-flashqueue` against `just dev-speech`.
-- **Popup recipe, the multi-batch fix (2026-09-03, unheard).** `ReadAlertCaptured` now reads
-  EVERY batch on the alert's panel rather than the newest — `popup-inventory.md` §10 has the
-  measurement. Owed on a live pass: (a) the seven alerts that were losing their words to a
-  trailing headshot batch must now read in full — `eAlert_StaffInfo` is the reported one and
-  must say ВНИМАНИЕ!, the title, the recruit's name, the bonus label and BOTH facility rows, in
-  that order; (b) the alerts that gained batches they never had — `BuildRetributionAlert` (five)
-  and `BuildConfirmCovertActionAlert` (four) — must be checked for OVER-read against what is on
-  screen, since nothing filters a batch the panel received but does not display; (c) confirm the
-  `UpdateFacilityList` deferral reads the facility rows AFTER the name and not before. The
-  `read N line(s) from the Flash capture (A+B+C, …)` log line names the contributing batches.
+- **Popup recipe, the multi-batch fix (2026-09-03; heard 2026-09-04 on eleven alerts).**
+  `ReadAlertCaptured` reads EVERY batch on the alert's panel rather than the newest —
+  `popup-inventory.md` §10 has the measurement. The first pass found the leak that reading
+  everything invites: `spawnChildPanel`'s two name operands led every popup (`surfaces/
+  strategy.md`, fixed — `IsStructuralBatch`), and the headshot mechanism read right
+  (`eAlert_NewStaffAvailableSmall`'s trailing `UpdateImage` dropped, the words kept). Still owed:
+  (a) `eAlert_StaffInfo` itself — ВНИМАНИЕ!, the title, the recruit's name, the bonus label and
+  BOTH facility rows, in that order; (b) the alerts that gained batches they never had —
+  `BuildRetributionAlert` (five) and `BuildConfirmCovertActionAlert` (four) — checked for
+  OVER-read against what is on screen, since nothing filters a batch the panel received but does
+  not display; (c) the `UpdateFacilityList` deferral reading the facility rows AFTER the name.
+  The `read N line(s) from the Flash capture (A+B+C, …)` log line names the contributing batches,
+  and a batch name in it that is not an `Update*` is the next leak.
 - **Commlink with subtitles OFF.** The reader obeys the game's Show Subtitles setting
   (`surfaces/strategy.md`): off must be SILENT, and turning it back on mid-conversation must
   announce the line still in progress rather than swallow it.

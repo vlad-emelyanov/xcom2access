@@ -414,6 +414,22 @@ bool IsListFeederBatch(const FlashShadow::Call& call)
     return call.name == "UpdateFacilityList";
 }
 
+// A batch that builds the panel's STRUCTURE and carries no words for anyone: UIPanel.LoadChild's
+// `spawnChildPanel`, whose two string operands are the child's MCName and its library id.
+//
+// ⛔ Heard live 2026-09-04, on every popup of the session: the alert's button strip is spawned as
+// a child named `ButtonGroup` with the default library item `EmptyControl`, and once the reader
+// took every batch on the panel (the multi-batch fix) those two names led every alert as
+// "ButtonGroup, 1 of N", "EmptyControl, 2 of N" — ahead of the title, and as the landing node.
+// Neither has a dot or a scheme, so the asset filter passes them, and neither is a button label.
+// Matched by NAME because the op's operands are names BY CONSTRUCTION; the ops that carry a
+// child name alongside text (ChildSetString and kin) arrive with the name in `child`, not in the
+// operands, so they need no such rule.
+bool IsStructuralBatch(const FlashShadow::Call& call)
+{
+    return call.name == "spawnChildPanel";
+}
+
 // The words UIAlert actually handed Scaleform, in the order it handed them over.
 //
 // ⛔ THIS IS THE SOURCE OF TRUTH for the alert family, and it replaces two weaker readings. The
@@ -491,6 +507,8 @@ std::vector<std::string> ReadAlertCaptured(
 
     const std::vector<FlashShadow::Call> calls = FlashShadow::GetCalls(index);
     for (const FlashShadow::Call& call : calls) {
+        if (IsStructuralBatch(call))
+            continue;
         if (!IsListFeederBatch(call))
             take(call);
     }

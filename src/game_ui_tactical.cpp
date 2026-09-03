@@ -1084,11 +1084,19 @@ void* FindChildByMCName(void* panel, const char* name)
 }
 
 // A named label's retained text, cleaned — SetCenteredText stores the <p align='CENTER'> wrapper
-// with it, which the cleaning read strips.
+// with it, which the cleaning read strips. ⛔ Text FIRST, HtmlText as the fallback: the class
+// label is written with SetHTMLText, which fills only the html field (heard live 2026-09-04 as a
+// heading with the name and no class), while the name and the stats go through SetText/SetTitle
+// and fill both. The html field carries font markup on top of the alignment, all of it stripped.
 std::string ChildText(void* panel, const std::string& name)
 {
     void* child = FindChildByMCName(panel, name.c_str());
-    return child ? ReadFStringField(child, kWidgetTextOffset) : std::string();
+    if (!child)
+        return std::string();
+    std::string text = ReadFStringField(child, kWidgetTextOffset);
+    if (text.empty())
+        text = ReadFStringField(child, kScrollHtmlOffset);
+    return text;
 }
 
 } // namespace

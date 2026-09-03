@@ -146,6 +146,14 @@ speech is serial.
     or a `Package.Asset` dot in the ASCII path alphabet — so a one-word title survives, and so does
     any title in a non-Latin script). **Every asset drop is logged**, so a live run enumerates what
     the filter rejected instead of a line going silently missing.
+- ⛔ **A batch whose operands are NAMES is skipped by the op's name, never filtered by what the
+  names look like.** Reading every batch on the alert's panel (the multi-batch fix) also read
+  `UIPanel.LoadChild`'s `spawnChildPanel` — child MCName, child library id — and every popup of
+  2026-09-04 opened with "ButtonGroup, 1 of N", "EmptyControl, 2 of N" ahead of its title, as the
+  landing node. Neither string has a dot or a scheme, so the asset filter is the wrong tool; the
+  op is structural by construction, so `IsStructuralBatch` names it. The child-addressed ops
+  (`ChildSetString` and kin) carry their names in the capture's `child` field, not in the
+  operands, and need no such rule.
 - ⛔ **A popup with NO Escape branch must send its own single button record.** The recipe's
   fallback pair (Continue / Dismiss on Enter / Escape) exists for a popup that answered nothing,
   and it assumes both keys do something. `UIChosenEncountered` and `UISoldierCaptured`

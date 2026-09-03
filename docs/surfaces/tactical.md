@@ -638,7 +638,11 @@ with `X2AccessCharInfoReader.OpenCharInfo`. Built 2026-09-03 from source
 - **The stats are the FLA's seven** (HEALTH, AIM, HACK, WILL, ARMOR, DODGE, PSI) and nothing else
   — Mobility and Defense are in the struct and not on the screen. `---` is the screen's marker for
   zero and is said as `none`. The effect headings are the game's own, present only for a
-  non-empty category, and become contexts.
+  non-empty category, and become contexts. ✅ Attached and read the stats live 2026-09-04.
+- ⛔ **`SetHTMLText` fills only the html field.** The class label is the one label written that
+  way, and the first live sheet read the heading as the name alone; the labels are read Text
+  first, HtmlText as the fallback (both cleaned). The name and the stats go through
+  `SetText`/`SetTitle` and fill both fields.
 - Nothing activates; scrolling is gamepad-only in vanilla and the graph is the way to read a long
   list. Escape is the game's close, which `Show()`s the HUD again.
 
