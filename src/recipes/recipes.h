@@ -55,6 +55,7 @@ extern const Recipe kChooseFacilityRecipe;
 extern const Recipe kChooseUpgradeRecipe;
 extern const Recipe kResearchReportRecipe;
 extern const Recipe kResearchUnlockedRecipe;
+extern const Recipe kAvengerHudRecipe; // ambient — the ant farm's Tab layer
 
 // ---- tactical (recipe_tactical.cpp) ----
 extern const Recipe kTacticalHudRecipe;
@@ -62,7 +63,7 @@ extern const Recipe kMissionSummaryRecipe;
 extern const Recipe kChosenSummaryRecipe;
 
 // How many of the above kRecipes must list. Pinned by a static_assert next to the array.
-constexpr std::size_t kRecipeCount = 32;
+constexpr std::size_t kRecipeCount = 33;
 
 } // namespace Recipes
 } // namespace MenuNavigator

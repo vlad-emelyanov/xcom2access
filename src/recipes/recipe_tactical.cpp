@@ -489,7 +489,8 @@ std::string ChosenSummaryName()
 // overlay that can appear during a mission (dialog, popup, pause menu, the promotion screen)
 // resolves above, and the strategy screens can never probe ready while a tactical gate is.
 const Recipe kTacticalHudRecipe{"tactical HUD", ProbeTacticalHud, BuildTacticalHud,
-    TacticalHudName, /*SetListIndex*/ nullptr, /*ambient*/ true, YieldTacticalFocus};
+    TacticalHudName, /*SetListIndex*/ nullptr, /*ambient*/ true, YieldTacticalFocus,
+    /*ambientExitName*/ Vocab::TacticalWorldMode};
 
 // ⛔ ABOVE the ambient tactical recipe, both of them. They are pushed over UITacticalHUD while
 // the map is still loaded, and the gate already treats them the way this needs — an unknown

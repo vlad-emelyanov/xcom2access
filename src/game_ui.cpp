@@ -103,6 +103,9 @@ constexpr int32_t kTTDataBodyOffset = 0x54;       // FTTextTooltipData::sBody (F
 // for those items at all. So a panel-keyed read finds nothing and the text is nevertheless
 // sitting in the same array. Matching on the path is the way in.
 constexpr int32_t kTTDataTargetPathOffset = 0x1C; // FTTextTooltipData::targetPath (FString)
+constexpr int32_t kTTDataMouseInOffset = 0x6C;    // FTTextTooltipData::del_OnMouseIn (FScriptDelegate)
+constexpr int32_t kDelegateObjectOffset = 0x00;   // FScriptDelegate::Object
+constexpr int32_t kDelegateFunctionOffset = 0x08; // FScriptDelegate::FunctionName (FName)
 
 constexpr int32_t kMechaBGOffset = 0x40C;         // UIMechaListItem::BG (UIPanel*)
 // ⛔ UIListItemString OVERRIDES SetTooltipText to forward to its ButtonBG child ("Set tooltip on
@@ -1844,6 +1847,51 @@ std::string ReadTooltipByPath(void* panel, const char* childPath)
         ReadFStringField(el, kTTDataTitleOffset), ReadFStringField(el, kTTDataBodyOffset));
 }
 
+std::string ReadCallbackTooltip(void* panel)
+{
+    if (!panel || !(ReadU32Raw(panel, kPanelFlagsOffset) & kPanelHasTooltip))
+        return {};
+    const int32_t id = ReadI32Raw(panel, kPanelTooltipIdOffset);
+    void* mgr = TooltipMgrFor(panel);
+    if (!mgr)
+        return {};
+
+    // Only the SetTooltipText family carries a per-element callback; a preformed tooltip has
+    // none and the plain read is the whole answer.
+    const uint8_t* el = FindTextTooltipDataRaw(mgr, id);
+    if (!el)
+        return ReadPanelTooltip(panel);
+    void* target = ReadPtrRaw(el, kTTDataMouseInOffset + kDelegateObjectOffset);
+    char fn[128] = "";
+    if (!target
+        || !FNameAtAnsiRaw(el + kTTDataMouseInOffset + kDelegateFunctionOffset, fn, sizeof(fn))
+        || !fn[0] || strcmp(fn, "None") == 0)
+        return ReadPanelTooltip(panel); // no callback registered — the text is already final
+
+    // The game's own hover sequence, minus the showing. UITooltipMgr.OnMouse matches the shared
+    // UITextTooltip by path, which lands in MatchesID/SetDataIndex — that is what points
+    // DataIndex at THIS element and copies its delegate onto the object — and then fires
+    // del_OnMouseIn(Tooltip). The callback's SetText writes TextTooltipData[DataIndex].sBody,
+    // so selecting the element FIRST is load-bearing: without it the refreshed words would land
+    // in whichever element the last hover left selected. The manager's own ActivateTooltip and
+    // the UpdateData Flash push are deliberately not called — nothing appears on screen.
+    void* shared = ReadPtrRaw(mgr, kMgrTextTooltipOffset);
+    if (!shared)
+        return ReadPanelTooltip(panel);
+    struct {
+        int32_t NewID;
+        uint32_t ReturnValue;
+    } select{id, 0};
+    if (!CallNamedFunction(shared, "MatchesID", &select))
+        return ReadPanelTooltip(panel);
+    struct {
+        void* Tooltip;
+    } arg{shared};
+    if (!CallNamedFunction(target, fn, &arg))
+        LOG_WARN("ReadCallbackTooltip: %s could not be called for tooltip %d", fn, id);
+    return ReadPanelTooltip(panel);
+}
+
 bool AdjustDropdown(void* rowItem, int delta)
 {
     // The row's own OnUnrealCommand refuses input while disabled; calling into the widget
@@ -2209,18 +2257,33 @@ bool CallCompanion(const char* className, const char* funcName, void* params,
 std::string CleanText(const std::string& text)
 {
     // Strip <...> markup tags, collapse runs of whitespace, trim.
+    //
+    // ⛔ A LINE BREAK TAG IS WHITESPACE, not nothing. The game writes "<br \>" (and "<br/>",
+    // "<br>") between lines it means to keep apart — a covert-action slot's tooltip is the
+    // soldier's name, a break, then the reward — and stripping it outright fused the two into
+    // one word. Every other tag is presentation (<font>, <img>, <p>) and still vanishes.
     std::string out;
     out.reserve(text.size());
     bool inTag = false;
     bool pendingSpace = false;
+    char tag[3] = {}; // the tag's first letters, lower-cased, enough to recognise "br"
+    size_t tagLen = 0;
     for (char c : text) {
         if (c == '<') {
             inTag = true;
+            tagLen = 0;
             continue;
         }
         if (inTag) {
-            if (c == '>')
+            if (c == '>') {
                 inTag = false;
+                const bool isBreak = tagLen >= 2 && tag[0] == 'b' && tag[1] == 'r'
+                    && (tagLen == 2 || tag[2] == ' ' || tag[2] == '/');
+                if (isBreak)
+                    pendingSpace = !out.empty();
+            } else if (tagLen < sizeof(tag)) {
+                tag[tagLen++] = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
             continue;
         }
         if (std::isspace(static_cast<unsigned char>(c))) {

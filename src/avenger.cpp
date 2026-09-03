@@ -30,6 +30,12 @@ constexpr uint64_t kPollIntervalMs = 150;
 // belongs on the tick, the same discipline as every other surface in this project.
 bool gActive = false;
 
+// The grid is the current, interactive screen — BEFORE the question of who owns the keys. Two
+// consumers, two answers: the navigator's layer-toggle claims want this (the layer must be
+// enterable whether or not it is already focused), while the poll and the Delete key above want
+// this AND the layer not owning input, which is gActive.
+bool gGridCurrent = false;
+
 // One outbound call to the companion reader, then speak whatever it wrote to NativeResult.
 // An empty result is a deliberate "nothing to say": the poll uses it on every tick where the
 // selection has not moved.
@@ -93,12 +99,16 @@ void OnTick()
         return;
     sLastMs = now;
 
-    // A graph recipe owns the whole surface when it is attached (the dialog recipe attaches over
-    // strategy screens too), so it wins here the same way it does over the tile cursor.
-    GameUI::AvengerGate gate = MenuNavigator::IsAttached() ? GameUI::AvengerGate{}
-                                                           : GameUI::ReadAvengerGate();
+    // ⛔ OwnsInput(), not IsAttached() — the gating rule CLAUDE.md states for the tile cursor,
+    // now needed here for the same reason: the ant farm's AMBIENT recipe (recipe_avenger.cpp)
+    // is attached for as long as the grid is up, and gating on attachment would silence this
+    // poll for the whole of it. A recipe that has FOCUS — the dialog recipe over the grid, or
+    // the ambient layer after Tab — owns the surface and this stands down; an attached-but-
+    // unfocused layer is the normal state, and the rooms keep speaking under it.
+    GameUI::AvengerGate gate = GameUI::ReadAvengerGate();
     GameUI::StackState stack = GameUI::ReadStackState();
-    bool active = gate.Active() && (!stack.valid || stack.Interactive());
+    gGridCurrent = gate.Active() && (!stack.valid || stack.Interactive());
+    bool active = gGridCurrent && !MenuNavigator::OwnsInput();
 
     if (active != gActive) {
         gActive = active;
@@ -119,6 +129,11 @@ void OnTick()
     if (active || sWasActive)
         Call("PollGrid", Narrator::Channel::Focus);
     sWasActive = active;
+}
+
+bool IsGridActive()
+{
+    return gGridCurrent;
 }
 
 } // namespace Avenger

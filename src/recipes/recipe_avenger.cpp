@@ -8,6 +8,7 @@
 
 #include "game_ui.h"
 #include "log.h"
+#include "objective_reader.h"
 #include "tts.h"
 #include "vocab.h"
 
@@ -1728,6 +1729,331 @@ const Recipe kResearchReportRecipe{
 const Recipe kResearchUnlockedRecipe{"research unlocked",
     ProbeFocused<GameUI::FindResearchUnlockedScreen>,
     BuildResearchUnlocked, ResearchUnlockedName};
+
+// ---- the Avenger HUD (UIAvengerHUD) — the ant farm's ambient Tab layer ----
+//
+// docs/surfaces/avenger.md §Avenger HUD layer. The mod's second AMBIENT recipe, and the way the
+// narrate-only rule and a Tab layer coexist on one screen: the ant farm keeps its arrows (the
+// game's own UINavigator walks the rooms, with the camera swoop, the highlight box and the room
+// name that is set only under `if( bIsFocused )` — the three things the rule says our own focus
+// model would destroy), and this recipe attaches SILENTLY underneath. Tab or Ctrl+Tab focuses it;
+// then the arrows walk the HUD's panels and Escape hands them back. Nothing about room
+// navigation changes while it is unfocused, which is the whole argument.
+//
+// Five stops, mirroring what is ON the persistent HUD and nothing that is not: the resource
+// strip, the objectives (and the dark events under their own heading), the row of category
+// buttons along the bottom, the to-do strip, and the event queue with its date. Every word is the
+// game's own — three of the five panels retain theirs in script and the other two come through
+// the capture — and every activation is the function the game's own digit key or mouse would
+// have called (game_ui_avenger.h, "the rest of the HUD").
+//
+// ⛔ The probe is the ant farm's gate, not the HUD's presence. UIAvengerHUD is on the stack for
+// the whole strategy layer, but the layer belongs to the GRID: a room, a picker, the geoscape
+// all make the grid not-current, and each of those has its own recipe (or is the ambient state
+// of another surface). The dialog refusal is the tactical recipe's: a UIDialogueBox takes no
+// stack entry, so an attached recipe has to refuse it by hand or the player answers it blind.
+
+namespace {
+
+void* ProbeAvengerHud()
+{
+    if (GameUI::FindDialogScreen())
+        return nullptr;
+    if (!GameUI::ReadAvengerGate().Active())
+        return nullptr;
+    return GameUI::FindAvengerHud();
+}
+
+// The objectives panel — two stops when the ship has dark events, one otherwise — through the
+// Ctrl+X composers, so the key and the stop cannot disagree about a row.
+bool AddAvengerObjectiveStops(GraphBuilder& b)
+{
+    GameUI::ObjectiveListView obj = GameUI::ReadObjectives();
+    if (!obj.found)
+        return false;
+    std::vector<std::pair<std::string, std::string>> lines, dark; // (id suffix, spoken text)
+    int n = 0;
+    for (const GameUI::ObjectiveLine& line : obj.lines) {
+        if (line.title || !line.Speakable())
+            continue;
+        (line.darkEvent ? dark : lines)
+            .emplace_back(std::to_string(n++) + "/" + line.label,
+                ObjectiveReader::DescribeLine(line));
+    }
+    if (!lines.empty()) {
+        b.BeginStop("objectives");
+        b.PushContext(!obj.heading.empty() ? obj.heading : std::string(Vocab::StopObjectives));
+        for (const auto& [suffix, text] : lines)
+            b.AddLabel(ControlId::Structural("ahud/obj/" + suffix), [text = text]() { return text; });
+        b.PopContext();
+    }
+    if (!dark.empty()) {
+        b.BeginStop("darkevents");
+        b.PushContext(!obj.darkHeading.empty() ? obj.darkHeading
+                                               : std::string(Vocab::StopDarkEventsFallback));
+        for (const auto& [suffix, text] : dark)
+            b.AddLabel(ControlId::Structural("ahud/dark/" + suffix), [text = text]() { return text; });
+        b.PopContext();
+    }
+    return !lines.empty() || !dark.empty();
+}
+
+// The row of buttons along the bottom: the hologlobe (digit 1) and the category buttons
+// (digits 2-6). Walked with Left/Right, as they are drawn. Each node teaches its digit, because
+// that digit is the game's own keyboard path and works from the grid without this layer.
+bool AddShortcutStop(GraphBuilder& b)
+{
+    const GameUI::ShortcutBarView bar = GameUI::ReadShortcutBar();
+    if (!bar.showing || (bar.categories.empty() && !bar.geoscapeButton))
+        return false;
+
+    b.BeginStop("shortcuts");
+    b.PushContext(Vocab::StopShortcuts);
+    b.StartRow("shortcuts");
+
+    if (bar.geoscapeButton) {
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(
+            bar.geoscapeLabel.empty() ? std::string(Vocab::GeoscapeButtonFallback)
+                                      : bar.geoscapeLabel));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::AbilityHotkey("1")));
+        vt.Announcements.back().Kind = AnnouncementKinds::Value;
+        vt.OnActivate = []() {
+            // Re-read at activation: the handler runs from the input drain, a frame or more
+            // after this render. HotlinkToGeoscape refuses by itself when the bridge is
+            // tutorial-locked, silently — so the refusal is owed here.
+            if (!GameUI::HotlinkToGeoscape(GameUI::ReadShortcutBar()))
+                TTS::SpeakInterrupt(Vocab::Disabled);
+        };
+        // Space: the hover text AddLeftHelp registered for this button — TooltipGeoscape with
+        // the player's own binding resolved. Static, so the render's copy is the answer.
+        if (!bar.geoscapeTooltip.empty()) {
+            const std::string tip = bar.geoscapeTooltip;
+            vt.OnTooltip = [tip]() { TTS::SpeakInterrupt(tip); };
+        }
+        b.AddItem(ControlId::Structural("ahud/sc/geoscape"), std::move(vt));
+    }
+
+    for (const GameUI::ShortcutCategory& c : bar.categories) {
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(c.label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.Announcements.emplace_back(
+            NodeAnnouncement::Static(Vocab::AbilityHotkey(std::to_string(c.index + 2))));
+        vt.Announcements.back().Kind = AnnouncementKinds::Value;
+        if (c.alert) {
+            // bAlert is FacilityState.NeedsAttention() — the "!" badge on the button.
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Attention));
+            vt.Announcements.back().Kind = kKindAttention;
+        }
+        if (c.disabled) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        }
+        // Passed through even when disabled: SelectCategory tests Button.IsDisabled itself and
+        // moves the highlight without opening the room, which is what the digit does too.
+        const int index = c.index;
+        vt.OnActivate = [index]() {
+            if (!GameUI::SelectShortcutCategory(GameUI::ReadShortcutBar(), index))
+                TTS::SpeakInterrupt(Vocab::Disabled);
+        };
+        // Space: a CALLBACK tooltip (SetTooltipWIthCallback) — the words exist only once the
+        // hover delegate has run, so it is read at keypress through ReadCallbackTooltip on a
+        // fresh button pointer, never captured cold (cold, it says "Init").
+        vt.OnTooltip = [index]() {
+            const GameUI::ShortcutBarView live = GameUI::ReadShortcutBar();
+            for (const GameUI::ShortcutCategory& lc : live.categories) {
+                if (lc.index != index)
+                    continue;
+                const std::string tip = GameUI::ReadCallbackTooltip(lc.button);
+                if (!tip.empty())
+                    TTS::SpeakInterrupt(tip);
+                return;
+            }
+        };
+        // Label in the identity: the Shadow Chamber's button appears mid-campaign at the same
+        // index the layout always reserved for it, and must read as a new node.
+        b.AddItem(ControlId::Structural("ahud/sc/" + std::to_string(c.index) + "/" + c.label),
+            std::move(vt));
+    }
+    b.EndRow();
+    b.PopContext();
+    return true;
+}
+
+// The to-do strip: one context per category that has messages (the drawn icons), one button
+// per message. The label is the headline a hovering player sees in the list; the description is
+// the tooltip, on Space. Enter fires the message's own hotlink.
+bool AddToDoStop(GraphBuilder& b)
+{
+    const GameUI::ToDoView todo = GameUI::ReadToDoWidget();
+    if (!todo.showing || todo.categories.empty())
+        return false;
+
+    b.BeginStop("todo");
+    b.PushContext(Vocab::StopToDo);
+    for (const GameUI::ToDoCategory& cat : todo.categories) {
+        const bool named = !cat.label.empty();
+        if (named)
+            b.PushContext(cat.label);
+        for (size_t m = 0; m < cat.messages.size(); m++) {
+            const GameUI::ToDoMessage& msg = cat.messages[m];
+            NodeVtable vt;
+            vt.Type = &ButtonType();
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(msg.label));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+            // The urgency is the icon's colour (GetUrgencyColor: High = red, Medium = amber) and
+            // the row's tint (SetBad / SetWarning) — the same two words the room recipe uses for
+            // the same enum on the shortcut submenu, so one fact reads the same on both surfaces.
+            if (msg.urgency >= 2) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::RoomUrgent));
+                vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+            } else if (msg.urgency == 1) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::RoomWarning));
+                vt.Announcements.back().Kind = kKindAttention;
+            }
+            if (!msg.description.empty()) {
+                const std::string desc = msg.description;
+                vt.OnTooltip = [desc]() { TTS::SpeakInterrupt(desc); };
+            }
+            const int category = cat.index;
+            const int index = static_cast<int>(m);
+            vt.OnActivate = [category, index]() {
+                // The hover-then-click the mouse would have made, on a fresh read. The hotlink
+                // pushes a screen (a room, the research picker, the personnel list), and the
+                // grid going not-current detaches this layer for that screen's own recipe.
+                if (!GameUI::ActivateToDoMessage(GameUI::ReadToDoWidget(), category, index))
+                    TTS::SpeakInterrupt(Vocab::Disabled);
+            };
+            // Label in the identity: the strip is recomputed on every grid visit and a message
+            // that changed (a different soldier due a promotion) must read as a new node.
+            b.AddItem(ControlId::Structural("ahud/todo/" + std::to_string(cat.index) + "/"
+                          + std::to_string(m) + "/" + msg.label),
+                std::move(vt));
+        }
+        if (named)
+            b.PopContext();
+    }
+    b.PopContext();
+    return true;
+}
+
+// The event queue: the date and time first (the only date readout on the ship), then the rows
+// the list actually holds, then the expand/collapse button when the game draws one.
+bool AddEventStop(GraphBuilder& b)
+{
+    const GameUI::EventQueueView q = GameUI::ReadEventQueue();
+    if (!q.showing)
+        return false;
+    const bool hasDate = !q.date.empty() || !q.time.empty();
+    if (!hasDate && q.entries.empty() && !q.canToggle)
+        return false;
+
+    b.BeginStop("events");
+    b.PushContext(Vocab::StopEvents);
+
+    if (hasDate) {
+        std::string when = q.date;
+        AppendPhrase(when, q.time);
+        b.AddLabel(ControlId::Structural("ahud/ev/date"), [when]() { return when; });
+    }
+
+    for (size_t i = 0; i < q.entries.size(); i++) {
+        const GameUI::EventQueueEntry& e = q.entries[i];
+        NodeVtable vt;
+        vt.Type = &TextType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(e.title));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        // "3 days", or the game's "--" said in words. The label is localized and may be a
+        // single space on an overdue row, which AppendPhrase treats as nothing to add.
+        std::string eta;
+        if (e.daysValue == "--") {
+            eta = Vocab::EventNoEstimate;
+        } else {
+            eta = e.daysValue;
+            AppendPhrase(eta, e.daysLabel, " ");
+        }
+        if (!eta.empty()) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(eta));
+            vt.Announcements.back().Kind = AnnouncementKinds::Value;
+        }
+        // Space on the covert-action row: who is on it and what each slot pays — the per-slot
+        // hover tooltips, which are the only place the game states either on this HUD. Plain
+        // rows register no tooltip and stay silent, as they are for a sighted player.
+        if (!e.tooltip.empty()) {
+            const std::string tip = e.tooltip;
+            vt.OnTooltip = [tip]() { TTS::SpeakInterrupt(tip); };
+        }
+        // Title in the identity: the queue re-sorts as projects finish, and row i becoming a
+        // different project is a new node, not a relabel.
+        b.AddItem(ControlId::Structural("ahud/ev/" + std::to_string(i) + "/" + e.title),
+            std::move(vt));
+    }
+
+    if (q.canToggle) {
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(q.toggleLabel));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.OnActivate = []() {
+            // ToggleExpanded respawns the rows through ShowEventQueue; the differ picks up the
+            // new set on the next tick and the button's own label flips with bIsExpanded.
+            if (!GameUI::ToggleEventQueue(GameUI::ReadEventQueue()))
+                TTS::SpeakInterrupt(Vocab::Disabled);
+        };
+        // ⛔ ONE identity for both faces of the button, and the new face is the StateText. The
+        // first live run had the label in the id, on the theory that the differ would land on
+        // "the new button" after a press — it does not: the old id is simply gone, focus fell
+        // onto the neighbouring row, and the player heard a row speak where they had pressed a
+        // button (18:43, 2026-09-03 — "nothing happens"). With the id held, the navigator keeps
+        // focus here and speaks StateText, which re-reads the queue so the answer is the label
+        // the game just drew, not the one this render captured.
+        vt.StateText = []() { return GameUI::ReadEventQueue().toggleLabel; };
+        b.AddItem(ControlId::Structural("ahud/ev/toggle"), std::move(vt));
+    }
+    b.PopContext();
+    return true;
+}
+
+std::unique_ptr<GraphRender> BuildAvengerHud()
+{
+    GraphBuilder b;
+    bool any = false;
+    // Information first, verbs last: the strip, the objectives, the to-do strip and the queue
+    // are what a player opens this layer to READ, and the shortcut buttons are the one stop
+    // whose Enter leaves the screen — which is also why they sit last, where Shift+Tab from the
+    // landing reaches them in one press. (The buttons have their own digits from the grid
+    // anyway, so this layer is the least-needed way to reach them.)
+    any = AddResourceStop(b) || any;
+    any = AddAvengerObjectiveStops(b) || any;
+    any = AddToDoStop(b) || any;
+    any = AddEventStop(b) || any;
+    any = AddShortcutStop(b) || any;
+    // A HUD with nothing readable (the first frames of the strategy layer, or the tutorial
+    // before the strip and the queue exist) is not attachable yet — the navigator retries.
+    if (!any)
+        return nullptr;
+    return b.Build();
+}
+
+std::string AvengerHudName()
+{
+    return Vocab::ScreenAvengerHud;
+}
+
+} // namespace
+
+// Probed near the end of kRecipes, beside the tactical HUD recipe: below every screen that can
+// stack over the grid, and never in contention with tactical (no stack carries both). Ambient —
+// attaches silently while the grid keeps the arrows; no yield test, because nothing the game
+// raises over the grid leaves it current (each such screen detaches this recipe through the
+// probe instead). No SetListIndex: the HUD's panels hold no list this layer drives.
+const Recipe kAvengerHudRecipe{"Avenger HUD", ProbeAvengerHud, BuildAvengerHud, AvengerHudName,
+    /*SetListIndex*/ nullptr, /*ambient*/ true, /*YieldFocus*/ nullptr,
+    /*ambientExitName*/ Vocab::AvengerRoomsMode};
 
 } // namespace Recipes
 } // namespace MenuNavigator

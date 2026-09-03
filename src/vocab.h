@@ -446,6 +446,31 @@ inline constexpr const char* StopAbilities = "Abilities";
 inline constexpr const char* StopCommands = "Commands";
 inline constexpr const char* StopObjectives = "Objectives";
 
+// ---- the Avenger HUD graph (the ant farm's ambient recipe, Tab / Ctrl+Tab) ----
+//
+// The second ambient layer. Same shape as the tactical one: the game keeps the arrows (they
+// walk the rooms, with the camera swoop and the room name the narrate-only reader speaks),
+// Tab or Ctrl+Tab focuses the HUD's panels, Escape hands the arrows back.
+
+// Spoken on entering the layer, and by its refusal ("Avenger HUD unavailable.").
+inline constexpr const char* ScreenAvengerHud = "Avenger HUD";
+// Spoken when the keys go back to the grid — what the arrows now drive, as "Map" is for tactical.
+inline constexpr const char* AvengerRoomsMode = "Rooms";
+// Stop headings. The shortcut bar and the event queue draw no title of their own; the to-do
+// strip is a row of icons. All three words are ours.
+inline constexpr const char* StopShortcuts = "Room shortcuts";
+inline constexpr const char* StopToDo = "To do";
+inline constexpr const char* StopEvents = "Events";
+// The Avenger objective list draws dark events under a second heading the widget retains
+// (m_strDarkEventsListTitle); this is only the fallback for a list that gave none.
+inline constexpr const char* StopDarkEventsFallback = "Dark events";
+// An event-queue row whose ETA the game cannot compute prints "--" and tints the title amber —
+// a build with no engineer, a project with nobody on it. Said in words rather than as dashes.
+inline constexpr const char* EventNoEstimate = "no estimate";
+// The hologlobe button on the nav help strip. Its label (m_strGeoscapeLabel) is the game's own
+// word and is what is normally spoken; this is only for a nav help that has not populated it.
+inline constexpr const char* GeoscapeButtonFallback = "Geoscape";
+
 // An ability icon whose antenna text read empty (the game populates it only while the mouse is
 // active, and a stale-cleared icon holds ""), so the node still gets a name a player can act on.
 inline std::string AbilityFallback(int index)

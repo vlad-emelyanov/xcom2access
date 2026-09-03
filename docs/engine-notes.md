@@ -157,6 +157,24 @@ and note that a rule with no measurement under it any more is a rule to delete, 
   `UIObjectiveListItem.Data` (`ObjectiveDisplayInfo.DisplayLabel`, plus its timer). Everything else
   — HP, armour, action points, effects, ammo, hit chance — exists only in `XCOMHISTORY`. In tactical
   the widget tree supplies STRUCTURE and SELECTION while the companion supplies the WORDS.
+- **Tooltips come in three registrations, and the one that looks empty is not.** Read from
+  source 2026-09-03 while auditing Space on the Avenger HUD. (1) `UIPanel.SetTooltipText` adds a
+  `TTextTooltipData` element to the manager's ONE shared `UITextTooltip` (`TextTooltipData`, stride
+  0xAC, id at 0x00, targetPath 0x1C, sBody 0x54) and stamps the panel with `bHasTooltip` +
+  `CachedTooltipId` — the panel-keyed read. (2) `UITooltipMgr.AddNewTooltipTextBox` called
+  DIRECTLY with a Flash path adds the same element with no panel behind it (`UINavigationHelp
+  .GenerateTooltip`, the covert row's `MCPath.slotN`) — the path-keyed read. (3)
+  `UIX2MenuButton.SetTooltipWIthCallback` registers a PLACEHOLDER ("Init") and stores a
+  `del_OnMouseIn` delegate in the element (0x6C, an FScriptDelegate: Object then FunctionName at
+  +8); the real words exist only after the hover fires it. The hover sequence is
+  `UITooltipMgr.OnMouse` → `UITextTooltip.MatchesPath`/`MatchesID` (sets `DataIndex` to the element
+  and copies its delegate onto the object) → `del_OnMouseIn(Tooltip)` → the callback's
+  `UITextTooltip.SetText`, which writes `TextTooltipData[DataIndex].sBody`. So a cold read of (3)
+  speaks "Init", and reproducing the hover natively MUST select the element first
+  (`MatchesID(id)`, an int-param script call) or the refreshed words land in whichever element the
+  last real hover left selected. `GameUI::ReadCallbackTooltip` is that sequence minus the
+  `ActivateTooltip`/`UpdateData` Flash push, so nothing appears on screen. The Avenger shortcut
+  buttons and the ability icons are (3); nearly everything else is (1).
 - Best public documentation of Firaxis' UE3 internals: robojumper's "Too Real" series
   (https://robojumper.github.io/too-real/). Highlander event reference:
   https://x2communitycore.github.io/X2WOTCCommunityHighlander/

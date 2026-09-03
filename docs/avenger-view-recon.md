@@ -147,7 +147,12 @@ Two exact forms worth copying rather than reinventing: monthly income prints as
 a signed parenthesised value (`(+§40)`), and contacts and power both print as
 `current/total`.
 
-### 2.3 Room shortcut bar — `UIAvengerShortcuts` ✅ fully retained
+### 2.3 Room shortcut bar — `UIAvengerShortcuts` ✅ fully retained — ✅ BUILT
+
+Built 2026-09-03 as a stop of the ant farm's ambient recipe (`surfaces/avenger.md` §Avenger HUD
+layer): the CATEGORY buttons plus the nav help's hologlobe, activated through `SelectCategory`
+and `HotlinkToGeoscape`. The messages under each category are the room's submenu and belong to
+the room recipe.
 
 The row of buttons along the bottom. This is the game's own primary navigation
 and **all of it is readable**. Live:
@@ -178,7 +183,12 @@ highlighted; the two differ only on controller.
 The Shadow Chamber button is hidden until the facility exists
 (`ShouldShowCurrentCategory`), which is why it read `inited` but not `visible`.
 
-### 2.4 To-do strip — `UIToDoWidget` ✅ fully retained
+### 2.4 To-do strip — `UIToDoWidget` ✅ fully retained — ✅ BUILT
+
+Built 2026-09-03 as a stop of the ant farm's ambient recipe: one context per drawn icon, one
+button per message, the description on Space, the hotlink on Enter through the game's own
+hover-then-click (`OnCategoryMouseEvent` + `OnListItemCallback`). The staleness gate below is
+moot for that recipe, which lives exactly where `UpdateCategories` runs.
 
 The small icon row. This is the closest thing the game has to a
 "what should I do next" list, and it is **the single highest-value surface on
@@ -217,7 +227,12 @@ last stood on the grid. Anything of ours that speaks the to-do list either has
 to accept that staleness (which matches what the sighted player's icons show —
 they are stale too) or call `UpdateCategories()` itself.
 
-### 2.5 Event queue — `UIEventQueue` ✅ RETAINED after all (corrected 2026-08-21)
+### 2.5 Event queue — `UIEventQueue` ✅ RETAINED after all (corrected 2026-08-21) — ✅ BUILT
+
+Built 2026-09-03 as a stop of the ant farm's ambient recipe: the rows the list holds (which
+is the collapsed one-or-two unless expanded), the expand/collapse button when drawn, and the
+date/time — the one Flash push on this HUD (`RefreshDateTime`), read off the queue's cache
+index by name.
 
 ⚠️ **This section said "not retained on the widget" and was wrong.** Measured
 live 2026-08-21 with `/gui depth=4 screen=UIAvengerHUD`, the row widget carries
@@ -254,7 +269,11 @@ room** (`UIFacility.InitScreen` calls `HideEventQueue()`), and when collapsed it
 shows only **one** event (two if a covert action is pending) — the expand button
 is the only way a sighted player sees the rest, and it is mouse-only.
 
-### 2.6 Objectives — `UIObjectiveList` *[not seen live]*
+### 2.6 Objectives — `UIObjectiveList` *[not seen live]* — ✅ BUILT
+
+Read natively by `objective_reader.cpp` (Ctrl+X) since the tactical work, and since 2026-09-03
+also a stop of the ant farm's ambient recipe — dark events under their own heading — through
+the same composers, so the key and the stop cannot disagree.
 
 Same class the tactical HUD uses; per CLAUDE.md its `UIObjectiveListItem.Data`
 (`ObjectiveDisplayInfo.DisplayLabel`) is readable. Sourced from

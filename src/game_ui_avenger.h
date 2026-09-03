@@ -99,6 +99,139 @@ ResourceStripView ReadResourceStrip();
 /// dispatched.
 bool RefreshResourceStrip(const ResourceStripView& view);
 
+// ---- the rest of the HUD: shortcuts, to-do strip, event queue (UIAvengerHUD) — recon §2.3-2.5 ----
+//
+// The three other panels the ant farm's ambient recipe walks. All three RETAIN their words in
+// script properties — the opposite of the tactical HUD, and the reason none of these needs the
+// Flash capture or a companion call: the shortcut bar keeps its categories and messages in
+// `Categories`, the to-do widget keeps every message it computed in ITS `Categories`, and each
+// event-queue row keeps Title/DaysLabel/DaysValue on the row widget (recon §2.5, corrected live
+// 2026-08-21). Every view here is a plain widget read plus the one activation path the game's own
+// mouse or digit key would have taken.
+
+/// The HUD screen itself, or null outside the strategy layer. Stack-managed and persistent —
+/// the same object for a whole campaign session, which is why the ambient recipe can attach to
+/// it and stay attached across every room visit and geoscape trip.
+void* FindAvengerHud();
+
+// The row of category buttons along the bottom (`UIAvengerShortcuts`): Research, Engineering,
+// Armory, Command Center, Shadow Chamber — the game's own primary navigation. ⛔ On
+// mouse+keyboard the game gives these NO keyboard cycling (LBUMPER/RBUMPER are controller-only);
+// a keyboard player reaches them only through the `2`–`6` digits, which call `SelectCategory`
+// directly. That function is therefore the activation path here too — it IS the digit key.
+struct ShortcutCategory {
+    int index = -1;         // the game's category index, which is also the digit minus two
+    std::string label;      // CategoryLabels[index], localized
+    bool alert = false;     // bAlert — the "!" badge, FacilityState.NeedsAttention()
+    bool disabled = false;  // Button.IsDisabled — SelectCategory refuses these itself
+    /// The UIX2MenuButton, for Space: its tooltip is a CALLBACK tooltip (SetTooltipWIthCallback,
+    /// resolving the player's real key binding on hover), so it is read through
+    /// ReadCallbackTooltip at keypress time, never cold. Valid for this read only.
+    void* button = nullptr;
+};
+
+struct ShortcutBarView {
+    void* hud = nullptr;
+    void* shortcuts = nullptr;
+    void* navHelp = nullptr;
+    bool showing = false; // the bar's own bIsVisible (RealizeShortcuts shows it on the grid)
+    std::vector<ShortcutCategory> categories; // VISIBLE buttons only, in the game's order
+    /// The hologlobe button on the nav help strip (digit `1`), which is not a category but sits
+    /// beside them and is the only other button on that edge. `geoscapeLabel` is the
+    /// localized word the controller branch draws; on mouse+keyboard the button is an icon.
+    bool geoscapeButton = false;
+    std::string geoscapeLabel;
+    /// The hologlobe's hover text — TooltipGeoscape with the player's binding resolved, which
+    /// AddLeftHelp registered against the button's Flash path rather than a panel. Found by
+    /// locating HotlinkToGeoscape in m_arrButtonClickDelegates: the index IS the button's name.
+    std::string geoscapeTooltip;
+};
+
+/// Read the bar. Game thread only.
+ShortcutBarView ReadShortcutBar();
+
+/// Go to a category the way the `2`–`6` keys do: `UIAvengerShortcuts.SelectCategory(index)`,
+/// which swoops the camera and pushes the room screen. The game refuses a disabled category
+/// inside that call, so a disabled button is passed through rather than pre-filtered. Game
+/// thread only.
+bool SelectShortcutCategory(const ShortcutBarView& view, int index);
+
+/// Press the hologlobe button: `UINavigationHelp.HotlinkToGeoscape()`, which is what digit `1`
+/// calls. Game thread only.
+bool HotlinkToGeoscape(const ShortcutBarView& view);
+
+// The to-do strip (`UIToDoWidget`): the small icon row bottom-left, one icon per category that
+// has something to say, coloured by the worst urgency in it. This is the game's own
+// pre-computed "what should I do next", and every message carries a working hotlink. ⛔ It is
+// MOUSE-ONLY in vanilla: the messages appear on hover (`OnCategoryMouseEvent` → `ShowList`), and
+// the only keyboard path is L3 on a controller. Reading it is parity with the hover; the
+// activation reproduces the hover-then-click.
+//
+// ⚠ `UpdateCategories()` runs only while `UIFacilityGrid` is the current screen and visible, so
+// the data is stale anywhere else — which matches the icons a sighted player sees, and does not
+// bite the ant farm recipe, which lives exactly there.
+struct ToDoMessage {
+    std::string label;       // "PROMOTION: Sq. Jane Kelly"
+    std::string description; // the hover tooltip
+    int urgency = 0;         // EUIToDoMsgUrgency: 0 low, 1 medium (amber), 2 high (red)
+};
+
+struct ToDoCategory {
+    int index = -1;    // UIToDoCategory — also the index into m_arrCategory_Labels
+    std::string label; // the category's localized name
+    std::vector<ToDoMessage> messages;
+};
+
+struct ToDoView {
+    void* hud = nullptr;
+    void* widget = nullptr;
+    bool showing = false;                // the widget's own bIsVisible
+    std::vector<ToDoCategory> categories; // categories WITH messages only — the drawn icons
+};
+
+/// Read the strip. Game thread only.
+ToDoView ReadToDoWidget();
+
+/// Fire a message's hotlink the way the mouse does: set `CurrentCategory` (what
+/// `OnCategoryMouseEvent` writes before `ShowList`) and call `OnListItemCallback(List, index)`,
+/// which dispatches the message's own `OnItemClicked` delegate with its refs. Game thread only.
+bool ActivateToDoMessage(const ToDoView& view, int category, int index);
+
+// The event queue (`UIEventQueue`): the timeline bottom-right — what is being researched, built
+// or trained and how long is left, soonest first. Collapsed it shows ONE row (two when a covert
+// action is running), and the expand button that reveals the rest is mouse-only in vanilla
+// (`ExpandButton.DisableNavigation()`; R3 is the controller path). The date/time header is a
+// Flash push (`RefreshDateTime`) and comes from the capture.
+struct EventQueueEntry {
+    std::string title;     // "RESEARCH: Hybrid Materials" — the row's own Title
+    std::string daysLabel; // "days" — localized by GetTimeValueAndLabel; " " on an overdue row
+    std::string daysValue; // "3", or "--" when the game cannot say
+    bool covert = false;   // a UIEventQueue_CovertActionListItem — the action row
+    /// The covert row's hover text: one tooltip per staff slot (`MCPath.slotN`), each the
+    /// soldier's name and the slot's reward, joined. Plain rows register none, so this is empty
+    /// there and Space is silent — as it is for a sighted player.
+    std::string tooltip;
+};
+
+struct EventQueueView {
+    void* hud = nullptr;
+    void* queue = nullptr;
+    bool showing = false;   // the queue's own bIsVisible
+    bool expanded = false;  // bIsExpanded
+    bool canToggle = false; // ExpandButton is visible — i.e. there is more than one event
+    std::string toggleLabel; // ExpandButtonLabel or ShrinkButtonLabel, whichever is drawn
+    std::string date;        // captured RefreshDateTime operand 0
+    std::string time;        // operands 1-3 joined: "9:41 AM"
+    std::vector<EventQueueEntry> entries; // the rows the list actually holds, top to bottom
+};
+
+/// Read the queue. Game thread only.
+EventQueueView ReadEventQueue();
+
+/// Expand or collapse the queue through its own `ToggleExpanded`, which respawns the rows via
+/// `UIAvengerHUD.ShowEventQueue`. Game thread only.
+bool ToggleEventQueue(const EventQueueView& view);
+
 // ---- inside a room (UIFacility and its 22 subclasses) ----
 //
 // ⛔ The room SCREEN is not the room's content. All seven FIXED rooms declare ZERO staff slots —

@@ -4,6 +4,7 @@
 #include "recipes/recipe_context.h"
 #include "recipes/recipes.h"
 #include "tactical_hud.h"
+#include "avenger.h"
 #include "tts.h"
 #include "ue3_reflection.h"
 #include "vocab.h"
@@ -413,7 +414,7 @@ void EnterAmbientFocus()
     if (!gGraph || !gGraph->Rerender()) {
         // The screen emptied under the attach (should have detached already; the next tick
         // will). A pressed mode key must not be silent about refusing.
-        TTS::SpeakInterrupt(Vocab::SurfaceUnavailable(Vocab::ScreenTacticalHud));
+        TTS::SpeakInterrupt(Vocab::SurfaceUnavailable(gActive->ScreenName().c_str()));
         return;
     }
     gFocused = true;
@@ -429,8 +430,11 @@ void ExitAmbientFocus(bool silent)
     if (!gFocused)
         return;
     gFocused = false;
+    // The recipe's own word for what the arrows drive again — two ambient layers exist now, and
+    // "Map" said on the Avenger would name the wrong one.
     if (!silent)
-        TTS::SpeakInterrupt(Vocab::TacticalWorldMode);
+        TTS::SpeakInterrupt((gActive && gActive->ambientExitName) ? gActive->ambientExitName
+                                                                  : Vocab::TacticalWorldMode);
     LOG_INFO("MenuNavigator: %s unfocused (%s)", gActive ? gActive->logName : "?",
         silent ? "yielded to the game" : "player exit");
 }
@@ -443,7 +447,10 @@ void ExitAmbientFocus(bool silent)
 void OnLayerToggle()
 {
     if (!gAttached || !gActive->ambient) {
-        TTS::SpeakInterrupt(Vocab::SurfaceUnavailable(Vocab::ScreenTacticalHud));
+        // Nothing attached to name, so name the layer the player is standing in: the claim is
+        // live in exactly two places, and which one is a flag read away.
+        TTS::SpeakInterrupt(Vocab::SurfaceUnavailable(
+            Avenger::IsGridActive() ? Vocab::ScreenAvengerHud : Vocab::ScreenTacticalHud));
         return;
     }
     if (gFocused) {
@@ -454,7 +461,7 @@ void OnLayerToggle()
     // test already says so) would announce a landing and then strip its keys 100 ms later.
     // Refuse up front instead, in the same words as any other unavailable surface.
     if (gActive->YieldFocus && gActive->YieldFocus()) {
-        TTS::SpeakInterrupt(Vocab::SurfaceUnavailable(Vocab::ScreenTacticalHud));
+        TTS::SpeakInterrupt(Vocab::SurfaceUnavailable(gActive->ScreenName().c_str()));
         return;
     }
     EnterAmbientFocus();
@@ -543,6 +550,11 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     // with each other (the Chosen screen pops itself before pushing the summary), so their
     // relative order is free; below every modal a mission can still raise, all listed earlier.
     &kChosenSummaryRecipe, &kMissionSummaryRecipe,
+    // The ambient Avenger recipe — the ant farm's Tab layer. Below every screen that stacks over
+    // the grid (dialogs, popups, the pickers, the rooms, the geoscape — all of which make the
+    // grid not-current, which is its probe's whole test), and it can never contend with the
+    // tactical recipe: no stack holds a UIFacilityGrid and a UITacticalHUD at once.
+    &kAvengerHudRecipe,
     // The ambient tactical recipe. Below every overlay a mission can raise (dialog, popup,
     // pause menu — all resolve above), and it can never contend with the strategy screens:
     // its probe requires a tactical gate no strategy stack can satisfy.
@@ -574,6 +586,18 @@ void OnArrow(GraphDir dir)
     }
     // Not moved (edge) — consumed silently; the layer's refusals are silent. The claim still
     // swallowed the chord, so the game's own navigation never runs in parallel (spec A1).
+}
+
+// The kernel's adjust verb on keys of its own. Left/Right already adjust a focused slider or
+// spinner (OnArrow tries that first), but inside a GraphSheet the arrows are column travel and
+// cannot be both — so an adjustable ROW (the trading post's sell quantity) needs a chord that
+// means nothing else. Silent on a node with no OnAdjust: the layer's refusals are silent.
+void OnAdjustKey(int sign)
+{
+    if (!gGraph)
+        return;
+    if (gGraph->TryAdjust(sign, /*large*/ false))
+        SpeakStateAfterChange();
 }
 
 void OnEdgeJump(GraphDir dir)
@@ -746,6 +770,24 @@ void Init()
         "settings: previous tab"});
     RegisterClaim({VK_NEXT, ModNone, optionsAttached, onDown([]() { OnTabPage(1); }),
         "settings: next tab"});
+    // Plus and minus adjust the focused control — the kernel's TryAdjust on keys of its own.
+    // Left/Right already do this for a slider or a spinner, but inside a GraphSheet the arrows
+    // are column travel and cannot be both, and the trading post's sell quantity is a table row
+    // that adjusts. The main-row keys and the numpad both, plus Shift on '=' because that is
+    // where '+' lives. Budget (docs/input-map.md): '=' and '-' carry no binding in any input
+    // section; numpad Add and Subtract are SpeedUpGame / SlowDownGame in the TACTICAL block
+    // only, which a menu recipe focused mid-mission swallows for exactly as long as it holds the
+    // keyboard — the same deal every claim here makes — and leniency leaves both at Ctrl+numpad.
+    RegisterClaim({VK_OEM_PLUS, ModNone, attached, onDown([]() { OnAdjustKey(1); }),
+        "menu: adjust up (+)"});
+    RegisterClaim({VK_OEM_PLUS, ModShift, attached, onDown([]() { OnAdjustKey(1); }),
+        "menu: adjust up (Shift+=)"});
+    RegisterClaim({VK_ADD, ModNone, attached, onDown([]() { OnAdjustKey(1); }),
+        "menu: adjust up (numpad +)"});
+    RegisterClaim({VK_OEM_MINUS, ModNone, attached, onDown([]() { OnAdjustKey(-1); }),
+        "menu: adjust down (-)"});
+    RegisterClaim({VK_SUBTRACT, ModNone, attached, onDown([]() { OnAdjustKey(-1); }),
+        "menu: adjust down (numpad -)"});
 
     // ---- the ambient (tactical HUD) layer's own keys ----
     //
@@ -755,19 +797,35 @@ void Init()
     // must be swallowed everywhere the player might try it — the handler owns the refusal.
     // IsMissionActive is a plain flag published from TacticalHUD's tick, which is what a
     // predicate evaluated inside the window procedure is allowed to read.
-    auto missionActive = []() { return TacticalHUD::IsMissionActive(); };
+    // ...and on the Avenger's ant farm, the second ambient layer: same chord, same handler, same
+    // leniency argument (bare Tab is bound in [XComGame.XComHeadquartersInput] too, line 468).
+    auto layerActive
+        = []() { return TacticalHUD::IsMissionActive() || Avenger::IsGridActive(); };
     // No auto-repeat: a held chord flapping the mode would leave the player unable to tell
     // which side of it they ended on.
-    RegisterClaim({VK_TAB, ModCtrl, missionActive,
+    RegisterClaim({VK_TAB, ModCtrl, layerActive,
         [](const KeyEvent& e) { if (e.down && !e.repeat) OnLayerToggle(); },
-        "tactical: enter/exit the HUD layer"});
+        "HUD layer: enter/exit (tactical and Avenger)"});
 
-    // Escape backs out of the HUD graph to world mode. Only while an ambient recipe is focused —
-    // on every menu recipe Escape stays the game's own close key, unclaimed.
+    // ⚠ PLAIN Tab enters the Avenger layer too — a key the tactical layer can never take (there
+    // it is next unit / next target), but on the ant farm it is DEAD in retail: the only handler
+    // it reaches, UIAvengerHUD.OnUnrealCommand's FXS_KEY_TAB case, is compiled out under
+    // `if(`notdefined(FINAL_RELEASE)) (it opened the personnel list in dev builds, beside `P`),
+    // UIFacilityGrid never handles Tab, and the shortcut bar cycles categories on the bumpers
+    // only. So the bare binding's forwarder fires into nothing, and claiming it displaces
+    // nothing. Only while the layer is NOT already focused — focused, Tab is the stop cycle
+    // (the `attached` claim above), and the two predicates are disjoint by construction.
+    auto gridUnfocused = []() { return Avenger::IsGridActive() && !(gAttached && gFocused); };
+    RegisterClaim({VK_TAB, ModNone, gridUnfocused,
+        [](const KeyEvent& e) { if (e.down && !e.repeat) OnLayerToggle(); },
+        "Avenger HUD: enter the layer"});
+
+    // Escape backs out of the HUD graph to the gameplay layer. Only while an ambient recipe is
+    // focused — on every menu recipe Escape stays the game's own close key, unclaimed.
     auto ambientFocused = []() { return gAttached && gFocused && gActive->ambient; };
     RegisterClaim({VK_ESCAPE, ModNone, ambientFocused,
         [](const KeyEvent& e) { if (e.down && !e.repeat) ExitAmbientFocus(/*silent*/ false); },
-        "tactical: leave the HUD layer"});
+        "HUD layer: leave"});
 
     LOG_INFO("MenuNavigator: initialized (%zu screen recipes)",
         sizeof(kRecipes) / sizeof(kRecipes[0]));

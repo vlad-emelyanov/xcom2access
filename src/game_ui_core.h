@@ -177,4 +177,15 @@ std::string ReadListItemTooltip(void* rowItem);
 /// which is indistinguishable from an empty tooltip. Game thread only.
 std::string ReadTooltipByPath(void* panel, const char* childPath);
 
+/// A panel's tooltip when it is a CALLBACK tooltip — `SetTooltipWIthCallback` and friends
+/// register a placeholder ("Init") plus a `del_OnMouseIn` delegate, and the real words are
+/// computed only when the mouse arrives: the Avenger shortcut buttons resolve the player's own
+/// key binding that way (`RefreshTooltipResearch` → `FindAbilityKey(TooltipResearch,
+/// "%KEY:TWO%", …)`), and ability icons do the same. A cold ReadPanelTooltip on one of these
+/// speaks the placeholder. This runs the game's own hover sequence without the showing — select
+/// the element on the shared UITextTooltip (MatchesID), fire the element's delegate, read back —
+/// and degrades to ReadPanelTooltip when the panel's tooltip has no callback. One outbound call
+/// per delegate: game thread only, and from a key handler rather than a poll.
+std::string ReadCallbackTooltip(void* panel);
+
 } // namespace GameUI

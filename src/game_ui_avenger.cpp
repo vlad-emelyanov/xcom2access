@@ -6,6 +6,7 @@
 #include "game_ui_internal.h"
 #include "log.h"
 #include "flash_shadow.h"
+#include "Graph/GraphAnnouncer.hpp" // AppendPhrase — the covert row's slot tooltips are joined here
 
 #include <cstring>
 #include <string>
@@ -202,6 +203,373 @@ bool RefreshResourceStrip(const ResourceStripView& view)
     return CallNamedFunction(view.hud, "UpdateResources", nullptr);
 }
 
+// ---- the rest of the HUD: shortcuts, to-do strip, event queue -----------------------------------
+//
+// See the header for what each panel is and why it is a plain widget read. What is worth keeping
+// here is the ACTIVATION discipline, which is the same for all three: never poke a field the
+// game's own path would have written, call the function that path calls. The digit keys call
+// SelectCategory; the mouse hover calls OnCategoryMouseEvent with the icon it hovered and the row
+// click calls OnListItemCallback; R3 calls ToggleExpanded. Each of those is one CallNamedFunction
+// with the game's own parameters, so every side effect — the camera swoop, the tooltip cleanup,
+// the close timer, the row respawn — happens exactly as it would for a sighted player.
+
+namespace {
+
+constexpr int32_t kAvengerHudNavHelpOffset = 0x418;    // UIAvengerHUD::NavHelp
+constexpr int32_t kAvengerHudEventQueueOffset = 0x42C; // UIAvengerHUD::EventQueue
+constexpr int32_t kAvengerHudToDoOffset = 0x434;       // UIAvengerHUD::ToDoWidget
+constexpr int32_t kAvengerHudShortcutsOffset = 0x43C;  // UIAvengerHUD::Shortcuts (the room
+                                                       // reader below uses it too)
+constexpr int32_t kShortcutsCategoryLabelsOffset = 0x3F0; // UIAvengerShortcuts::CategoryLabels[5],
+                                                          // stride 0x10 (same)
+
+// UIAvengerShortcuts::Categories — a TArray of UIAvengerShortcutMessageCategory, walked by
+// stride. Only Button and bAlert are read; the messages inside are the ROOM's submenu, which the
+// room recipe already reads and which the grid never shows (HideList on RealizeShortcuts).
+constexpr int32_t kShortcutsCategoriesOffset = 0x82C;
+constexpr int32_t kShortcutCatStride = 0x40;
+constexpr int32_t kShortcutCatButton = 0x00;
+constexpr int32_t kShortcutCatFlags = 0x3C; // bAlert bit 0
+constexpr uint32_t kShortcutCatAlert = 0x1;
+constexpr int kShortcutLabelCount = 5; // CategoryLabels[5]
+constexpr int kMaxShortcutCategories = 8; // five shipped; the headroom is for a mod
+
+// UINavigationHelp — the hologlobe button (digit 1) and the word the controller branch draws.
+constexpr int32_t kNavHelpGeoscapeLabelOffset = 0x3F4;
+constexpr int32_t kNavHelpFlagsOffset = 0x434; // bGeoscapeButton bit 0x4
+constexpr uint32_t kNavHelpGeoscapeButton = 0x4;
+// m_arrButtonClickDelegates (TArray<FScriptDelegate>): entry N belongs to the help button
+// Flash knows as `buttonNavHelp_N`, which is also where AddLeftHelp registered its tooltip
+// (GenerateTooltipPath: MCPath.leftBtnHelpContainer.buttonNavHelp_N).
+constexpr int32_t kNavHelpButtonDelegatesOffset = 0x43C;
+constexpr int32_t kDelegateStride = 0x20;
+constexpr int32_t kDelegateFunctionOffset = 0x08; // FScriptDelegate::FunctionName
+constexpr int kMaxNavHelpButtons = 16;
+constexpr const char* kGeoscapeHotlinkFunction = "HotlinkToGeoscape";
+constexpr const char* kNavHelpLeftButtonPath = ".leftBtnHelpContainer.buttonNavHelp_";
+// A covert-action row's staff-slot tooltips: MCPath.slot0 … registered per staff slot only.
+constexpr int kMaxCovertSlots = 8;
+
+// UIToDoWidget
+constexpr int32_t kToDoCategoryLabelsOffset = 0x3D8; // m_arrCategory_Labels (TArray<FString>)
+constexpr int32_t kToDoListOffset = 0x780;
+constexpr int32_t kToDoCategoriesOffset = 0x7AC; // Categories (TArray<UIToDoMessageCategory>)
+constexpr int32_t kToDoCatStride = 0x18;
+constexpr int32_t kToDoCatIcon = 0x00;
+constexpr int32_t kToDoCatMessages = 0x08; // TArray<UIToDoMessage>
+constexpr int32_t kToDoMsgStride = 0x5C;
+constexpr int32_t kToDoMsgLabel = 0x00;
+constexpr int32_t kToDoMsgDescription = 0x10;
+constexpr int32_t kToDoMsgUrgency = 0x28; // a byte; read as the dword it pads
+constexpr int kMaxToDoCategories = 16; // eUIToDoCat_MAX is 9
+constexpr int kMaxToDoMessages = 32;   // per category; the staffing list is the widest shipped
+// UIUtilities_Input.FXS_L_MOUSE_IN — the command OnCategoryMouseEvent takes as "hovered".
+constexpr int32_t kInputMouseIn = 392;
+
+// UIEventQueue and its rows
+constexpr int32_t kEventQueueListOffset = 0x3D8;
+constexpr int32_t kEventQueueExpandButtonOffset = 0x3F0;
+constexpr int32_t kEventQueueExpandLabelOffset = 0x3F8;
+constexpr int32_t kEventQueueShrinkLabelOffset = 0x408;
+constexpr int32_t kEventQueueFlagsOffset = 0x418; // bIsExpanded bit 0
+constexpr uint32_t kEventQueueExpanded = 0x1;
+constexpr int32_t kEventItemTitleOffset = 0x3D8;
+constexpr int32_t kEventItemDaysLabelOffset = 0x3E8;
+constexpr int32_t kEventItemDaysValueOffset = 0x3F8;
+constexpr int kMaxEventRows = 64; // eleven contributors; a long queue is a dozen rows
+
+// RefreshDateTime's operands (UIEventQueue.uc:185-190): date, hours, minutes, suffix.
+constexpr size_t kDateTimeDate = 0;
+constexpr size_t kDateTimeHours = 1;
+constexpr size_t kDateTimeMinutes = 2;
+constexpr size_t kDateTimeSuffix = 3;
+
+// Visible AND not removed, for the child widgets whose bIsVisible the game toggles on purpose —
+// every panel read below is one (Show/Hide on the strip, the icons, the queue, the button).
+bool ChildShowing(void* panel)
+{
+    if (!panel)
+        return false;
+    const uint32_t flags = ReadU32Raw(panel, kPanelFlagsOffset);
+    return (flags & kPanelVisible) && !(flags & kPanelRemoved);
+}
+
+// The Data pointer and Count of a TArray at `offset`, for the struct arrays walked by stride.
+// Count is -1 when the array could not be read; the callers treat that as empty.
+const uint8_t* ArrayData(const void* obj, int32_t offset, int* count)
+{
+    *count = ReadArrayCountRaw(obj, offset);
+    if (*count <= 0)
+        return nullptr;
+    return static_cast<const uint8_t*>(ReadPtrRaw(obj, offset));
+}
+
+} // namespace
+
+void* FindAvengerHud()
+{
+    return FindStackScreenRaw("UIAvengerHUD");
+}
+
+ShortcutBarView ReadShortcutBar()
+{
+    ShortcutBarView v;
+    v.hud = FindAvengerHud();
+    if (!v.hud)
+        return v;
+    v.shortcuts = ReadPtrRaw(v.hud, kAvengerHudShortcutsOffset);
+    v.navHelp = ReadPtrRaw(v.hud, kAvengerHudNavHelpOffset);
+    if (!v.shortcuts)
+        return v;
+    v.showing = ChildShowing(v.shortcuts);
+
+    int count = 0;
+    const uint8_t* data = ArrayData(v.shortcuts, kShortcutsCategoriesOffset, &count);
+    if (data) {
+        if (count > kMaxShortcutCategories) {
+            LOG_WARN("ShortcutBar: %d categories, reading the first %d", count,
+                kMaxShortcutCategories);
+            count = kMaxShortcutCategories;
+        }
+        for (int i = 0; i < count; i++) {
+            const uint8_t* cat = data + static_cast<size_t>(i) * kShortcutCatStride;
+            void* button = ReadPtrRaw(cat, kShortcutCatButton);
+            // The Shadow Chamber's button is spawned and hidden until the facility exists
+            // (ShouldShowCurrentCategory) — the recon saw it inited and not visible. A hidden
+            // button is one a sighted player has no way to press, so it gets no node.
+            if (!ChildShowing(button))
+                continue;
+            ShortcutCategory c;
+            c.index = i;
+            // The button's own retained Text first (it was SetText'd from CategoryLabels), the
+            // class-default label as the fallback for the five shipped slots.
+            c.label = ReadFStringField(button, kButtonTextOffset);
+            if (c.label.empty() && i < kShortcutLabelCount)
+                c.label = ReadFStringField(v.shortcuts, kShortcutsCategoryLabelsOffset + i * 0x10);
+            c.alert = (ReadU32Raw(cat, kShortcutCatFlags) & kShortcutCatAlert) != 0;
+            c.disabled = (ReadU32Raw(button, kButtonFlagsOffset) & kButtonDisabled) != 0;
+            c.button = button;
+            v.categories.push_back(std::move(c));
+        }
+    }
+
+    if (v.navHelp) {
+        v.geoscapeButton = (ReadU32Raw(v.navHelp, kNavHelpFlagsOffset) & kNavHelpGeoscapeButton) != 0;
+        v.geoscapeLabel = ReadFStringField(v.navHelp, kNavHelpGeoscapeLabelOffset);
+        if (v.geoscapeButton) {
+            // Which help button is the hologlobe: the one whose click delegate is
+            // HotlinkToGeoscape. Its index names it in Flash, and the tooltip was registered
+            // against that name — so this is the exact path, not a guess at a slot.
+            int n = 0;
+            const uint8_t* delegates = ArrayData(v.navHelp, kNavHelpButtonDelegatesOffset, &n);
+            if (n > kMaxNavHelpButtons)
+                n = kMaxNavHelpButtons;
+            for (int i = 0; delegates && i < n; i++) {
+                char fn[128] = "";
+                if (!FNameAtAnsiRaw(delegates + static_cast<size_t>(i) * kDelegateStride
+                            + kDelegateFunctionOffset,
+                        fn, sizeof(fn))
+                    || strcmp(fn, kGeoscapeHotlinkFunction) != 0)
+                    continue;
+                const std::string path = std::string(kNavHelpLeftButtonPath) + std::to_string(i);
+                v.geoscapeTooltip = ReadTooltipByPath(v.navHelp, path.c_str());
+                break;
+            }
+        }
+    }
+    return v;
+}
+
+bool SelectShortcutCategory(const ShortcutBarView& view, int index)
+{
+    if (!view.shortcuts || index < 0)
+        return false;
+    struct {
+        int32_t iNewCat;
+    } params{index};
+    return CallNamedFunction(view.shortcuts, "SelectCategory", &params);
+}
+
+bool HotlinkToGeoscape(const ShortcutBarView& view)
+{
+    if (!view.navHelp)
+        return false;
+    return CallNamedFunction(view.navHelp, "HotlinkToGeoscape", nullptr);
+}
+
+ToDoView ReadToDoWidget()
+{
+    ToDoView v;
+    v.hud = FindAvengerHud();
+    if (!v.hud)
+        return v;
+    v.widget = ReadPtrRaw(v.hud, kAvengerHudToDoOffset);
+    if (!v.widget)
+        return v;
+    v.showing = ChildShowing(v.widget);
+
+    int labelCount = 0;
+    const uint8_t* labels = ArrayData(v.widget, kToDoCategoryLabelsOffset, &labelCount);
+
+    int count = 0;
+    const uint8_t* data = ArrayData(v.widget, kToDoCategoriesOffset, &count);
+    if (!data)
+        return v;
+    if (count > kMaxToDoCategories) {
+        LOG_WARN("ToDo: %d categories, reading the first %d", count, kMaxToDoCategories);
+        count = kMaxToDoCategories;
+    }
+    for (int i = 0; i < count; i++) {
+        const uint8_t* cat = data + static_cast<size_t>(i) * kToDoCatStride;
+        // The icon is what a sighted player sees, and UpdateCategories hides it for a category
+        // with nothing to say. Both tests, because they are the same fact from two sides and a
+        // disagreement between them is worth a look in the log.
+        const bool iconShowing = ChildShowing(ReadPtrRaw(cat, kToDoCatIcon));
+        int msgCount = 0;
+        const uint8_t* msgs = ArrayData(cat, kToDoCatMessages, &msgCount);
+        if (!msgs || msgCount <= 0) {
+            if (iconShowing)
+                LOG_DEBUG("ToDo: category %d icon showing with no messages", i);
+            continue;
+        }
+        if (!iconShowing)
+            continue;
+        if (msgCount > kMaxToDoMessages) {
+            LOG_WARN("ToDo: category %d holds %d messages, reading the first %d", i, msgCount,
+                kMaxToDoMessages);
+            msgCount = kMaxToDoMessages;
+        }
+        ToDoCategory c;
+        c.index = i;
+        if (labels && i < labelCount)
+            c.label = ReadFStringField(labels, i * 0x10);
+        for (int m = 0; m < msgCount; m++) {
+            const uint8_t* msg = msgs + static_cast<size_t>(m) * kToDoMsgStride;
+            ToDoMessage entry;
+            entry.label = ReadFStringField(msg, kToDoMsgLabel);
+            entry.description = ReadFStringField(msg, kToDoMsgDescription);
+            entry.urgency = static_cast<int>(ReadU32Raw(msg, kToDoMsgUrgency) & 0xFF);
+            // A message with neither word is not one the game could have drawn a row for.
+            if (entry.label.empty() && entry.description.empty())
+                continue;
+            c.messages.push_back(std::move(entry));
+        }
+        if (!c.messages.empty())
+            v.categories.push_back(std::move(c));
+    }
+    return v;
+}
+
+bool ActivateToDoMessage(const ToDoView& view, int category, int index)
+{
+    if (!view.widget || category < 0 || index < 0)
+        return false;
+    // The icon the mouse would have hovered. OnCategoryMouseEvent reads the category number off
+    // the icon's OWN MCName ("CatImage_N"), which is why the game's widget is handed in rather
+    // than a category index — and why nothing here writes CurrentCategory by hand.
+    int count = 0;
+    const uint8_t* data = ArrayData(view.widget, kToDoCategoriesOffset, &count);
+    if (!data || category >= count)
+        return false;
+    void* icon = ReadPtrRaw(data + static_cast<size_t>(category) * kToDoCatStride, kToDoCatIcon);
+    void* list = ReadPtrRaw(view.widget, kToDoListOffset);
+    if (!icon || !list)
+        return false;
+
+    struct {
+        void* Control;
+        int32_t cmd;
+    } hover{icon, kInputMouseIn};
+    if (!CallNamedFunction(view.widget, "OnCategoryMouseEvent", &hover))
+        return false;
+
+    struct {
+        void* ContainerList;
+        int32_t ItemIndex;
+    } click{list, index};
+    return CallNamedFunction(view.widget, "OnListItemCallback", &click);
+}
+
+EventQueueView ReadEventQueue()
+{
+    EventQueueView v;
+    v.hud = FindAvengerHud();
+    if (!v.hud)
+        return v;
+    v.queue = ReadPtrRaw(v.hud, kAvengerHudEventQueueOffset);
+    if (!v.queue)
+        return v;
+    v.showing = ChildShowing(v.queue);
+    v.expanded = (ReadU32Raw(v.queue, kEventQueueFlagsOffset) & kEventQueueExpanded) != 0;
+    void* expandButton = ReadPtrRaw(v.queue, kEventQueueExpandButtonOffset);
+    v.canToggle = ChildShowing(expandButton);
+    if (v.canToggle) {
+        v.toggleLabel = ReadFStringField(v.queue,
+            v.expanded ? kEventQueueShrinkLabelOffset : kEventQueueExpandLabelOffset);
+    }
+
+    // The date and time: pushed straight to Flash by RefreshDateTime, so the capture is the
+    // only place the words exist. Keyed on the queue's own cache index, matched by name.
+    const int32_t index = FlashShadow::PanelCacheIndex(v.queue);
+    if (index >= 0) {
+        FlashShadow::Call call;
+        if (FlashShadow::GetCall(index, "RefreshDateTime", call)) {
+            const std::vector<std::string> args = call.StringArgs();
+            v.date = FlashArg(args, kDateTimeDate);
+            const std::string hours = FlashArg(args, kDateTimeHours);
+            const std::string minutes = FlashArg(args, kDateTimeMinutes);
+            const std::string suffix = FlashArg(args, kDateTimeSuffix);
+            if (!hours.empty() && !minutes.empty()) {
+                v.time = hours + ":" + minutes;
+                if (!suffix.empty())
+                    v.time += " " + suffix;
+            }
+        }
+    }
+
+    void* list = ReadPtrRaw(v.queue, kEventQueueListOffset);
+    if (!list)
+        return v;
+    void* rows[kMaxEventRows] = {};
+    const int count = TakeListItemsRaw("event queue rows", list, rows, kMaxEventRows);
+    for (int i = 0; i < count; i++) {
+        if (!ChildShowing(rows[i]))
+            continue;
+        EventQueueEntry e;
+        e.title = ReadFStringField(rows[i], kEventItemTitleOffset);
+        e.daysLabel = ReadFStringField(rows[i], kEventItemDaysLabelOffset);
+        e.daysValue = ReadFStringField(rows[i], kEventItemDaysValueOffset);
+        e.covert = IsKindOfRaw(rows[i], "UIEventQueue_CovertActionListItem");
+        if (e.title.empty())
+            continue; // a row UpdateData has not reached yet
+        if (e.covert) {
+            // One tooltip per STAFF slot (AddSlotTooltip: the soldier's name, then the slot's
+            // reward on a second line); a purchased cost slot has its tooltip removed. Probed
+            // by index because the slot count lives on the action state, not the row; a gap
+            // is a cost slot and the walk continues past it.
+            for (int s = 0; s < kMaxCovertSlots; s++) {
+                const std::string path = ".slot" + std::to_string(s);
+                std::string tip = ReadTooltipByPath(rows[i], path.c_str());
+                if (!tip.empty())
+                    X2Access::Graph::AppendPhrase(e.tooltip, tip, ". ");
+            }
+        }
+        v.entries.push_back(std::move(e));
+    }
+    return v;
+}
+
+bool ToggleEventQueue(const EventQueueView& view)
+{
+    if (!view.queue)
+        return false;
+    // R3's own call is ToggleExpanded(none) — the button parameter is unused by the body.
+    struct {
+        void* Button;
+    } params{nullptr};
+    return CallNamedFunction(view.queue, "ToggleExpanded", &params);
+}
+
 // ---- inside a room (UIFacility and its 22 subclasses) ----
 //
 // The room SCREEN is not the room's content, and that is the whole shape of this reader.
@@ -226,12 +594,13 @@ bool RefreshResourceStrip(const ResourceStripView& view)
 
 namespace {
 
-constexpr int32_t kAvengerHudShortcutsOffset = 0x43C;      // UIAvengerHUD::Shortcuts
+// kAvengerHudShortcutsOffset and kShortcutsCategoryLabelsOffset sit with the HUD-panel readers
+// above — the shortcut bar is read from two sections now, and the TU's anonymous namespace
+// is one namespace, so the earlier definition serves both.
 constexpr int32_t kAvengerHudFacilityHeaderOffset = 0x454; // UIAvengerHUD::FacilityHeader
 constexpr int32_t kScreenHeaderLocationOffset = 0x3D8;     // UIX2ScreenHeader::LocationField
 constexpr int32_t kScreenHeaderRoomOffset = 0x3E8;         // UIX2ScreenHeader::RoomField
 constexpr int32_t kShortcutsListOffset = 0x7F8;            // UIAvengerShortcuts::List
-constexpr int32_t kShortcutsCategoryLabelsOffset = 0x3F0;  // ::CategoryLabels[5], stride 0x10
 constexpr int32_t kShortcutsCurrentCategoryOffset = 0x83C; // ::CurrentCategory
 constexpr int32_t kFacilityStaffContainerOffset = 0x608;   // UIFacility::m_kStaffSlotContainer
 constexpr int32_t kFacilityRoomContainerOffset = 0x610;    // UIFacility::m_kRoomContainer

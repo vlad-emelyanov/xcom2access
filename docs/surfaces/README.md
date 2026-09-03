@@ -27,6 +27,7 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Hacking screen | `hacking_screen.cpp` | `X2AccessHackingReader.uc` | tactical.md | `hacking-screen-recon.md` |
 | Resource strip (every strategy screen) | `game_ui_avenger.cpp` (Flash capture), `resource_strip.cpp` (the `R` key) | — (no companion), `Recipes::AddResourceStop` in six recipes | avenger.md | `avenger-view-recon.md` §2.2 |
 | Avenger ant farm | `avenger.cpp` | `X2AccessAvengerReader.uc` | avenger.md | `avenger-view-recon.md` §11 |
+| Avenger HUD layer (Tab on the ant farm: resources, objectives, shortcut buttons, to-do strip, event queue + date) | `game_ui_avenger.cpp` (widget reads; the date via Flash capture) | — (no companion), `Avenger HUD` ambient recipe | avenger.md | `avenger-view-recon.md` §2.3-2.6 |
 | Inside a room (incl. staff slots + picker) | `game_ui_avenger.cpp` | `X2AccessFacilityReader.uc` + `X2AccessStaffSlots.uc`, `avenger room` | avenger.md | `avenger-view-recon.md` §13, §18 |
 | Debris room | `game_ui_avenger.cpp` | `X2AccessRoomReader.uc` + `X2AccessStaffSlots.uc`, `avenger debris room` | avenger.md | `avenger-view-recon.md` §13 |
 | Facility upgrades (`UIChooseUpgrade`) | `game_ui_avenger.cpp` | `X2AccessUpgradeReader.uc`, `facility upgrades` | avenger.md | `avenger-view-recon.md` §18 |

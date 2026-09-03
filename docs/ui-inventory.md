@@ -102,8 +102,8 @@ All ✅ — shell recipes: `UIShellDifficulty`, `UISecondWave`, `UIShellNarrativ
 
 | Screen | What it is | Status |
 |---|---|---|
-| `UIAvengerHUD` | persistent strategy HUD | ◐ — ant farm and **resource strip** done (the strip is a trailing stop in six recipes plus the `R` key — `surfaces/avenger.md`); `UIToDoWidget` and `UIEventQueue` are the panels of this screen still owed (`next-steps.md`) |
-| `UIFacilityGrid` | the ant farm | ✅ narrate-only |
+| `UIAvengerHUD` | persistent strategy HUD | ✅ `Avenger HUD` ambient recipe (2026-09-03, unexercised live): resource strip, objectives + dark events, `UIToDoWidget`, `UIEventQueue` + date, shortcut buttons + hologlobe — Tab on the ant farm (`surfaces/avenger.md`). The strip is also a trailing stop in six other recipes and on `R`. Still ⬜: `StaffIcons` (unstaffed engineers) and the crew status indicators (an aid, not parity — `next-steps.md`) |
+| `UIFacilityGrid` | the ant farm | ✅ narrate-only for the rooms; the HUD around it is the ambient recipe above |
 | `UIRoom` | debris room | ✅ |
 | `UIFacility` + 19 subclasses | inside a facility (`_Academy`, `_AdvancedWarfareCenter`, `_Armory`, `_BarMemorial`, `_CIC`, `_CovertActions`, `_Infirmary`, `_Labs`, `_LivingQuarters`, `_Powercore`, `_PowerGenerator`, `_ProvingGround`, `_PsiLab`, `_ResistanceComms`, `_ShadowChamber`, `_Storage`, `_TrainingCenter`, `_UFODefense`, `_Workshop`, DLC_2 `_HuntersLodge`) | ✅ facility reader (Flash-only status panels still ⬜ — next-steps 10) |
 | `UIBuildFacilities` | build-mode grid overlay | ✅ |

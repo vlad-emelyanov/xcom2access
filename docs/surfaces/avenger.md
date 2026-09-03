@@ -16,7 +16,8 @@ on. `UIFacilityGrid.InitScreen` builds its whole eight-way room adjacency graph 
 movie's mouse-active flag (`Core/Globals.uci:207`). The fix is to call the gated function
 ourselves, once per grid instance, so this layer is **narrate-only and claims no arrows**: the
 game's own `UINavigator` moves and brings the camera swoop, focus delivery and highlight box
-with it. The 51 DIAGONAL links are `FXS_VIRTUAL_LSTICK_DIAG_*` only and have no keyboard
+with it. (The HUD's panels around the grid are a separate, AMBIENT recipe — §Avenger HUD layer
+below — which coexists with this precisely because it takes nothing until Tab is pressed.) The 51 DIAGONAL links are `FXS_VIRTUAL_LSTICK_DIAG_*` only and have no keyboard
 chord; the cardinal-only graph is fully strongly connected across all 19 rooms. Keys are
 re-armed off the GRAPH'S OWN EMPTINESS (`FacilityOverlays[0].Navigator.NavigationTargets.Length
 == 0`) rather than screen identity: idempotent, self-healing across a map transition, a no-op
@@ -138,6 +139,91 @@ and the full per-screen table: `../avenger-view-recon.md` §2.2.
   whose entry the LRU evicted) has nothing while the player can plainly see it. The tick asks
   the HUD for its OWN `UpdateResources()` at most once per 10 s to repair it, and the key says
   so meanwhile rather than falling silent.
+
+## Avenger HUD layer
+
+The ant farm's Tab layer: the mod's second AMBIENT recipe (`kAvengerHudRecipe`,
+`recipe_avenger.cpp`), attached silently whenever `UIFacilityGrid` is the current screen and
+focused by Tab or Ctrl+Tab. Five stops, information first and the verbs last: the resource
+strip (`Recipes::AddResourceStop`), the objectives and dark events (the Ctrl+X composers), the
+to-do strip, the event queue with the date, and — last, because its Enter leaves the screen and
+Shift+Tab from the landing reaches it in one press — the row of category buttons plus the
+hologlobe.
+Readers in `game_ui_avenger.cpp` ("the rest of the HUD"); no companion class — three panels
+retain their words in script, the strip and the date come through the capture.
+
+- ⛔ **This does NOT revoke the ant farm's narrate-only ruling — it is how the two coexist.**
+  The rule forbids taking the ARROWS (the room name is set under `if( bIsFocused )`, and the
+  camera swoop and highlight box ride the game's own navigator). An ambient recipe takes
+  nothing while unfocused; while focused the player is reading panels, not walking rooms, so
+  nothing the rule protects is in play. `avenger.cpp`'s poll and its `Delete` key gate on
+  `OwnsInput()`, never `IsAttached()` — the layer being attached is their normal state for as
+  long as the player stands on the grid.
+- ⛔ **Plain Tab is claimed here and is NOT free anywhere else** — measure before copying this.
+  The bare binding (`[XComGame.XComHeadquartersInput]`, `DefaultInput.ini:468`) forwards to
+  `FXS_KEY_TAB`, and on this screen every handler it reaches is dead in retail: `UIAvengerHUD
+  .OnUnrealCommand`'s Tab case is inside `` `if(`notdefined(FINAL_RELEASE)) `` (it opened the
+  personnel list in dev builds, beside `P`), `UIFacilityGrid` never handles Tab, and the
+  shortcut bar cycles categories on the bumpers only. In tactical the same key is next unit;
+  inside a room the shortcut list is a `UIList` with its own Tab. The claim is gated on the
+  grid being current AND the layer not already focused, so it is disjoint from the navigator's
+  own Tab (the stop cycle) by construction.
+- ⛔ **Two ambient layers means two exit words.** `ExitAmbientFocus` used to say "Map"
+  unconditionally; `Recipe::ambientExitName` now carries the word per recipe ("Rooms" here),
+  and `OnLayerToggle`'s refusal names whichever layer the player is standing in via
+  `Avenger::IsGridActive()`. Copy the field, not the tactical constant, for any third layer.
+- **Every activation is the game's own path, called by name with the game's own parameters** —
+  no field is written by hand. Categories: `UIAvengerShortcuts.SelectCategory(i)`, which IS
+  the `2`-`6` digit key. Hologlobe: `UINavigationHelp.HotlinkToGeoscape()`, which IS digit
+  `1`. A to-do message: `OnCategoryMouseEvent(icon, FXS_L_MOUSE_IN)` then
+  `OnListItemCallback(List, i)` — the hover-then-click, with the game's own icon so it reads
+  the category off `MCName` itself (writing `CurrentCategory` was the alternative and is the
+  kind of poke the screen-accept rule warns about). The queue's expand button:
+  `ToggleExpanded(none)`, which is R3's own call.
+- ⚠ **The to-do strip is MOUSE-ONLY in vanilla** (hover reveals the list; L3 is
+  controller-only). Reading it is parity with the hover, and the recipe exposes only
+  categories whose icon the game is DRAWING (`Icon.bIsVisible`, toggled in
+  `UpdateCategories`) with messages behind them — both tests, logged when they disagree. The
+  label is the row a hovering player reads; the description is the tooltip, on Space.
+- ⚠ **The event queue shows what the LIST holds, not what `GetEvents()` would return**:
+  collapsed, that is one row (two with a covert action), and the expand button is the only way
+  a sighted player sees the rest. Parity is the rows on screen plus that button, which the
+  layer offers when the game draws it (`ExpandButton.bIsVisible`). The date and time are the
+  one Flash push on this HUD (`RefreshDateTime`), read off the queue's cache index by name.
+  - ⛔ **A button that relabels itself keeps ONE identity, and speaks the new face as
+    `StateText`.** The expand/collapse button's label went into its node id on the first pass,
+    on the theory that the differ would "land on the new button" — it does not. The old id
+    vanishes, focus falls onto the neighbouring row, and the player hears a row where they
+    pressed a button, which read live as *nothing happened* (the toggle HAD fired). Held id +
+    a `StateText` that re-reads the label is the pattern for any control whose caption is its
+    state.
+- ⚠ Shortcut categories: `bAlert` is `FacilityState.NeedsAttention()` — the "!" badge — and a
+  DISABLED category is offered and passed through, because `SelectCategory` tests
+  `Button.IsDisabled` itself and moves the highlight without opening the room, exactly as the
+  digit does. The Shadow Chamber's button is spawned hidden until the facility exists and gets
+  no node until it shows.
+- Urgency words: a to-do message's `EUIToDoMsgUrgency` maps to the SAME two words the room
+  recipe uses for the shortcut submenu's `SetBad`/`SetWarning` (`RoomUrgent`/`RoomWarning`), so
+  the one enum reads identically on both surfaces (the shared-oracle corollary).
+- **Space, audited panel by panel (2026-09-03).** The strip, the objectives and the plain event
+  rows register NO tooltip in the game, so Space is silent there — that is parity, not a gap.
+  The three that do, and the three different mechanisms they use:
+  - ⛔ **The category buttons carry a CALLBACK tooltip** (`SetTooltipWIthCallback("Init",
+    RefreshTooltipX)`): the words are computed on hover — `TooltipResearch` with `%KEY:TWO%`
+    resolved to the player's real binding — and a cold `ReadPanelTooltip` speaks the
+    placeholder "Init". They go through `GameUI::ReadCallbackTooltip`, which runs the game's
+    own hover sequence minus the showing: `UITextTooltip.MatchesID(id)` (selects the element on
+    the shared tooltip AND copies its delegate), then the element's `del_OnMouseIn(Tooltip)`,
+    then the read. ⛔ Select FIRST — the callback's `SetText` writes
+    `TextTooltipData[DataIndex].sBody`, so without it the words land in whichever element the
+    last hover left selected. Same mechanism ability icons use; reach for it before assuming a
+    tooltip that reads "Init" is empty.
+  - The hologlobe's tooltip is registered by FLASH PATH (`AddLeftHelp` → `GenerateTooltipPath`:
+    `MCPath.leftBtnHelpContainer.buttonNavHelp_N`), so it is `ReadTooltipByPath` — and `N` is
+    found by locating `HotlinkToGeoscape` in `m_arrButtonClickDelegates`, never guessed.
+  - The covert-action event row registers one tooltip per STAFF slot (`MCPath.slotN`: the
+    soldier's name, then the reward), probed by index and joined — the only place this HUD says
+    who is on the action.
 
 ## Inside a room
 

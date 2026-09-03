@@ -123,6 +123,21 @@ confirmed in play):
   4. The strip must be **SILENT before `T0_M4_ReturnToAvenger`** and while the Avenger is in
      flight — no stop, and `R` unclaimed. This is the parity half and the only one that fails
      in the direction a player would not report.
+- ⛔ **The Avenger HUD layer has NEVER RUN** (built 2026-09-03, `surfaces/avenger.md` §Avenger
+  HUD layer). First-pass debt on the ant farm, and the checklist is short because four of its
+  five stops reuse readers that have: (1) `Tab` on the grid must say "Avenger HUD" then land on
+  the resources stop, and `Escape` must say "Rooms" and give the arrows back — the room name
+  must still speak on the next arrow, which is the `OwnsInput()` gate in `avenger.cpp` doing its
+  job; (2) `Tab` must cycle Resources → Objectives → To do → Events → Room shortcuts, and
+  `just dev-log` must show the recipe attached "(ambient, unfocused)" BEFORE the first Tab —
+  a refusal ("Avenger HUD unavailable.") on the first press means the probe is not passing;
+  (3) Enter on a shortcut category must open that room and land in the room recipe; Enter on a
+  to-do message must open its hotlink (the research picker is the easy one); (4) the event
+  queue's expand button must appear only with two or more events, and the date node must read
+  a real date — an empty date with the queue showing means `RefreshDateTime` was not captured
+  on that cache index (check `just dev-flashqueue`). ⚠ The to-do strip is the one panel with a
+  real staleness question (`UpdateCategories` runs on the grid only) — read it, open a room,
+  come back, and confirm it refreshed.
 - **Pause menu, mod rows.** `ActivatePauseMenuItem` sends Enter to the LIST (`SendRowCommand`)
   rather than calling `OnChildClicked` by name, so a mod-wrapped `OnItemClicked` delegate runs.
   The vanilla rows are confirmed; the MOD row that motivated it is not — with Remove Missing
@@ -264,10 +279,15 @@ a repeating announcement.
    the path has settled — `CursorMoveTo`, or the queued `/tile` endpoint (item 4).
 7. Strategy-layer surfaces still unread, in value order: `UIFacility.m_kResearchProgressBar` (the last
    of the room's Flash-only status panels — `m_kCovertOpsStatus` is done, `surfaces/avenger.md`),
-   the to-do widget and the event queue (`avenger-view-recon.md` §2 —
-   note §2.5 was CORRECTED: the event queue IS retained, `UIEventQueue_ListItem.Title` /
-   `DaysValue`). ⚠ The resource strip came off this list on 2026-09-03 (`surfaces/avenger.md`)
-   and is **unexercised live** — see item 10.
+   and on the Avenger HUD the two panels the ant farm's Tab layer left out on purpose:
+   `UIAvengerHUD.StaffIcons` (one icon per unstaffed ENGINEER — the scientist loop is commented
+   out in shipped source — clicking opens the engineer list; likely a duplicate of the to-do
+   strip's Staffing category, so check that before building) and the crew status indicators
+   (`UIAvengerHUD_SoldierStatusIndicatorContainer`, bond/trait icons anchored to walking pawns
+   in 3D — they go off-camera for a sighted player too, so a stop for them is an AID and must be
+   labelled as one). ⚠ The resource strip, the to-do widget and the event queue all came off this
+   list on 2026-09-03 (`surfaces/avenger.md`) and are **unexercised live** — see the entries
+   above.
 8. The tactical HUD recipe's last stop — **Enemies** (the `m_arrTargets` strip, distance and
    bearing appended as a labelled aid, Enter → `DirectTargetObject`). Soldier (2026-08-31,
    `X2AccessUnitReader.BuildSoldierRecords` — the wire bridge went in that class, next to its

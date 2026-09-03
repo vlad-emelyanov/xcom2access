@@ -132,6 +132,25 @@ Claimed here:
 | `/` | geo ring: camera to selection | same | — |
 | `Delete` | ant farm / dropship: re-announce | that screen | `Toggledebugcamera`, still at `Ctrl+Delete` |
 | `R` | read the whole resource strip | **the strip is on screen** | nothing — no bare `R` in this layer |
+| `Tab` | enter the Avenger HUD layer | the ant farm is current AND the layer is not focused | nothing — see below |
+| `Ctrl+Tab` | enter/exit the Avenger HUD layer | the ant farm is current (shared with tactical's mission gate) | the bare Tab it would double-fire, which is dead here |
+| `Escape` | leave the layer | an ambient recipe is focused | the pause menu, for that one press |
+| `+` / `-` (also `Shift+=` and numpad `+`/`-`) | adjust the focused control — the kernel's `TryAdjust`; today the trading post's sell quantity | ANY menu recipe focused, in either layer | `=`/`-`: nothing, no binding in any input section; numpad `Add`/`Subtract`: tactical `SpeedUpGame`/`SlowDownGame`, only while a menu holds the keyboard mid-mission, still at `Ctrl+numpad` |
+
+⚠ **`+`/`-` exist because a sheet spends the arrows.** Left/Right already adjust a focused
+slider or spinner (`OnArrow` tries `TryAdjust` first), but inside a `GraphSheet` they are column
+travel and cannot be both — and the trading post's sell quantity is a table row that adjusts,
+whose vanilla keys are exactly the row's `FXS_ARROW_LEFT`/`_RIGHT`. The claim is general
+(`OnAdjustKey`), not per screen: silent on a node with no `OnAdjust`, like every refusal here.
+
+⚠ **Bare `Tab` on the ant farm is dead in retail, which is the only reason it is claimed.** The
+forwarder at line 468 reaches `FXS_KEY_TAB`, and every handler on that screen that could act on
+it does not: `UIAvengerHUD.OnUnrealCommand`'s Tab case is compiled out under
+`` `if(`notdefined(FINAL_RELEASE)) `` (`UIAvengerHUD.uc:588` — it opened the personnel list in
+dev builds, beside `P`), `UIFacilityGrid` never handles Tab, and `UIAvengerShortcuts` cycles
+categories on the bumpers only. This does NOT generalise: in tactical Tab is next unit, and
+inside a room the shortcut submenu is a `UIList` with its own Tab. Measure the screen, not the
+layer, before claiming it anywhere else.
 
 ⚠ **`R`'s gate is the strip's own visibility, and that is doing two jobs.** It keeps the claim out
 of tactical, where `R` IS bound, without the module knowing anything about layers; and it keeps

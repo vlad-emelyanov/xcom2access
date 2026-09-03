@@ -76,6 +76,10 @@ static_assert(offsetof(FTTextTooltipData, sTitle) == 0x44, "TTextTooltipData::sT
 static_assert(offsetof(FTTextTooltipData, sBody) == 0x54, "TTextTooltipData::sBody");
 // The only link back to a tooltip registered straight on the manager, with no panel to key on.
 static_assert(offsetof(FTTextTooltipData, targetPath) == 0x1C, "TTextTooltipData::targetPath");
+// The per-element hover callback ReadCallbackTooltip fires; FScriptDelegate is Object then
+// FunctionName (pinned by its stride above).
+static_assert(offsetof(FTTextTooltipData, del_OnMouseIn) == 0x6C, "TTextTooltipData::del_OnMouseIn");
+static_assert(offsetof(FScriptDelegate, FunctionName) == 0x08, "FScriptDelegate::FunctionName");
 // UIListItemString forwards SetTooltipText (and SetDisabled's reason) to this child.
 static_assert(offsetof(AUIListItemString, ButtonBG) == 0x454, "UIListItemString::ButtonBG");
 
@@ -584,6 +588,55 @@ static_assert(offsetof(AUIStrategyPolicy_Card, eFaction) == 0x3F0, "policy card 
 static_assert(offsetof(AUIAvengerHUD, ResourceContainer) == 0x420, "avenger HUD resource strip");
 static_assert(offsetof(AUIAvengerHUD, Shortcuts) == 0x43C, "avenger HUD shortcut bar");
 static_assert(offsetof(AUIAvengerHUD, FacilityHeader) == 0x454, "avenger HUD facility header");
+
+// ---- the ant farm's Tab layer: the HUD's other panels (game_ui_avenger.cpp ReadShortcutBar /
+// ReadToDoWidget / ReadEventQueue) ----
+static_assert(offsetof(AUIAvengerHUD, NavHelp) == 0x418, "avenger HUD nav help");
+static_assert(offsetof(AUIAvengerHUD, EventQueue) == 0x42C, "avenger HUD event queue");
+static_assert(offsetof(AUIAvengerHUD, ToDoWidget) == 0x434, "avenger HUD to-do widget");
+// The shortcut bar's categories: a TArray of structs walked by stride. bAlert is the bitfield
+// at 0x3C, bracketed by OnItemClicked before it and the struct size after.
+static_assert(offsetof(AUIAvengerShortcuts, Categories) == 0x82C, "shortcut categories");
+static_assert(sizeof(FUIAvengerShortcutMessageCategory) == 0x40, "shortcut category stride");
+static_assert(offsetof(FUIAvengerShortcutMessageCategory, Button) == 0x00, "shortcut category button");
+static_assert(offsetof(FUIAvengerShortcutMessageCategory, OnItemClicked) == 0x1C,
+    "shortcut category flag dword (bAlert) follows OnItemClicked at 0x3C");
+// The nav help's hologlobe button and its label. bGeoscapeButton is bit 0x4 of the dword at
+// 0x434, bracketed by RightContainer before it and VerticalHelpCount after.
+static_assert(offsetof(AUINavigationHelp, m_strGeoscapeLabel) == 0x3F4, "nav help geoscape label");
+static_assert(offsetof(AUINavigationHelp, RightContainer) == 0x42C,
+    "nav help flag dword (bGeoscapeButton) follows RightContainer at 0x434");
+static_assert(offsetof(AUINavigationHelp, VerticalHelpCount) == 0x438,
+    "nav help flag dword ends before VerticalHelpCount");
+// The click delegates, one per help button in creation order — the index is the button's Flash
+// name (`buttonNavHelp_N`) and therefore its tooltip path, which is how the hologlobe's is found.
+static_assert(offsetof(AUINavigationHelp, m_arrButtonClickDelegates) == 0x43C,
+    "nav help button delegates");
+// The to-do widget: category labels (a TArray<FString>), the message categories and the
+// message struct, plus the list and current-category index the activation path drives.
+static_assert(offsetof(AUIToDoWidget, m_arrCategory_Labels) == 0x3D8, "to-do category labels");
+static_assert(offsetof(AUIToDoWidget, List) == 0x780, "to-do list");
+static_assert(offsetof(AUIToDoWidget, Categories) == 0x7AC, "to-do categories");
+static_assert(offsetof(AUIToDoWidget, CurrentCategory) == 0x7BC, "to-do current category");
+static_assert(sizeof(FUIToDoMessageCategory) == 0x18, "to-do category stride");
+static_assert(offsetof(FUIToDoMessageCategory, Icon) == 0x00, "to-do category icon");
+static_assert(offsetof(FUIToDoMessageCategory, Messages) == 0x08, "to-do category messages");
+static_assert(sizeof(FUIToDoMessage) == 0x5C, "to-do message stride");
+static_assert(offsetof(FUIToDoMessage, Label) == 0x00, "to-do message label");
+static_assert(offsetof(FUIToDoMessage, Description) == 0x10, "to-do message description");
+static_assert(offsetof(FUIToDoMessage, Urgency) == 0x28, "to-do message urgency");
+// The event queue and its rows. bIsExpanded is the bitfield at 0x418, bracketed by
+// ShrinkButtonLabel before it and the first delegate after.
+static_assert(offsetof(AUIEventQueue, List) == 0x3D8, "event queue list");
+static_assert(offsetof(AUIEventQueue, ExpandButton) == 0x3F0, "event queue expand button");
+static_assert(offsetof(AUIEventQueue, ExpandButtonLabel) == 0x3F8, "event queue expand label");
+static_assert(offsetof(AUIEventQueue, ShrinkButtonLabel) == 0x408,
+    "event queue flag dword (bIsExpanded) follows ShrinkButtonLabel at 0x418");
+static_assert(offsetof(AUIEventQueue, __OnUpButtonClicked__Delegate) == 0x41C,
+    "event queue flag dword ends before the first delegate");
+static_assert(offsetof(AUIEventQueue_ListItem, Title) == 0x3D8, "event row title");
+static_assert(offsetof(AUIEventQueue_ListItem, daysLabel) == 0x3E8, "event row days label");
+static_assert(offsetof(AUIEventQueue_ListItem, DaysValue) == 0x3F8, "event row days value");
 
 static_assert(offsetof(AUIX2ScreenHeader, LocationField) == 0x3D8, "screen header location");
 static_assert(offsetof(AUIX2ScreenHeader, RoomField) == 0x3E8, "screen header room name");
