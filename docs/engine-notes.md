@@ -98,6 +98,24 @@ and note that a rule with no measurement under it any more is a rule to delete, 
     that MUST be special-cased or the decoder swallows the next panel's text whole; and it
     captures the PUSH, so it knows the words and nothing about selection, disabled state, or
     anything an `.as` computed after receiving them. `UIAlert` is the first consumer.
+  - ⛔ **A PANEL IS NOT PAINTED BY ONE BATCH, and the last batch is often a PICTURE.** Measured
+    2026-09-03 on the staff popups. `UIAlert.GetOrStartWaitingForStaffImage` (`UIAlert.uc:3972`)
+    fires an ASYNCHRONOUS photobooth request whose callback pushes a *later* `UpdateImage` batch
+    carrying one operand — the headshot's texture path — onto the same `LibraryPanel.MC` the
+    prose went through. Any reader taking "the newest batch carrying a string" therefore read the
+    picture, dropped it as an asset path, and reported the screen as empty; the alert then fell
+    to its weakest fallback and spoke a title alone. Seven alert names lost their words this way
+    in four sessions of logs (`SoldierPromoted`, `ClassEarned`, `NewStaffAvailable(Small)`,
+    `StaffInfo`, `StaffSlotFilled`, `ClearRoomSlotFilled`, `XPACK_Retribution`) — every popup
+    carrying a soldier headshot or a Chosen icon. Multi-batch painting is ordinary besides:
+    `BuildRetributionAlert` uses five batches, `BuildConfirmCovertActionAlert` four, and the two
+    staff builders feed a child list (`UpdateFacilityList`) BEFORE painting the frame that labels
+    it. **So a consumer either names the call it wants (`GetCall`) or reads them ALL (`GetCalls`)
+    — there is deliberately no "the batch that painted this panel" accessor any more.** What
+    makes reading them all sound is that panel identity is per screen instance:
+    `UIAlert.BindLibraryItem` (`:1044`) spawns a fresh `UIPanel` per alert, and `CLEANUP_OP`
+    evicts the index when it goes. ⚠ Push order is reading order everywhere EXCEPT a batch that
+    feeds a child list, which must be pushed first and read last.
 - Some screens are Flash-driven with no UIList (e.g. key bindings): neither layer can enumerate
   rows, and the same is true of anything a screen wrote into Flash and did not retain — a text
   field's caret and selection above all. The route in is `GFxMoviePlayer`'s own path-string API, ALL

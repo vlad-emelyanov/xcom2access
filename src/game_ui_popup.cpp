@@ -400,6 +400,20 @@ bool LooksLikeAssetPath(const std::string& s)
     return true;
 }
 
+// A batch that FEEDS a child list rather than painting the frame around it — pushed BEFORE the
+// frame because Flash needs the rows in hand to lay them out, and therefore read AFTER it.
+//
+// `UpdateFacilityList` is the only one UIAlert has (BuildNewStaffAvailableAlert:3565 and
+// BuildStaffInfoAlert:3694). It fills the `Alert_NewStaffListItem` rows — facility name and
+// bonus, per empty staff slot — that sit UNDERNEATH the "available staff bonus" label the
+// FOLLOWING `UpdateData` supplies. Taking push order literally there would read a new recruit's
+// bonuses before naming the recruit. Everywhere else push order IS reading order, which is why
+// this is a named exception of one rather than a policy.
+bool IsListFeederBatch(const FlashShadow::Call& call)
+{
+    return call.name == "UpdateFacilityList";
+}
+
 // The words UIAlert actually handed Scaleform, in the order it handed them over.
 //
 // ⛔ THIS IS THE SOURCE OF TRUTH for the alert family, and it replaces two weaker readings. The
@@ -407,8 +421,29 @@ bool LooksLikeAssetPath(const std::string& s)
 // stem's six suffixes the panel actually DISPLAYS, so it over-reads (eAlert_LostAndAbandoned
 // shows Title and Body, and the convention also speaks its Label). The Flash path read cannot
 // reach an XComScrollingTextField at all. The capture has neither problem: it is exactly the
-// argument list of the Update* call that painted this panel, so it covers every variant, in
+// argument list of the Update* calls that painted this panel, so it covers every variant, in
 // display order, with nothing the panel did not receive.
+//
+// ⛔ EVERY BATCH ON THE PANEL, NEVER JUST THE NEWEST — the correction measured 2026-09-03, and
+// the failure mode is the one CLAUDE.md says a blind player cannot report. `UIAlert` paints
+// through more than one batch in at least seven builders, and for several of them the LAST batch
+// is a PICTURE: `GetOrStartWaitingForStaffImage` (UIAlert.uc:3972) fires an ASYNCHRONOUS
+// photobooth request whose callback `UpdateAlertImage` pushes a fresh `UpdateImage` carrying one
+// operand — the headshot's texture path. Reading only the newest batch read that picture,
+// LooksLikeAssetPath correctly dropped its single operand, and the whole screen fell through to
+// the localized-var fallback, which for `Alert_NewStaff` yields the title and NOTHING ELSE. Shape-
+// counted over four sessions' logs, eAlert_SoldierPromoted, ClassEarned, NewStaffAvailable(Small),
+// StaffInfo, StaffSlotFilled, ClearRoomSlotFilled and XPACK_Retribution all lost their words that
+// way — every popup in the game that carries a soldier headshot or a Chosen icon.
+//
+// Reading them all also recovers what a one-batch read could never see whatever order it arrived
+// in: BuildRetributionAlert paints with FIVE batches, BuildConfirmCovertActionAlert with four,
+// and the two staff builders feed a list before painting their frame.
+//
+// ✅ Concatenating is sound because the panel identity is PER ALERT: `BindLibraryItem`
+// (UIAlert.uc:1044) spawns a fresh `UIPanel` for every UIAlert instance, so every batch recorded
+// against this cache index belongs to THIS alert — and flash_shadow evicts the index on
+// CLEANUP_OP when the panel goes, which is what makes a recycled index safe too.
 //
 // `buttons` are matched out by EXACT STRING. A confirm/ignore label rides in the same argument
 // list as the prose, and the button read already speaks it — without this they would be said
@@ -424,31 +459,49 @@ std::vector<std::string> ReadAlertCaptured(
     if (index < 0)
         return lines;
 
-    FlashShadow::Call call;
-    if (!FlashShadow::GetTextCall(index, call))
-        return lines;
+    // Which batches actually contributed, for the log — so a live run can tell "this alert paints
+    // with one call" from "we only found one of its calls".
+    std::string batches;
 
-    for (const FlashShadow::Value& arg : call.args) {
-        if (arg.type != FlashShadow::ValueType::String || arg.s.empty())
-            continue;
-        std::string text = CleanText(arg.s);
-        if (text.empty())
-            continue;
-        if (LooksLikeAssetPath(text)) {
-            LOG_INFO("Popup: dropped asset-looking operand '%s' from %s.%s",
-                text.c_str(), alertName.c_str(), call.name.c_str());
-            continue;
+    auto take = [&](const FlashShadow::Call& call) {
+        const size_t before = lines.size();
+        for (const FlashShadow::Value& arg : call.args) {
+            if (arg.type != FlashShadow::ValueType::String || arg.s.empty())
+                continue;
+            std::string text = CleanText(arg.s);
+            if (text.empty())
+                continue;
+            if (LooksLikeAssetPath(text)) {
+                LOG_INFO("Popup: dropped asset-looking operand '%s' from %s.%s",
+                    text.c_str(), alertName.c_str(), call.name.c_str());
+                continue;
+            }
+            if (std::find(buttons.begin(), buttons.end(), text) != buttons.end())
+                continue; // a button label; the button stop already says it
+            if (std::find(lines.begin(), lines.end(), text) != lines.end())
+                continue; // several panels push the same string into two fields
+            lines.push_back(std::move(text));
         }
-        if (std::find(buttons.begin(), buttons.end(), text) != buttons.end())
-            continue; // a button label; the button stop already says it
-        if (std::find(lines.begin(), lines.end(), text) != lines.end())
-            continue; // several panels push the same string into two fields
-        lines.push_back(std::move(text));
+        if (lines.size() != before) {
+            if (!batches.empty())
+                batches += '+';
+            batches += call.name;
+        }
+    };
+
+    const std::vector<FlashShadow::Call> calls = FlashShadow::GetCalls(index);
+    for (const FlashShadow::Call& call : calls) {
+        if (!IsListFeederBatch(call))
+            take(call);
+    }
+    for (const FlashShadow::Call& call : calls) {
+        if (IsListFeederBatch(call))
+            take(call);
     }
 
     if (!lines.empty()) {
         LOG_INFO("Popup: %s read %zu line(s) from the Flash capture (%s, cache index %d)",
-            alertName.c_str(), lines.size(), call.name.c_str(), index);
+            alertName.c_str(), lines.size(), batches.c_str(), index);
     }
     return lines;
 }

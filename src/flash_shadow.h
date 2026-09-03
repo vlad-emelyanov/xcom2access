@@ -107,14 +107,15 @@ bool IsActive();
 /// The most recent recorded operation named `name` on `cacheIndex`. False when nothing matches.
 bool GetCall(int32_t cacheIndex, const char* name, Call& out);
 
-/// The most recent recorded operation on `cacheIndex` carrying at least one non-empty STRING
-/// operand — which for the alert family is the `Update*` call that painted the panel, whatever
-/// its name (UIAlert alone uses UpdateData, UpdateGuerrillaOpsSplash, UpdateRetaliationSplash,
-/// UpdateSupplyRaidSplashData and more, so matching by name is not available). False when the
-/// panel has pushed no words.
-bool GetTextCall(int32_t cacheIndex, Call& out);
+// ⛔ THERE IS NO "the batch that painted this panel" ACCESSOR, and the absence is deliberate.
+// One used to exist — `GetTextCall`, returning the newest batch carrying a string, on the theory
+// that a panel paints itself with a single `Update*` call. `UIAlert` disproved it twice over: at
+// least seven of its builders paint through several batches, and the ones showing a soldier
+// headshot append a LATER `UpdateImage` whose only operand is a texture path, so "the newest
+// batch carrying a string" was a picture and the screen read as empty. A consumer that cannot
+// name the call it wants must take `GetCalls` and read them ALL — see ReadAlertCaptured.
 
-/// Every operation recorded against `cacheIndex`, oldest first. For the dev harness.
+/// Every operation recorded against `cacheIndex`, oldest first.
 std::vector<Call> GetCalls(int32_t cacheIndex);
 
 /// A panel's `UIMCController.CacheIndex` — the identity the command stream is keyed by. Reads

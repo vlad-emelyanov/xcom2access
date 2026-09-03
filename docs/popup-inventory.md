@@ -415,3 +415,71 @@ item). The BUTTONS keep their row — they really are side by side.
 
 The `Label` over-read from §8 has not yet been seen in the ring, because every alert so far either
 missed the convention or did not set Label. Worth watching on a `Complete`-family alert.
+
+## 10. ⛔ A panel is painted by SEVERAL batches, and the last one is often a picture (2026-09-03)
+
+Reported live as *"we don't speak this screen"* on `eAlert_StaffInfo` (the PERSONNEL DATA popup).
+The screen was attached and spoke exactly one line — its title — and lost the recruit's name, the
+bonus label and both facility rows.
+
+**The mechanism.** `GetOrStartWaitingForStaffImage` (`UIAlert.uc:3972`) starts an ASYNCHRONOUS
+photobooth headshot request. Its callback `UpdateAlertImage` (`:3988`) pushes a *later* batch
+through the same `LibraryPanel.MC` the prose went through:
+
+```unrealscript
+LibraryPanel.MC.BeginFunctionOp("UpdateImage");
+LibraryPanel.MC.QueueString(class'UIUtilities_Image'.static.ValidateImagePath(PathName(StaffPicture)));
+LibraryPanel.MC.EndOp();
+```
+
+The reader took the newest string-carrying batch, so it took the picture; the asset filter
+correctly dropped its single operand; the alert reported nothing captured and fell through to the
+localized-var fallback, which for `Alert_NewStaff` yields `m_str<Stem>Title` and nothing else
+(`Bonus` is not one of the six convention suffixes, and the name is runtime data). And because that
+fallback returned one non-empty line, the third fallback — the Flash field sweep — never ran.
+
+**Distribution, over four sessions of `X2Access*.log`** (the audit CLAUDE.md prescribes; `.UpdateData`
+drops are healthy — an image riding inside the prose batch — while `.Update*Image`/`*Icon` drops are
+a whole batch lost):
+
+```
+7  eAlert_SoldierPromoted.UpdateImage        6  eAlert_ClassEarned.UpdateImage
+6  eAlert_NewStaffAvailableSmall.UpdateImage 5  eAlert_StaffSlotFilled.UpdateImage
+3  eAlert_StaffInfo.UpdateImage              3  eAlert_NewStaffAvailable.UpdateImage
+2  eAlert_ClearRoomSlotFilled.UpdateImage    2  eAlert_XPACK_Retribution.UpdateRetributionChosenIcon
+```
+
+Severity varied by PANEL, not by bug: `eAlert_ClassEarned` degraded to the Flash sweep and got six
+lines back because `Alert_TrainingComplete` uses plain `theText` fields; `Alert_NewStaff` could not,
+its fields being `XComScrollingTextField`s the path API cannot read at all.
+
+**Multi-batch builders** (comments excluded; `AnimateIn` ignored). Nine more reach `UpdateImage`
+through the async callback rather than their own body — `BuildTrainingCompleteAlert`,
+`BuildPsiTrainingCompleteAlert`, `BuildSoldierPromotedAlert`, `BuildPsiOperativeIntroAlert`,
+`BuildNewStaffAvailableAlert`, `BuildStaffInfoAlert`, `BuildConstructionSlotFilledAlert`,
+`BuildClearRoomSlotFilledAlert`, `BuildStaffSlotFilledAlert`:
+
+| Builder | Batches, in push order |
+|---|---|
+| `BuildNewStaffAvailableAlert` | UpdateFacilityList, UpdateData |
+| `BuildStaffInfoAlert` | UpdateFacilityList, UpdateData |
+| `BuildSuperSoldierAlert` | UpdateData, UpdateImage (synchronous) |
+| `BuildConfirmCovertActionAlert` | UpdateCovertInfoBlade, UpdateCovertButtonBlade (+ UpdateCovertSlot, SetFactionIcon via helpers) |
+| `BuildRetributionAlert` | UpdateRetributionTitle, …Description, …InfoPanel, …ChosenPanel, …ChosenIcon |
+| `AddChosenInfoPanel` (helper) | SetChosenName, UpdateChosenIcon — on top of its caller's own batch |
+
+**The fix.** `ReadAlertCaptured` reads EVERY batch on the panel, in push order, and `GetTextCall`
+is deleted so nothing can make the assumption again. Concatenating is sound because panel identity
+is per alert: `BindLibraryItem` (`:1044`) spawns a fresh `UIPanel` for each `UIAlert` instance, so
+every batch on that cache index belongs to that alert, and `CLEANUP_OP` evicts it when the panel
+goes.
+
+⚠ **The one ordering exception is a batch that FEEDS a child list.** `UpdateFacilityList` fills the
+`Alert_NewStaffListItem` rows that sit *under* the "available staff bonus" label the following
+`UpdateData` supplies, so Flash needs it FIRST while a reader wants it LAST — otherwise a recruit's
+bonuses are read before the recruit is named. It is a named exception of one (`IsListFeederBatch`),
+not a policy: everywhere else push order is reading order.
+
+⚠ **Watch for over-read on the four-and-five-batch alerts.** Retribution and the covert-action
+confirmation now contribute every batch they push, and no one has heard them since the change; the
+`read N line(s) from the Flash capture (A+B+C, …)` log line names which batches contributed.

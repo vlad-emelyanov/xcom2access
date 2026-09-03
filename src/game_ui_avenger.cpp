@@ -67,9 +67,11 @@ AvengerGate ReadAvengerGate()
 // ---- the resource strip (UIAvengerHUD.ResourceContainer) ---------------------------------------
 //
 // See the header for why this reads the capture rather than re-deriving. What belongs HERE is the
-// batch problem, which no other capture consumer has had: the strip is painted by N same-named
-// pushes instead of one, so "the most recent batch" (GetCall, GetTextCall) is one resource out of
-// nine, and the only honest read walks back to where THIS repaint began.
+// batch problem: the strip is painted by N same-named pushes instead of one, so "the most recent
+// batch" (GetCall) is one resource out of nine, and the only honest read walks back to where THIS
+// repaint began. The alert family has the same problem in a different shape — several DIFFERENTLY
+// named batches per panel, the last of them often a picture — and answers it by reading every
+// batch (ReadAlertCaptured).
 //
 // `ClearResources` is that boundary, and it is retained for exactly this reason — see
 // IsRepaintDelimiter in flash_shadow.cpp. Without it the walk would happily read a previous

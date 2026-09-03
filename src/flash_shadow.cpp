@@ -258,7 +258,7 @@ bool CarriesText(const Call& call)
 // The one exception to CarriesText, and it is about BOUNDARIES rather than words.
 //
 // A panel that paints itself with a single Update* call needs no delimiter — the newest recorded
-// batch IS the current state, which is what GetCall and GetTextCall assume. `UIX2ResourceHeader`
+// batch under that name IS the current state, which is what GetCall assumes. `UIX2ResourceHeader`
 // breaks that assumption: it paints with N same-named `addResource` batches, so "the newest" is
 // one resource out of nine, and the whole list is only recoverable if the consumer can tell where
 // THIS repaint started. `ClearResources` is `MC.FunctionVoid("clearResources")` — a FUNCTION_OP
@@ -535,23 +535,6 @@ bool GetCall(int32_t cacheIndex, const char* name, Call& out)
         }
     }
     return false;
-}
-
-bool GetTextCall(int32_t cacheIndex, Call& out)
-{
-    if (cacheIndex < 0)
-        return false;
-    std::lock_guard<std::mutex> lock(gMutex);
-    auto it = gPanels.find(cacheIndex);
-    if (it == gPanels.end())
-        return false;
-    const std::vector<Call>& calls = it->second.calls;
-    if (calls.empty())
-        return false;
-    // Newest first: only batches carrying text are stored at all, so the newest IS the one that
-    // last painted words onto this panel.
-    out = calls.back();
-    return true;
 }
 
 std::vector<Call> GetCalls(int32_t cacheIndex)

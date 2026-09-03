@@ -106,10 +106,9 @@ and the full per-screen table: `../avenger-view-recon.md` §2.2.
   - ⚠ This is `bIsVisible` on a CHILD widget, which is the documented exception to CLAUDE.md's
     never-gate-on-`bIsVisible` rule — the game toggles it deliberately here, on every screen
     change, exactly as it does for a button it means to hide.
-- ⛔ **The strip is painted by N pushes, not one — so the capture needed a BOUNDARY.** Every
-  other consumer of `flash_shadow.cpp` reads one `Update*` batch, which is why `GetCall` and
-  `GetTextCall` return the most recent. This screen pushes one `addResource` per resource, so
-  "most recent" is one resource out of nine. `ClearResources` (`MC.FunctionVoid`, no operands)
+- ⛔ **The strip is painted by N pushes, not one — so the capture needed a BOUNDARY.** A consumer
+  that names the call it wants gets the most recent batch under that name (`GetCall`). This
+  screen pushes one `addResource` per resource, so "most recent" is one resource out of nine. `ClearResources` (`MC.FunctionVoid`, no operands)
   is retained as a delimiter specifically for this — see `IsRepaintDelimiter` — and the reader
   walks back to the LAST one. Without it the walk reads the previous screen's resources, which
   is not hypothetical: stepping from the ant farm's nine into the Power Generator's one leaves

@@ -160,9 +160,15 @@ Why it is cleaner than `UIAlert`, the capture's first consumer:
 
 - **Matched by NAME**, not by "the most recent batch carrying a string". `UIAlert` cannot do that
   (`UpdateData`, `UpdateGuerrillaOpsSplash`, `UpdateRetaliationSplash`, … — 106 build functions),
-  so `GetTextCall` guesses and then needs a per-symbol field table, an asset-path filter and a
-  button-label matcher. Here the function name is unique to this screen and the argument layout is
-  fixed by the `.uc`.
+  so it guesses and then needs a per-symbol field table, an asset-path filter and a button-label
+  matcher. Here the function name is unique to this screen and the argument layout is fixed by
+  the `.uc`.
+  - ⚠ **Corrected 2026-09-03**: the guess was worse than "needs a field table" — the accessor it
+    used (`GetTextCall`) has since been DELETED. A panel is not painted by one batch, and for
+    every alert carrying a soldier headshot the last batch is the picture, so the alert family
+    now reads every batch on its panel. `engine-notes.md` has the measurement. Nothing here
+    changes: this screen still pushes exactly one `UpdateResearchReport`, and naming the call is
+    still the right way to read it.
 - **Arg 4 is skipped by POSITION**, not by looking like an asset. `StringArgs()` keeps non-string
   operands as empty entries precisely so a positional consumer does not shift — the wire-format
   rule, restated for the capture.

@@ -183,6 +183,16 @@ confirmed in play):
   that pushes an image path MID-LIST (`BuildGOpsAlert` / retaliation / supply raid), and an
   alert whose confirm label has to be matched out of the prose by the button filter. Grep the
   log for that line and check `just dev-flashqueue` against `just dev-speech`.
+- **Popup recipe, the multi-batch fix (2026-09-03, unheard).** `ReadAlertCaptured` now reads
+  EVERY batch on the alert's panel rather than the newest — `popup-inventory.md` §10 has the
+  measurement. Owed on a live pass: (a) the seven alerts that were losing their words to a
+  trailing headshot batch must now read in full — `eAlert_StaffInfo` is the reported one and
+  must say ВНИМАНИЕ!, the title, the recruit's name, the bonus label and BOTH facility rows, in
+  that order; (b) the alerts that gained batches they never had — `BuildRetributionAlert` (five)
+  and `BuildConfirmCovertActionAlert` (four) — must be checked for OVER-read against what is on
+  screen, since nothing filters a batch the panel received but does not display; (c) confirm the
+  `UpdateFacilityList` deferral reads the facility rows AFTER the name and not before. The
+  `read N line(s) from the Flash capture (A+B+C, …)` log line names the contributing batches.
 - **Commlink with subtitles OFF.** The reader obeys the game's Show Subtitles setting
   (`surfaces/strategy.md`): off must be SILENT, and turning it back on mid-conversation must
   announce the line still in progress rather than swallow it.
