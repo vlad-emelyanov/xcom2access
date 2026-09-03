@@ -63,6 +63,145 @@ AvengerGate ReadAvengerGate()
     return gate;
 }
 
+// ---- the resource strip (UIAvengerHUD.ResourceContainer) ---------------------------------------
+//
+// See the header for why this reads the capture rather than re-deriving. What belongs HERE is the
+// batch problem, which no other capture consumer has had: the strip is painted by N same-named
+// pushes instead of one, so "the most recent batch" (GetCall, GetTextCall) is one resource out of
+// nine, and the only honest read walks back to where THIS repaint began.
+//
+// `ClearResources` is that boundary, and it is retained for exactly this reason — see
+// IsRepaintDelimiter in flash_shadow.cpp. Without it the walk would happily read a previous
+// screen's resources: the strip is rebuilt on every screen change, and stepping from the ant farm
+// (nine) into the Power Generator (one) would leave the eight before it looking current.
+
+namespace {
+
+// UIAvengerHUD::ResourceContainer, pinned in sdk_layout_checks.cpp with its neighbours.
+constexpr int32_t kAvengerHudResourceContainerOffset = 0x420;
+
+// AddResource's two operands (UIX2ResourceHeader.uc:35-42): label, then the coloured value.
+constexpr size_t kResourceLabel = 0;
+constexpr size_t kResourceValue = 1;
+
+// The strip's own worst case is nine; the headroom is for a mod that adds resources, and the cap
+// exists only so a capture that never saw a delimiter cannot grow without bound.
+constexpr size_t kMaxResourceEntries = 32;
+
+// UIUtilities_Colors' HTML constants, verbatim (UIUtilities_Colors.uc:45-60). Matched
+// case-insensitively because the game's own table is not internally consistent about case —
+// CASH_HTML_COLOR is "5CD16C" where BAD_HTML_COLOR is "bf1e2e", and both reach this string
+// through the same GetColoredText.
+//
+// ⛔ Only the two states worth SAYING are listed. NORMAL/CASH/GOOD all mean "no comment", and
+// mapping them to words would put a reassurance on the end of every one of nine resources.
+struct StateColor {
+    const char* hex;
+    ResourceState state;
+};
+constexpr StateColor kStateColors[] = {
+    {"bf1e2e", ResourceState::Critical}, // BAD_HTML_COLOR
+    {"fdce2b", ResourceState::Warning},  // WARNING_HTML_COLOR
+};
+
+// The colour out of `<font color='#xxxxxx'>`, as a state. Anything unrecognised — including a
+// value the game did not colour at all — is Normal, which is the right failure: a resource whose
+// markup we cannot parse is read WITHOUT a state word rather than with a wrong one.
+ResourceState StateFromMarkup(const std::string& raw)
+{
+    const size_t hit = raw.find("color='#");
+    if (hit == std::string::npos)
+        return ResourceState::Normal;
+    const size_t at = hit + 8; // past "color='#"
+    if (at + 6 > raw.size())
+        return ResourceState::Normal;
+    for (const StateColor& candidate : kStateColors) {
+        if (_strnicmp(raw.c_str() + at, candidate.hex, 6) == 0)
+            return candidate.state;
+    }
+    return ResourceState::Normal;
+}
+
+} // namespace
+
+ResourceStripView ReadResourceStrip()
+{
+    ResourceStripView v;
+
+    // ⛔ The HUD, never the screen asking. Every strategy screen that shows resources shows the
+    // ONE strip on UIAvengerHUD underneath it — the same arrangement the room reader already
+    // relies on for the facility header and the shortcut bar.
+    v.hud = FindStackScreenRaw("UIAvengerHUD");
+    if (!v.hud)
+        return v;
+    v.container = ReadPtrRaw(v.hud, kAvengerHudResourceContainerOffset);
+    if (!v.container)
+        return v;
+
+    // A CHILD widget's bIsVisible, which the game toggles deliberately here — see the header.
+    v.showing = (ReadU32Raw(v.container, kPanelFlagsOffset) & kPanelVisible) != 0;
+
+    const int32_t index = FlashShadow::PanelCacheIndex(v.container);
+    if (index < 0)
+        return v;
+
+    // Oldest first, which is UpdateResources' own call order, which is left-to-right on screen.
+    // Everything before the LAST clearResources belongs to a repaint that is no longer on screen.
+    const std::vector<FlashShadow::Call> calls = FlashShadow::GetCalls(index);
+    size_t start = 0;
+    for (size_t i = calls.size(); i-- > 0;) {
+        if (calls[i].name == "clearResources") {
+            start = i + 1;
+            break;
+        }
+    }
+
+    for (size_t i = start; i < calls.size(); i++) {
+        if (calls[i].name != "addResource")
+            continue;
+        if (v.entries.size() >= kMaxResourceEntries)
+            break;
+        const std::vector<std::string> args = calls[i].StringArgs();
+        ResourceEntry entry;
+        entry.label = FlashArg(args, kResourceLabel);
+        entry.value = FlashArg(args, kResourceValue);
+        // ⛔ The state comes off the RAW operand: FlashArg cleans, and cleaning is what removes
+        // the <font> the colour lives in. Read the markup first, then keep the cleaned words.
+        entry.state = kResourceValue < args.size() ? StateFromMarkup(args[kResourceValue])
+                                                   : ResourceState::Normal;
+        // An unlabelled entry is not a resource — and dropping it here is safe precisely because
+        // this list is not positional: each entry carries its own label.
+        if (entry.label.empty() && entry.value.empty())
+            continue;
+        v.entries.push_back(std::move(entry));
+    }
+
+    // Log on change, never per read — this runs from every recipe's Build() and from the hotkey,
+    // so several times a second. The container pointer is COMPARED and never dereferenced.
+    static void* sLastContainer = nullptr;
+    static size_t sLastCount = 0;
+    static bool sLastShowing = false;
+    if (v.container != sLastContainer || v.entries.size() != sLastCount || v.showing != sLastShowing) {
+        sLastContainer = v.container;
+        sLastCount = v.entries.size();
+        sLastShowing = v.showing;
+        LOG_INFO("ResourceStrip: %zu resource(s) from cache index %d, %s (%zu call(s) recorded, "
+                 "batch starts at %zu)",
+            v.entries.size(), index, v.showing ? "showing" : "HIDDEN", calls.size(), start);
+    }
+    return v;
+}
+
+bool RefreshResourceStrip(const ResourceStripView& view)
+{
+    // ⛔ The HUD, not the container: `UpdateResources` is UIAvengerHUD's, and it is the function
+    // that owns the per-screen switch. `UIX2ResourceHeader` has no repaint of its own — it only
+    // has the AddResource the HUD drives it with.
+    if (!view.hud)
+        return false;
+    return CallNamedFunction(view.hud, "UpdateResources", nullptr);
+}
+
 // ---- inside a room (UIFacility and its 22 subclasses) ----
 //
 // The room SCREEN is not the room's content, and that is the whole shape of this reader.
@@ -101,6 +240,10 @@ constexpr int32_t kRoomContainerFuncsOffset = 0x3DC;       // UIRoomContainer::R
 constexpr int32_t kStaffContainerTitleOffset = 0x3D8;      // UIStaffContainer::Title
 constexpr int32_t kStaffContainerSkillOffset = 0x408;      // UIStaffContainer::Skill
 constexpr int32_t kStaffContainerSlotsOffset = 0x418;      // UIStaffContainer::StaffSlots
+// The picker hangs off the same base class in a built room and in a debris room, so both
+// readers below share these two.
+constexpr int32_t kStaffContainerDropDownOffset = 0x428; // UIStaffContainer::m_kPersonnelDropDown
+constexpr int32_t kDropDownListOffset = 0x3E0;           // UIPersonnel_DropDown::m_kList
 
 constexpr int kShortcutCategoryCount = 5;
 constexpr int kMaxRoomActions = 16;
@@ -162,9 +305,34 @@ RoomView ReadRoom(void* screen)
         v.staffVisible = (flags & kPanelVisible) != 0;
         v.staffTitle = ReadFStringField(staff, kStaffContainerTitleOffset);
         v.staffSkill = ReadFStringField(staff, kStaffContainerSkillOffset);
-        void* slots[kMaxStaffSlots] = {};
-        v.staffSlots = TakeArrayRaw("Room: staff slots", staff, kStaffContainerSlotsOffset, slots,
-            kMaxStaffSlots);
+        // The slot widgets, and only while the game is SHOWING the strip: Refresh() Hide()s the
+        // container for a facility with no slots or with bHideStaffSlots, and a slot read off a
+        // hidden strip would be a control the player cannot see. The pointers are what the
+        // recipe activates (HandleClick) and what keys its words; the words themselves come from
+        // the companion, because UIStaffSlot.UpdateData pushes name and bonus into Flash and
+        // keeps only StaffSlotRef.
+        if (v.staffVisible) {
+            void* slots[kMaxStaffSlots] = {};
+            int n = TakeArrayRaw("Room: staff slots", staff, kStaffContainerSlotsOffset, slots,
+                kMaxStaffSlots);
+            for (int i = 0; i < n; i++) {
+                if (slots[i])
+                    v.staffSlots.push_back(slots[i]);
+            }
+        }
+
+        // The picker, when it is up. Same read as the debris room's, because it is the same
+        // widget on the same base class (UIStaffContainer::m_kPersonnelDropDown) — a facility
+        // slot's ShowDropDown spawns exactly what a build slot's does. Its visibility is the
+        // routing test the game itself makes (UIStaffContainer.OnUnrealCommand hands every key
+        // to the picker while it shows), so it is the recipe's shape switch too.
+        void* drop = ReadPtrRaw(staff, kStaffContainerDropDownOffset);
+        if (drop && (ReadU32Raw(drop, kPanelFlagsOffset) & kPanelVisible)) {
+            v.dropDown = drop;
+            v.dropList = ReadPtrRaw(drop, kDropDownListOffset);
+            if (v.dropList)
+                v.dropSelected = ReadI32Raw(v.dropList, kListSelectedIndexOffset);
+        }
     }
 
     // The room's OWN button bar. Spawned lazily by AddFacilityButton, so a room with no buttons
@@ -277,8 +445,6 @@ namespace {
 
 constexpr int32_t kRoomStaffContainerOffset = 0x608;  // UIRoom::m_kStaffSlotContainer
 constexpr int32_t kRoomExcavateButtonOffset = 0x628;  // UIRoom::ExcavateButton
-constexpr int32_t kStaffContainerDropDownOffset = 0x428; // UIStaffContainer::m_kPersonnelDropDown
-constexpr int32_t kDropDownListOffset = 0x3E0;        // UIPersonnel_DropDown::m_kList
 constexpr int kMaxBuildSlots = 8;
 
 } // namespace
@@ -341,20 +507,20 @@ bool OpenStaffSlotPicker(void* slotWidget)
     return CallNamedFunction(slotWidget, "HandleClick", zeros);
 }
 
-bool SetStaffPickerSelection(const RoomBuildView& view, int index)
+bool SetStaffPickerSelection(void* dropList, int index)
 {
-    return SetListIndex(view.dropList, index);
+    return SetListIndex(dropList, index);
 }
 
-bool ChooseStaffCandidate(const RoomBuildView& view, int index)
+bool ChooseStaffCandidate(void* dropList, int index)
 {
-    if (!view.dropList)
+    if (!dropList)
         return false;
     // Same select-then-Enter shape as the room menu, for the same reason: UIList's accept path
     // fires OnItemClicked(self, SelectedIndex) — here UIPersonnel_DropDown.OnStaffSelected,
     // which indexes m_staff by that number — so the selection is the argument.
-    SetListIndex(view.dropList, index);
-    return SendRowCommand(view.dropList, kCmdEnter);
+    SetListIndex(dropList, index);
+    return SendRowCommand(dropList, kCmdEnter);
 }
 
 bool StartRoomExcavation(const RoomBuildView& view)
@@ -840,6 +1006,33 @@ bool ActivateChooseFacility(const ChooseFacilityView& view, int index)
     // why (supplies, power, or staffing).
     SetListIndex(view.list, index);
     return SendRowCommand(view.screen, kCmdEnter);
+}
+
+// ---- choosing a facility upgrade (UIChooseUpgrade) ----
+//
+// See the header: the screen every upgrade path actually opens, and UIChooseFacility's twin in
+// layout and in input. The list sits at the same offset on both classes; that is pinned for
+// EACH class in sdk_layout_checks.cpp rather than assumed from the other, because two screens
+// sharing a number today is a coincidence of their declaration order, not a contract.
+
+void* FindChooseUpgradeScreen()
+{
+    // Stack first, like every screen-class finder — XComHQPresentationLayer.UIFacilityUpgrade
+    // pushes this screen, so the stack has it — with the GObjects scan as the logged fallback.
+    static ScreenFinder sFinder{"UIChooseUpgrade"};
+    static bool sReported = false;
+    void* screen = PreferStack("UIChooseUpgrade", sFinder, sReported);
+    return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
+}
+
+ChooseFacilityView ReadChooseUpgrade(void* screen)
+{
+    // The same read, deliberately: m_List at 0x418, UIListItemString rows populated through
+    // SetText (names retained), bDisabled from UpgradeAlreadyPerformed || !HasEnoughPower ||
+    // !CanBuildUpgrade, and the attention icon from bPriority — UIChooseUpgrade.PopulateList is
+    // UIChooseFacility.PopulateList line for line. Selection and activation go through the
+    // same two functions as well, since OnAccept reads the screen's own SelectedIndex here too.
+    return ReadChooseFacility(screen);
 }
 
 } // namespace GameUI

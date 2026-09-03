@@ -57,6 +57,27 @@ encounter (its `SetChosenReward` is pushed with three EMPTY strings and must sta
 knowledge extraction, and a soldier kidnapped — and the reward branch needs a Chosen actually
 killed, which is the rarest of the four.
 
+**Staffing a BUILT facility, and the upgrade screen** (2026-09-03, built and deployed, never
+run — `surfaces/avenger.md` "Inside a room" and "Facility upgrades", recon §18). Reported as
+"I can't assign engineers to the Power Relay or soldiers to the Training Center": the room
+recipe built no nodes for `UIFacility`'s staff slots and had no picker shape. Now the slots sit
+in the crew stop and the picker is the debris room's, through one shared companion class
+(`X2AccessStaffSlots`) — so the debris-room path is ALSO re-deployed and must be re-walked. The
+pass, on a campaign with a built facility: (a) in the Power Relay, Down from "ENGINEERS: N"
+must land on the first slot, Enter must open the picker and the screen name must gain "choose
+who to assign", Enter on a name must assign and the slot must re-read with the occupant WITHOUT
+leaving the room (the words re-ask while the picker is open); (b) in the GTS, Enter on the
+empty slot → picker of rookies → Enter → the game's train dialog (dialog recipe) → Yes →
+`UIChooseClass` (commodity recipe), and Enter on the FILLED slot must raise the stop-training
+confirmation, never a picker; (c) a padlocked slot must say "locked" plus the game's unlock
+tooltip and Enter must open `UIChooseUpgrade`; (d) on that screen the rows read with
+"unavailable" where greyed, the card's COMPLETED line appears only on an installed upgrade, the
+power line carries its sign, and Enter installs and pops back to the room; (e) a debris room
+still clears by keyboard (the shared builder replaced its own). Then shape-count the ring, and
+`grep -n 'MISSING DISPLAY INFO'` over it — that literal is `XComGameState_StaffSlot`'s own
+fallback for a template with no display function, and would mean a slot kind the words never
+covered.
+
 ## Unexercised paths inside surfaces that HAVE run
 
 ⚠ Everything in this section belongs to a surface whose MAIN PATH has been walked live. What is
@@ -67,6 +88,23 @@ as "this is broken".
 The branches carried over when the 2026-08-31 build's live-run debt was retired (main paths all
 confirmed in play):
 
+- ⛔ **The resource strip has NEVER RUN** (built 2026-09-03, `surfaces/avenger.md`). It is
+  first-pass debt rather than a branch, and it is cheap to walk because the strip is on screen
+  for most of the strategy layer. Four things to confirm, in order:
+  1. `just dev-log` carrying `ResourceStrip: N resource(s) from cache index …, showing`. **N
+     must be 9 on the ant farm** — anything less means the repaint delimiter or the raised
+     `kMaxCallsPerPanel` is not doing its job, and 8 specifically would mean the cap change did
+     not take.
+  2. `R` on the ant farm reads all nine; Tab in a commodity list, in a room and on the geoscape
+     reaches a **Resources** stop with the subset `avenger-view-recon.md` §2.2 predicts for that
+     screen. ⚠ The per-screen subsets are the thing most likely to be wrong, and the cheapest
+     check is the Power Generator (power ONLY) against `UIChooseResearch` (five, no supplies).
+  3. **The colour states.** `grep -c critical` / `low` over `just dev-speech` — a run in which
+     NOTHING is ever `critical` is the distribution failure CLAUDE.md's audit rule describes,
+     and the easy provocation is `UIFacility_ResistanceComms` with contacts at capacity.
+  4. The strip must be **SILENT before `T0_M4_ReturnToAvenger`** and while the Avenger is in
+     flight — no stop, and `R` unclaimed. This is the parity half and the only one that fails
+     in the direction a player would not report.
 - **Pause menu, mod rows.** `ActivatePauseMenuItem` sends Enter to the LIST (`SendRowCommand`)
   rather than calling `OnChildClicked` by name, so a mod-wrapped `OnItemClicked` delegate runs.
   The vanilla rows are confirmed; the MOD row that motivated it is not — with Remove Missing
@@ -204,12 +242,12 @@ a repeating announcement.
    vs our recompute on the same settled hover) and the only route to `LaserScopeMarkers` /
    `KillZoneMarkers`, two warnings the companion recompute does not attempt. Read it only where
    the path has settled — `CursorMoveTo`, or the queued `/tile` endpoint (item 4).
-7. Strategy-layer surfaces still unread, in value order: the staff drop-down (`UIPersonnel_DropDown`,
-   a `UIPanel` and NOT part of the personnel family), `UIFacility.m_kResearchProgressBar` (the last
+7. Strategy-layer surfaces still unread, in value order: `UIFacility.m_kResearchProgressBar` (the last
    of the room's Flash-only status panels — `m_kCovertOpsStatus` is done, `surfaces/avenger.md`),
-   the resource strip, the to-do widget and the event queue (`avenger-view-recon.md` §2 —
+   the to-do widget and the event queue (`avenger-view-recon.md` §2 —
    note §2.5 was CORRECTED: the event queue IS retained, `UIEventQueue_ListItem.Title` /
-   `DaysValue`).
+   `DaysValue`). ⚠ The resource strip came off this list on 2026-09-03 (`surfaces/avenger.md`)
+   and is **unexercised live** — see item 10.
 8. The tactical HUD recipe's last stop — **Enemies** (the `m_arrTargets` strip, distance and
    bearing appended as a labelled aid, Enter → `DirectTargetObject`). Soldier (2026-08-31,
    `X2AccessUnitReader.BuildSoldierRecords` — the wire bridge went in that class, next to its

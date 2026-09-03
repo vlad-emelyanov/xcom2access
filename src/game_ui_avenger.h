@@ -31,6 +31,74 @@ struct AvengerGate {
 /// Game thread only.
 AvengerGate ReadAvengerGate();
 
+// ---- the resource strip (UIAvengerHUD.ResourceContainer) — docs/avenger-view-recon.md §2.2 ----
+//
+// The band across the top of every strategy screen: INCOME, SUPPLIES, INTEL, ELERIUM, ALLOYS,
+// CORES, SCI, ENG, CONTACTS, POWER. It is ONE widget with ONE owner — a grep over all of SrcOrig
+// finds `UIX2ResourceHeader` named in exactly two files — so this reader serves every screen that
+// shows it, and there is no second strip anywhere in the game.
+//
+// ⛔ IT IS NOT A FIXED BAR, and that is the fact a reader has to carry. `UIAvengerHUD
+// .UpdateResources()` switches on `SCREENSTACK.GetCurrentScreen().Class` and shows a DIFFERENT
+// SUBSET per screen — nine resources on the ant farm, `power` alone in the Power Generator,
+// `contacts` alone in Resistance Comms, nothing at all on the twenty-odd classes that fall to its
+// `default:`. A sighted player never sees the whole strip at once, so neither do we: reading the
+// current subset is parity, and reporting resources the screen is not showing is not.
+//
+// ✅ The words come from the Flash capture, and this is the case that most needed it.
+// `AddResource` is `MC.BeginFunctionOp("addResource")` straight into Flash — the strip retains
+// NOTHING, and `bIsNavigable = false`, so the widget tree has neither the words nor a way in. The
+// alternative was re-deriving all ten values in the companion AND mirroring that per-screen switch,
+// which would drift from the game's source and would be blind to any mod that adds a resource.
+// The capture reads what was actually drawn, so both problems are somebody else's.
+//
+// ⛔ THE STATE IS THE COLOUR, and losing it loses the point of the strip. Every value is wrapped by
+// `UIUtilities_Text.GetColoredText`, and the colour is the only thing separating "SUPPLIES 0" from
+// "SUPPLIES 0, and that is why you cannot buy this". So the value is parsed for its `<font
+// color='#…'>` BEFORE it is cleaned, against UIUtilities_Colors' own constants.
+enum class ResourceState {
+    Normal,   // NORMAL (cyan) or CASH/GOOD (green) — nothing to say
+    Warning,  // WARNING (yellow): contacts with <= 2 free, power in ePowerState_Yellow
+    Critical, // BAD (red): a resource at zero, contacts at capacity, power over budget
+};
+
+struct ResourceEntry {
+    std::string label; // "SUPPLIES" — the game's own localized, Caps()'d word
+    std::string value; // "§217", "4/6", "(+§40)" — cleaned, markup stripped
+    ResourceState state = ResourceState::Normal;
+};
+
+struct ResourceStripView {
+    void* hud = nullptr;       // the UIAvengerHUD, or null when not in the strategy layer
+    void* container = nullptr; // its ResourceContainer
+    /// The strip is on screen. ⛔ This is `bIsVisible` on a CHILD WIDGET, which is the documented
+    /// exception to CLAUDE.md's never-gate-on-bIsVisible rule: `ShowResources`/`HideResources`
+    /// toggle it deliberately, on every screen change, and it is ALSO how the game withholds the
+    /// strip for the whole tutorial (`ShowResources` no-ops until `T0_M4_ReturnToAvenger`) and
+    /// while the Avenger is in flight (`UIStrategyMap.UpdateResourceBar`). Reading resources the
+    /// player cannot see would be a parity leak in the other direction.
+    bool showing = false;
+    std::vector<ResourceEntry> entries; // in the game's own push order, left to right
+};
+
+/// Read the strip as the game last drew it. Finds `UIAvengerHUD` itself — the strip belongs to the
+/// HUD underneath, never to the screen asking. Game thread only.
+ResourceStripView ReadResourceStrip();
+
+/// Ask the HUD to repaint the strip, by calling its OWN `UpdateResources()`.
+///
+/// The capture holds what was PUSHED, so a strip that was last painted before the capture had the
+/// panel — or whose entry the capture's LRU has since evicted — reads as empty even though the
+/// player can see it. The game paints the strip only on a screen change, so on the ant farm that
+/// state can last as long as the player stands there.
+///
+/// ⛔ This is the game's own function and it is what the game itself calls on every screen change
+/// (`UIStrategyScreenListener.RealizeResourceHeader`), so the repaint is the one the game would
+/// have done anyway — no state is poked and nothing is fabricated. It is still an outbound
+/// ProcessEvent: game thread only, and the CALLER owns the throttle. Answers whether the call was
+/// dispatched.
+bool RefreshResourceStrip(const ResourceStripView& view);
+
 // ---- inside a room (UIFacility and its 22 subclasses) ----
 //
 // ⛔ The room SCREEN is not the room's content. All seven FIXED rooms declare ZERO staff slots —
@@ -92,7 +160,18 @@ struct RoomView {
     std::string staffTitle;    // UIStaffContainer::Title ("SCIENTISTS")
     std::string staffSkill;    // UIStaffContainer::Skill — the ship-wide crew count for the kind
     bool staffVisible = false; // the container's own bIsVisible, which the GAME sets meaningfully
-    int staffSlots = 0;        // StaffSlots.Length — zero on every fixed room
+    // The UIFacility_StaffSlot widgets the game SPAWNED, in container order — empty on every
+    // fixed room. ⛔ Container order is not template order: UIFacilityStaffContainer.Refresh
+    // skips a slot that is locked with no upgrade to buy, and one whose template hides it, so
+    // the widget's own StaffSlotRef is the only thing that says which slot a node is. Nothing
+    // here indexes the facility's StaffSlots by this position.
+    std::vector<void*> staffSlots;
+    // The personnel picker (UIPersonnel_DropDown), only while it is OPEN. It is a PANEL on the
+    // staff container, never a screen, so its bIsVisible is the only thing that says it owns the
+    // keys — the same child-widget exception the debris room reads.
+    void* dropDown = nullptr;
+    void* dropList = nullptr; // its UIList
+    int dropSelected = -1;
     std::vector<RoomFunc> funcs;   // the room's own bottom-bar buttons; empty on most rooms
     std::vector<RoomAction> actions;
     int selected = -1;             // List::SelectedIndex
@@ -160,18 +239,24 @@ void* FindRoomBuildScreen();
 
 RoomBuildView ReadRoomBuild(void* screen);
 
-/// Open a build slot's personnel picker through the widget's own HandleClick — the same entry
-/// the mouse and UIStaffSlot's own Enter use, so a LOCKED slot still offers the facility
-/// upgrade instead, as the game intends. Game thread only.
+/// Open a staff slot's personnel picker through the widget's own HandleClick — the same entry
+/// the mouse and UIStaffSlot's own Enter use. Shared by the debris room's build slots and the
+/// built room's facility slots, because the widget is the same class either way and the
+/// handler is where the game branches: a LOCKED slot opens the facility upgrade screen instead
+/// of the picker, and a FILLED project slot (the GTS trainee, a Psi Lab operative, a bonding
+/// pair) raises the game's own stop-training confirmation rather than a list. Calling anything
+/// lower than HandleClick would have to reproduce those branches by hand. Game thread only.
 bool OpenStaffSlotPicker(void* slotWidget);
 
-/// P11 write-back inside the open picker (UIList::SetSelectedIndex). Game thread only.
-bool SetStaffPickerSelection(const RoomBuildView& view, int index);
+/// P11 write-back inside an open picker (UIList::SetSelectedIndex on its list). Takes the
+/// picker's LIST rather than a view because two views carry one: the debris room's and the
+/// built room's. Game thread only.
+bool SetStaffPickerSelection(void* dropList, int index);
 
-/// Pick a candidate from the open picker: select, then hand the LIST an Enter, which fires
+/// Pick a candidate from an open picker: select, then hand the LIST an Enter, which fires
 /// OnItemClicked → UIPersonnel_DropDown.OnStaffSelected — and that indexes m_staff by
 /// SelectedIndex, so selecting first is the argument, not a courtesy. Game thread only.
-bool ChooseStaffCandidate(const RoomBuildView& view, int index);
+bool ChooseStaffCandidate(void* dropList, int index);
 
 /// Press Excavate through the button's own Click, i.e. the mouse path, firing the
 /// StartExcavation delegate. ⛔ Not UIRoom.OnAccept (empty), and not StartClearRoom on the room
@@ -414,5 +499,29 @@ bool SetChooseFacilitySelection(const ChooseFacilityView& view, int index);
 /// UpdateSelection ever writes. A disabled row is passed through: OnAccept re-tests
 /// CanBuildFacility and plays its own refusal sound. Game thread only.
 bool ActivateChooseFacility(const ChooseFacilityView& view, int index);
+
+// ---- choosing a facility upgrade (UIChooseUpgrade) ----
+//
+// ⛔ THE UPGRADE SCREEN A PLAYER SEES IS UIChooseUpgrade, NOT UIFacilityUpgrade. Every path the
+// game has to it — the room's UPGRADE button, a locked staff slot, the to-do widget, the ant
+// farm's overlay — goes through XComHQPresentationLayer.UIFacilityUpgrade(), and that function
+// spawns a UIChooseUpgrade (XComHQPresentationLayer.uc:1994). UIFacilityUpgrade is shipped, has
+// a list of UIFacilityUpgrade_ListItems with retained UIText, and is never instantiated; a
+// reader built for it would probe a class that never reaches the stack.
+//
+// UIChooseUpgrade is UIChooseFacility's TWIN, down to the field layout: a UIList of
+// UIListItemStrings at the same offset (0x418, pinned separately), a `SelectedIndex` only
+// UpdateSelection writes, `OnAccept` reading that index, and a panel whose every value is a local
+// on its way into Flash. So the same view struct and the same reader serve it, and only the
+// finder and the pin are its own. The screen's own Package is even "gfxChooseFacility".
+//
+// Vanilla's keyboard here already works (Up/Down through UIScreen's navigator, Enter/Space →
+// OnAccept, Escape → OnCancel); what it lacks is every word on the right-hand panel.
+
+/// The choose-upgrade screen, when it is the CURRENT screen. Game thread only.
+void* FindChooseUpgradeScreen();
+
+/// Same layout as UIChooseFacility, same reader; see above. Game thread only.
+ChooseFacilityView ReadChooseUpgrade(void* screen);
 
 } // namespace GameUI

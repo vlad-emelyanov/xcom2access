@@ -108,3 +108,35 @@ only two lines in `DefaultInput.ini` mentioning `Semicolon` are `WidgetInputAlia
 for the editor's edit boxes, which bind no command). `;` is the selected-unit readout; `'` remains
 free, earmarked for the vantage read.
 
+## The strategy layer
+
+A different and much richer budget, because `[XComGame.XComHeadquartersInput]` binds almost
+nothing: the geoscape recon measured **sixteen free bare letters** —
+`C E F G H I K L O Q R T V X Y Z` (`geoscape-recon.md` §7) — against tactical's two.
+
+⛔ **The two layers' budgets are NOT interchangeable, and the tell is `R`.** In
+`[XComGame.XComTacticalInput]` it carries a bare `R_Key_Press | onrelease R_Key_Release`
+forwarder (line 354) — that is Reload, one of the generic forwarders the tactical section is full
+of. In `[XComGame.XComHeadquartersInput]` it appears only as `Shift+R` (`ErrorReport`, which
+`[Engine.PlayerInput]` also binds the same way), and UE3 REQUIRES a modifier a binding declares,
+so a bare `R` there matches nothing at all. A key is free per LAYER, never per game.
+
+Claimed here:
+
+| Key | Verb | Gate | What it displaces |
+|---|---|---|---|
+| `PgUp` / `PgDn`, `Ctrl+` same | geo ring: step within / between categories | `UIStrategyMap` current | — |
+| `O` | geo ring: re-announce selection | same | — |
+| `Home` | geo ring: sort from selection | same | the navigator's edge jump, deliberately |
+| `C` | geo ring: sort from the Avenger | same | — |
+| `/` | geo ring: camera to selection | same | — |
+| `Delete` | ant farm / dropship: re-announce | that screen | `Toggledebugcamera`, still at `Ctrl+Delete` |
+| `R` | read the whole resource strip | **the strip is on screen** | nothing — no bare `R` in this layer |
+
+⚠ **`R`'s gate is the strip's own visibility, and that is doing two jobs.** It keeps the claim out
+of tactical, where `R` IS bound, without the module knowing anything about layers; and it keeps
+the key off the save-name text field, since `UISaveGame` falls to `UpdateResources`' `default:`
+and hides the strip. Both fall out of the GAME's answer rather than an exclusion list of ours —
+which matters, because an exclusion list is a thing that goes stale. See
+`surfaces/avenger.md` §Resource strip.
+

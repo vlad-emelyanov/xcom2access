@@ -67,37 +67,81 @@ which is the opposite of what tactical taught us to expect.
 carries the facility's `DisplayName`; on `UIFacilitySummary` it carries that
 screen's title instead.
 
-### 2.2 Resource strip — `UIX2ResourceHeader` ⛔ write-only *[not seen live]*
+### 2.2 Resource strip — `UIX2ResourceHeader` ⛔ write-only — ✅ BUILT
+
+Built 2026-09-03 off the Flash capture; the rules it earned are
+`surfaces/avenger.md` §Resource strip. What follows is the measurement.
 
 `AddResource(label, data)` is `MC.BeginFunctionOp("addResource")` and retains
-**nothing** — the tactical-HUD pattern exactly. But the source is trivially
-re-derivable in script: every value comes from
-`UIUtilities_Strategy.GetResource` or `XComGameState_HeadquartersXCom`.
+**nothing** — the tactical-HUD pattern exactly, and `bIsNavigable = false` on
+top, so the widget tree has neither the words nor a way in. A grep over all of
+`SrcOrig` finds `UIX2ResourceHeader` named in exactly **two files**
+(`UIAvengerHUD.uc` and its own), so this is ONE widget with ONE owner: there is
+no second resource strip anywhere in the game, and the geoscape reuses this one.
+
+The values are re-derivable in script — every one comes from
+`UIUtilities_Strategy.GetResource` or `XComGameState_HeadquartersXCom` — but
+re-deriving them also means mirroring the per-screen switch below, so the build
+took the capture instead.
 
 What makes this one interesting is that **the strip's contents are
 context-dependent** — `UpdateResources()` switches on
 `ScreenStack.GetCurrentScreen().Class`. A sighted player does not see a fixed
-resource bar; they see the subset relevant to where they are:
+resource bar; they see the subset relevant to where they are.
+
+⚠ **CORRECTED 2026-09-03: this table was missing seven of the twenty classes.**
+The earlier pass listed only the branches it expected; the switch is
+`UIAvengerHUD.uc:118-241` and these are all of it:
 
 | Screen | Shown |
 |---|---|
 | `UIFacilityGrid` (the default) | monthly income, supplies, intel, elerium, alloys, scientists, engineers, contacts, power — plus unstaffed-engineer icons |
 | `UIStrategyMap` | same minus power, minus staff icons |
-| `UIChooseResearch` | intel, elerium, alloys, sci, eng |
+| `UIBlackMarket_Buy` | income, supplies, intel, elerium, alloys, sci, eng |
+| `UIBlackMarket_Sell` | income, supplies |
+| `UIResistanceGoods` | income, supplies, sci, eng |
+| `UIAdventOperations` | income, supplies, intel |
 | `UIChooseProject` | income, supplies, cores, elerium, alloys, eng |
+| `UIOfficerTrainingSchool` / `UIRecruitSoldiers` | income, supplies |
 | `UIBuildFacilities` / `UIChooseFacility` | income, supplies, **power** |
 | `UIFacilityUpgrade` / `UIChooseUpgrade` | income, supplies, elerium, alloys, power |
 | `UIInventory_BuildItems` | income, supplies, elerium, alloys, eng |
+| `UIChooseResearch` | intel, elerium, alloys, sci, eng |
 | `UIFacility_Labs` | scientists only |
 | `UIFacility_PowerGenerator` | power only |
 | `UIFacility_ResistanceComms` | contacts only |
+| `UIAlert` with `eAlertName == eAlert_Contact` | intel |
+| `UIAlert` with `eAlertName == eAlert_Outpost` | supplies |
 | `UICovertActions` | supplies, intel, alloys, elerium |
 | everything else | **hidden** |
+
+⚠ Note what the corrected table does to the COMMODITY family: the commodity
+recipe covers nineteen classes, and only six of them draw a strip. The other
+thirteen — `UIResearchArchives`, `UIViewObjectives`, `UIChooseClass` and the
+rest — fall to `default:` and hide it. "Commodity screens get resources" would
+have been wrong.
+
+**Two gates sit on top of the switch**, and both hide the strip regardless of
+which branch ran: `ShowResources()` no-ops until `T0_M4_ReturnToAvenger` is
+complete (which is why the 2026-08-20 pass never saw the strip at all), and
+`UIStrategyMap.UpdateResourceBar()` hides it while `m_eUIState == eSMS_Flight`.
+The observable result of both is `ResourceContainer.bIsVisible`.
+
+**Who repaints it**: `UIStrategyScreenListener.RealizeResourceHeader()` on
+EVERY strategy screen's `OnInit` and `OnReceiveFocus`, plus about twenty ad-hoc
+call sites that refresh after a transaction (buying, staffing, contacting a
+region, covert-action costs). It is therefore never painted on a timer — a
+screen the player sits on keeps the strip it was drawn with.
 
 Colour carries meaning and is lost to us as colour: supplies/income go
 `eUIState_Bad` when negative, contacts go Warning at ≤2 free and Bad at 0 free,
 power goes Green/Yellow/Red off `XComHQ.PowerState`. Those are the states a
 readout has to say in words.
+
+⚠ `UpdateScientistScore` and `UpdateEngineerScore` compute
+`bBonusActive = (NumSci > XComHQ.GetNumberOfScientists())` — a value against
+itself — so it is always false and sci/eng never take the Good tint. A Firaxis
+bug, affecting colour only; do not go looking for the state that produces it.
 
 Two exact forms worth copying rather than reinventing: monthly income prints as
 a signed parenthesised value (`(+§40)`), and contacts and power both print as
@@ -1898,5 +1942,67 @@ partly staffed (where the split is the point).
   ("Room action") rather than a wrong label; the widget retains nothing else.
 - The soldier row's bond icon and its tooltip (`BondmateTooltip`, a real
   localized sentence naming the bondmate) are not spoken.
-- `UIPersonnel_DropDown`, the staff picker, is a separate surface and separately
-  handled. It shares none of this layout.
+- `UIPersonnel_DropDown`, the staff picker, shares none of the roster's layout. It is read
+  as the picker shape of both room recipes (§18).
+
+## 18. Staffing a BUILT facility, and the upgrade screen (2026-09-03, built, unexercised)
+
+Reported: *"I can't assign engineers to the Power Relay or soldiers to the Training Center."*
+§13.6 had said it in advance — *a staffed room has never been exercised (none exists to test
+on)* — and the reason was structural, not a missed test: `ReadRoom` took `StaffSlots.Length`
+as a number and `BuildRoom` built nothing from it, while the debris room (§13.7, §17) had a
+full slot-and-picker treatment of its own. So an engineer could clear a room by keyboard and
+could not be assigned to the facility built in it.
+
+## 18.1 One widget class, two readers — now one implementation
+
+`UIFacility.m_kStaffSlotContainer` (`UIFacilityStaffContainer`) and `UIRoom`'s
+(`UIRoomStaffContainer`) both extend `UIStaffContainer`; their children are `UIStaffSlot`s
+(`UIFacility_StaffSlot` and its five subclasses, `UIRoom_StaffSlot`); the picker is one
+`UIPersonnel_DropDown` spawned on the container at the same offset (0x428, already pinned).
+The state object under both is `XComGameState_StaffSlot`, whose `GetNameDisplayString` /
+`GetBonusDisplayString` are what `UIStaffSlot.UpdateData` pushed into Flash and dropped.
+
+So the slot and candidate records moved out of `X2AccessRoomReader` into a static helper,
+`X2AccessStaffSlots`, and both readers call it; native's `StaffSlotVtable` and
+`BuildStaffPicker` build both rooms' nodes. Three facts the facility side added:
+
+- **`HandleClick` is the branch point, and every state is activatable.** Locked → the upgrade
+  screen; greyed → an empty picker; filled project slot → the subclass's `ShowDropDown`
+  override raises the stop-training confirmation (`UIFacility_AcademySlot`,
+  `_AdvancedWarfareCenterSlot`, `_PsiLabSlot`, `_InfirmarySlot`, `_BondSlot`). The vanilla
+  keyboard reaches the same call on **F2/F3/F4** only.
+- **Container index ≠ facility index.** `UIFacilityStaffContainer.Refresh` skips locked slots
+  with no upgrade to buy and template-hidden ones, so the widget's own `StaffSlotRef` is the
+  link and nothing indexes `Facility.StaffSlots` by position.
+- **The hover tooltip is re-run, never read.** `RefreshTooltip` is a mouse delegate — the
+  tooltip manager holds the class default until something hovers — so the companion re-runs
+  its branches (locked / soldier / engineer / scientist × available) and the bond slot's
+  override, in that precedence.
+
+Cache: the facility's words now key on funcs + slot widgets + the picker pointer and re-ask on
+every render while the picker is open (the debris room's rule, for the same in-place
+`UpdateData` reason).
+
+## 18.2 The upgrade screen is `UIChooseUpgrade`
+
+`XComHQPresentationLayer.UIFacilityUpgrade()` (`:1994`) spawns `UIChooseUpgrade`. The
+`UIFacilityUpgrade` class the census had filed as "natively readable" ships and is never
+instantiated. `UIChooseUpgrade` is `UIChooseFacility` with the numbers changed: `m_List` at
+0x418 (pinned on its own class), `UIListItemString` rows through `SetText`, `SelectedIndex`
+written only by `UpdateSelection`, a panel of locals pushed through `AS_SetDescription` /
+`AS_SetResources`. The two recipes share `BuildChoiceScreen`; `X2AccessUpgradeReader` mirrors
+`UpdateSelection` through the screen's own `GetPowerRequirement` / `HasEnoughPower` /
+`UpgradeAlreadyPerformed` / `CanBuildUpgrade`, and adds a COMPLETED line
+(`UIFacilityUpgrade_ListItem.m_strCompleted`, populated in INT and RUS) for an installed
+upgrade, since the panel otherwise cannot distinguish "already have" from "cannot afford" on a
+greyed row.
+
+## 18.3 First live pass must answer
+
+The checklist is `next-steps.md` (live-run debt). The two things only a run can say: whether
+`OnReceiveFocus` on a slot (our P11 write-back onto the widget) disturbs anything the game
+does with `SelectedStaffSlot`, and whether the picker's rows are present on the FIRST render
+after it opens — `PopulateListSequentially` adds them one per realized item, so an early
+render may see an empty list and the candidate-only graph must be re-rendered by the differ
+as they arrive.

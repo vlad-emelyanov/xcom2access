@@ -7,7 +7,10 @@
 //
 // WHY IT EXISTS AT ALL. Almost everything the "avenger room" recipe speaks is a retained widget
 // read that native does for itself — the header's room name, the crew line, the shortcut
-// submenu's rows, the upgrade button's own UIButton.Text. Exactly one thing is not:
+// submenu's rows, the upgrade button's own UIButton.Text. Three things are not: the bottom-bar
+// labels below, the Ring's covert-op panel further down, and the STAFF SLOTS — whose words
+// (occupant, bonus, the hover tooltip) UIStaffSlot pushes into Flash and drops, and which are
+// supplied by X2AccessStaffSlots, the one implementation shared with the debris room. The first:
 //
 //   UIFacility_RoomFunc.InitRoomFunc(label, delegate)
 //       MC.FunctionString("update", label);      // <- straight into Flash
@@ -109,6 +112,14 @@ function DescribeFacility()
 	// focused one — testing it could only ever produce silence at a panel that is on screen.
 	if (Screen.m_kCovertOpsStatus != none)
 		Emit(CovertOpsRecord());
+
+	// The staff strip: one record per slot the container SPAWNED, then the picker's rows while
+	// it is open. Shared with the debris room (X2AccessStaffSlots), because it is the same
+	// widget class on the same base container and a slot must read the same in both rooms.
+	// Native decides whether the strip is SHOWING (the container's own bIsVisible, which the
+	// game sets meaningfully); this only supplies the words for whatever widgets exist.
+	class'X2AccessStaffSlots'.static.AppendSlots(Screen.m_kStaffSlotContainer, false, NativeResult);
+	class'X2AccessStaffSlots'.static.AppendCandidates(Screen.m_kStaffSlotContainer, NativeResult);
 }
 
 // ---------------------------------------------------------------------------------------

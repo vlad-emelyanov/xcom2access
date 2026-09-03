@@ -6,6 +6,7 @@
 #include "menu_navigator.h"
 #include "tile_reader.h"
 #include "avenger.h"
+#include "resource_strip.h"
 #include "dropship.h"
 #include "text_input.h"
 #include "tactical_hud.h"
@@ -130,6 +131,10 @@ static void RegisterEventHandlers() {
             // The Avenger's ant farm. Its gate is a plain "is UIFacilityGrid the current
             // screen", so outside the strategy layer this is one stack walk and no more.
             Avenger::OnTick();
+            // The resource strip's hotkey gate. Right after the ant farm because it is that
+            // screen's only route to the strip, and because both are cheap outside the strategy
+            // layer — this is one stack walk and a pointer read whenever no HUD is up.
+            ResourceStrip::OnTick();
             // The Skyranger load screen. Deliberately AFTER TransientReader: the dropship's own
             // narrative moment starts within a beat of the briefing appearing, and the arrival
             // block queues behind Central rather than over him. Off the transition map this is

@@ -269,5 +269,22 @@ std::string JoinPhrases(const std::string& first, const std::string& second);
 // The first record of a given `kind` in a payload, or null.
 const WireRecord* FindRecord(const std::vector<WireRecord>& records, const char* kind);
 
+// ---- the resource strip, shared by every recipe whose screen shows one ----
+
+// Append `UIAvengerHUD.ResourceContainer` as a TRAILING Tab stop, one node per resource, and
+// answer whether anything was added. Six recipes call this and it must stay ONE implementation:
+// the strip is one widget on one screen, so two readers of it would be exactly the duplication
+// docs/surfaces/README.md exists to prevent.
+//
+// ⛔ TRAILING, and not by taste. Attach lands on stop 0, so a resources stop built FIRST would
+// open every commodity list, every room and every geoscape on the supplies figure instead of on
+// the screen's own content — the strip is context a player consults, never the thing they came
+// for. Tab reaches it in one press from anywhere in the screen.
+//
+// ⛔ It adds NOTHING when the game is not drawing the strip. `ReadResourceStrip().showing` is the
+// game's own answer, and it is false for the whole early tutorial and for the Avenger in flight;
+// a stop that appeared there would hand a blind player figures no sighted player can see.
+bool AddResourceStop(GraphBuilder& b);
+
 } // namespace Recipes
 } // namespace MenuNavigator

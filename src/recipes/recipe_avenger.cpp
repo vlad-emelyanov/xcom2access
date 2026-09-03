@@ -46,16 +46,145 @@ namespace {
 
 constexpr const char* kFacilityReaderClass = "X2AccessFacilityReader";
 
-// Cached on the button pointers, and this one is not merely an optimisation: the frame differ
+// Cached on the widget pointers, and this one is not merely an optimisation: the frame differ
 // rebuilds the graph on every poll, so an uncached fetch would make an outbound ProcessEvent ten
-// times a second for a set of labels that CANNOT change — AddFacilityButton runs once, in
-// InitScreen, and nothing ever relabels a UIFacility_RoomFunc. A changed pointer list means a
-// different room, which is the only thing that can change the answer.
+// times a second. The bottom-bar labels CANNOT change (AddFacilityButton runs once, in
+// InitScreen, and nothing ever relabels a UIFacility_RoomFunc); the staff slots CAN, and in
+// place — RealizeStaffSlots calls UpdateData() on the widgets it already has rather than
+// respawning them — which is why the key below carries the picker as well as the pointers and
+// re-asks unconditionally while it is open, exactly as the debris room does.
 WireCache gFacilityWords(kFacilityReaderClass, "DescribeFacility");
 
 const std::vector<WireRecord>& FetchFacilityWords(const GameUI::RoomView& view)
 {
-    return FetchWordsKeyedOnRows(gFacilityWords, view.facility, view.funcs);
+    std::vector<void*> key;
+    key.reserve(view.funcs.size() + view.staffSlots.size() + 2);
+    for (const GameUI::RoomFunc& f : view.funcs)
+        key.push_back(f.handle);
+    key.insert(key.end(), view.staffSlots.begin(), view.staffSlots.end());
+    key.push_back(view.dropDown);
+    key.push_back(view.facility);
+    // ⛔ Re-ask on every render while the picker is OPEN: choosing a staffer rewrites the slot's
+    // occupant (UpdateData on the same widget) and, on the project slots, the game closes the
+    // picker BEFORE the dialog that commits the choice — so neither the pointer set nor the
+    // open/closed edge alone can be trusted to have seen the new words. The picker being up is
+    // the only state in which the room changes under the player without a screen change, and a
+    // screen change invalidates every cache anyway.
+    const bool dropOpen = view.dropDown != nullptr;
+    return gFacilityWords.Get(std::move(key), dropOpen ? 1 : 0, /*alwaysStale*/ dropOpen);
+}
+
+// ---- staff slots and the personnel picker — shared by the built room and the debris room ----
+//
+// One widget class (UIStaffSlot, in a UIStaffContainer), one picker class (UIPersonnel_DropDown
+// on that container), one companion record shape (X2AccessStaffSlots emits kind=slot and
+// kind=candidate for BOTH readers) — so one node builder and one picker builder. The two rooms
+// differ only in which view carries the pointers, which is what the two `live*` callbacks below
+// abstract over. ⛔ Two copies of this were the trap: the debris room had a working picker and
+// the built room had none, so a player could clear a room by keyboard and then could not staff
+// the facility they built in it (reported 2026-09-03: "I can't assign engineers to the power
+// relay or soldiers to the training centre").
+
+// A slot node: the occupant, or the template's own open-slot wording, then the bonus — and then
+// the state a sighted player reads off the widget's padlock or greying, in the game's own words
+// where it has any (the hover tooltip UIFacility_StaffSlot.RefreshTooltip would show).
+//
+// ⛔ Every state here is still ACTIVATABLE, because the game's own HandleClick is: a padlocked
+// slot opens the upgrade screen that unlocks it, a greyed slot still opens its (empty) picker,
+// and a filled project slot raises the stop-training confirmation. Marking any of them
+// Vocab::Disabled would take Enter away from a control the mouse can press.
+NodeVtable StaffSlotVtable(const WireRecord& rec, std::function<void*()> liveWidget)
+{
+    std::string label = RecField(rec, "label");
+    AppendPhrase(label, RecField(rec, "bonus"));
+    const bool locked = RecField(rec, "locked") == "1";
+    const bool empty = RecField(rec, "filled") != "1";
+    const bool available = RecField(rec, "available") == "1";
+    const std::string hint = RecField(rec, "hint");
+
+    NodeVtable vt;
+    vt.Type = &ButtonType();
+    vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+    vt.Announcements.back().Kind = AnnouncementKinds::Label;
+
+    if (locked) {
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::RoomSlotLocked));
+        vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        if (!hint.empty()) {
+            // "Upgrade the facility to unlock the staff slot" — the reason AND what Enter does.
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(hint));
+            vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+        }
+    } else if (empty && !available) {
+        // "No one is available" is NOT the same as "you cannot press this": the game greys the
+        // slot but still opens its picker. Spoken as a Reason, in the game's words when the slot
+        // class has them (a facility slot) and in ours when it does not (a build slot).
+        vt.Announcements.emplace_back(
+            NodeAnnouncement::Static(hint.empty() ? std::string(Vocab::RoomNoStaff) : hint));
+        vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+    } else if (!hint.empty()) {
+        // The hover tooltip of a slot that can be filled ("Assign an engineer to receive the
+        // bonus") is instruction rather than state, so it goes where every other control's
+        // game tooltip goes: Space.
+        vt.OnTooltip = [hint]() { TTS::SpeakInterrupt(hint); };
+    }
+
+    vt.OnActivate = [liveWidget]() {
+        if (void* widget = liveWidget())
+            GameUI::OpenStaffSlotPicker(widget);
+    };
+    return vt;
+}
+
+// The picker's rows as the WHOLE graph while it is open. The game routes every key into the
+// picker while it shows (UIStaffContainer.OnUnrealCommand tests its bIsVisible before anything
+// else), so offering the room's own stops behind it would be a keyboard the game does not have.
+// `liveDropList` re-resolves the list at activation, a frame or more after this render.
+void BuildStaffPicker(GraphBuilder& b, const std::vector<WireRecord>& records,
+    const std::string& keyPrefix, void* (*liveDropList)())
+{
+    b.BeginStop("staff");
+    int shown = 0;
+    for (const WireRecord& rec : records) {
+        if (RecField(rec, "kind") != "candidate")
+            continue;
+        const int index = atoi(RecField(rec, "index").c_str());
+        std::string label = RecField(rec, "name");
+        const std::string status = RecField(rec, "status");
+        if (label.empty())
+            continue;
+        AppendPhrase(label, status);
+
+        ControlId id = ControlId::Structural(keyPrefix + "/pick/" + std::to_string(index));
+        gFocus[id.StructuralKey] = FocusTarget{index, nullptr, false, nullptr};
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.OnActivate = [index, liveDropList]() {
+            GameUI::ChooseStaffCandidate(liveDropList(), index);
+        };
+        b.AddItem(std::move(id), std::move(vt));
+        shown++;
+    }
+    if (shown == 0) {
+        // The picker opens even with nothing to put in it — IsUnitAvailableForThisSlot is what
+        // greys the SLOT, not what closes the list. Saying so beats an empty graph, which would
+        // read as the layer having failed.
+        b.AddLabel(ControlId::Structural(keyPrefix + "/pick/empty"),
+            []() { return std::string(Vocab::RoomNoStaff); });
+    }
+}
+
+void* LiveRoomDropList()
+{
+    return GameUI::ReadRoom(gScreen).dropList;
+}
+
+void* LiveRoomBuildDropList()
+{
+    return GameUI::ReadRoomBuild(gScreen).dropList;
 }
 
 // The room's own bottom-bar buttons, and the upgrade button beside them. Split out of BuildRoom
@@ -150,6 +279,14 @@ std::unique_ptr<GraphRender> BuildRoom()
 
     GraphBuilder b;
 
+    // --- shape 2: the picker owns the keys --- (see BuildStaffPicker)
+    if (view.dropDown) {
+        BuildStaffPicker(b, FetchFacilityWords(view), "room", LiveRoomDropList);
+        return b.Build();
+    }
+
+    // --- shape 1: the room itself ---
+
     // The room's STATUS lines first, as their own stop: "SCIENTISTS: 0" is drawn in the room and
     // is reachable by no keyboard in the game. It is also the one number that decides whether the
     // room's verbs will do anything — a lab with no scientists researches nothing — so it reads
@@ -161,6 +298,38 @@ std::unique_ptr<GraphRender> BuildRoom()
         status = true;
         const std::string crew = view.staffTitle + Vocab::RoomCrewSeparator + view.staffSkill;
         b.AddLabel(ControlId::Structural("room/crew"), [crew]() { return crew; });
+    }
+
+    // The staff SLOTS, under the crew line they are drawn under: the same widget (the crew line
+    // is the container's title, the slots its children), so the same stop — walking down from
+    // "ENGINEERS: 2" lands on the first slot. Only a BUILT facility has any; the seven fixed
+    // rooms declare none, which is the whole reason the recipe existed for weeks without them.
+    // ⛔ The record's index is the CONTAINER's, matched against the widgets the same read saw,
+    // and never used to index the facility's own StaffSlots (the container skips slots it does
+    // not show).
+    if (!view.staffSlots.empty()) {
+        for (const WireRecord& rec : FetchFacilityWords(view)) {
+            if (RecField(rec, "kind") != "slot")
+                continue;
+            const int index = atoi(RecField(rec, "index").c_str());
+            if (index < 0 || static_cast<size_t>(index) >= view.staffSlots.size())
+                continue;
+            if (!status) {
+                b.BeginStop("crew");
+                status = true;
+            }
+            void* handle = view.staffSlots[static_cast<size_t>(index)];
+            ControlId id = ControlId::Referenced(handle, "room/slot/" + std::to_string(index));
+            // Focus the widget itself, as the bottom-bar buttons do: UIStaffSlot.OnReceiveFocus
+            // draws nothing on mouse+keyboard, so this keeps the container's own SelectedStaffSlot
+            // honest and changes nothing the player can see.
+            gFocus[id.StructuralKey] = FocusTarget{-1, handle, false, nullptr};
+            const size_t pos = static_cast<size_t>(index);
+            b.AddItem(std::move(id), StaffSlotVtable(rec, [pos]() -> void* {
+                GameUI::RoomView live = GameUI::ReadRoom(gScreen);
+                return pos < live.staffSlots.size() ? live.staffSlots[pos] : nullptr;
+            }));
+        }
     }
 
     const std::string covertOps = RoomCovertOpsLine(view);
@@ -180,17 +349,24 @@ std::unique_ptr<GraphRender> BuildRoom()
     AddRoomFunctions(b, view);
 
     if (view.actions.empty()) {
-        if (view.funcs.empty() && !view.upgrade) {
+        if (view.funcs.empty() && !view.upgrade && view.staffSlots.empty()) {
             // Now genuinely nothing, and still not a fault: this is also the state while the
             // submenu is being rebuilt. ⛔ It used to be reached by the Bar and the Living
             // Quarters as well, whose shortcut category really is -1 — but those rooms DO have a
             // bottom-bar button, so "nothing to do here" was a lie about a screen with a visible
-            // control on it (reported live 2026-08-21). The empty case has to mean empty.
+            // control on it (reported live 2026-08-21). The empty case has to mean empty — and
+            // the Power Relay, which has no shortcut category, no bar and (until upgraded) no
+            // upgrade button, has two staff slots, so they count too.
             b.BeginStop("actions");
             b.AddLabel(ControlId::Structural("room/empty"), []() {
                 return std::string(Vocab::RoomNoActions) + ". " + Vocab::RoomLeaveHint;
             });
         }
+        // ⚠ The empty case gets the strip too, and it is the case that needs it most: the Labs,
+        // the Power Generator and Resistance Comms are exactly the rooms whose strip the game
+        // narrows to their ONE relevant resource, and a room with no actions would otherwise
+        // leave the player nothing to move between.
+        AddResourceStop(b);
         return b.Build();
     }
 
@@ -239,6 +415,7 @@ std::unique_ptr<GraphRender> BuildRoom()
 
         b.AddItem(std::move(id), std::move(vt));
     }
+    AddResourceStop(b);
     return b.Build();
 }
 
@@ -255,15 +432,22 @@ std::string RoomName()
         name = view.category;
     if (name.empty())
         name = Vocab::ScreenRoomFallback;
+    // The picker opening is a shape change the differ announces through the screen name, the
+    // same way the debris room does it.
+    if (view.dropDown)
+        AppendPhrase(name, Vocab::RoomPickStaff);
     return name;
 }
 
-// P11 write-back for the submenu. Driving the game's own UIList.SetSelectedIndex is what keeps
-// its highlight, its scroll position and its OnSelectionChanged delegates in step with our
-// focus — verified live 2026-08-21 to do all three.
+// P11 write-back for the submenu — or, while the picker is open, for the picker's list, which
+// is the only list a node can be on in that shape. Driving the game's own UIList.SetSelectedIndex
+// is what keeps its highlight, its scroll position and its OnSelectionChanged delegates in step
+// with our focus — verified live 2026-08-21 to do all three.
 bool SetRoomListIndex(void* screen, int index)
 {
     GameUI::RoomView view = GameUI::ReadRoom(screen);
+    if (view.dropDown)
+        return GameUI::SetStaffPickerSelection(view.dropList, index);
     return GameUI::SetRoomActionSelection(view, index);
 }
 
@@ -311,41 +495,9 @@ std::unique_ptr<GraphRender> BuildRoomBuild()
 
     GraphBuilder b;
 
-    // --- shape 2: the picker owns the keys ---
+    // --- shape 2: the picker owns the keys --- (see BuildStaffPicker)
     if (view.dropDown) {
-        b.BeginStop("staff");
-        int shown = 0;
-        for (const WireRecord& rec : records) {
-            if (RecField(rec, "kind") != "candidate")
-                continue;
-            const int index = atoi(RecField(rec, "index").c_str());
-            std::string label = RecField(rec, "name");
-            const std::string status = RecField(rec, "status");
-            if (label.empty())
-                continue;
-            AppendPhrase(label, status);
-
-            ControlId id = ControlId::Structural("roompick/" + std::to_string(index));
-            gFocus[id.StructuralKey] = FocusTarget{index, nullptr, false, nullptr};
-
-            NodeVtable vt;
-            vt.Type = &ButtonType();
-            vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
-            vt.Announcements.back().Kind = AnnouncementKinds::Label;
-            vt.OnActivate = [index]() {
-                GameUI::RoomBuildView live = GameUI::ReadRoomBuild(gScreen);
-                GameUI::ChooseStaffCandidate(live, index);
-            };
-            b.AddItem(std::move(id), std::move(vt));
-            shown++;
-        }
-        if (shown == 0) {
-            // The picker opens even with nothing to put in it — IsUnitAvailableForThisSlot is
-            // what greys the SLOT, not what closes the list. Saying so beats an empty graph,
-            // which would read as the layer having failed.
-            b.AddLabel(ControlId::Structural("roompick/empty"),
-                []() { return std::string(Vocab::RoomNoStaff); });
-        }
+        BuildStaffPicker(b, records, "roombuild", LiveRoomBuildDropList);
         return b.Build();
     }
 
@@ -370,31 +522,14 @@ std::unique_ptr<GraphRender> BuildRoomBuild()
         if (kind == "slot") {
             b.BeginStop("slot");
             const int index = atoi(RecField(rec, "index").c_str());
-            std::string label = RecField(rec, "label");
-            AppendPhrase(label, RecField(rec, "bonus"));
-
-            ControlId id = ControlId::Structural("room/slot/" + std::to_string(index));
-
-            NodeVtable vt;
-            vt.Type = &ButtonType();
-            vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
-            vt.Announcements.back().Kind = AnnouncementKinds::Label;
-
-            // "No one is available" is NOT the same as "you cannot press this": the game greys
-            // the slot but still opens its picker, and the picker is where a filled slot is
-            // emptied. So this is spoken as a Reason and the node stays activatable.
-            if (RecField(rec, "available") == "0" && RecField(rec, "filled") == "0") {
-                vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::RoomNoStaff));
-                vt.Announcements.back().Kind = AnnouncementKinds::Reason;
-            }
-
+            if (index < 0)
+                continue;
+            ControlId id = ControlId::Structural("roombuild/slot/" + std::to_string(index));
             const size_t slotPos = static_cast<size_t>(index);
-            vt.OnActivate = [slotPos]() {
+            b.AddItem(std::move(id), StaffSlotVtable(rec, [slotPos]() -> void* {
                 GameUI::RoomBuildView live = GameUI::ReadRoomBuild(gScreen);
-                if (slotPos < live.slots.size())
-                    GameUI::OpenStaffSlotPicker(live.slots[slotPos]);
-            };
-            b.AddItem(std::move(id), std::move(vt));
+                return slotPos < live.slots.size() ? live.slots[slotPos] : nullptr;
+            }));
             continue;
         }
 
@@ -457,7 +592,7 @@ std::string RoomBuildName()
 bool SetRoomBuildListIndex(void* screen, int index)
 {
     GameUI::RoomBuildView view = GameUI::ReadRoomBuild(screen);
-    return GameUI::SetStaffPickerSelection(view, index);
+    return GameUI::SetStaffPickerSelection(view.dropList, index);
 }
 
 // ---- the commodity list (UIInventory and its dozen subclasses) ----
@@ -728,6 +863,7 @@ std::unique_ptr<GraphRender> BuildCommodity()
     if (const WireRecord* card = FindRecord(records, "card"))
         BuildCommodityCard(b, *card);
 
+    AddResourceStop(b);
     return b.Build();
 }
 
@@ -1120,14 +1256,29 @@ const std::vector<WireRecord>& FetchBuildFacilityWords(const GameUI::ChooseFacil
     return FetchWordsKeyedOnRows(gBuildFacilityWords, view.screen, view.choices, view.selected);
 }
 
-void BuildFacilityCard(GraphBuilder& b, const WireRecord& card)
+// The two choice screens — what to build, and what to upgrade it with — are one shape: a list
+// of names native reads, a panel the companion re-derives, Enter to the SCREEN after the
+// selection lands. These two callbacks are the only things that differ per screen: how the
+// live view is read, and which cache holds its words.
+using ReadChoiceFn = GameUI::ChooseFacilityView (*)(void*);
+using LiveWordsFn = const std::vector<WireRecord>& (*)();
+
+const std::vector<WireRecord>& FetchBuildFacilityWordsLive()
+{
+    return FetchBuildFacilityWords(GameUI::ReadChooseFacility(gScreen));
+}
+
+void BuildChoiceCard(GraphBuilder& b, const WireRecord& card, const std::string& keyPrefix,
+    LiveWordsFn fetchLive)
 {
     struct Line {
         const char* label;
         const char* value;
     };
     // The panel's own order: what it is, what it costs, what it draws, what else it needs, how
-    // long, what it costs every month, why you cannot have it, and finally what it does.
+    // long, what it costs every month, why you cannot have it, whether you already have it
+    // (upgrades only), and finally what it does. A line the record does not carry is a line the
+    // panel is not drawing, so the two screens share one table.
     const Line lines[] = {
         {nullptr, "title"},
         {nullptr, "cost"},
@@ -1136,6 +1287,7 @@ void BuildFacilityCard(GraphBuilder& b, const WireRecord& card)
         {"timeLabel", "time"},
         {nullptr, "upkeep"},
         {nullptr, "warning"},
+        {nullptr, "status"},
         {nullptr, "desc"},
     };
 
@@ -1153,12 +1305,10 @@ void BuildFacilityCard(GraphBuilder& b, const WireRecord& card)
         // poll old — so a Tab pressed hard on the heels of an arrow would describe the facility
         // just left. Same guard the commodity card earned.
         std::string fallback = ComposeCardLine(card, line.label, line.value);
-        b.AddLabel(ControlId::Structural(std::string("buildfacility/card/") + line.value),
+        b.AddLabel(ControlId::Structural(keyPrefix + "card/" + line.value),
             [labelKey = std::string(line.label ? line.label : ""),
-                valueKey = std::string(line.value), fallback]() {
-                const std::vector<WireRecord>& fresh
-                    = FetchBuildFacilityWords(GameUI::ReadChooseFacility(gScreen));
-                const WireRecord* live = FindRecord(fresh, "card");
+                valueKey = std::string(line.value), fallback, fetchLive]() {
+                const WireRecord* live = FindRecord(fetchLive(), "card");
                 if (!live)
                     return fallback;
                 std::string text = ComposeCardLine(
@@ -1168,25 +1318,26 @@ void BuildFacilityCard(GraphBuilder& b, const WireRecord& card)
     }
 }
 
-std::unique_ptr<GraphRender> BuildChooseFacility()
+// The whole graph of a choice screen: the list (or the empty line), the card, the strip.
+std::unique_ptr<GraphRender> BuildChoiceScreen(const GameUI::ChooseFacilityView& view,
+    const std::vector<WireRecord>& records, const std::string& keyPrefix, ReadChoiceFn readLive,
+    LiveWordsFn fetchLive)
 {
-    GameUI::ChooseFacilityView view = GameUI::ReadChooseFacility(gScreen);
-    const std::vector<WireRecord>& records = FetchBuildFacilityWords(view);
-
     GraphBuilder b;
     b.BeginStop("list");
     b.SetRegion("list");
 
     if (view.choices.empty()) {
-        b.AddLabel(ControlId::Structural("buildfacility/empty"), []() {
+        b.AddLabel(ControlId::Structural(keyPrefix + "empty"), []() {
             return std::string(Vocab::CommodityEmpty) + ". " + Vocab::CommodityLeaveHint;
         });
+        AddResourceStop(b);
         return b.Build();
     }
 
     for (const GameUI::FacilityChoice& choice : view.choices) {
-        ControlId id = ControlId::Referenced(
-            choice.handle, "buildfacility/" + std::to_string(choice.index));
+        ControlId id
+            = ControlId::Referenced(choice.handle, keyPrefix + std::to_string(choice.index));
         const int index = choice.index;
         gFocus[id.StructuralKey] = FocusTarget{index, nullptr, false, nullptr};
 
@@ -1209,28 +1360,82 @@ std::unique_ptr<GraphRender> BuildChooseFacility()
         }
         // Passed through even when disabled: OnAccept re-tests and plays its own refusal, which
         // keeps the refusal where the game can be right about why.
-        vt.OnActivate = [index]() {
-            GameUI::ActivateChooseFacility(GameUI::ReadChooseFacility(gScreen), index);
+        vt.OnActivate = [index, readLive]() {
+            GameUI::ActivateChooseFacility(readLive(gScreen), index);
         };
         vt.OnTooltip = ListItemTooltipAction(choice.handle);
         b.AddItem(std::move(id), std::move(vt));
     }
 
     if (const WireRecord* card = FindRecord(records, "card"))
-        BuildFacilityCard(b, *card);
+        BuildChoiceCard(b, *card, keyPrefix, fetchLive);
 
+    AddResourceStop(b);
     return b.Build();
+}
+
+std::unique_ptr<GraphRender> BuildChooseFacility()
+{
+    GameUI::ChooseFacilityView view = GameUI::ReadChooseFacility(gScreen);
+    return BuildChoiceScreen(view, FetchBuildFacilityWords(view), "buildfacility/",
+        GameUI::ReadChooseFacility, FetchBuildFacilityWordsLive);
 }
 
 std::string ChooseFacilityName()
 {
-    return NameFromHeader(FetchBuildFacilityWords(GameUI::ReadChooseFacility(gScreen)),
-        Vocab::ScreenChooseFacilityFallback);
+    return NameFromHeader(FetchBuildFacilityWordsLive(), Vocab::ScreenChooseFacilityFallback);
 }
 
 bool SetChooseFacilityListIndex(void* screen, int index)
 {
     return GameUI::SetChooseFacilitySelection(GameUI::ReadChooseFacility(screen), index);
+}
+
+// ---- choosing a facility upgrade (UIChooseUpgrade) ----
+//
+// The screen behind the room's UPGRADE button, a padlocked staff slot and the to-do widget's
+// upgrade nudge. ⛔ UIChooseUpgrade, not UIFacilityUpgrade: XComHQPresentationLayer
+// .UIFacilityUpgrade() spawns the former, and the latter — the class the census had marked as
+// the natively readable one — is never instantiated (game_ui_avenger.h has the trace).
+//
+// UIChooseFacility's twin, and built as one: same list read, same Enter-to-the-screen commit
+// (OnAccept re-tests UpgradeAlreadyPerformed / HasEnoughPower / CanBuildUpgrade and refuses with
+// its own sound), same panel shape re-derived by the companion through the screen's own
+// functions. What differs is the words — no build time (an upgrade lands the moment it is paid
+// for), and a COMPLETED line on the card for an upgrade already installed, which is the only
+// thing a greyed row on this screen can mean besides "cannot afford".
+
+constexpr const char* kUpgradeReaderClass = "X2AccessUpgradeReader";
+
+// Keyed on the rows AND the selection, like the facility picker's and for the same reason: the
+// panel is the selection's shadow.
+WireCache gUpgradeWords(kUpgradeReaderClass, "DescribeUpgradeChoice");
+
+const std::vector<WireRecord>& FetchUpgradeWords(const GameUI::ChooseFacilityView& view)
+{
+    return FetchWordsKeyedOnRows(gUpgradeWords, view.screen, view.choices, view.selected);
+}
+
+const std::vector<WireRecord>& FetchUpgradeWordsLive()
+{
+    return FetchUpgradeWords(GameUI::ReadChooseUpgrade(gScreen));
+}
+
+std::unique_ptr<GraphRender> BuildChooseUpgrade()
+{
+    GameUI::ChooseFacilityView view = GameUI::ReadChooseUpgrade(gScreen);
+    return BuildChoiceScreen(view, FetchUpgradeWords(view), "upgrade/",
+        GameUI::ReadChooseUpgrade, FetchUpgradeWordsLive);
+}
+
+std::string ChooseUpgradeName()
+{
+    return NameFromHeader(FetchUpgradeWordsLive(), Vocab::ScreenChooseUpgradeFallback);
+}
+
+bool SetChooseUpgradeListIndex(void* screen, int index)
+{
+    return GameUI::SetChooseFacilitySelection(GameUI::ReadChooseUpgrade(screen), index);
 }
 
 // ---- the research report (UIResearchReport) — docs/research-report-recon.md ----
@@ -1500,6 +1705,12 @@ const Recipe kPersonnelRecipe{
 const Recipe kChooseFacilityRecipe{"choose facility",
     ProbeFocused<GameUI::FindChooseFacilityScreen>, BuildChooseFacility,
     ChooseFacilityName, SetChooseFacilityListIndex};
+
+// Above the room (and the grid, via the to-do widget) it is pushed over, below the dialogs it
+// raises — its own "insufficient power" warning and the narrative an upgrade can trigger.
+const Recipe kChooseUpgradeRecipe{"facility upgrades",
+    ProbeFocused<GameUI::FindChooseUpgradeScreen>, BuildChooseUpgrade, ChooseUpgradeName,
+    SetChooseUpgradeListIndex};
 
 // HIGH — above every screen it can be raised over, which is an unusually wide set: the Labs and
 // the Shadow Chamber (a UIFacility), the two archives (the commodity list), and the GEOSCAPE, for

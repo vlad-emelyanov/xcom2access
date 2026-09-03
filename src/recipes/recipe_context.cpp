@@ -11,6 +11,7 @@
 #include "log.h"
 #include "script_call.h"
 #include "ue3_reflection.h"
+#include "vocab.h"
 
 #include <cstdint>
 #include <string>
@@ -94,6 +95,69 @@ const WireRecord* FindRecord(const std::vector<WireRecord>& records, const char*
             return &rec;
     }
     return nullptr;
+}
+
+// ---- the resource strip ----
+//
+// See the header for why this is trailing, why it is conditional, and why it is shared. The read
+// itself is GameUI::ReadResourceStrip's; this is only the shape it takes as nodes.
+//
+// One node per resource rather than one node for the strip: nine resources in a single sentence
+// is the all-items dump the project's speech rule forbids, and arrowing across them is how a
+// player checks the one figure they came for. The hotkey is the other half of that split — it
+// says the whole strip at once, which is what a key pressed FROM ANOTHER STOP has to do.
+bool AddResourceStop(GraphBuilder& b)
+{
+    const GameUI::ResourceStripView strip = GameUI::ReadResourceStrip();
+    if (!strip.showing || strip.entries.empty())
+        return false;
+
+    b.BeginStop("resources");
+    b.SetRegion("resources");
+    // A CONTEXT rather than a leading label node: the strip needs a name — Tabbing into it and
+    // hearing "INCOME" with no warning that the stop changed is how a player loses their place —
+    // but naming it with a node would put a step in front of every resource on every visit. A
+    // context is announced on entry from outside and is never navigable, which is exactly the
+    // difference. The word is ours; the game labels the band only by drawing it in one place.
+    b.PushContext(Vocab::Resources);
+
+    for (size_t i = 0; i < strip.entries.size(); i++) {
+        const GameUI::ResourceEntry& entry = strip.entries[i];
+
+        NodeVtable vt;
+        vt.Type = &TextType();
+
+        // ⛔ The name and the value stay SEPARATE parts rather than a string we join here. Both
+        // are the game's own captured words and the game ends plenty of its strings in its own
+        // punctuation — so the join belongs to GraphAnnouncer, whose join sites route through
+        // AppendPhrase. Composing them by hand would be the bare-", " bug in a new place.
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(entry.label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(entry.value));
+        vt.Announcements.back().Kind = AnnouncementKinds::Value;
+
+        // The colour, which is the only reason the strip is worth more than a number. Same two
+        // kinds the commodity list already uses for the same two tints, so the ordering and the
+        // per-kind user settings stay consistent across surfaces.
+        if (entry.state == GameUI::ResourceState::Critical) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::ResourceCritical));
+            vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+        } else if (entry.state == GameUI::ResourceState::Warning) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::ResourceLow));
+            vt.Announcements.back().Kind = kKindAttention;
+        }
+
+        // ⛔ NO OnActivate and no focus write-back. `UIX2ResourceHeader` sets
+        // `bIsNavigable = false` and spawns no child widgets — there is nothing to press and
+        // nowhere for the game's own focus to go, so offering either would be inventing a control
+        // a sighted player does not have.
+        b.AddItem(ControlId::Structural("resources/" + std::to_string(i)), std::move(vt));
+    }
+    // ⛔ Pop what we pushed. Build() does not check the parent stack, so an unpopped context is
+    // silent here and lands on whoever adds a call AFTER this one — which is a live risk, since
+    // this is the last line of six builders and will be the last line of more.
+    b.PopContext();
+    return true;
 }
 
 } // namespace Recipes

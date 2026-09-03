@@ -174,6 +174,14 @@ inline constexpr const char* RoomWarning = "attention";
 // greys the slot but still opens its picker, and the picker is where a filled slot is emptied.
 inline constexpr const char* RoomNoStaff = "no one available";
 inline constexpr const char* RoomPickStaff = "choose who to assign";
+// A facility staff slot the game draws padlocked: it still takes Enter (HandleClick opens the
+// upgrade screen that unlocks it), so this is a state word rather than Vocab::Disabled. The
+// WHY is the game's own m_strSlotLockedTooltip, carried by the companion; this is only the
+// one-word state a sighted player reads off the padlock.
+inline constexpr const char* RoomSlotLocked = "locked";
+// The choose-upgrade screen's fallback name, reached only in the window between attaching and
+// the companion answering with the screen's own m_strTitle.
+inline constexpr const char* ScreenChooseUpgradeFallback = "Facility upgrades";
 
 // The commodity list (research, build items, the archives, the market). Almost every word on
 // that screen is the game's own — the row names, the card, both cost labels — so this is a short
@@ -189,6 +197,30 @@ inline constexpr const char* CommodityOwned = "owned";
 // Choosing what to build in a room (UIChooseFacility). It carries its own localized title and
 // list heading and reaches this only in the window between attaching and the companion answering.
 inline constexpr const char* ScreenChooseFacilityFallback = "Build facility";
+
+// ---- the resource strip (UIAvengerHUD.ResourceContainer) ----
+//
+// Three words, and only three, because every resource NAME and every VALUE on that strip is the
+// game's own — captured as it was drawn. What the game says in colour and speech cannot is the
+// STATE, and these are that translation: `UIUtilities_Colors`' WARNING (yellow) and BAD (red),
+// which on this strip mean a resource running out, contacts nearly or fully spent, and power
+// over budget. Deliberately generic, because the colour is: the game paints one yellow and one
+// red across ten different resources and expects the player to know what each means in context.
+//
+// ⛔ These are OURS and therefore English, which is wrong the moment the player is not — the same
+// debt every table in this file carries. They are keyed by COLOUR rather than by resource, which
+// is what keeps a missing entry a missing adjective instead of a shifted one.
+inline constexpr const char* ResourceLow = "low";
+inline constexpr const char* ResourceCritical = "critical";
+// The stop's own name. The game never labels the strip as a group — to a sighted player it is a
+// band across the top, and its grouping is spatial — so this word has no localized source.
+inline constexpr const char* Resources = "Resources";
+// Said only by the HOTKEY, and only in the one state the stop cannot reach: the strip is ON
+// SCREEN and the Flash capture has nothing for it, because the game paints the strip on a screen
+// change and nothing has changed screens since the capture acquired that panel. Silence there
+// would say "there are no resources" — a different and false statement — so this says what is
+// actually true, and the tick asks the HUD to repaint so the next press is answered properly.
+inline constexpr const char* ResourcesNotRead = "Resources not read yet";
 
 // ---- covert actions (docs/covert-actions-recon.md) ----
 //

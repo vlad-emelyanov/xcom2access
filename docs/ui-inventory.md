@@ -102,14 +102,14 @@ All ✅ — shell recipes: `UIShellDifficulty`, `UISecondWave`, `UIShellNarrativ
 
 | Screen | What it is | Status |
 |---|---|---|
-| `UIAvengerHUD` | persistent strategy HUD | ◐ — ant farm done; **resource strip, `UIToDoWidget`, `UIEventQueue` are panels of this screen** (CLAUDE.md next-steps 10) |
+| `UIAvengerHUD` | persistent strategy HUD | ◐ — ant farm and **resource strip** done (the strip is a trailing stop in six recipes plus the `R` key — `surfaces/avenger.md`); `UIToDoWidget` and `UIEventQueue` are the panels of this screen still owed (`next-steps.md`) |
 | `UIFacilityGrid` | the ant farm | ✅ narrate-only |
 | `UIRoom` | debris room | ✅ |
 | `UIFacility` + 19 subclasses | inside a facility (`_Academy`, `_AdvancedWarfareCenter`, `_Armory`, `_BarMemorial`, `_CIC`, `_CovertActions`, `_Infirmary`, `_Labs`, `_LivingQuarters`, `_Powercore`, `_PowerGenerator`, `_ProvingGround`, `_PsiLab`, `_ResistanceComms`, `_ShadowChamber`, `_Storage`, `_TrainingCenter`, `_UFODefense`, `_Workshop`, DLC_2 `_HuntersLodge`) | ✅ facility reader (Flash-only status panels still ⬜ — next-steps 10) |
 | `UIBuildFacilities` | build-mode grid overlay | ✅ |
 | `UIChooseFacility` | facility picker | ✅ |
-| `UIChooseUpgrade` | facility upgrade picker (spawned from `UIFacility`/`UIAvengerHUD`) | ⬜ P2 |
-| `UIFacilityUpgrade` | facility upgrade screen (spawned from `UIAvengerHUD`) | ⬜ P2 — `UIButton.SetText`-based, natively readable per CLAUDE.md |
+| `UIChooseUpgrade` | THE facility upgrade screen — what `XComHQPresentationLayer.UIFacilityUpgrade()` actually spawns, from the room's UPGRADE button, a locked staff slot, the to-do widget and the ant farm | ✅ `facility upgrades` recipe + `X2AccessUpgradeReader` (2026-09-03, unexercised live) |
+| `UIFacilityUpgrade` | DEAD CODE — shipped, never instantiated; `UIFacilityUpgrade()` on the presentation layer spawns `UIChooseUpgrade` instead | — out of scope (its `m_strCompleted` loc string is borrowed by the reader above) |
 | `UIFacilitySummary` | all-facilities overview list | ⬜ P2 |
 | `UIHuntersLodge3D` | DLC_2 trophy wall viewer | ⬜ P3 |
 
@@ -286,7 +286,8 @@ external references in the shipped sources.
 Panels and subsystems that are TODO surfaces in their own right, already tracked in
 `next-steps.md` — listed so this census reads complete:
 
-- `UIPersonnel_DropDown` — staff drop-down, a `UIPanel`, not part of the personnel family.
+- `UIPersonnel_DropDown` — staff drop-down, a `UIPanel`, not part of the personnel family. Read
+  as the picker shape of both room recipes (`X2AccessStaffSlots`), on `UIRoom` and `UIFacility`.
 - `UIToDoWidget` + `UINotificationMenu`, `UIEventQueue`, the `UIAvengerHUD` resource strip.
 - Facility Flash-only status panels (via the companion).
 - `UITacticalHUD_HackingTooltip` → the pre-commit hack odds read (hacking phase 4).

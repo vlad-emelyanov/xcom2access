@@ -50,7 +50,23 @@ constexpr int32_t kMaxOpsPerFlush = 4096;
 constexpr size_t kMaxArgsPerOp = 64;
 // Operations retained per panel. A panel is normally painted by ONE Update* call; the extra room
 // covers a screen that splits its text across several, and the oldest is dropped first.
-constexpr size_t kMaxCallsPerPanel = 8;
+//
+// ⛔ SIZED FROM THE WIDEST REPAINTER, not from a round number. `UIX2ResourceHeader` is painted by
+// ONE clearResources plus up to NINE addResource calls (UIAvengerHUD.UpdateDefaultResources —
+// income, supplies, intel, elerium, alloys, sci, eng, contacts, power), so the strip alone needs
+// ten; a screen whose own transaction handler refreshes the strip in the same frame the screen
+// listener does pushes that batch twice. At the old value of 8 the delimiter and the first two
+// resources fell off the front and INCOME silently ceased to exist — the tail-truncation failure
+// mode CLAUDE.md names, wearing a different hat. Doubling the strip's worst case leaves headroom
+// without changing what any other panel costs: this is a per-panel BOUND, and a panel that pushes
+// one Update* call still holds one entry.
+//
+// ✅ It also lifts a latent truncation on the one OTHER multi-push consumer: `UIResearchUnlocked`
+// pushes one `addResearch` per tech, so a deck of more than eight was losing its earliest cards
+// (visible as that reader's `COUNT MISMATCH vs NumUnlockedTechs` line). Nothing else changes for
+// it — `PopulateData` runs exactly once on a freshly spawned screen, so a larger history cannot
+// carry cards over from a previous deck.
+constexpr size_t kMaxCallsPerPanel = 24;
 // Panels retained. Cache indices are recycled by the game, so the real bound is eviction on
 // CLEANUP_OP; this is the backstop for a movie that never cleans up.
 constexpr size_t kMaxPanels = 2048;
@@ -239,6 +255,25 @@ bool CarriesText(const Call& call)
     return false;
 }
 
+// The one exception to CarriesText, and it is about BOUNDARIES rather than words.
+//
+// A panel that paints itself with a single Update* call needs no delimiter — the newest recorded
+// batch IS the current state, which is what GetCall and GetTextCall assume. `UIX2ResourceHeader`
+// breaks that assumption: it paints with N same-named `addResource` batches, so "the newest" is
+// one resource out of nine, and the whole list is only recoverable if the consumer can tell where
+// THIS repaint started. `ClearResources` is `MC.FunctionVoid("clearResources")` — a FUNCTION_OP
+// carrying its name and no operands at all — so it is exactly the marker needed and exactly the
+// shape CarriesText drops. Without it, walking back through the recorded calls would happily read
+// the previous screen's resources: the strip is rebuilt on every screen change, and a screen
+// showing one resource leaves the eight before it looking current.
+//
+// Kept deliberately narrow — a name match, not "any wordless op". FunctionVoid is how the game
+// drives animations too, and admitting those would fill every panel's history with noise.
+bool IsRepaintDelimiter(const Call& call)
+{
+    return !call.isField && call.child.empty() && call.name == "clearResources";
+}
+
 void Remember(int32_t index, Call&& call)
 {
     PanelEntry& entry = gPanels[index];
@@ -353,7 +388,7 @@ void DecodeQueue(const uint8_t* data, int32_t count)
         for (size_t k = at; k < operands.size(); k++)
             call.args.push_back(std::move(operands[k]));
 
-        if (!CarriesText(call))
+        if (!CarriesText(call) && !IsRepaintDelimiter(call))
             continue;
 
         gStats.opsKept++;

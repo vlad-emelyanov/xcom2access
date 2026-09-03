@@ -10,6 +10,7 @@
 #include "free_aim.h"
 #include "tile_reader.h"
 #include "avenger.h"
+#include "resource_strip.h"
 #include "dropship.h"
 #include "text_input.h"
 #include "tactical_hud.h"
@@ -111,19 +112,26 @@ static void InitThread() {
     // recipe probes on, so the two stand down at the same instant.
     GeoScanner::Init();
 
-    // 14. Skyranger load screen (claims — same; one re-announce key). Its gate is the transition
+    // 14. The resource strip's hotkey (claims — same; one read key). Its gate is "the game is
+    // drawing the strip", which is true only in the strategy layer and false on every screen
+    // that takes typed input — so it contends with neither the tactical `R` (Reload) nor the
+    // save-name field. It is the ant farm's ONLY route to the strip, that screen having no
+    // recipe to hang a stop on.
+    ResourceStrip::Init();
+
+    // 15. Skyranger load screen (claims — same; one re-announce key). Its gate is the transition
     // map's own briefing screen, which exists in no layer any of the above can be active in, so
     // it contends with none of them.
     Dropship::Init();
 
-    // 15. Text-entry dialog (naming a save). Registers an OBSERVER, not a claim: the keys must
+    // 16. Text-entry dialog (naming a save). Registers an OBSERVER, not a claim: the keys must
     // reach the Flash text field AND be spoken, because no screen reader can see that field.
     TextInput::Init();
 
-    // 16. Game hooks
+    // 17. Game hooks
     Hooks::Init();
 
-    // 17. Dev harness (dev builds + marker file only; no-op otherwise). Last, so it can report
+    // 18. Dev harness (dev builds + marker file only; no-op otherwise). Last, so it can report
     // on everything above, and so a failure here can never keep the mod itself from loading.
     DevServer::Start(dir);
 

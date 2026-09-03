@@ -545,6 +545,10 @@ static_assert(offsetof(AUIPersonnel, m_kList) == 0x45C, "personnel roster list")
 // detail panel comes from the companion, because UpdateSelection retains none of it.
 static_assert(offsetof(AUIChooseFacility, m_List) == 0x418, "choose-facility list");
 static_assert(offsetof(AUIListItemString, AttentionIcon) == 0x440, "list item attention icon");
+// UIChooseUpgrade — the screen every facility-upgrade path opens (UIFacilityUpgrade is dead
+// code) — is read by the same function. Pinned on its OWN class: the two lists sharing 0x418 is
+// a coincidence of declaration order, and a Highlander bump could break one without the other.
+static_assert(offsetof(AUIChooseUpgrade, m_List) == 0x418, "choose-upgrade list");
 
 // ---- covert actions (UICovertActions) ----
 //
@@ -577,6 +581,7 @@ static_assert(offsetof(AUIStrategyPolicy, InspectingCard) == 0x538, "policy pick
 static_assert(offsetof(AUIStrategyPolicy_Card, CardRef) == 0x3E8, "policy card ref");
 static_assert(offsetof(AUIStrategyPolicy_Card, eFaction) == 0x3F0, "policy card flags end");
 
+static_assert(offsetof(AUIAvengerHUD, ResourceContainer) == 0x420, "avenger HUD resource strip");
 static_assert(offsetof(AUIAvengerHUD, Shortcuts) == 0x43C, "avenger HUD shortcut bar");
 static_assert(offsetof(AUIAvengerHUD, FacilityHeader) == 0x454, "avenger HUD facility header");
 

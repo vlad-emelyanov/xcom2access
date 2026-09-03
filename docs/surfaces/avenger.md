@@ -84,6 +84,61 @@ when the game shows it.
   ones, and to check that `FacilityOverlays` really is sorted into MapIndex order, which the
   whole index scheme assumes.
 
+## Resource strip
+
+The band across the top of every strategy screen (`UIAvengerHUD.ResourceContainer`, a
+`UIX2ResourceHeader`). Native-only: `game_ui_avenger.cpp` reads it, `Recipes::AddResourceStop`
+turns it into a trailing Tab stop in six recipes, and `resource_strip.cpp` puts the whole strip
+on `R`. No companion class — the words are the game's own, captured as they were drawn. Recon
+and the full per-screen table: `../avenger-view-recon.md` §2.2.
+
+- ⛔ **ONE widget, ONE owner, ONE reader.** `UIX2ResourceHeader` is named in exactly two files
+  in all of `SrcOrig`. Every screen that shows resources shows the strip on `UIAvengerHUD`
+  UNDERNEATH it, so a reader that went looking for a strip on the screen asking would find
+  nothing — the same arrangement the room reader already follows for the facility header.
+- ⛔ **It is not a fixed bar.** `UpdateResources()` shows a different subset per screen and
+  hides it entirely on the twenty-odd classes that fall to its `default:`. Every consumer here
+  therefore gates on `ResourceStripView::showing` and NEVER on "this screen is one that has
+  resources" — a list the game owns and we would have to keep in sync. That gate is also what
+  keeps the strip silent for the whole early tutorial (`ShowResources` no-ops until
+  `T0_M4_ReturnToAvenger`) and while the Avenger is in flight.
+  - ⚠ This is `bIsVisible` on a CHILD widget, which is the documented exception to CLAUDE.md's
+    never-gate-on-`bIsVisible` rule — the game toggles it deliberately here, on every screen
+    change, exactly as it does for a button it means to hide.
+- ⛔ **The strip is painted by N pushes, not one — so the capture needed a BOUNDARY.** Every
+  other consumer of `flash_shadow.cpp` reads one `Update*` batch, which is why `GetCall` and
+  `GetTextCall` return the most recent. This screen pushes one `addResource` per resource, so
+  "most recent" is one resource out of nine. `ClearResources` (`MC.FunctionVoid`, no operands)
+  is retained as a delimiter specifically for this — see `IsRepaintDelimiter` — and the reader
+  walks back to the LAST one. Without it the walk reads the previous screen's resources, which
+  is not hypothetical: stepping from the ant farm's nine into the Power Generator's one leaves
+  the eight before it looking current.
+  - ⛔ `kMaxCallsPerPanel` is sized from this screen (24, against a worst case of 10). At the
+    old value of 8 the delimiter and INCOME fell off the front silently — the tail-truncation
+    failure mode, which reads to a player as *the game is not showing that*.
+- ⛔ **Read the colour BEFORE cleaning.** The value arrives wrapped by
+  `UIUtilities_Text.GetColoredText`, and the tint is the whole difference between "SUPPLIES 0"
+  and "SUPPLIES 0, and that is why you cannot buy this". `CleanText` strips the `<font>` the
+  colour lives in, so `FlashArg`'s cleaned answer is too late — the state comes off the raw
+  operand, matched against `UIUtilities_Colors`' own constants, case-insensitively because the
+  game's own table is not consistent about case (`5CD16C` beside `bf1e2e`).
+- ⛔ **The stop is TRAILING and the key reads everything — that split is the design.** Attach
+  lands on stop 0, so a resources stop built first would open every commodity list on the
+  supplies figure instead of the screen's content. And the key is not redundant with the stop:
+  the **ant farm has no recipe** (narrate-only, by the rule below) and shows the WIDEST strip in
+  the game, so without the key the screen with the most resources to report would be the one
+  screen that could not report them.
+- ⚠ `R` is claimed only while the strip is showing, which is what keeps it away from tactical
+  `R` (Reload, `DefaultInput.ini:354`, `[XComGame.XComTacticalInput]`) and from the save-name
+  text field (`UISaveGame` hides the strip). The gate is the GAME's answer, not an exclusion
+  list of ours. `[XComGame.XComHeadquartersInput]` binds `R` only with `Shift` held, and UE3
+  requires a modifier a binding declares — so a bare `R` there displaces nothing.
+- ⚠ **A showing strip with nothing captured is a real state**, not a fault: the game paints the
+  strip only on a screen change, so a capture that acquired the panel after the last paint (or
+  whose entry the LRU evicted) has nothing while the player can plainly see it. The tick asks
+  the HUD for its OWN `UpdateResources()` at most once per 10 s to repair it, and the key says
+  so meanwhile rather than falling silent.
+
 ## Inside a room
 
 ⛔ **The room SCREEN is not the room's content, and building for its staff strip produces a
@@ -170,6 +225,42 @@ Every word is a RETAINED widget read, no `XCOMHISTORY` and no Flash: `FacilityHe
   deliberately **not** gated on the room having bottom-bar buttons: the Ring happens to have both,
   so the gate would work today and turn any future status-panel-without-a-button into silence.
   (`m_kResearchProgressBar` is the same shape and is still unread.)
+- ⛔ **A BUILT facility's staff slots are nodes, and for weeks they were not.** The recipe read
+  `StaffSlots.Length` and built nothing from it, because no staffed room existed when it was
+  written (§13.6 above) — so the debris room could be cleared by keyboard and the Power Relay
+  built in it could not be staffed (reported 2026-09-03). The slots now sit in the **crew** stop
+  under the "ENGINEERS: 2" line they are drawn under, and the picker is the debris room's:
+  `X2AccessStaffSlots` emits `kind=slot` / `kind=candidate` for BOTH readers, and
+  `StaffSlotVtable` / `BuildStaffPicker` in the recipe TU build both rooms' nodes. **One
+  implementation** — a slot must read the same in a construction site and in the facility it
+  becomes.
+- ⛔ **Every slot state is ACTIVATABLE, because `UIStaffSlot.HandleClick` is the branch point**:
+  a padlocked slot opens the upgrade screen that unlocks it, a greyed slot still opens its
+  (empty) picker, and a FILLED project slot — the GTS trainee, a Psi Lab operative, a bonding
+  pair, an Infirmary patient — raises the game's stop-training confirmation through the slot
+  subclass's `ShowDropDown` override. Enter always goes to `HandleClick`; marking any state
+  `Disabled` would take Enter away from a control the mouse can press. The vanilla keyboard
+  route to the same call is **F2/F3/F4** (`UIFacilityStaffContainer.OnUnrealCommand`), the
+  live keys `CLAUDE.md` warns about — unclaimed, so they still work beside our Enter.
+- ⛔ **Container index is not facility index.** `UIFacilityStaffContainer.Refresh` skips a slot
+  that is locked with no upgrade to buy and one whose template hides it, so `StaffSlots[i]` is
+  not `Facility.GetStaffSlot(i)`. The companion iterates the WIDGETS and follows each one's own
+  `StaffSlotRef`; native matches the record's index against the widget array it read. Nothing
+  indexes the facility's slots by position.
+- **The slot's words are the state object's, the tooltip is re-run, never read.** Name and bonus
+  come from `GetNameDisplayString` / `GetBonusDisplayString` (what `UpdateData` pushed and
+  dropped). The hover tooltip — *"Upgrade the facility to unlock the staff slot"*, *"No
+  engineers available"* — is `UIFacility_StaffSlot.RefreshTooltip` re-run branch for branch,
+  because the game writes it only on MOUSE-IN, so the tooltip manager's stored text for a slot
+  nobody hovered is the class default whatever the slot's state. A locked or unfillable slot
+  speaks it as the Reason; a fillable one gets it on Space. ⚠ `UIFacility_BondSlot` overrides
+  the whole function and its `m_strNoSoldiersTooltip` is a different sentence, so the bond cast
+  is tested FIRST.
+- **Words re-ask on every render while the picker is open** (the debris room's rule, now the
+  facility's too): `RealizeStaffSlots` calls `UpdateData()` on the widgets it already has, so
+  an assignment changes the occupant with no pointer change, and the project slots close the
+  picker BEFORE the dialog that commits the choice. The picker's pointer is in the cache key as
+  well, so its opening and closing each refetch.
 - Probe insists the facility screen is TOPMOST, which keeps this recipe from attaching over the
   choose-research screen or the facility summary the room's own verbs push.
 - ⚠ Known gap: `UIFacility_Infirmary` spawns its own `PatientList` (`UIList`), the only facility
@@ -243,6 +334,43 @@ ever gets onto the Avenger.
   `UpdateSelection` writes and only `UIList::SetSelectedIndex` triggers. A disabled row is passed
   through rather than refused: `OnAccept` re-tests and plays its own refusal, keeping the refusal
   where the game can be right about why.
+
+## Facility upgrades
+
+`UIChooseUpgrade` — behind the room's UPGRADE / REVIEW UPGRADES button, a padlocked staff slot,
+the to-do widget's nudge and the ant farm overlay's upgrade path.
+
+- ⛔ **The screen is `UIChooseUpgrade`, not `UIFacilityUpgrade`.** Every one of those paths calls
+  `XComHQPresentationLayer.UIFacilityUpgrade()`, and that function spawns a `UIChooseUpgrade`
+  (`XComHQPresentationLayer.uc:1994`). `UIFacilityUpgrade` ships in the package — with a list
+  of `UIFacilityUpgrade_ListItem`s whose `UIText` IS retained, which is what made the census
+  file it as the natively readable one — and is never instantiated. A recipe probing for it
+  would never attach. **Check what the presentation layer SPAWNS before building for a class
+  name** (`CLAUDE.md`, adding a screen recipe).
+- **It is `UIChooseFacility`'s twin, and built as one**: `m_List` at the same offset (pinned on
+  its OWN class — sharing 0x418 is declaration-order luck, not a contract), `UIListItemString`
+  rows populated through `SetText` (names, `bDisabled`, the attention icon all retained),
+  `OnAccept` reading the screen's own `SelectedIndex` so Enter goes to the SCREEN after the
+  selection lands, and a panel `UpdateSelection` resolves into locals and pushes through
+  `AS_SetDescription` / `AS_SetResources`. One `BuildChoiceScreen` serves both; only the finder,
+  the pin, the companion class and the words differ.
+- **The words are the screen's own functions again**: `GetStrategyCostString` with the screen's
+  scalars and discount (⚠ `UpdateSelection` draws with `FacilityBuildCostScalars` while
+  `CanBuildUpgrade` tests `FacilityUpgradeCostScalars` — the DRAWN number is the parity target,
+  the test is the game's to make on Enter), `GetPowerRequirement`, `GetStrategyReqString`,
+  `HasEnoughPower`, `UpgradeAlreadyPerformed`, `CanBuildUpgrade`. No time line: an upgrade is
+  installed in the same game state that pays for it.
+- **A greyed row here can mean two things** — cannot afford, or already installed — and the
+  panel says neither in words. The card gets a COMPLETED line for the second, in the game's own
+  word: `UIFacilityUpgrade_ListItem.m_strCompleted` ships populated under its own loc section
+  (INT and RUS checked) even though the class is never spawned. Derivable from what is on
+  screen (the room's button says REVIEW UPGRADES, the upgrade is visibly built), so it hands a
+  blind player nothing a sighted one lacks.
+- ⚠ `m_strTitle` ships as `UPGRADE <XGParam:StrValue0/!UpgradeName/>` and the screen hands it
+  to `UIX2PanelHeader.SetText` UNEXPANDED — no `ExpandString` anywhere on the path — so Flash
+  draws whatever it makes of a stray tag. The spoken title expands it with the facility's own
+  `DisplayName`, which is what the one shipped use of the same key (`UIFacilityUpgrade
+  .InitScreen`) fills in.
 
 ## Commodity list
 

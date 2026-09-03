@@ -144,6 +144,7 @@ add_library(X2Access SHARED
     src/unit_info.cpp
     src/objective_reader.cpp
     src/avenger.cpp
+    src/resource_strip.cpp
     src/dropship.cpp
     src/text_input.cpp
     src/hacking_screen.cpp

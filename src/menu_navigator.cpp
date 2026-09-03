@@ -510,7 +510,10 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     &kResearchUnlockedRecipe,
     &kNarrativeRecipe, &kIronManRecipe,
     &kSoundtrackRecipe, &kOptionsRecipe, &kDifficultyRecipe, &kSaveLoadRecipe, &kPauseMenuRecipe,
-    &kPersonnelRecipe, &kChooseFacilityRecipe, &kPromotionRecipe, &kArmoryLoadoutRecipe,
+    // The upgrade picker beside the facility picker: both are pushed over the room or the grid
+    // they were opened from and raise only dialogs above themselves.
+    &kPersonnelRecipe, &kChooseFacilityRecipe, &kChooseUpgradeRecipe, &kPromotionRecipe,
+    &kArmoryLoadoutRecipe,
     // Below BOTH screens it opens: a slot asking for a soldier pushes UIPersonnel_CovertAction,
     // and the EDIT verb pushes UIArmory_Loadout. Above the Resistance Ring it was pushed over.
     &kCovertActionsRecipe,

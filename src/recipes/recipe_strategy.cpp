@@ -1091,6 +1091,7 @@ std::unique_ptr<GraphRender> BuildGeoscape()
         b.AddLabel(ControlId::Structural("geoscape/empty"), []() {
             return std::string(Vocab::GeoscapeTrayEmpty) + ". " + Vocab::GeoscapeLeaveHint;
         });
+        AddResourceStop(b);
         return b.Build();
     }
 
@@ -1278,6 +1279,7 @@ std::unique_ptr<GraphRender> BuildGeoscape()
         }
     }
 
+    AddResourceStop(b);
     return b.Build();
 }
 
@@ -1420,6 +1422,11 @@ std::unique_ptr<GraphRender> BuildPopup()
         b.AddItem(ControlId::Structural(key + "button/" + std::to_string(i)), std::move(vt));
     }
     b.EndRow();
+    // Only two alerts in the whole family draw a strip — eAlert_Contact shows intel and
+    // eAlert_Outpost shows supplies, both being the resource that alert is asking the player to
+    // spend. Every other popup falls to UpdateResources' `default:` and hides it, so this adds
+    // nothing there without the recipe needing to know the switch.
+    AddResourceStop(b);
     return b.Build();
 }
 
@@ -1906,6 +1913,9 @@ std::unique_ptr<GraphRender> BuildCovertActions()
         b.AddItem(ControlId::Structural("covert/confirm"), std::move(vt));
     }
 
+    // ⛔ Before SetStart, not after: the landing node is one of the nodes above, and adding a
+    // trailing stop afterwards would leave the start pointing across a stop boundary.
+    AddResourceStop(b);
     if (start.IsValid())
         b.SetStart(start);
     return b.Build();

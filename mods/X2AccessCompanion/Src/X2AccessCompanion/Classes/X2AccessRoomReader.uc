@@ -24,16 +24,14 @@
 //
 // Every string below is taken from the SCREEN's own accessors (GetExcavationStatusString,
 // GetExcavationTimeEstimateString, GetExcavationRewardString) or re-derived exactly the way the
-// widget that hid it derived it — UIPersonnel_DropDownListItem.UpdateData, line for line. That
-// keeps one source of truth for words a sighted player is reading off the same pixels.
+// widget that hid it derived it. That keeps one source of truth for words a sighted player is
+// reading off the same pixels. The slot and picker records come from X2AccessStaffSlots, which
+// serves the built room's strip as well — one implementation, so both rooms describe a slot in
+// the same words.
 //
 // GC rule: this object is a CDO — value-typed state only, NEVER object references.
 
-// dependson: StaffUnitInfo and EStaffStatus are both declared INSIDE
-// X2StrategyGameRulesetDataStructures, not in a global header, so a class in another package
-// needs it in scope by name — the same reason X2AccessAvengerReader dependson(UIStaffIcon).
-class X2AccessRoomReader extends Object
-	dependson(X2StrategyGameRulesetDataStructures);
+class X2AccessRoomReader extends Object;
 
 // Written by the entry point; read by native immediately after the ProcessEvent returns.
 var string NativeResult;
@@ -134,44 +132,10 @@ private function AppendStatus(UIRoom Room)
 private function AppendSlots(UIRoom Room)
 {
 	local XComGameState_HeadquartersRoom RoomState;
-	local XComGameState_StaffSlot SlotState;
-	local UIStaffSlot Slot;
-	local string Rec;
-	local int i;
-
-	if (Room.m_kStaffSlotContainer == none)
-		return;
 
 	RoomState = Room.GetRoom();
-
-	for (i = 0; i < Room.m_kStaffSlotContainer.StaffSlots.Length; i++)
-	{
-		Slot = Room.m_kStaffSlotContainer.StaffSlots[i];
-		if (Slot == none)
-			continue;
-
-		SlotState = XComGameState_StaffSlot(`XCOMHISTORY.GetGameStateForObjectID(Slot.StaffSlotRef.ObjectID));
-		if (SlotState == none)
-			continue;
-
-		Rec = "kind=slot";
-		Rec $= FLD_SEP $ "index=" $ string(i);
-		// GetNameDisplayString is what the widget put in its name field: the occupant when the
-		// slot is filled, the template's own "open slot" wording when it is not. Taking it from
-		// the state object rather than inventing an empty-slot phrase keeps us in the player's
-		// language for free.
-		Rec $= FLD_SEP $ "label=" $ SlotState.GetNameDisplayString();
-		Rec $= FLD_SEP $ "bonus=" $ SlotState.GetBonusDisplayString();
-		Rec $= FLD_SEP $ "filled=" $ (SlotState.IsSlotFilled() ? "1" : "0");
-		Rec $= FLD_SEP $ "locked=" $ (SlotState.IsLocked() ? "1" : "0");
-		// The disabled state the widget itself computes (UIStaffSlot.UpdateData → SetDisabled):
-		// no unit of the right kind is free, so clicking opens an empty picker.
-		Rec $= FLD_SEP $ "available=" $ (SlotState.IsUnitAvailableForThisSlot() ? "1" : "0");
-		Push(Rec);
-
-		if (RoomState != none && RoomState.UnderConstruction)
-			break;
-	}
+	class'X2AccessStaffSlots'.static.AppendSlots(Room.m_kStaffSlotContainer,
+		RoomState != none && RoomState.UnderConstruction, NativeResult);
 }
 
 // The excavate button. Its label is genuinely ambiguous in vanilla: Enable/DisableExcavateButton
@@ -199,67 +163,10 @@ private function AppendExcavate(UIRoom Room)
 	Push(Rec);
 }
 
-// The personnel picker, when it is open. Mirrors UIPersonnel_DropDownListItem.UpdateData: the
-// same name (rank-qualified for soldiers, ghost-renamed for a gremlin), the same localized
-// status, and the same m_strEmptyStaff for the "take them out" row the drop-down puts first
-// when the slot is already filled.
+// The personnel picker, when it is open — the shared reader, see X2AccessStaffSlots.
 private function AppendCandidates(UIRoom Room)
 {
-	local UIPersonnel_DropDown Drop;
-	local XComGameState_Unit Unit, PairUnit;
-	local StaffUnitInfo Info;
-	local EStaffStatus StafferStatus;
-	local string Rec, UnitName, UnitStatus;
-	local int i;
-
-	if (Room.m_kStaffSlotContainer == none)
-		return;
-
-	Drop = Room.m_kStaffSlotContainer.m_kPersonnelDropDown;
-	if (Drop == none || !Drop.bIsVisible)
-		return;
-
-	for (i = 0; i < Drop.m_staff.Length; i++)
-	{
-		Info = Drop.m_staff[i];
-		Unit = XComGameState_Unit(`XCOMHISTORY.GetGameStateForObjectID(Info.UnitRef.ObjectID));
-
-		if (Unit == none)
-		{
-			// An empty ref is the "remove the current staffer" row, and the drop-down really
-			// does put one there whenever the slot is filled. It has to be spoken, or the only
-			// way to un-assign somebody is silence.
-			UnitName = class'UIUtilities_Strategy'.default.m_strEmptyStaff;
-			UnitStatus = "";
-		}
-		else
-		{
-			StafferStatus = class'X2StrategyGameRulesetDataStructures'.static.GetStafferStatus(Info);
-			UnitStatus = class'UIUtilities_Strategy'.default.m_strStaffStatus[StafferStatus];
-
-			if (Unit.IsSoldier())
-			{
-				UnitName = Unit.GetName(eNameType_RankFull);
-				PairUnit = XComGameState_Unit(`XCOMHISTORY.GetGameStateForObjectID(Info.PairUnitRef.ObjectID));
-				if (PairUnit != none && PairUnit.IsSoldier())
-					UnitName @= class'UIUtilities_Text'.default.m_strAmpersand @ PairUnit.GetName(eNameType_RankFull);
-			}
-			else
-			{
-				UnitName = Unit.GetFullName();
-				// A ghost (a Gremlin standing in for an engineer) is renamed by its slot's
-				// template, exactly as the row does it — otherwise two entries read alike.
-				if (Info.bGhostUnit && Unit.GetStaffSlot() != none)
-					UnitName = Repl(Unit.GetStaffSlot().GetMyTemplate().GhostName, "%UNITNAME", UnitName);
-			}
-		}
-
-		Rec = "kind=candidate";
-		Rec $= FLD_SEP $ "index=" $ string(i);
-		Rec $= FLD_SEP $ "name=" $ UnitName;
-		Rec $= FLD_SEP $ "status=" $ UnitStatus;
-		Push(Rec);
-	}
+	class'X2AccessStaffSlots'.static.AppendCandidates(Room.m_kStaffSlotContainer, NativeResult);
 }
 
 // ---------------------------------------------------------------------------------------

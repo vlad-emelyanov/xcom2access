@@ -49,6 +49,7 @@ extern const Recipe kRoomBuildRecipe;
 extern const Recipe kCommodityRecipe;
 extern const Recipe kPersonnelRecipe;
 extern const Recipe kChooseFacilityRecipe;
+extern const Recipe kChooseUpgradeRecipe;
 extern const Recipe kResearchReportRecipe;
 extern const Recipe kResearchUnlockedRecipe;
 
@@ -58,7 +59,7 @@ extern const Recipe kMissionSummaryRecipe;
 extern const Recipe kChosenSummaryRecipe;
 
 // How many of the above kRecipes must list. Pinned by a static_assert next to the array.
-constexpr std::size_t kRecipeCount = 28;
+constexpr std::size_t kRecipeCount = 29;
 
 } // namespace Recipes
 } // namespace MenuNavigator

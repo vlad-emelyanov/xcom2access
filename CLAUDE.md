@@ -556,7 +556,11 @@ any one endpoint:
    for what the widgets are, which delegate activation must go through, and what a sighted player can
    actually reach. Watch for controls the game reaches only by mouse (its own keyboard path may be a
    dead end) and for `DisableNavigation()`, which means focus write-back there would be pushing focus
-   somewhere the game refuses to keep it.
+   somewhere the game refuses to keep it. ⛔ **First confirm the class is what the presentation layer
+   SPAWNS** (`grep` the `XComHQPresentationLayer` / `XComPresentationLayer` function that opens it): a
+   shipped class is not a reachable one — `UIFacilityUpgrade` ships with retained text and is never
+   instantiated, `UIFacilityUpgrade()` spawns `UIChooseUpgrade`, and the census had the dead one
+   marked as the readable target.
 2. Transcribe field offsets from the generated SDK's dump comments into the surface family's
    `game_ui_*.cpp` (generic widget offsets live in `game_ui_internal.h`), add a matching
    `static_assert` per offset to `sdk_layout_checks.cpp`, and expose a `Read<Screen>` view struct.
