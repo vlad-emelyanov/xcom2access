@@ -202,7 +202,13 @@ can never both be showing, which is why their lines cannot collide.
   `GFullScreenMovie` is at RVA `0x1DB8900`; the object's vtable must be RVA `0x13E9B28`, the one
   `FFullScreenMovieBink`'s constructor writes. A mismatch disables the surface permanently with one
   `LOG_ERROR`. **That check IS the pin** — none of these offsets can be `static_assert`ed, because
-  the type is not a UObject and appears in no SDK dump. Provenance for re-derivation: `FUN_14024c630`
+  the type is not a UObject and appears in no SDK dump. ✅ It has now held live: the surface has
+  run against a cue-tracked `.bk2` and spoken. ⛔ That is a result about ONE build of the exe,
+  not a property of the design — a game patch moves both RVAs, and the failure mode is the
+  surface going permanently quiet with a single line in the log. **`MovieSubtitles: movie player
+  at 0x… validated` in `just dev-log` is the first thing to re-check after any game update**;
+  `DISABLED` there means every offset below is void and nothing else about this surface is worth
+  looking at. Provenance for re-derivation: `FUN_14024c630`
   is the lazy creator (names the global and the constructor), `FUN_1402073b0` the constructor
   (writes the vtable, allocates the cue track into `+0x114`), `FUN_14023d7a0` `PlayMovie` (movie
   name `+0x40`, `BINKHANDLE` `+0x84`), `FUN_14023ed10` `PumpMovie` (the time arithmetic, transcribed

@@ -14,18 +14,6 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
-⛔ **`movie_subtitles.cpp` has NEVER RUN and its first pass outranks the rest of this list**,
-because it is the only surface in the mod that dereferences a raw C++ object rather than a
-UObject: nothing in it is `static_assert`ed and the vtable check is the whole pin. The FIRST
-thing to confirm is `just dev-log` carrying `MovieSubtitles: movie player at 0x… validated` —
-if it says DISABLED instead, every offset below it is void and nothing else about this surface
-is worth testing. Then a `.bk2` with a cue track (`CIN_XP_PreIntro` is the earliest, on a new
-WOTC campaign; `CIN_XP_Stronghold_*` and the XP autopsies are the rest) checked three ways:
-`just dev-speech` against what is on screen, the same movie with Show Subtitles OFF (must be
-silent), and a grep for `no localized text for cue` — that line is the only place a cue whose
-text we failed to resolve would show up, and its absence is what says the loc lookup found the
-right package.
-
 ⛔ **TWO COMPANION COMMITS POSTDATE THE DEPLOYED `.u`.** The build in the game is the ASI of
 2026-08-31 17:00 beside the companion of 16:57, and the whole live-run debt below it was
 retired against THAT pair — but `04a264c` (16:58, `X2AccessAfterActionReader` /
@@ -120,30 +108,19 @@ the text-entry reader's own announcements (`just dev-log` should carry `TextInpu
 caret N, selection A..B)`); the Resistance Ring's covert-op status line, in BOTH branches — an
 action running (name + days left) and none assigned.
 
-The tile cursor's **concealment readout** (2026-08-31, source-derived, never run):
-"Detection zone" / "Tower detection" per tile and "breaks concealment, noise" on the move
-preview (both concealment-gated — revealed, a window on the path is silent by design). The pass
-is `concealment-recon.md` §6 — a Gatecrasher sweep across a visible pod's red paint, a
-window-smashing move preview concealed AND revealed, a tower ring before and after its hack — and §4 lists the four parity assumptions the pass exists to check, the squad-visibility
-gate on detectors first (if the game paints red for enemies the squad cannot see, widen ours to
-match the overlay, not the other way round).
+The tile cursor **across floors, in TARGETING mode** — the half of the floor redesign that was
+deliberately left unchanged. World mode now syncs the game's floor state on every cursor push
+and has run; `X2AccessTacticalReader`'s `PushAim` / `EnsureAimPlanted` still push position
+WITHOUT floor state. The pathing-pawn clamp that motivated the redesign does not apply there, so
+this is an open question rather than a known defect: whether any targeting method, or the melee
+pathing pawn, cares about `m_iRequestedFloor` across floors. Throw a grenade onto a roof from
+the ground and compare the spoken land tile against `GetTargetLocations`.
 
-The tile cursor's **floor redesign** (2026-08-31, built from a live diagnosis but not yet run —
-`surfaces/tactical.md` holds the rule): every cursor push now syncs the game's floor state, the
-floor keys drive `AscendFloor`/`DescendFloor` instead of a per-column Z hop, and
-`CursorFloorPoll` announces external floor changes. The pass: (a) with a soldier who can reach a
-roof, cursor up to a tile that reads "Dash" and confirm the two-press move now COMMITS instead of
-refusing "Out of range"; (b) `Ctrl+.`/`Ctrl+,` speak "Floor N of M" plus the landed tile, clamp
-at "Top floor"/"Bottom floor", and reach a 2-story roof in two presses; (c) the mouse wheel and a
-soldier switch across levels each speak the new floor ONCE and re-land the cursor — and neither
-babbles at mission start, before the cursor is planted, or on same-level soldier switches (the
-shape-count audit is the tool); (d) ground-level stepping is unchanged (every earlier test was
-ground-level, which is what masked the clamp). And the same question for TARGETING mode,
-deliberately left unchanged: `X2AccessTacticalReader`'s `PushAim`/`EnsureAimPlanted` push
-position without floor state too — the pathing-pawn clamp does not apply there, but whether any
-targeting method or the melee pathing pawn cares about `m_iRequestedFloor` across floors has
-never been exercised (throw a grenade onto a roof from the ground and compare the spoken land
-tile with `GetTargetLocations`).
+The tile cursor's **detection readout on a hacked tower** — the one branch of the concealment
+work a normal Gatecrasher sweep does not produce. "Tower detection" is confirmed; what nobody
+has heard is the ring BEFORE and AFTER the hack, i.e. that hacking the tower actually silences
+it. (The wider parity audit behind that readout — `concealment-recon.md` §4's four assumptions,
+our recompute against the game's own markers — is queued work item 6, not a test.)
 
 The WOTC **first-time popups** now that `TutorialReader::OnTick` polls the modal outside the
 tutorial (`surfaces/tactical.md`). This one needs no campaign luck: `just dev-exec
