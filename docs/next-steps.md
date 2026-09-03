@@ -81,6 +81,26 @@ OFFSETS are already confirmed live (2026-08-23, `LostAndAbandonedB`) and the `st
 pass — what is unexercised is the spoken COMPOSITION, plus the Avenger/dark-event and
 counter-row branches, which need the ship and a Retaliation-style mission respectively.
 
+**The promotion screens** (`UIArmory_Promotion` / `_PromotionHero` / `_PromotionPsiOp` — one
+`promotion` recipe + `X2AccessPromotionReader` over all three). ⚠ **Built in a "work in
+progress" commit and then recorded NOWHERE** — it was still listed as unbuilt in
+`ui-inventory.md`'s P1 list and absent from the surface registry until 2026-09-03, which is why
+it has no recon doc and no first-pass checklist. It needs both halves of a pass:
+
+- **Classic** (`UIArmory_Promotion`): a squaddie promotion and a mid-rank one, taken from the
+  after-action screen's promote banner AND from the armory, since the two entry paths differ in
+  what is on the stack behind. Check that a locked rank's ability names stay UNSPOKEN — the
+  reader resolves names in script precisely so `m_strAbilityLockedTitle` substitutes, and a
+  regression there leaks information no sighted player has.
+- **Hero** (`_PromotionHero`): the one screen in the game where the layer is not a convenience
+  but the ONLY keyboard route — vanilla handles DPAD/LStick only and `InitPromotion` calls
+  `DisableNavigation()`. Needs a faction hero, or any class after the Training Center retrofit.
+  Buying an ability with AP is the verb to exercise, including the refusal when AP is short.
+- **PsiOp** (`_PromotionPsiOp`): needs a Psi Lab and a trained operative.
+- Across all three: rank headings read as tree index + 1 (a `ClassRowItem.Rank` of 0 must say
+  "Squaddie", not "Rookie"), descriptions arrive EXPANDED with the unit's own numbers rather
+  than raw `LocLongDescription` tags, and nothing anywhere is spoken in `Caps()`.
+
 **The mission bookends** (2026-09-03, built, never run — `mission-summary-recon.md`; the
 `mission summary` and `chosen summary` recipes, both Flash-capture-only, no companion). This is
 the last hole in the post-mission chain, so the pass is one mission end walked all the way

@@ -45,6 +45,7 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Mission summary (post-mission stats) | `game_ui_tactical.cpp` | — (no companion), `mission summary` | — | `mission-summary-recon.md` |
 | After action (post-mission walk-up) | `game_ui_strategy.cpp` | `X2AccessAfterActionReader.uc`, `after action` | — | `after-action-recon.md` |
 | Armory loadout | — | `X2AccessLoadoutReader.uc`, `armory loadout` | strategy.md | `loadout-recon.md` |
+| Promotion / level-up (3 screens) | `game_ui_strategy.cpp` | `X2AccessPromotionReader.uc`, `promotion` | — | — (no recon; built straight from source) |
 | Covert actions | `game_ui_strategy.cpp` | `X2AccessCovertActionReader.uc`, `covert actions` | strategy.md | `covert-actions-recon.md` |
 | Resistance orders | `game_ui_strategy.cpp` | `X2AccessPolicyReader.uc`, `resistance orders` | strategy.md | — |
 

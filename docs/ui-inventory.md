@@ -41,28 +41,26 @@ priority.
 
 What actually blocks a campaign, in rough play order:
 
-1. **`UIMission` family (17 classes)** — the geoscape mission-launch briefings: objective,
-   rewards, difficulty, dark events, sitreps. Today the player can move the tray but cannot
-   read what they are launching. One layout family (`UIMission` base + per-mission-type
-   subclasses), so one recipe should cover all 17 the way `UIAlert`'s 118 variants did.
-2. **`UIArmory_MainMenu`** — the armory hub; every soldier operation routes through it.
-3. **`UIArmory_Promotion` / `_PromotionHero` / `_PromotionPsiOp`** — ability choices. The
-   hero screen is also what regular classes use once the Training Center retrofits them.
-4. **`UIArmory_WeaponUpgrade`** + **`UIArmory_Implants`** — weapon mods and PCS.
-5. **`UIInventoryTactical`** — mid-mission loot pickup.
-6. **`UITacticalCharInfoScreen`** — F1 soldier details in tactical.
-7. **`UIResistanceReport`** (+ `_ChosenEvents`, `_FactionEvents`, `UIRewardsRecap`) — the
-   monthly council report chain.
-8. **`UICovertActions`** + **`UICovertActionReport`** — the WOTC core loop. Surveyed:
-   `covert-actions-recon.md`. The soldier picker and the confirm modal are already covered by the
-   personnel and popup recipes, so this is two screens, not four — and `CONFIRM ACTION` is
-   MOUSE-ONLY in vanilla (§4).
-9. **`UIStrategyPolicy`** — resistance orders (WOTC's card system).
-10. **`UIRecruitSoldiers`**, **`UIBlackMarket`** + **`UIBlackMarket_Sell`** — recruiting and
-    selling. (`_Sell` is explicitly NOT in the commodity family — own list, own card call;
-    `avenger-view-recon.md` §14.1.)
+⚠ This list holds only what is NOT built. An entry that ships leaves it rather than gaining a
+"done" mark, and what the built surface still OWES moves to `next-steps.md` — so a name appearing
+here and a `◐`/`✅` in the tables below is a contradiction, not a nuance. (It happened: the
+promotion screens sat here for weeks after they were written.)
 
-Plus one standing ⚠: **`UIShellStrategy`** below — possibly a live bug in an existing surface.
+1. **`UIArmory_MainMenu`** — the armory hub; every soldier operation routes through it. The
+   loadout and promotion screens it opens are both built, which makes the hub itself the one
+   keyboard gap between them.
+2. **`UIArmory_WeaponUpgrade`** + **`UIArmory_Implants`** — weapon mods and PCS.
+3. **`UIInventoryTactical`** — mid-mission loot pickup.
+4. **`UITacticalCharInfoScreen`** — F1 soldier details in tactical.
+5. **`UIResistanceReport`** (+ `_ChosenEvents`, `_FactionEvents`, `UIRewardsRecap`) — the
+   monthly council report chain. `UIRewardsRecap` is also the hole the research-available deck
+   closes into on the tutorial-objective path (`research-unlocked-recon.md` §5).
+6. **`UICovertActionReport`** — the covert-action RESULT screen. The PICKER is built (`covert
+   actions` recipe), and the soldier picker and confirm modal ride the personnel and popup
+   recipes, so this is the one screen of that loop still unread — `covert-actions-recon.md` §8b.
+7. **`UIRecruitSoldiers`**, **`UIBlackMarket`** + **`UIBlackMarket_Sell`** — recruiting and
+   selling. (`_Sell` is explicitly NOT in the commodity family — own list, own card call;
+   `avenger-view-recon.md` §14.1.)
 
 ## 1. Boot, shell, main menu
 
@@ -93,7 +91,7 @@ All ✅ — shell recipes: `UIShellDifficulty`, `UISecondWave`, `UIShellNarrativ
 | `UIOptionsPCScreen` | settings | ✅ |
 | `UIKeybindingsPCScreen` | key bindings — Flash-only, no `UIList` | ✅ legacy listener (`UIScreenListener_KeyBindings`) |
 | `UIPauseMenu` | pause menu (tactical) | ✅ |
-| `UIShellStrategy` | **the Avenger's Escape menu** — `extends UIPauseMenu`, spawned by `XComHQPresentationLayer` | ⚠ **verify the pause recipe attaches**: probing is by exact class name, and this is not named `UIPauseMenu` |
+| `UIShellStrategy` | `extends UIPauseMenu` — the **developer** shell's strategy menu, NOT the Avenger's Escape menu | 🚫 dev-only, and the ⚠ it used to carry is answered: `XComPresentationLayerBase.UIPauseMenu()` spawns `class'UIPauseMenu'` LITERALLY for every layer including the HQ's, so the Avenger's Escape menu really is a plain `UIPauseMenu` and the exact-name probe is right. The only caller of `UIStrategyShell()` that runs is `UIShell.uc:357`, which `-review` skips; the HQ layer's copy sits under its own "BEGIN DEPRECATED UI" banner |
 | `UIDialogueBox` | the universal modal (confirmations, errors) | ✅ |
 | `UIInputDialogue` | text entry | ✅ observer |
 | `UIProgressDialogue` | blocking progress spinner | ✅ popup recipe |
@@ -143,9 +141,9 @@ along. `avenger-view-recon.md` §14.
 | `UIArmory_Loadout` | loadout | ✅ |
 | `UIArmory_WeaponUpgrade` | weapon mods | ⬜ **P1** |
 | `UIArmory_WeaponTrait` | TLE legacy weapon customization | ⬜ P3 |
-| `UIArmory_Promotion` | ability tree (base classes) | ⬜ **P1** |
-| `UIArmory_PromotionHero` | faction-hero / Training-Center tree | ⬜ **P1** |
-| `UIArmory_PromotionPsiOp` | psi-op training tree | ⬜ **P1** |
+| `UIArmory_Promotion` | ability tree (base classes) | ◐ built — `promotion` recipe + `X2AccessPromotionReader` (one recipe, all three classes); first live pass owed |
+| `UIArmory_PromotionHero` | faction-hero / Training-Center tree | ◐ built — same recipe. ⛔ Vanilla here is a KEYBOARD DEAD END (`game_ui_strategy.h`): its `OnUnrealCommand` takes DPAD/LStick only and `InitPromotion` calls `DisableNavigation()`, so the layer is the ONLY way in without a mouse |
+| `UIArmory_PromotionPsiOp` | psi-op training tree | ◐ built — same recipe |
 | `UIArmory_Implants` | PCS slots | ⬜ **P1** |
 | `UIAbilityInfoScreen` | ability details viewer (from armory & challenge) | ⬜ P2 |
 | `UIManageEquipmentMenu` | equipment mgmt popup (from loadout & squad select) | ⬜ P2 |
