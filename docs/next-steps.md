@@ -14,6 +14,18 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+⛔ **`movie_subtitles.cpp` has NEVER RUN and its first pass outranks the rest of this list**,
+because it is the only surface in the mod that dereferences a raw C++ object rather than a
+UObject: nothing in it is `static_assert`ed and the vtable check is the whole pin. The FIRST
+thing to confirm is `just dev-log` carrying `MovieSubtitles: movie player at 0x… validated` —
+if it says DISABLED instead, every offset below it is void and nothing else about this surface
+is worth testing. Then a `.bk2` with a cue track (`CIN_XP_PreIntro` is the earliest, on a new
+WOTC campaign; `CIN_XP_Stronghold_*` and the XP autopsies are the rest) checked three ways:
+`just dev-speech` against what is on screen, the same movie with Show Subtitles OFF (must be
+silent), and a grep for `no localized text for cue` — that line is the only place a cue whose
+text we failed to resolve would show up, and its absence is what says the loc lookup found the
+right package.
+
 ⛔ **TWO COMPANION COMMITS POSTDATE THE DEPLOYED `.u`.** The build in the game is the ASI of
 2026-08-31 17:00 beside the companion of 16:57, and the whole live-run debt below it was
 retired against THAT pair — but `04a264c` (16:58, `X2AccessAfterActionReader` /
