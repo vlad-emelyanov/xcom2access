@@ -52,9 +52,11 @@ promotion screens sat here for weeks after they were written.)
 2. **`UIArmory_WeaponUpgrade`** + **`UIArmory_Implants`** — weapon mods and PCS.
 3. **`UIInventoryTactical`** — mid-mission loot pickup.
 4. **`UITacticalCharInfoScreen`** — F1 soldier details in tactical.
-5. **`UIResistanceReport`** (+ `_ChosenEvents`, `_FactionEvents`, `UIRewardsRecap`) — the
-   monthly council report chain. `UIRewardsRecap` is also the hole the research-available deck
-   closes into on the tutorial-objective path (`research-unlocked-recon.md` §5).
+5. **`UIRewardsRecap`** — the last unread screen of the monthly chain, and the hole the
+   research-available deck closes into on the tutorial-objective path (`research-unlocked-recon.md`
+   §5). (The report card and its Chosen page came off this list on 2026-09-03 — the `monthly
+   report` and `chosen activity` recipes, built from source and unexercised live;
+   `resistance-report-recon.md`.)
 6. **`UICovertActionReport`** — the covert-action RESULT screen. The PICKER is built (`covert
    actions` recipe), and the soldier picker and confirm modal ride the personnel and popup
    recipes, so this is the one screen of that loop still unread — `covert-actions-recon.md` §8b.
@@ -164,7 +166,9 @@ the pool itself are not cosmetic — P2, and the voice picker matters most.
 | `UIStrategyMap` | the geoscape | ◐ — tray built (`geo_scanner`); map-item details beyond the tray unmeasured |
 | `UIResistance` | region contact/outpost screen (from a region pin) | ⬜ P2 |
 | `UIAdventOperations` | dark events | ✅ popup recipe |
-| `UIResistanceReport` (+`_ChosenEvents`, `_FactionEvents`) | monthly council report | ⬜ **P1** |
+| `UIResistanceReport` | monthly council report — the report card | ◐ built — `monthly report` recipe + `X2AccessReportReader` (2026-09-03, unexercised live; `resistance-report-recon.md`) |
+| `UIResistanceReport_ChosenEvents` | the report's Chosen page (knowledge, activities, planned actions) | ◐ built — `chosen activity` recipe + `X2AccessChosenReader` (2026-09-03, unexercised live; `resistance-report-recon.md`) |
+| `UIResistanceReport_FactionEvents` | empty `BuildScreen`, and its presentation-layer opener has no caller in the shipped sources | 🚫 dead |
 | `UIRewardsRecap` | monthly rewards recap | ⬜ **P1** |
 | `UIStrategyPolicy` | resistance orders | ✅ resistance orders recipe (`surfaces/strategy.md`) |
 | `UICovertActions` | covert action picker | ✅ covert actions recipe (`covert-actions-recon.md`) |

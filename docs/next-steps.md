@@ -54,6 +54,20 @@ the cohesion column must not collapse to one value across the roster. ⚠ The co
 Cancel EMPTIES the Training Center's bond slots when it was opened from one — that is vanilla,
 and Escape there must be tried once from the slot path to hear what the room says afterwards.
 
+**The monthly report and its Chosen page** (2026-09-03, built from source after a live screenshot
+of the Chosen page the mod was silent on, never run — `resistance-report-recon.md` §6; the
+`monthly report` and `chosen activity` recipes, `X2AccessReportReader` and
+`X2AccessChosenReader.DescribeChosenEvents`). Needs a month end. The load-bearing items: (a) the
+supply line must carry the card's own signed figure and the activity lists must read as sentences
+with no `<font` markup left in the ring; (b) Enter on the report's Continue must land on the Chosen
+page with one stop per column and the unmet column saying only `UNKNOWN CHOSEN`; (c) on the FIRST
+knowledge gain of a campaign the warning stop must lead, its ACCEPT must dismiss the popup and the
+Continue must appear only after — the wire cache is discriminated on `bShowChosenWarningPopup`,
+and if the Continue never appears that discriminator is the suspect; (d) when a Chosen levelled up
+the level-up popups come first and the columns must still read once they are dismissed. The page
+after this one, `UIAdventOperations`, is the popup recipe's and reads its headings only — its
+dark-event rows are the next hole in the chain, with `UIRewardsRecap`.
+
 **The mission bookends** (2026-09-03, built, never run — `mission-summary-recon.md`; the
 `mission summary` and `chosen summary` recipes, both Flash-capture-only, no companion). This is
 the last hole in the post-mission chain, so the pass is one mission end walked all the way

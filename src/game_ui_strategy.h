@@ -815,4 +815,33 @@ bool SetBondSelection(const BondScreenView& view, int index);
 /// The focused UISoldierBondConfirmScreen, or null. Game thread only.
 void* FindBondConfirmScreen();
 
+// ---- the monthly report (UIResistanceReport) and its Chosen page
+//      (UIResistanceReport_ChosenEvents) — docs/resistance-report-recon.md ----
+//
+// Two Enter-only documents shown back to back at the end of every month: the council's report
+// card (supplies, activity lists, Avatar progress), then — pushed by the report's OWN CloseScreen
+// — one column per Chosen with the knowledge meter, any new knowledge level, last month's
+// activities and the action planned for this one. Both push every word through
+// MC.BeginFunctionOp and retain nothing; both re-derive cleanly, because every value comes off a
+// screen function (GetDateString, GetSupplyRewardString) or the state objects the screen names
+// (ChosenRefs). The Chosen page also carries a ONE-TIME warning popup (the first knowledge gain
+// of a campaign), drawn over the columns; while it is up the screen's Enter dismisses it instead
+// of closing, so the recipe reads the flag and offers exactly that.
+
+struct ChosenEventsView {
+    void* screen = nullptr;
+    int count = 0;             // ChosenRefs.Length — the columns, met or not
+    bool warningShown = false; // bShowChosenWarningPopup — the knowledge warning is up
+    bool simpleView = false;   // bSimpleView — opened from somewhere other than the report
+};
+
+/// The focused UIResistanceReport_ChosenEvents, or null. Game thread only.
+void* FindChosenEventsScreen();
+
+ChosenEventsView ReadChosenEvents(void* screen);
+
+/// The focused UIResistanceReport, or null. Every word is companion-side, so no view struct.
+/// Game thread only.
+void* FindResistanceReportScreen();
+
 } // namespace GameUI

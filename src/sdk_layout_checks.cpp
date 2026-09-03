@@ -789,6 +789,18 @@ static_assert(offsetof(AUISoldierBondListItem, UnitRef) == 0x4C4, "UISoldierBond
 static_assert(offsetof(AUISoldierBondListItem, ActivateBondButton) == 0x4CC,
     "UISoldierBondListItem::ActivateBondButton");
 
+// ---- the monthly report's Chosen page (docs/resistance-report-recon.md) ----
+//
+// Two reads: the ChosenRefs count and the flag dword at 0x650 (bSimpleView, the one-time knowledge
+// warning). The dword is bitfields, so its two plain neighbours pin it. UIResistanceReport itself
+// is read entirely companion-side and needs no pin.
+static_assert(offsetof(AUIResistanceReport_ChosenEvents, ChosenRefs) == 0x630,
+    "UIResistanceReport_ChosenEvents::ChosenRefs");
+static_assert(offsetof(AUIResistanceReport_ChosenEvents, ChosenLevelUpRefs) == 0x640,
+    "UIResistanceReport_ChosenEvents::ChosenLevelUpRefs (the flag dword follows at 0x650)");
+static_assert(offsetof(AUIResistanceReport_ChosenEvents, UIDisplayMIC) == 0x654,
+    "UIResistanceReport_ChosenEvents::UIDisplayMIC (the flag dword precedes at 0x650)");
+
 // ---- the black market (game_ui_avenger.cpp: UIBlackMarket, UIBlackMarket_Sell, _SellItem) ----
 //
 // The entry menu: its title and the interest caption are read as FStrings, its two buttons

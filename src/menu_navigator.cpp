@@ -552,6 +552,10 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     // and over an alert's Chosen panel — the popup recipe's topmost-only probe stands down for
     // it there — and it raises nothing above itself.
     &kChosenInfoRecipe,
+    // The monthly report and its Chosen page: sequential, never stacked (the report's own
+    // CloseScreen pushes the Chosen page), both over the geoscape, and the Chosen page raises
+    // only the level-up popups — resolved by the popup recipe above.
+    &kChosenEventsRecipe, &kResistanceReportRecipe,
     &kRoomBuildRecipe, &kRoomRecipe, &kGeoscapeRecipe,
     // The mission bookends, ABOVE the ambient tactical recipe they are pushed over. Sequential
     // with each other (the Chosen screen pops itself before pushing the summary), so their

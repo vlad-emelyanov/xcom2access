@@ -242,6 +242,126 @@ private function AppendFaction(UIChosenInfo Screen, XComGameState_AdventChosen C
 }
 
 // ---------------------------------------------------------------------------------------
+// UIResistanceReport_ChosenEvents — the monthly report's Chosen page
+// ---------------------------------------------------------------------------------------
+
+// Records, in the order the recipe wants stops:
+//   kind=header   title
+//   kind=warning  title text button       (only while the one-time knowledge warning popup is up)
+//   kind=column   index unknown=<label>    (a Chosen not yet met — the column shows that word alone)
+//   kind=column   index class name nick defeated knowlabel before after gain bullet=… acthead act=…
+//                 actionheader action summary quote
+//   kind=continue label                   (withheld while the warning is up: Enter dismisses it)
+//
+// RealizeColumn's own operands, in its order, minus the three it pushes as art (the icon, the
+// action image, the level badge — a bare digit with no label anywhere on the page). The screen
+// keeps ChosenRefs rather than the objects, so each column resolves its ref exactly where
+// RealizeColumns does.
+function DescribeChosenEvents()
+{
+	local UIResistanceReport_ChosenEvents Screen;
+	local XComGameState_AdventChosen Chosen;
+	local string Rec;
+	local int i;
+
+	NativeResult = "";
+
+	Screen = UIResistanceReport_ChosenEvents(`SCREENSTACK.GetCurrentScreen());
+	if (Screen == none)
+		return;
+
+	Rec = "kind=header";
+	class'X2AccessWire'.static.AddField(Rec, "title", Screen.ChosenActivityTitle);
+	Emit(Rec);
+
+	if (Screen.bShowChosenWarningPopup)
+	{
+		Rec = "kind=warning";
+		class'X2AccessWire'.static.AddField(Rec, "title", Screen.KnowledgePopupTitle);
+		class'X2AccessWire'.static.AddField(Rec, "text", Screen.KnowledgePopupText);
+		class'X2AccessWire'.static.AddField(Rec, "button", Screen.KnowledgePopupButtonTitle);
+		Emit(Rec);
+	}
+
+	for (i = 0; i < Screen.ChosenRefs.Length; i++)
+	{
+		Chosen = XComGameState_AdventChosen(`XCOMHISTORY.GetGameStateForObjectID(Screen.ChosenRefs[i].ObjectID));
+		if (Chosen == none)
+			continue;
+		AppendEventsColumn(Screen, Chosen, i);
+	}
+
+	if (!Screen.bShowChosenWarningPopup)
+		Emit("kind=continue" $ FLD_SEP $ "label=" $ class'UIUtilities_Text'.default.m_strGenericContinue);
+}
+
+private function AppendEventsColumn(UIResistanceReport_ChosenEvents Screen,
+	XComGameState_AdventChosen Chosen, int Index)
+{
+	local XComGameState_ChosenAction Action;
+	local array<string> Lines;
+	local string Rec, Line;
+	local int i;
+
+	Rec = "kind=column" $ FLD_SEP $ "index=" $ string(Index);
+
+	// RealizeColumn pushes the UNKNOWN CHOSEN label into the column's first slot for a Chosen not
+	// yet met, and the movie shows that alone.
+	if (!Chosen.bMetXCom)
+	{
+		class'X2AccessWire'.static.AddField(Rec, "unknown", Screen.UnknownChosenLabel);
+		Emit(Rec);
+		return;
+	}
+
+	class'X2AccessWire'.static.AddField(Rec, "class", Chosen.GetChosenClassName());
+	class'X2AccessWire'.static.AddField(Rec, "name", Chosen.GetChosenName());
+	class'X2AccessWire'.static.AddField(Rec, "nick", Chosen.GetChosenNickname());
+	if (Chosen.bDefeated)
+		class'X2AccessWire'.static.AddField(Rec, "defeated", Screen.DefeatedChosenLabel);
+
+	// The meter's two ends: last month's percent and this month's.
+	class'X2AccessWire'.static.AddField(Rec, "knowlabel", Screen.KnowledgeLabel);
+	class'X2AccessWire'.static.AddField(Rec, "before", string(Chosen.GetKnowledgePercent()));
+	class'X2AccessWire'.static.AddField(Rec, "after", string(Chosen.GetKnowledgePercent(true)));
+
+	// A new knowledge level this month: the prefixed title and up to three bullets, indexed by
+	// the level exactly as RealizeColumn indexes them.
+	if (Chosen.bJustIncreasedKnowledgeLevel)
+	{
+		class'X2AccessWire'.static.AddField(Rec, "gain",
+			Screen.KnowledgeGainPrefix @ Chosen.KnowledgeGainTitle[Chosen.GetKnowledgeLevel()]);
+		class'X2AccessWire'.static.AddField(Rec, "bullet", Chosen.KnowledgeGainFirstBullet[Chosen.GetKnowledgeLevel()]);
+		class'X2AccessWire'.static.AddField(Rec, "bullet", Chosen.KnowledgeGainSecondBullet[Chosen.GetKnowledgeLevel()]);
+		class'X2AccessWire'.static.AddField(Rec, "bullet", Chosen.KnowledgeGainThirdBullet[Chosen.GetKnowledgeLevel()]);
+	}
+
+	// GetMonthActivitiesList joins the PREVIOUS MONTH ACTIVITIES heading (which ends in a newline)
+	// and one "-item" per activity with newlines; split it back into lines and drop the bullet
+	// dash, which is a glyph rather than a word.
+	ParseStringIntoArray(Chosen.GetMonthActivitiesList(), Lines, "\n", true);
+	for (i = 0; i < Lines.Length; i++)
+	{
+		Line = Lines[i];
+		if (Left(Line, 1) == "-")
+			Line = Mid(Line, 1);
+		class'X2AccessWire'.static.AddField(Rec, i == 0 ? "acthead" : "act", Line);
+	}
+
+	// This month's planned action, off the state the Chosen's own ref names.
+	class'X2AccessWire'.static.AddField(Rec, "actionheader", Screen.ActionHeader);
+	Action = XComGameState_ChosenAction(`XCOMHISTORY.GetGameStateForObjectID(Chosen.CurrentMonthAction.ObjectID));
+	if (Action != none)
+	{
+		class'X2AccessWire'.static.AddField(Rec, "action", Action.GetDisplayName());
+		class'X2AccessWire'.static.AddField(Rec, "summary", Action.GetSummaryText());
+		class'X2AccessWire'.static.AddField(Rec, "quote", Action.GetQuote());
+	}
+
+	Emit(Rec);
+}
+
+// ---------------------------------------------------------------------------------------
 // Verbs
 // ---------------------------------------------------------------------------------------
 

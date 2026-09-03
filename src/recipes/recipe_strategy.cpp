@@ -3279,6 +3279,202 @@ std::string BondConfirmName()
     return NameFromHeader(FetchBondConfirmWords(), Vocab::ScreenBondConfirmFallback);
 }
 
+// ---- the monthly report (UIResistanceReport) — docs/resistance-report-recon.md ----
+//
+// The council's report card: one document stop (date, supplies, bonus and penalty lines, the
+// two activity lists, Avatar progress) and Continue. Every word is X2AccessReportReader's, taken
+// through the screen's own functions and the two HQ states it reads; the recipe only lays them
+// out. Enter is the screen's own input path — OnContinue closes AND pushes the Chosen page.
+
+constexpr const char* kReportReaderClass = "X2AccessReportReader";
+WireCache gReportWords(kReportReaderClass, "DescribeResistanceReport");
+
+const std::vector<WireRecord>& FetchReportWords()
+{
+    return gReportWords.Get({gScreen});
+}
+
+// One "LABEL: value" line off a companion record, with a `max` field turning the value into a
+// count against its maximum (the Avatar pips). Returns whether a node was added.
+bool AddReportLine(GraphBuilder& b, const std::string& id, const WireRecord& rec)
+{
+    std::string value = RecField(rec, "value");
+    const std::string max = RecField(rec, "max");
+    if (!value.empty() && !max.empty())
+        value = Vocab::Fraction(atoi(value.c_str()), atoi(max.c_str()));
+    return AddLabelledLine(b, id, RecField(rec, "label"), value);
+}
+
+std::unique_ptr<GraphRender> BuildResistanceReport()
+{
+    const std::vector<WireRecord>& words = FetchReportWords();
+
+    GraphBuilder b;
+    b.BeginStop("report");
+    b.PushContext("", "", /*positions*/ false);
+    int added = 0;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "line")
+            continue;
+        if (AddReportLine(b, "report/line/" + RecField(rec, "index"), rec))
+            added++;
+    }
+    if (added == 0) {
+        b.AddLabel(ControlId::Structural("report/none"),
+            []() { return Vocab::SurfaceUnavailable("Report reader"); });
+    }
+    b.PopContext();
+
+    std::string continueLabel;
+    if (const WireRecord* c = FindRecord(words, "continue"))
+        continueLabel = RecField(*c, "label");
+    AddScreenContinue(b, "report/continue", continueLabel);
+    return b.Build();
+}
+
+std::string ResistanceReportName()
+{
+    return NameFromHeader(FetchReportWords(), Vocab::ScreenMonthlyReportFallback);
+}
+
+// ---- the report's Chosen page (UIResistanceReport_ChosenEvents) ----
+//
+// One column per Chosen, met or not, then Continue. An unmet Chosen's column shows one phrase
+// (UNKNOWN CHOSEN) and gets one node; a met one reads identity, the knowledge meter (both ends
+// when it moved this month), any new knowledge level with its bullets, last month's activities,
+// and the planned action under the screen's own PLANNED ACTIVITY heading. The first knowledge
+// gain of a campaign draws a warning popup over all of it, and while that is up the screen's
+// Enter dismisses the popup rather than closing — so the recipe leads with the popup's words and
+// its button, and offers no Continue that would not do what it says.
+
+WireCache gChosenEventsWords(kChosenReaderClass, "DescribeChosenEvents");
+
+const std::vector<WireRecord>& FetchChosenEventsWords(const GameUI::ChosenEventsView& view)
+{
+    // Discriminated on the warning: dismissing it changes the graph (the Continue appears)
+    // without respawning a single widget.
+    return gChosenEventsWords.Get({view.screen}, view.warningShown ? 1 : 0);
+}
+
+std::unique_ptr<GraphRender> BuildChosenEvents()
+{
+    const GameUI::ChosenEventsView view = GameUI::ReadChosenEvents(gScreen);
+    const std::vector<WireRecord>& words = FetchChosenEventsWords(view);
+
+    GraphBuilder b;
+    int added = 0;
+
+    if (const WireRecord* warn = FindRecord(words, "warning")) {
+        b.BeginStop("warning");
+        b.PushContext("", "", /*positions*/ false);
+        if (AddLabelledLine(b, "chosenevents/warning/title", RecField(*warn, "title"), ""))
+            added++;
+        if (AddLabelledLine(b, "chosenevents/warning/text", RecField(*warn, "text"), ""))
+            added++;
+        b.PopContext();
+        // The popup's own button (ACCEPT), through the screen's input path: OnUnrealCommand
+        // routes Enter to OnPopupButton while bShowChosenWarningPopup is set.
+        std::string label = RecField(*warn, "button");
+        if (label.empty())
+            label = Vocab::PopupContinue;
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.OnActivate = []() { GameUI::SendScreenCommand(gScreen, GameUI::kCmdEnter); };
+        b.AddItem(ControlId::Structural("chosenevents/warning/button"), std::move(vt));
+        added++;
+    }
+
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "column")
+            continue;
+        const std::string index = RecField(rec, "index");
+        const std::string key = "chosenevents/" + index + "/";
+        b.BeginStop("column" + index);
+        b.PushContext("", "", /*positions*/ false);
+
+        const std::string unknown = RecField(rec, "unknown");
+        if (!unknown.empty()) {
+            // The column for a Chosen not yet met draws this one phrase and nothing else.
+            if (AddLabelledLine(b, key + "unknown", unknown, ""))
+                added++;
+            b.PopContext();
+            continue;
+        }
+
+        if (AddLabelledLine(b, key + "identity", JoinParts(rec, {"class", "name", "nick"}),
+                RecField(rec, "defeated")))
+            added++;
+
+        // The meter fills from last month's value to this one; when it moved, both ends are the
+        // content (the Chosen summary's rule), otherwise the one number.
+        const std::string before = RecField(rec, "before");
+        const std::string after = RecField(rec, "after");
+        std::string knowledge;
+        if (!after.empty()) {
+            knowledge = (!before.empty() && before != after)
+                ? Vocab::KnowledgeChange(atoi(before.c_str()), atoi(after.c_str()))
+                : Vocab::Percent(atoi(after.c_str()));
+        }
+        if (AddLabelledLine(b, key + "knowledge", RecField(rec, "knowlabel"), knowledge))
+            added++;
+
+        // A new knowledge level: the prefixed title, then its bullets (one to three).
+        if (AddLabelledLine(b, key + "gain", RecField(rec, "gain"), ""))
+            added++;
+        int bulletIndex = 0;
+        for (const std::string& bullet : RecFieldAll(rec, "bullet")) {
+            if (AddLabelledLine(b, key + "bullet/" + std::to_string(bulletIndex++), bullet, ""))
+                added++;
+        }
+
+        // Last month's activities under the game's own heading, one line each.
+        if (AddLabelledLine(b, key + "activities", RecField(rec, "acthead"), ""))
+            added++;
+        int actIndex = 0;
+        for (const std::string& act : RecFieldAll(rec, "act")) {
+            if (AddLabelledLine(b, key + "act/" + std::to_string(actIndex++), act, ""))
+                added++;
+        }
+
+        // The planned action: the heading as context, the name with its summary, the quote.
+        const std::string action = RecField(rec, "action");
+        const std::string summary = RecField(rec, "summary");
+        const std::string quote = RecField(rec, "quote");
+        if (!action.empty() || !summary.empty() || !quote.empty()) {
+            b.PushContext(RecField(rec, "actionheader"), "", /*positions*/ false);
+            if (AddLabelledLine(b, key + "action", action, summary, SpeakAgain(summary)))
+                added++;
+            if (AddLabelledLine(b, key + "quote", quote, ""))
+                added++;
+            b.PopContext();
+        }
+        b.PopContext();
+    }
+
+    if (added == 0) {
+        b.BeginStop("column0");
+        b.AddLabel(ControlId::Structural("chosenevents/none"),
+            []() { return Vocab::SurfaceUnavailable("Chosen reader"); });
+    }
+
+    // No Continue while the warning is up — the companion withholds the record, because the
+    // screen's Enter would dismiss the popup rather than close, and a node must do what it says.
+    if (const WireRecord* c = FindRecord(words, "continue"))
+        AddScreenContinue(b, "chosenevents/continue", RecField(*c, "label"));
+    else if (added == 0)
+        AddScreenContinue(b, "chosenevents/continue", std::string());
+
+    return b.Build();
+}
+
+std::string ChosenEventsName()
+{
+    return NameFromHeader(FetchChosenEventsWords(GameUI::ReadChosenEvents(gScreen)),
+        Vocab::ScreenChosenEventsFallback);
+}
+
 } // namespace
 
 const Recipe kChosenInfoRecipe{"chosen dossier", ProbeFocused<GameUI::FindChosenInfoScreen>,
@@ -3290,6 +3486,12 @@ const Recipe kBondScreenRecipe{"soldier bonds", ProbeFocused<GameUI::FindBondScr
 
 const Recipe kBondConfirmRecipe{"bond confirm", ProbeFocused<GameUI::FindBondConfirmScreen>,
     BuildBondConfirm, BondConfirmName};
+
+const Recipe kResistanceReportRecipe{"monthly report",
+    ProbeFocused<GameUI::FindResistanceReportScreen>, BuildResistanceReport, ResistanceReportName};
+
+const Recipe kChosenEventsRecipe{"chosen activity", ProbeFocused<GameUI::FindChosenEventsScreen>,
+    BuildChosenEvents, ChosenEventsName};
 
 } // namespace Recipes
 } // namespace MenuNavigator

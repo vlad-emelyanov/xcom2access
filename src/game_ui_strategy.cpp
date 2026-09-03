@@ -1589,6 +1589,46 @@ void* FindBondConfirmScreen()
     return FindFocusedStackScreen("UISoldierBondConfirmScreen", sFinder, sReported);
 }
 
+// ---- the monthly report and its Chosen page (docs/resistance-report-recon.md) ----
+
+namespace {
+
+// UIResistanceReport_ChosenEvents
+constexpr int32_t kChosenEventsRefsOffset = 0x630;  // ChosenRefs (TArray<StateObjectReference>)
+constexpr int32_t kChosenEventsFlagsOffset = 0x650; // bSimpleView, bShowChosenWarningPopup
+constexpr uint32_t kChosenEventsSimpleView = 0x1;
+constexpr uint32_t kChosenEventsWarning = 0x2;
+
+} // namespace
+
+void* FindChosenEventsScreen()
+{
+    static ScreenFinder sFinder{"UIResistanceReport_ChosenEvents"};
+    static bool sReported = false;
+    return FindFocusedStackScreen("UIResistanceReport_ChosenEvents", sFinder, sReported);
+}
+
+ChosenEventsView ReadChosenEvents(void* screen)
+{
+    ChosenEventsView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+    const uint32_t flags = ReadU32Raw(screen, kChosenEventsFlagsOffset);
+    v.warningShown = (flags & kChosenEventsWarning) != 0;
+    v.simpleView = (flags & kChosenEventsSimpleView) != 0;
+    const int32_t count = ReadArrayCountRaw(screen, kChosenEventsRefsOffset);
+    v.count = count < 0 ? 0 : count;
+    return v;
+}
+
+void* FindResistanceReportScreen()
+{
+    static ScreenFinder sFinder{"UIResistanceReport"};
+    static bool sReported = false;
+    return FindFocusedStackScreen("UIResistanceReport", sFinder, sReported);
+}
+
 } // namespace GameUI
 
 #ifdef _MSC_VER

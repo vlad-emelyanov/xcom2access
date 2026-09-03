@@ -342,6 +342,19 @@ inline std::string MeterLevel(int level, int max)
     return "level " + std::to_string(level) + " of " + std::to_string(max);
 }
 
+// ---- the monthly report and its Chosen page (docs/resistance-report-recon.md) ----
+//
+// Both screens name themselves from their own localized titles; these are the attach-window
+// fallbacks. The Avatar meter is drawn as pips with only its heading for text.
+inline constexpr const char* ScreenMonthlyReportFallback = "Monthly report";
+inline constexpr const char* ScreenChosenEventsFallback = "Chosen activity";
+/// A count against its maximum where the game draws pips (Avatar progress). Not Position() —
+/// "3 of 12" after a heading reads as a menu position — and not MeterLevel, which names a step.
+inline std::string Fraction(int value, int max)
+{
+    return std::to_string(value) + " out of " + std::to_string(max);
+}
+
 // The geoscape's mission tray. Almost nothing here is ours: each icon's Title and Body are the
 // game's own hover tooltip, already localized and already exactly what a sighted player reads.
 //

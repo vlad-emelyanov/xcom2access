@@ -55,4 +55,6 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Chosen dossier (`UIChosenInfo`) | `game_ui_strategy.cpp` | `X2AccessChosenReader.uc`, `chosen dossier` | — | `chosen-bond-recon.md` |
 | Chosen revealed / soldier captured (`UIChosenEncountered`, `UISoldierCaptured`) | `game_ui_popup.cpp` (class table) | `X2AccessPopupReader.uc`, `popup` | strategy.md | `chosen-bond-recon.md` §1.2-1.3 |
 | Soldier bonds (`UISoldierBondScreen`) + bond confirmation (`UISoldierBondConfirmScreen`) | `game_ui_strategy.cpp` | `X2AccessBondReader.uc`, `soldier bonds` + `bond confirm` | — | `chosen-bond-recon.md` |
+| Monthly council report (`UIResistanceReport`) | `game_ui_strategy.cpp` (finder only) | `X2AccessReportReader.uc`, `monthly report` | — | `resistance-report-recon.md` |
+| The report's Chosen page (`UIResistanceReport_ChosenEvents`) | `game_ui_strategy.cpp` | `X2AccessChosenReader.DescribeChosenEvents`, `chosen activity` | — | `resistance-report-recon.md` |
 
