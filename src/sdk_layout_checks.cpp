@@ -718,4 +718,22 @@ static_assert(offsetof(UEngine, TangentColorMaterialName) == 0x45C,
 static_assert(offsetof(UEngine, MaxRMSDForCombiningMappings) == 0x474,
     "UEngine flag dwords end before MaxRMSDForCombiningMappings");
 
+// ---- the Chosen dossier and the bond screens (docs/chosen-bond-recon.md §2) ----
+//
+// UIChosenInfo keeps only the tab index and the array it populated Flash from — the wire-cache
+// discriminator and the tab count. UISoldierBondScreen's flag dword at 0x410 is bitfields
+// (m_bFlipSort, m_bDirtySortHeaders, bSquadOnly), so m_eSortType right after it pins the layout
+// from the far side. UISoldierBondConfirmScreen, UIChosenEncountered and UISoldierCaptured are
+// read entirely companion-side and need no pin.
+static_assert(offsetof(AUIChosenInfo, CurrentChosenIndex) == 0x520,
+    "UIChosenInfo::CurrentChosenIndex");
+static_assert(offsetof(AUIChosenInfo, AllActiveChosen) == 0x524, "UIChosenInfo::AllActiveChosen");
+static_assert(offsetof(AUISoldierBondScreen, m_eSortType) == 0x414,
+    "UISoldierBondScreen::m_eSortType (the flag dword precedes it at 0x410)");
+static_assert(offsetof(AUISoldierBondScreen, UnitRef) == 0x4E4, "UISoldierBondScreen::UnitRef");
+static_assert(offsetof(AUISoldierBondScreen, List) == 0x4EC, "UISoldierBondScreen::List");
+static_assert(offsetof(AUISoldierBondListItem, UnitRef) == 0x4C4, "UISoldierBondListItem::UnitRef");
+static_assert(offsetof(AUISoldierBondListItem, ActivateBondButton) == 0x4CC,
+    "UISoldierBondListItem::ActivateBondButton");
+
 } // namespace

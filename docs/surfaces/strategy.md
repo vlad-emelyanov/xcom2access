@@ -146,6 +146,13 @@ speech is serial.
     or a `Package.Asset` dot in the ASCII path alphabet — so a one-word title survives, and so does
     any title in a non-Latin script). **Every asset drop is logged**, so a live run enumerates what
     the filter rejected instead of a line going silently missing.
+- ⛔ **A popup with NO Escape branch must send its own single button record.** The recipe's
+  fallback pair (Continue / Dismiss on Enter / Escape) exists for a popup that answered nothing,
+  and it assumes both keys do something. `UIChosenEncountered` and `UISoldierCaptured`
+  (`chosen-bond-recon.md` §1.2-1.3) answer Enter and Space only, so a Dismiss there would be a
+  node that does nothing when pressed — worse than no node. Their companion branches push one
+  button, and the screen's own `OnContinue` is reached through its input path because that is
+  where `UISoldierCaptured` fires its `SoldierCapturedClosed` event.
 - The transient half is the unglamorous file with the highest value in it: `UINarrativeCommLink`
   is how essentially ALL story dialogue in XCOM 2 is delivered, and without it a blind player gets
   the voice acting and nothing else — nothing at all in a language whose VO they do not have.

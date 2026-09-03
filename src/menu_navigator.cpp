@@ -513,6 +513,11 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     // The upgrade picker beside the facility picker: both are pushed over the room or the grid
     // they were opened from and raise only dialogs above themselves.
     &kPersonnelRecipe, &kChooseFacilityRecipe, &kChooseUpgradeRecipe, &kPromotionRecipe,
+    // The bond confirmation is pushed OVER the bond screen (and over the bond alert and the
+    // Training Center's slot dialog, both listed above); the bond screen is pushed over squad
+    // select, after action and the armory, all listed below. Neither raises anything but dialogs
+    // and the photobooth.
+    &kBondConfirmRecipe, &kBondScreenRecipe,
     &kArmoryLoadoutRecipe,
     // Below BOTH screens it opens: a slot asking for a soldier pushes UIPersonnel_CovertAction,
     // and the EDIT verb pushes UIArmory_Loadout. Above the Resistance Ring it was pushed over.
@@ -529,6 +534,10 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     // The mission blade: below every modal that pushes over it (dialogs, alerts, the sitrep
     // detail popup — all listed above), above the geoscape tray it covers.
     &kMissionBladeRecipe,
+    // The Chosen dossier: pushed over the geoscape (its HUD button and the map's own handler)
+    // and over an alert's Chosen panel — the popup recipe's topmost-only probe stands down for
+    // it there — and it raises nothing above itself.
+    &kChosenInfoRecipe,
     &kRoomBuildRecipe, &kRoomRecipe, &kGeoscapeRecipe,
     // The mission bookends, ABOVE the ambient tactical recipe they are pushed over. Sequential
     // with each other (the Chosen screen pops itself before pushing the summary), so their

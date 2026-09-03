@@ -43,6 +43,10 @@ constexpr const char* kPopupClasses[] = {
     "UISoldierBondAlert",
     "UIChosenFragmentRecovered",
     "UIChosenLevelUp",
+    // Two continue-only screens (docs/chosen-bond-recon.md §1.2-1.3). They answer Enter and Space
+    // at screen level and have NO Escape branch, so their companion record carries one button.
+    "UIChosenEncountered",
+    "UISoldierCaptured",
     "UIUFOAttack",
     "UISitRepInformation",
     "UIAdventOperations",

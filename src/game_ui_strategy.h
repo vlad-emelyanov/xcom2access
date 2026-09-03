@@ -734,4 +734,85 @@ bool ActivateHudVerb(const StrategyMapView& view, const HudVerb& verb);
 /// depends on it. Game thread only.
 bool ActivateTraySelection(const StrategyMapView& view, const TrayIcon& icon);
 
+// ---- the Chosen dossier (UIChosenInfo) — docs/chosen-bond-recon.md ----
+//
+// The Chosen database: four tab buttons (one per Chosen met, UNKNOWN CHOSEN for the rest) over one
+// dossier panel — counters, two meters, strengths, weaknesses, the rival faction. Every word is
+// pushed through MC.BeginFunctionOp with locals on both sides; what the screen RETAINS is the
+// state it populated Flash from (AllActiveChosen, SelectedChosen) and the tab index
+// (CurrentChosenIndex), so X2AccessChosenReader re-derives the panel from SelectedChosen exactly
+// as RefreshDisplay does — reveal filter included — and native reads only two integers.
+//
+// ⛔ SWITCHING CHOSEN IS A KEYBOARD DEAD END IN VANILLA: OnUnrealCommand takes FXS_DPAD_UP/DOWN
+// and the virtual stick only (no FXS_ARROW_*), and Enter, Space and Escape all CLOSE the screen.
+// On mouse+keyboard the second Chosen is reachable only by clicking its tab, so the recipe
+// supplies the switch through the screen's own SelectChosen().
+
+struct ChosenInfoView {
+    void* screen = nullptr;
+    int selected = -1; // CurrentChosenIndex — which tab the panel is describing
+    int count = 0;     // AllActiveChosen.Length — how many of the four tabs name a real Chosen
+};
+
+/// The focused UIChosenInfo, or null. Stack-managed (XComPresentationLayerBase pushes it, in
+/// both layers). Game thread only.
+void* FindChosenInfoScreen();
+
+ChosenInfoView ReadChosenInfo(void* screen);
+
+// ---- soldier bonds (UISoldierBondScreen) — docs/chosen-bond-recon.md §1.4 ----
+//
+// One soldier's bond page: the soldier and their bondmate up top, a sortable roster of every
+// other living soldier below (the crew, or the squad when bSquadOnly), each row showing rank,
+// class, compatibility, cohesion and — on rows where CanHaveBondAtLevel says so — a CREATE BOND
+// button. The rows are UISoldierBondListItem (a UIButton) and retain the UnitRef they were built
+// from and nothing else; the companion re-derives their cells the way UpdateData does.
+//
+// ⛔ MAKING A BOND IS MOUSE-ONLY IN VANILLA. The row's ActivateBondButton calls DisableNavigation()
+// and OnConfirmBond is reached from its mouse handler or FXS_BUTTON_A; the keyboard Enter is
+// OnSelectSoldier (switch the page to that soldier), and sorting is FXS_DPAD_LEFT/RIGHT +
+// FXS_BUTTON_L3 — controller constants all three. Tab / LeftShift cycle soldiers (outside the
+// squad screens), which the layer's own Tab displaces and re-provides on the soldier node.
+
+struct BondRow {
+    void* handle = nullptr; // UISoldierBondListItem
+    int index = 0;          // the list's own item index (SetSelectedIndex's)
+    int unitId = 0;         // UnitRef.ObjectID — the join key to the companion's row record
+    bool disabled = false;  // IsDisabled: bonded to someone else, in either direction
+    /// ActivateBondButton.bIsVisible — the game's own "a bond can be made with this one right
+    /// now" (UpdateData Show()s it exactly when CanHaveBondAtLevel passes). The documented
+    /// child-widget exception to never-gate-on-bIsVisible: a BUTTON's visibility is deliberate.
+    bool bondOffered = false;
+};
+
+struct BondScreenView {
+    void* screen = nullptr;
+    void* list = nullptr; // UISoldierBondScreen::List
+    std::vector<BondRow> rows;
+    int selected = -1;      // UIList::SelectedIndex
+    int unitId = 0;         // UnitRef.ObjectID — whose bonds these are; the wire-cache discriminator
+    bool squadOnly = false; // bSquadOnly — opened from squad select or after action
+    int sortType = 0;       // ESoldierBondSortType
+    bool flipSort = false;  // m_bFlipSort — the header arrow's direction
+};
+
+/// The focused UISoldierBondScreen, or null. Game thread only.
+void* FindBondScreen();
+
+BondScreenView ReadBondScreen(void* screen);
+
+/// P11 write-back into the roster. Game thread only.
+bool SetBondSelection(const BondScreenView& view, int index);
+
+// ---- bond confirmation (UISoldierBondConfirmScreen) — docs/chosen-bond-recon.md §1.5 ----
+//
+// "DEVELOP BOND - LEVEL n": the two soldiers, the benefits the new level brings, CONFIRM BOND.
+// Every word is companion-side (the screen retains the two unit states and the staff slot it was
+// opened from); activation is the screen's own input path — Enter is ConfirmClicked, Escape is
+// Cancel(), and Cancel EMPTIES the staff slots when the screen came from the Training Center, so
+// nothing here may reach the handlers any other way. No offsets.
+
+/// The focused UISoldierBondConfirmScreen, or null. Game thread only.
+void* FindBondConfirmScreen();
+
 } // namespace GameUI

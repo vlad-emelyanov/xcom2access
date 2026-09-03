@@ -88,6 +88,12 @@ function DescribePopup()
 	case 'UIChosenReveal':
 		DescribeChosenReveal(UIChosenReveal(Screen));
 		break;
+	case 'UIChosenEncountered':
+		DescribeChosenEncountered(UIChosenEncountered(Screen));
+		break;
+	case 'UISoldierCaptured':
+		DescribeSoldierCaptured(UISoldierCaptured(Screen));
+		break;
 	case 'UIUFOAttack':
 		DescribeUFOAttack(UIUFOAttack(Screen));
 		break;
@@ -383,6 +389,92 @@ private function PushTrait(UIChosenReveal Popup, XComGameState_AdventChosen Chos
 		PushLine(Trait.LocFriendlyName @ Trait.LocLongDescription);
 	else
 		PushLine(Popup.UnknownChosenTraitName @ Popup.UnknownChosenTraitDescription);
+}
+
+// A Chosen's first appearance on the map, right after the reveal cinematic
+// (docs/chosen-bond-recon.md §1.2). ⛔ ENTER AND SPACE ONLY — the screen has no Escape branch —
+// so this pushes ONE button, and the recipe's generic accept/cancel pair (which would offer a
+// Dismiss that does nothing) is never reached. The body carries an XGParam token for the Chosen's
+// name, filled as BuildScreen fills it. The level badge is a bare digit with no label anywhere on
+// the screen and is not spoken.
+private function DescribeChosenEncountered(UIChosenEncountered Popup)
+{
+	local XComGameState_AdventChosen Chosen;
+	local XGParamTag ParamTag;
+	local string Line;
+
+	if (Popup == none)
+		return;
+
+	PushHeader("UIChosenEncountered", Popup.ChosenEncounteredTitle);
+	PushLine(Popup.ChosenEncounteredLabel);
+
+	Chosen = XComGameState_AdventChosen(`XCOMHISTORY.GetGameStateForObjectID(Popup.ChosenRef.ObjectID));
+	if (Chosen != none)
+	{
+		Line = Chosen.GetChosenClassName();
+		class'X2AccessHelper'.static.AppendComma(Line, Chosen.GetChosenName());
+		class'X2AccessHelper'.static.AppendComma(Line, Chosen.GetChosenNickname());
+		PushLine(Line);
+
+		ParamTag = XGParamTag(`XEXPANDCONTEXT.FindTag("XGParam"));
+		ParamTag.StrValue0 = Chosen.GetChosenName();
+		PushLine(`XEXPAND.ExpandString(Popup.ChosenEncounteredBody));
+	}
+
+	PushButton(0, class'UIUtilities_Text'.default.m_strGenericContinue,
+		class'UIUtilities_Input'.const.FXS_KEY_ENTER);
+}
+
+// A soldier carried off by a Chosen — after the mission, or as a covert-action risk
+// (docs/chosen-bond-recon.md §1.3). Same Enter-only contract, and OnContinue is what fires the
+// SoldierCapturedClosed event, so the key must reach the screen rather than a CloseScreen poke.
+// ⚠ The screen puts the Chosen's NAME in its name slot and its CLASS in its nickname slot
+// ("CAPTURED BY <name> <class>"), and that order is kept.
+private function DescribeSoldierCaptured(UISoldierCaptured Popup)
+{
+	local XComGameState_AdventChosen Chosen;
+	local XComGameState_Unit Unit;
+	local X2SoldierClassTemplate SoldierClass;
+	local XGParamTag ParamTag;
+	local string Line;
+
+	if (Popup == none)
+		return;
+
+	Chosen = XComGameState_AdventChosen(`XCOMHISTORY.GetGameStateForObjectID(Popup.ChosenRef.ObjectID));
+	Unit = XComGameState_Unit(`XCOMHISTORY.GetGameStateForObjectID(Popup.TargetRef.ObjectID));
+
+	PushHeader("UISoldierCaptured", Popup.SoldierCapturedTitle);
+	PushLine(Popup.SoldierCapturedLabel);
+
+	if (Chosen != none && Unit != none)
+	{
+		ParamTag = XGParamTag(`XEXPANDCONTEXT.FindTag("XGParam"));
+		ParamTag.StrValue0 = Chosen.GetChosenName();
+		ParamTag.StrValue1 = Unit.GetFullName();
+		PushLine(`XEXPAND.ExpandString(Popup.SoldierCapturedBody));
+	}
+
+	if (Unit != none)
+	{
+		Line = Unit.GetName(eNameType_RankFull);
+		SoldierClass = Unit.GetSoldierClassTemplate();
+		if (SoldierClass != none)
+			class'X2AccessHelper'.static.AppendComma(Line, SoldierClass.DisplayName);
+		PushLine(Line);
+	}
+
+	if (Chosen != none)
+	{
+		Line = Popup.SoldierCapturedBy;
+		class'X2AccessHelper'.static.AppendJoined(Line, Chosen.GetChosenName(), " ");
+		class'X2AccessHelper'.static.AppendComma(Line, Chosen.GetChosenClassName());
+		PushLine(Line);
+	}
+
+	PushButton(0, class'UIUtilities_Text'.default.m_strGenericContinue,
+		class'UIUtilities_Input'.const.FXS_KEY_ENTER);
 }
 
 // The Avenger is under attack. Three real UIButtons here, unlike most of this family — but their

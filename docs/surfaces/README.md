@@ -50,4 +50,7 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Promotion / level-up (3 screens) | `game_ui_strategy.cpp` | `X2AccessPromotionReader.uc`, `promotion` | — | — (no recon; built straight from source) |
 | Covert actions | `game_ui_strategy.cpp` | `X2AccessCovertActionReader.uc`, `covert actions` | strategy.md | `covert-actions-recon.md` |
 | Resistance orders | `game_ui_strategy.cpp` | `X2AccessPolicyReader.uc`, `resistance orders` | strategy.md | — |
+| Chosen dossier (`UIChosenInfo`) | `game_ui_strategy.cpp` | `X2AccessChosenReader.uc`, `chosen dossier` | — | `chosen-bond-recon.md` |
+| Chosen revealed / soldier captured (`UIChosenEncountered`, `UISoldierCaptured`) | `game_ui_popup.cpp` (class table) | `X2AccessPopupReader.uc`, `popup` | strategy.md | `chosen-bond-recon.md` §1.2-1.3 |
+| Soldier bonds (`UISoldierBondScreen`) + bond confirmation (`UISoldierBondConfirmScreen`) | `game_ui_strategy.cpp` | `X2AccessBondReader.uc`, `soldier bonds` + `bond confirm` | — | `chosen-bond-recon.md` |
 

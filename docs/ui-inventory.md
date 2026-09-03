@@ -129,8 +129,8 @@ along. `avenger-view-recon.md` §14.
 | `UIPersonnel` + 10 subclasses | roster picker (`_Armory`, `_BarMemorial`, `_BoostSoldier`, `_BuildFacility`, `_ChooseResearch`, `_CovertAction`, `_LivingQuarters`, `_SpecialFeature`, `_SquadSelect`, `_TrainingCenter`) | ✅ personnel roster (family via class chain) |
 | `UIRecruitSoldiers` | recruit list | ⬜ **P1** |
 | `UIBarMemorial_Details` | fallen-soldier detail card | ⬜ P2 |
-| `UISoldierBondScreen` | bond overview for a soldier | ⬜ P2 |
-| `UISoldierBondConfirmScreen` | confirm-bond screen | ⬜ P2 |
+| `UISoldierBondScreen` | bond overview for a soldier | ◐ built — `soldier bonds` recipe + `X2AccessBondReader` (2026-09-03, unexercised live; `chosen-bond-recon.md`). The roster is a `GraphSheet`; CREATE BOND, sorting and the soldier cycle are re-provided |
+| `UISoldierBondConfirmScreen` | confirm-bond screen | ◐ built — `bond confirm` recipe, same reader (2026-09-03, unexercised live) |
 
 ## 7. Armory and soldier management
 
@@ -169,8 +169,8 @@ the pool itself are not cosmetic — P2, and the voice picker matters most.
 | `UIStrategyPolicy` | resistance orders | ✅ resistance orders recipe (`surfaces/strategy.md`) |
 | `UICovertActions` | covert action picker | ✅ covert actions recipe (`covert-actions-recon.md`) |
 | `UICovertActionReport` | covert action result | ⬜ **P1** — `covert-actions-recon.md` §8b |
-| `UIChosenInfo` | Chosen dossier | ⬜ P2 |
-| `UIChosenEncountered` | first-encounter overlay | ⬜ P2 (mostly cinematic) |
+| `UIChosenInfo` | Chosen dossier | ◐ built — `chosen dossier` recipe + `X2AccessChosenReader` (2026-09-03, unexercised live; `chosen-bond-recon.md`). ⛔ Vanilla switches Chosen on the D-pad only; the tab nodes re-provide it |
+| `UIChosenEncountered` | first-encounter overlay | ◐ built — popup recipe branch (2026-09-03, unexercised live). Enter-only in vanilla, so one button |
 | `UINotificationMenu` | notification list (opened from `UIToDoWidget`) | ⬜ P2, with the to-do widget work |
 | `UISkyrangerArrives` | squad-return overlay | ⬜ P3 |
 | `UIStrategyMap_BlackMarket`/`_BuyIntel`/`_Outpost`/`_PoiChoice`/`_VisitCommander` | EU/EW leftovers, zero references | 🚫 dead |
@@ -192,14 +192,14 @@ v1 punts (`_GPIntelOptions` cannot purchase; the sitrep info button has no node)
 ✅ recipe: `UIAlert` (118 variants), `UIAlert_DLC_Day60`, `UIAlert_DLC_Day90`,
 `UIFactionPopup`, `UIAbilityPopup`, `UISoldierBondAlert`, `UIChosenFragmentRecovered`,
 `UIChosenLevelUp`, `UIChosenReveal`, `UIUFOAttack`, `UISitRepInformation`, `UICombatLose`,
-`UIProgressDialogue`, `UIRedScreen`. ✅ transient reader: `UINarrativeCommLink`,
+`UIProgressDialogue`, `UIRedScreen`; ◐ `UIChosenEncountered`, `UISoldierCaptured` (2026-09-03,
+unexercised live — `chosen-bond-recon.md` §1.2-1.3). ✅ transient reader: `UINarrativeCommLink`,
 `UIEventNotices` (fed by `UIEventNoticesTactical`, which is an `Object`, not a screen),
 `UIStrategyTutorialBox`.
 
 | Remaining | What it is | Status |
 |---|---|---|
 | `UINarrativePopup` | skippable narrative popup (spawned by `XComPresentationLayerBase`) | ⬜ P2 — measure what triggers it |
-| `UISoldierCaptured` | Chosen captured a soldier | ⬜ P2 |
 
 ## 12. Mission bookends
 

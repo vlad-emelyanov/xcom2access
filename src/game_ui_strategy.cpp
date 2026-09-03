@@ -1478,6 +1478,117 @@ bool MoveTrayHover(const TrayIcon& icon, bool entering)
     return SendIconMouseEvent(icon.handle, entering ? kFxsLMouseIn : kFxsLMouseOut);
 }
 
+// ---- the Chosen dossier and the bond screens (docs/chosen-bond-recon.md §2) ----
+
+namespace {
+
+// UIChosenInfo
+constexpr int32_t kChosenInfoSelectedOffset = 0x520; // CurrentChosenIndex
+constexpr int32_t kChosenInfoAllOffset = 0x524;      // AllActiveChosen (TArray)
+
+// UISoldierBondScreen
+constexpr int32_t kBondScreenFlagsOffset = 0x410;    // m_bFlipSort, m_bDirtySortHeaders, bSquadOnly
+constexpr uint32_t kBondFlipSort = 0x1;
+constexpr uint32_t kBondSquadOnly = 0x4;
+constexpr int32_t kBondScreenSortTypeOffset = 0x414; // m_eSortType (a byte enum)
+constexpr int32_t kBondScreenUnitRefOffset = 0x4E4;  // UnitRef (StateObjectReference: ObjectID first)
+constexpr int32_t kBondScreenListOffset = 0x4EC;     // List
+
+// UISoldierBondListItem
+constexpr int32_t kBondRowUnitRefOffset = 0x4C4;    // UnitRef
+constexpr int32_t kBondRowBondButtonOffset = 0x4CC; // ActivateBondButton
+
+// The whole crew but one can be on this list — the personnel roster's bound, for the same reason.
+constexpr int kMaxBondRows = 256;
+
+// The stack-first finder every one of these screens shares, answering only while the screen is
+// the FOCUSED one — a bond screen under its own confirm screen has already lost the keys.
+void* FindFocusedStackScreen(const char* className, ScreenFinder& finder, bool& reported)
+{
+    void* screen = PreferStack(className, finder, reported);
+    return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
+}
+
+} // namespace
+
+void* FindChosenInfoScreen()
+{
+    static ScreenFinder sFinder{"UIChosenInfo"};
+    static bool sReported = false;
+    return FindFocusedStackScreen("UIChosenInfo", sFinder, sReported);
+}
+
+ChosenInfoView ReadChosenInfo(void* screen)
+{
+    ChosenInfoView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+    v.selected = ReadI32Raw(screen, kChosenInfoSelectedOffset);
+    // The COUNT only. The elements are game-state objects the companion resolves for itself off
+    // the same array, and a pointer read here would be a UObject held for nothing.
+    const int32_t count = ReadArrayCountRaw(screen, kChosenInfoAllOffset);
+    v.count = count < 0 ? 0 : count;
+    return v;
+}
+
+void* FindBondScreen()
+{
+    static ScreenFinder sFinder{"UISoldierBondScreen"};
+    static bool sReported = false;
+    return FindFocusedStackScreen("UISoldierBondScreen", sFinder, sReported);
+}
+
+BondScreenView ReadBondScreen(void* screen)
+{
+    BondScreenView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+
+    const uint32_t flags = ReadU32Raw(screen, kBondScreenFlagsOffset);
+    v.flipSort = (flags & kBondFlipSort) != 0;
+    v.squadOnly = (flags & kBondSquadOnly) != 0;
+    v.sortType = ReadU8Raw(screen, kBondScreenSortTypeOffset);
+    v.unitId = ReadI32Raw(screen, kBondScreenUnitRefOffset);
+
+    v.list = ReadPtrRaw(screen, kBondScreenListOffset);
+    if (!v.list)
+        return v;
+    v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
+
+    void* rows[kMaxBondRows] = {};
+    const int rowCount = TakeListItemsRaw("SoldierBonds: rows", v.list, rows, kMaxBondRows);
+    for (int i = 0; i < rowCount; i++) {
+        if (!rows[i])
+            continue;
+        BondRow r;
+        r.handle = rows[i];
+        r.index = i;
+        r.unitId = ReadI32Raw(rows[i], kBondRowUnitRefOffset);
+        // UIButton::IsDisabled — UpdateData's SetDisabled(true) for a soldier already bonded to
+        // someone else. The game still lets the row be selected; it is the bond it refuses.
+        r.disabled = (ReadU32Raw(rows[i], kButtonFlagsOffset) & kButtonDisabled) != 0;
+        void* bondButton = ReadPtrRaw(rows[i], kBondRowBondButtonOffset);
+        r.bondOffered
+            = bondButton && (ReadU32Raw(bondButton, kPanelFlagsOffset) & kPanelVisible) != 0;
+        v.rows.push_back(r);
+    }
+    return v;
+}
+
+bool SetBondSelection(const BondScreenView& view, int index)
+{
+    return SetListIndex(view.list, index);
+}
+
+void* FindBondConfirmScreen()
+{
+    static ScreenFinder sFinder{"UISoldierBondConfirmScreen"};
+    static bool sReported = false;
+    return FindFocusedStackScreen("UISoldierBondConfirmScreen", sFinder, sReported);
+}
+
 } // namespace GameUI
 
 #ifdef _MSC_VER

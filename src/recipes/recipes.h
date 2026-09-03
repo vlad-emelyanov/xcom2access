@@ -42,6 +42,9 @@ extern const Recipe kMissionBladeRecipe;
 extern const Recipe kPromotionRecipe;
 extern const Recipe kCovertActionsRecipe;
 extern const Recipe kStrategyPolicyRecipe;
+extern const Recipe kChosenInfoRecipe;   // the Chosen dossier (UIChosenInfo)
+extern const Recipe kBondScreenRecipe;   // soldier bonds (UISoldierBondScreen)
+extern const Recipe kBondConfirmRecipe;  // bond confirmation (UISoldierBondConfirmScreen)
 
 // ---- Avenger (recipe_avenger.cpp) ----
 extern const Recipe kRoomRecipe;
@@ -59,7 +62,7 @@ extern const Recipe kMissionSummaryRecipe;
 extern const Recipe kChosenSummaryRecipe;
 
 // How many of the above kRecipes must list. Pinned by a static_assert next to the array.
-constexpr std::size_t kRecipeCount = 29;
+constexpr std::size_t kRecipeCount = 32;
 
 } // namespace Recipes
 } // namespace MenuNavigator

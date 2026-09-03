@@ -307,6 +307,32 @@ inline constexpr const char* PersonnelSortBy = "sort by";
 inline constexpr const char* SortAscending = "ascending";
 inline constexpr const char* SortDescending = "descending";
 
+// ---- the Chosen dossier and the bond screens (docs/chosen-bond-recon.md) ----
+//
+// Every word on these three screens is the game's own, re-derived by the companion from the state
+// the screen cached. These are the attach-window fallbacks and the words for what the game draws
+// with no text at all: a bond level as a digit inside an icon, a meter filled to a level.
+inline constexpr const char* ScreenChosenInfoFallback = "Chosen database";
+inline constexpr const char* ScreenBondsFallback = "Soldier bonds";
+inline constexpr const char* ScreenBondConfirmFallback = "Confirm bond";
+/// The bond roster with nobody else on it (a squad of one). The game draws an empty list and no
+/// line, and an empty stop is indistinguishable from a broken one.
+inline constexpr const char* BondsEmpty = "No other soldiers";
+/// The CREATE BOND button's label is the row class's own localized string and rides the wire;
+/// this is only for the window before the companion answers.
+inline constexpr const char* BondCreateFallback = "Create bond";
+/// The bondmate panel's level, which Flash draws as a digit inside the bond icon.
+inline std::string BondLevel(int level)
+{
+    return "bond level " + std::to_string(level);
+}
+/// A meter the game fills to one of a few discrete steps under a heading and no text (the
+/// dossier's HUNT PROGRESS). Not Position(): "1 of 3" after a heading reads as a menu position.
+inline std::string MeterLevel(int level, int max)
+{
+    return "level " + std::to_string(level) + " of " + std::to_string(max);
+}
+
 // The geoscape's mission tray. Almost nothing here is ours: each icon's Title and Body are the
 // game's own hover tooltip, already localized and already exactly what a sighted player reads.
 //

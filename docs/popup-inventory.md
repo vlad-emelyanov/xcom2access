@@ -281,7 +281,9 @@ Both halves compile: the ASI builds clean and `X2AccessCompanion` compiles **0 e
 Covered: `UIAlert` (+ both DLC subclasses), `UIFactionPopup`, `UIAbilityPopup`,
 `UISoldierBondAlert`, `UIChosenFragmentRecovered`, `UIChosenLevelUp`, `UIChosenReveal`,
 `UIUFOAttack`, `UIProgressDialogue`, `UICombatLose`, `UISitRepInformation`,
-`UIAdventOperations`, plus §4's three transient surfaces.
+`UIAdventOperations`, plus §4's three transient surfaces. Added 2026-09-03, unexercised:
+`UIChosenEncountered` and `UISoldierCaptured` (`chosen-bond-recon.md` §1.2-1.3) — both answer
+Enter/Space and NOT Escape, so their record carries a single button.
 
 The popup family hand-transcribes **no offsets** and adds **no `static_assert`s** — activation is
 each screen's own `OnUnrealCommand`, so there are no button offsets to pin.

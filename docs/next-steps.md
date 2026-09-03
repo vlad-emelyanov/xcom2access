@@ -36,6 +36,24 @@ and whatever was verified about them does not carry. `just go-full` first, then 
 three; the unification commit is the one that matters, because its whole claim is that two
 surfaces now say the same thing and only a live pass can show that they do.
 
+**The Chosen dossier and the bond screens** (2026-09-03, built, never run —
+`chosen-bond-recon.md` §8 is the checklist; the `chosen dossier`, `soldier bonds` and `bond
+confirm` recipes + `X2AccessChosenReader` / `X2AccessBondReader`, and two new popup-family
+branches for `UIChosenEncountered` / `UISoldierCaptured`). Needs a campaign with at least one
+Chosen met and a soldier or two with cohesion. The load-bearing items: (a) on the dossier, Enter
+on the second Chosen's tab must make the `dossier` stop re-read for THAT Chosen — the wire cache
+is keyed on the screen pointer and discriminated on `CurrentChosenIndex`, and if the words do not
+change it is that discriminator that broke; (b) on the bond screen opened from the armory's BONDS
+entry, Left/Right on the soldier node must cycle soldiers with the roster respawning under it,
+Right onto `CREATE BOND` + Enter must reach the confirm screen, and Enter on a row that offers no
+bond must switch the page to that soldier; (c) opened from after action (`bSquadOnly`) the
+soldier node must be plain text and a plain row's Enter must do nothing but log the refused verb
+— vanilla gates `OnSelectSoldier` there; (d) the two continue-only popups must offer ONE button
+and no `<XGParam` markup may reach the ring. Then the audit: no double space, no asset path, and
+the cohesion column must not collapse to one value across the roster. ⚠ The confirm screen's
+Cancel EMPTIES the Training Center's bond slots when it was opened from one — that is vanilla,
+and Escape there must be tried once from the slot path to hear what the room says afterwards.
+
 **The mission bookends** (2026-09-03, built, never run — `mission-summary-recon.md`; the
 `mission summary` and `chosen summary` recipes, both Flash-capture-only, no companion). This is
 the last hole in the post-mission chain, so the pass is one mission end walked all the way
@@ -128,8 +146,10 @@ confirmed in play):
 - **Resistance orders**: the READ-ONLY visit (`PolicyReadOnly` on the name, verbs raising
   `UICantChangeOrders`), a direct swap of two slotted cards, Backspace-cancels-hold, and the
   empty-hands refusals `PolicyCantPick` / `PolicyCantMove`.
-- **After action**: a KIA card's Memorialize into the photobooth and the bond icon into
-  `UISoldierBondScreen` — neither of those two screens has a recipe, so expect Escape-only.
+- **After action**: a KIA card's Memorialize into the photobooth (no recipe — expect
+  Escape-only) and the bond icon into `UISoldierBondScreen`, which now has the `soldier bonds`
+  recipe (its own first pass is under live-run debt above) — from here it opens in `bSquadOnly`
+  mode, the branch where vanilla gates the soldier switch and the cycle off.
 - **Objectives readout** (`Ctrl+X`): the Avenger / dark-event branch and the counter-row branch,
   which need the ship and a Retaliation-style mission respectively.
 - **Mission blade**: a GOps blade with 2+ missions (the selector buttons are mouse-only in

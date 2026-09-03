@@ -2669,5 +2669,627 @@ std::string PromotionName()
 const Recipe kPromotionRecipe{
     "promotion", ProbeFocused<GameUI::FindPromotionScreen>, BuildPromotion, PromotionName};
 
+// ---- the Chosen dossier (UIChosenInfo) — docs/chosen-bond-recon.md ----
+//
+// Four tabs over one dossier. Every word is re-derived by X2AccessChosenReader from the screen's
+// own SelectedChosen — the object it populated Flash from — so the reveal filter and the UNKNOWN
+// CHOSEN placeholders come out exactly as the screen drew them. Native reads two integers: the
+// selected tab (the cache discriminator, since SelectChosen re-pushes the whole panel without
+// respawning a widget) and the tab count.
+//
+// Vanilla switches Chosen on the D-pad only and closes on Enter, Space and Escape alike, so the
+// tab nodes' Enter is the one verb this recipe re-provides — through the screen's own
+// SelectChosen(), which plays the sounds, moves the Flash highlight and refreshes the panel.
+
+namespace {
+
+constexpr const char* kChosenReaderClass = "X2AccessChosenReader";
+WireCache gChosenWords(kChosenReaderClass, "DescribeChosenInfo");
+
+const std::vector<WireRecord>& FetchChosenWords(const GameUI::ChosenInfoView& view)
+{
+    // Keyed on the screen, discriminated by the tab: the pointer set never changes on this
+    // screen, so without `extra` the first Chosen's dossier would be served for every tab.
+    return gChosenWords.Get({view.screen}, view.selected);
+}
+
+// The record of `kind` carrying `index`, optionally under a `which` section.
+const WireRecord* FindIndexed(const std::vector<WireRecord>& records, const char* kind, int index,
+    const char* which = nullptr)
+{
+    for (const WireRecord& rec : records) {
+        if (RecField(rec, "kind") != kind)
+            continue;
+        if (which && RecField(rec, "which") != which)
+            continue;
+        if (atoi(RecField(rec, "index").c_str()) == index)
+            return &rec;
+    }
+    return nullptr;
+}
+
+// A read-only "LABEL: value" line as one node — label part then value part, so the per-kind
+// filter still applies and a missing half degrades to the other rather than to a bare colon.
+// Returns whether anything was added.
+bool AddLabelledLine(GraphBuilder& b, const std::string& id, const std::string& label,
+    const std::string& value, std::function<void()> tooltip = nullptr)
+{
+    if (label.empty() && value.empty())
+        return false;
+    NodeVtable vt;
+    vt.Type = &TextType();
+    vt.Announcements.emplace_back(NodeAnnouncement::Static(label.empty() ? value : label));
+    vt.Announcements.back().Kind = AnnouncementKinds::Label;
+    if (!label.empty() && !value.empty()) {
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(value));
+        vt.Announcements.back().Kind = AnnouncementKinds::Value;
+    }
+    vt.OnTooltip = std::move(tooltip);
+    b.AddItem(ControlId::Structural(id), std::move(vt));
+    return true;
+}
+
+// A re-speak of a long description on Space, or nothing when there is none.
+std::function<void()> SpeakAgain(const std::string& text)
+{
+    if (text.empty())
+        return nullptr;
+    return [text]() { TTS::SpeakInterrupt(text); };
+}
+
+// The Continue node the dossier ends on: the SCREEN's own input path (OnUnrealCommand →
+// OnContinue), which is where its close sound and nav-help teardown live.
+void AddScreenContinue(GraphBuilder& b, const std::string& id, std::string label)
+{
+    if (label.empty())
+        label = Vocab::PopupContinue;
+    b.BeginStop("actions");
+    NodeVtable vt;
+    vt.Type = &ButtonType();
+    vt.Announcements.emplace_back(NodeAnnouncement::Static(std::move(label)));
+    vt.Announcements.back().Kind = AnnouncementKinds::Label;
+    vt.OnActivate = []() { GameUI::SendScreenCommand(gScreen, GameUI::kCmdEnter); };
+    b.AddItem(ControlId::Structural(id), std::move(vt));
+}
+
+// One section of traits — strengths or weaknesses — as its own stop, the game's heading as the
+// context and one node per trait. The unknown wording for an unrevealed trait arrives from the
+// companion already substituted, so nothing here can leak a name the game withholds.
+void AddTraitStop(GraphBuilder& b, const std::vector<WireRecord>& words, const char* which)
+{
+    std::string title;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") == "section" && RecField(rec, "which") == which) {
+            title = RecField(rec, "title");
+            break;
+        }
+    }
+    bool any = false;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "trait" || RecField(rec, "which") != which)
+            continue;
+        if (!any) {
+            b.BeginStop(which);
+            b.PushContext(title);
+            any = true;
+        }
+        // Space re-speaks the description alone: a long trait text is what a player most often
+        // wants a second time, and the label-then-value readout is the whole thing.
+        const std::string desc = RecField(rec, "desc");
+        AddLabelledLine(b, std::string("chosen/") + which + "/" + RecField(rec, "index"),
+            RecField(rec, "name"), desc, SpeakAgain(desc));
+    }
+    if (any)
+        b.PopContext();
+}
+
+std::unique_ptr<GraphRender> BuildChosenInfo()
+{
+    const GameUI::ChosenInfoView view = GameUI::ReadChosenInfo(gScreen);
+    const std::vector<WireRecord>& words = FetchChosenWords(view);
+
+    GraphBuilder b;
+
+    // The tab strip: four slots on the Flash stage, met Chosen first, UNKNOWN CHOSEN after.
+    // Nothing joins gFocus — the tabs are Flash buttons the screen highlights itself through
+    // SelectChosen, and the game's navigator never holds them.
+    b.BeginStop("chosen");
+    b.StartRow("chosen/tabs");
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "tab")
+            continue;
+        const int index = atoi(RecField(rec, "index").c_str());
+        const bool unknown = !RecField(rec, "unknown").empty();
+        std::string label = unknown ? RecField(rec, "label") : JoinParts(rec, {"name", "nick"});
+        if (label.empty())
+            label = Vocab::TabFallback(index);
+
+        NodeVtable vt;
+        vt.Type = &TabType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (unknown) {
+            // On screen — a sighted player counts the greyed slots to learn how many Chosen are
+            // unmet — but not actionable: vanilla's click on one wraps to Chosen 0, which is not
+            // a verb worth re-providing.
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        } else {
+            const bool selected = RecField(rec, "selected") == "1";
+            vt.Announcements.emplace_back(NodeAnnouncement(
+                [selected]() { return selected ? std::string(Vocab::Selected) : std::string(); },
+                false, AnnouncementKinds::Selected));
+            vt.OnActivate = [index]() {
+                CallCompanionVerb(gChosenWords, kChosenReaderClass, "SelectChosen", index);
+            };
+            // Read LIVE after the press: a flag captured at build time can only describe the
+            // state before it.
+            vt.StateText = [index]() {
+                const std::vector<WireRecord>& fresh
+                    = FetchChosenWords(GameUI::ReadChosenInfo(gScreen));
+                const WireRecord* tab = FindIndexed(fresh, "tab", index);
+                if (!tab)
+                    return std::string();
+                std::string line = JoinParts(*tab, {"name", "nick"});
+                if (RecField(*tab, "selected") == "1")
+                    AppendPhrase(line, Vocab::Selected);
+                return line;
+            };
+        }
+        b.AddItem(ControlId::Structural("chosen/tab/" + std::to_string(index)), std::move(vt));
+    }
+    b.EndRow();
+
+    // The dossier — a document, so positions are suppressed (the mission summary's arrangement).
+    b.BeginStop("dossier");
+    b.PushContext("", "", /*positions*/ false);
+    int added = 0;
+    if (const WireRecord* id = FindRecord(words, "identity")) {
+        // The DEFEATED badge rides as the value: present only when bDefeated, so an undefeated
+        // Chosen's line ends on the nickname and nothing is said about an unlit badge.
+        if (AddLabelledLine(b, "chosen/identity", JoinParts(*id, {"class", "name", "nick"}),
+                RecField(*id, "defeated")))
+            added++;
+    }
+    int statIndex = 0;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "stat")
+            continue;
+        if (AddLabelledLine(b, "chosen/stat/" + std::to_string(statIndex++),
+                RecField(rec, "label"), RecField(rec, "value")))
+            added++;
+    }
+    if (const WireRecord* k = FindRecord(words, "knowledge")) {
+        // The meter is a percentage the game passes as a number; the current action is the
+        // meter's own caption, already prefixed by the screen ("CURRENT ACTION: …").
+        std::string value;
+        const std::string percent = RecField(*k, "percent");
+        if (!percent.empty())
+            value = Vocab::Percent(atoi(percent.c_str()));
+        AppendPhrase(value, RecField(*k, "action"));
+        if (AddLabelledLine(b, "chosen/knowledge", RecField(*k, "label"), value))
+            added++;
+    }
+    if (const WireRecord* h = FindRecord(words, "hunt")) {
+        // No text operand at all on this meter — the game fills it to FragmentLevel and says
+        // nothing — so the words are ours, keyed on the same number.
+        std::string value;
+        const std::string level = RecField(*h, "level");
+        const std::string max = RecField(*h, "max");
+        if (!level.empty() && !max.empty())
+            value = Vocab::MeterLevel(atoi(level.c_str()), atoi(max.c_str()));
+        if (AddLabelledLine(b, "chosen/hunt", RecField(*h, "label"), value))
+            added++;
+    }
+    if (const WireRecord* f = FindRecord(words, "faction")) {
+        if (AddLabelledLine(b, "chosen/faction", RecField(*f, "label"),
+                JoinParts(*f, {"type", "name"})))
+            added++;
+    }
+    if (added == 0) {
+        // Recognised the screen, got no words — the companion is not loaded or the screen is
+        // mid-build. Said out loud: the player still has to leave the screen, and the Continue
+        // below is how.
+        b.AddLabel(ControlId::Structural("chosen/none"),
+            []() { return Vocab::SurfaceUnavailable("Chosen reader"); });
+    }
+    b.PopContext();
+
+    AddTraitStop(b, words, "strengths");
+    AddTraitStop(b, words, "weaknesses");
+
+    std::string continueLabel;
+    if (const WireRecord* c = FindRecord(words, "continue"))
+        continueLabel = RecField(*c, "label");
+    AddScreenContinue(b, "chosen/continue", continueLabel);
+
+    return b.Build();
+}
+
+std::string ChosenInfoName()
+{
+    return NameFromHeader(
+        FetchChosenWords(GameUI::ReadChosenInfo(gScreen)), Vocab::ScreenChosenInfoFallback);
+}
+
+// ---- soldier bonds (UISoldierBondScreen) — docs/chosen-bond-recon.md §1.4 ----
+//
+// THE ROSTER IS A TABLE and is emitted as one (GraphSheet, the personnel roster's arrangement):
+// column 0 is the soldier and carries the whole row as extra parts; RANK, CLASS, COMPATIBILITY
+// and COHESION sit under the game's own headings; a fifth, heading-less column holds the CREATE
+// BOND button on exactly the rows the game shows it on. Two verbs vanilla leaves to the mouse
+// come back here — making the bond (the button called DisableNavigation(), so Enter never reaches
+// it) and changing the sort (controller constants only) — and the soldier cycle vanilla put on
+// Tab and LeftShift, both displaced by the layer's own keys, comes back as Left/Right on the
+// soldier node, only while the game itself offers it.
+
+constexpr const char* kBondReaderClass = "X2AccessBondReader";
+WireCache gBondWords(kBondReaderClass, "DescribeBonds");
+WireCache gBondConfirmWords(kBondReaderClass, "DescribeBondConfirm");
+
+const std::vector<WireRecord>& FetchBondWords(const GameUI::BondScreenView& view)
+{
+    // Rows respawn on every sort, switch and refresh (ClearItems + a fresh panel per soldier), so
+    // their pointers are the key; the screen's soldier is the discriminator, because the header
+    // describes them and a switch that happened to land every new row on an old address would
+    // otherwise keep the previous soldier's name.
+    return FetchWordsKeyedOnRows(gBondWords, view.screen, view.rows, view.unitId);
+}
+
+bool CallBondVerb(const char* funcName, int value)
+{
+    return CallCompanionVerb(gBondWords, kBondReaderClass, funcName, value);
+}
+
+SheetConfig BondSheetConfig()
+{
+    return SheetConfig{Vocab::TableBlank, Vocab::RoleTable, &TextType()};
+}
+
+// A read-only cell of the bond sheet.
+NodeVtable BondCell(const std::string& text)
+{
+    NodeVtable vt;
+    vt.Type = &TextType();
+    vt.Announcements.emplace_back(NodeAnnouncement::Static(text));
+    vt.Announcements.back().Kind = AnnouncementKinds::Label;
+    return vt;
+}
+
+// The sort-header line the personnel roster settled on: "sort by RANK, ascending".
+std::string SortLine(const WireRecord& rec)
+{
+    std::string line = std::string(Vocab::PersonnelSortBy) + " " + RecField(rec, "label");
+    if (RecField(rec, "selected") == "1")
+        AppendPhrase(line,
+            RecField(rec, "desc") == "1" ? Vocab::SortDescending : Vocab::SortAscending);
+    return line;
+}
+
+std::string BondSoldierLine(const std::vector<WireRecord>& words)
+{
+    const WireRecord* soldier = FindRecord(words, "soldier");
+    return soldier ? JoinParts(*soldier, {"rank", "name"}) : std::string();
+}
+
+std::unique_ptr<GraphRender> BuildBondScreen()
+{
+    const GameUI::BondScreenView view = GameUI::ReadBondScreen(gScreen);
+    const std::vector<WireRecord>& words = FetchBondWords(view);
+    const WireRecord* header = FindRecord(words, "header");
+    const WireRecord* soldier = FindRecord(words, "soldier");
+    // Both gates are the GAME's: cycle is UpdateNavHelp's own HasSoldiersToCycleThrough outside
+    // the squad screens, switch is OnUnrealCommand's !IsInSquadScreen().
+    const bool canCycle = soldier && RecField(*soldier, "cycle") == "1";
+    const bool canSwitch = soldier && RecField(*soldier, "switch") == "1";
+    std::string bondLabel = header ? RecField(*header, "bondlabel") : std::string();
+    if (bondLabel.empty())
+        bondLabel = Vocab::BondCreateFallback;
+
+    GraphBuilder b;
+
+    // Whose bonds, and with whom. A spinner while the game offers the soldier cycle, plain text
+    // otherwise.
+    b.BeginStop("soldier");
+    b.PushContext("", "", /*positions*/ false);
+    {
+        std::string line = BondSoldierLine(words);
+        if (line.empty())
+            line = Vocab::SoldierFallback;
+        NodeVtable vt;
+        vt.Type = canCycle ? &SpinnerType() : &TextType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(line));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (canCycle) {
+            // NextSoldier()/PrevSoldier() through the companion — the game's own CycleToSoldier,
+            // which also re-points every armory screen underneath at the new soldier.
+            vt.OnAdjust = [](int sign, bool) { CallBondVerb("CycleSoldier", sign > 0 ? 1 : -1); };
+            vt.StateText = []() {
+                return BondSoldierLine(FetchBondWords(GameUI::ReadBondScreen(gScreen)));
+            };
+        }
+        b.AddItem(ControlId::Structural("bonds/soldier"), std::move(vt));
+    }
+    if (const WireRecord* mate = FindRecord(words, "bondmate")) {
+        // The panel's level is a digit inside the icon and its cohesion a bar — both get words.
+        // With no bondmate the record carries the title alone (the game's own "No bondmate").
+        std::string value;
+        const std::string level = RecField(*mate, "level");
+        if (!level.empty())
+            value = Vocab::BondLevel(atoi(level.c_str()));
+        AppendPhrase(value, JoinParts(*mate, {"name", "nick", "rank", "class", "compat"}));
+        const std::string cohesion = RecField(*mate, "cohesion");
+        if (!cohesion.empty())
+            AppendPhrase(value, Vocab::Percent(atoi(cohesion.c_str())));
+        AddLabelledLine(b, "bonds/bondmate", RecField(*mate, "title"), value);
+    }
+    b.PopContext();
+
+    // The sort header — the personnel roster's stop, word for word, over this screen's five
+    // UIFlipSortButtons (which retain Label, bArrowVisible and bArrowFlipped).
+    bool anySort = false;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "sort" || RecField(rec, "label").empty())
+            continue;
+        const int index = atoi(RecField(rec, "index").c_str());
+        if (!anySort) {
+            b.BeginStop("sort");
+            b.StartRow("bonds/sort");
+            anySort = true;
+        }
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(SortLine(rec)));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        // The header's own mouse handler: deselects the others, flips when already selected,
+        // re-sorts. Re-read afterwards rather than closing over the flag.
+        vt.OnActivate = [index]() { CallBondVerb("ClickBondSort", index); };
+        vt.StateText = [index]() {
+            const std::vector<WireRecord>& fresh
+                = FetchBondWords(GameUI::ReadBondScreen(gScreen));
+            const WireRecord* rec = FindIndexed(fresh, "sort", index);
+            return rec ? SortLine(*rec) : std::string();
+        };
+        b.AddItem(ControlId::Structural("bonds/sort/" + std::to_string(index)), std::move(vt));
+    }
+    if (anySort)
+        b.EndRow();
+
+    b.BeginStop("list");
+    if (view.rows.empty()) {
+        // The game draws an empty list and no line here, so the line is ours.
+        std::string text = Vocab::BondsEmpty;
+        text += ". ";
+        text += Vocab::CommodityLeaveHint;
+        b.AddLabel(ControlId::Structural("bonds/empty"), [text]() { return text; });
+        AddResourceStop(b);
+        return b.Build();
+    }
+
+    // The companion's headings, in the row's own cell order, with a BLANK fifth for the CREATE
+    // BOND column the screen draws no heading over (positional, so the blank is sent, not
+    // dropped).
+    std::vector<std::string> columns;
+    if (const WireRecord* cols = FindRecord(words, "cols"))
+        columns = RecFieldAll(*cols, "col");
+
+    GraphSheet sheet(b, "bonds/", BondSheetConfig());
+    sheet.Region("", columns);
+
+    ControlId start;
+    bool haveStart = false;
+    const int rowCount = static_cast<int>(view.rows.size());
+    int position = 0;
+
+    for (const GameUI::BondRow& row : view.rows) {
+        const WireRecord* rec = FindIndexed(words, "row", row.index);
+        std::string name = rec ? RecField(*rec, "name") : std::string();
+        if (name.empty())
+            name = Vocab::SoldierFallback;
+        std::vector<std::string> cells
+            = rec ? RecFieldAll(*rec, "cell") : std::vector<std::string>();
+        // The wire's own column order (X2AccessBondReader.AppendColumns): rank, class,
+        // compatibility, cohesion — and cohesion arrives as the bare percentage the bar is filled
+        // to, so it takes its unit here.
+        if (cells.size() >= 4 && !cells[3].empty())
+            cells[3] = Vocab::Percent(atoi(cells[3].c_str()));
+
+        const int index = row.index;
+        const bool offered = row.bondOffered && !row.disabled;
+        position++;
+
+        NodeVtable primary;
+        primary.Type = &ButtonType();
+        primary.Announcements.emplace_back(NodeAnnouncement::Static(name));
+        primary.Announcements.back().Kind = AnnouncementKinds::Label;
+        for (size_t c = 0; c < cells.size() && c < 4; c++) {
+            if (cells[c].empty())
+                continue;
+            primary.Announcements.emplace_back(NodeAnnouncement::Static(cells[c]));
+            primary.Announcements.back().Kind = AnnouncementKinds::Value;
+        }
+        if (offered) {
+            // The CREATE BOND button as an attention part: a whole affordance a sighted player
+            // sees on the row, heard here without arrowing right for it.
+            primary.Announcements.emplace_back(NodeAnnouncement::Static(bondLabel));
+            primary.Announcements.back().Kind = kKindAttention;
+        }
+        if (row.disabled) {
+            primary.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            primary.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        }
+        // Enter on the row: the bond when the game offers one — the prominent button IS what a
+        // sighted player clicks on that row — else vanilla's own Enter (switch the page to this
+        // soldier) where vanilla allows it. Shift+Enter is the switch regardless, so a row that
+        // offers a bond keeps the other verb too.
+        if (offered)
+            primary.OnActivate = [index]() { CallBondVerb("ConfirmBond", index); };
+        else if (canSwitch)
+            primary.OnActivate = [index]() { CallBondVerb("SwitchSoldier", index); };
+        if (canSwitch)
+            primary.OnActivateShift = [index]() { CallBondVerb("SwitchSoldier", index); };
+        // A sheet is raw mode underneath and stamps no positions; "4 of 20" is one of the facts a
+        // player most wants on a roster, so it is added explicitly under the position kind.
+        primary.Announcements.emplace_back(
+            NodeAnnouncement::Static(Vocab::Position(position, rowCount)));
+        primary.Announcements.back().Kind = AnnouncementKinds::Position;
+
+        // Explicit LOGICAL columns: an empty cell is simply not emitted (a sparse column is not
+        // landable — the personnel roster's rule) while the columns after it keep their numbers,
+        // and the CREATE BOND cell is a real button rather than a text producer.
+        std::vector<std::pair<int, NodeVtable>> cellNodes;
+        for (size_t c = 0; c < cells.size() && c < 4; c++) {
+            if (!cells[c].empty())
+                cellNodes.emplace_back(static_cast<int>(c) + 1, BondCell(cells[c]));
+        }
+        if (offered) {
+            NodeVtable bond;
+            bond.Type = &ButtonType();
+            bond.Announcements.emplace_back(NodeAnnouncement::Static(bondLabel));
+            bond.Announcements.back().Kind = AnnouncementKinds::Label;
+            bond.OnActivate = [index]() { CallBondVerb("ConfirmBond", index); };
+            cellNodes.emplace_back(5, std::move(bond));
+        }
+        sheet.RowAt(std::move(primary), row.handle, std::move(cellNodes));
+
+        // Every cell inherits the row's list index: acting from column 3 must act on the row you
+        // are in, and the write-back is what the screen's own handlers read.
+        for (int col = 0; col <= 5; col++) {
+            std::string key = GraphSheet::RowKey("bonds/", row.handle, col);
+            gFocus[key] = FocusTarget{index, nullptr, false, nullptr};
+            if (col == 0 && !haveStart && (index == view.selected || position == 1)) {
+                start = ControlId::Referenced(row.handle, key);
+                haveStart = index == view.selected;
+            }
+        }
+    }
+    sheet.Finish();
+
+    // Land on the roster: the screen name already carries the soldier, and the list is what the
+    // player came to act on.
+    if (start.IsValid())
+        b.SetStart(std::move(start));
+
+    AddResourceStop(b);
+    return b.Build();
+}
+
+std::string BondScreenName()
+{
+    return NameFromHeader(
+        FetchBondWords(GameUI::ReadBondScreen(gScreen)), Vocab::ScreenBondsFallback);
+}
+
+bool SetBondListIndex(void* screen, int index)
+{
+    return GameUI::SetBondSelection(GameUI::ReadBondScreen(screen), index);
+}
+
+// ---- bond confirmation (UISoldierBondConfirmScreen) — docs/chosen-bond-recon.md §1.5 ----
+//
+// Two soldiers, the benefits the new level brings, CONFIRM BOND. Enter and Escape are the
+// SCREEN's own input path: ConfirmClicked runs the level-1 creation or the Training Center
+// project and then the poster dialog, and Cancel() empties the staff slots this screen may have
+// been opened from — a Click() on the button or a CloseScreen() poke would lose one of those.
+
+const std::vector<WireRecord>& FetchBondConfirmWords()
+{
+    return gBondConfirmWords.Get({gScreen});
+}
+
+std::unique_ptr<GraphRender> BuildBondConfirm()
+{
+    const std::vector<WireRecord>& words = FetchBondConfirmWords();
+
+    GraphBuilder b;
+    b.BeginStop("bond");
+    b.PushContext("", "", /*positions*/ false);
+    int added = 0;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "soldier")
+            continue;
+        const std::string line = JoinParts(rec, {"rank", "class", "name"});
+        if (line.empty())
+            continue;
+        b.AddLabel(ControlId::Structural("bondconfirm/soldier/" + RecField(rec, "index")),
+            [line]() { return line; });
+        added++;
+    }
+    b.PopContext();
+
+    bool anyBenefit = false;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "benefit")
+            continue;
+        if (!anyBenefit) {
+            std::string title;
+            if (const WireRecord* heading = FindRecord(words, "benefits"))
+                title = RecField(*heading, "label");
+            b.PushContext(title);
+            anyBenefit = true;
+        }
+        const std::string desc = RecField(rec, "desc");
+        if (AddLabelledLine(b, "bondconfirm/benefit/" + RecField(rec, "index"),
+                RecField(rec, "name"), desc, SpeakAgain(desc)))
+            added++;
+    }
+    if (anyBenefit)
+        b.PopContext();
+    if (added == 0) {
+        b.AddLabel(ControlId::Structural("bondconfirm/none"),
+            []() { return Vocab::SurfaceUnavailable("Bond reader"); });
+    }
+
+    // The buttons: CONFIRM BOND on Enter, cancel on Escape — both through the screen's own
+    // OnUnrealCommand. Labels are the companion's; the generic pair stands in when it answered
+    // nothing, because a modal a blind player cannot leave is worse than one that reads badly.
+    struct Choice {
+        std::string label;
+        int cmd;
+    };
+    std::vector<Choice> choices;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "button")
+            continue;
+        const std::string label = RecField(rec, "label");
+        if (!label.empty())
+            choices.push_back({label, atoi(RecField(rec, "cmd").c_str())});
+    }
+    if (choices.empty()) {
+        choices.push_back({std::string(Vocab::PopupContinue), GameUI::kCmdEnter});
+        choices.push_back({std::string(Vocab::PopupDismiss), GameUI::kCmdEscape});
+    }
+    b.BeginStop("buttons");
+    b.StartRow("bondconfirm/buttons");
+    for (size_t i = 0; i < choices.size(); i++) {
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(choices[i].label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.OnActivate = [cmd = choices[i].cmd]() { GameUI::SendScreenCommand(gScreen, cmd); };
+        b.AddItem(
+            ControlId::Structural("bondconfirm/button/" + std::to_string(i)), std::move(vt));
+    }
+    b.EndRow();
+    return b.Build();
+}
+
+std::string BondConfirmName()
+{
+    return NameFromHeader(FetchBondConfirmWords(), Vocab::ScreenBondConfirmFallback);
+}
+
+} // namespace
+
+const Recipe kChosenInfoRecipe{"chosen dossier", ProbeFocused<GameUI::FindChosenInfoScreen>,
+    BuildChosenInfo, ChosenInfoName};
+
+// SetListIndex is the roster's; the header and the sort strip hang off plain panels.
+const Recipe kBondScreenRecipe{"soldier bonds", ProbeFocused<GameUI::FindBondScreen>,
+    BuildBondScreen, BondScreenName, SetBondListIndex};
+
+const Recipe kBondConfirmRecipe{"bond confirm", ProbeFocused<GameUI::FindBondConfirmScreen>,
+    BuildBondConfirm, BondConfirmName};
+
 } // namespace Recipes
 } // namespace MenuNavigator
