@@ -1669,6 +1669,430 @@ std::string ResearchUnlockedName()
     return view.header.empty() ? std::string(Vocab::ScreenResearchUnlocked) : view.header;
 }
 
+// ---- the black market (UIBlackMarket entry menu, UIBlackMarket_Sell) ----
+//
+// The geoscape POI's shop is three screens, and the BUY side is a UISimpleCommodityScreen the
+// commodity recipe above already reads. These are the other two — game_ui_avenger.h for what each
+// retains, docs/surfaces/avenger.md "Black market" for the rules.
+//
+// THE ENTRY MENU is mouse-only in vanilla: BuildScreen calls Navigator.Clear(), and the key
+// branches in OnUnrealCommand are FXS_BUTTON_A and FXS_BUTTON_X, both controller constants — so a
+// keyboard player can reach the shop and never buy or sell. One stop in the screen's own order:
+// the welcome line (one of seven at random, retained nowhere, so it comes off the Flash capture
+// and is simply absent when the capture has let it go), the month's interests (the caption plus
+// the sentence the companion re-expands through the screen's own GetInterestsString), then BUY
+// and SELL INVENTORY as buttons — label, greyed state and the game's own reason for it (the
+// tooltip RefreshButtons parks on a disabled button) — activated through UIButton.Click so the
+// screen's OnBuyClicked / OnSellClicked run their own guards.
+//
+// THE TRADING POST already walks on the keyboard — Up/Down through the list, Left/Right on a row
+// for the quantity, Enter to confirm — and lacks every WORD: a row pushes its name and four
+// columns straight into Flash and keeps only NumSelling, Price and the item reference; the card,
+// the headings and the running total are Flash-only too. It draws column headings, so it is a
+// SHEET: column 0 is the item name carrying the row's cells as heading-prefixed parts (the flat
+// reading), and the cells to its right are the same facts under the game's own headings. The
+// quantity verb is the kernel's ADJUST on +/-: in a sheet Left/Right are column travel and cannot
+// also be the game's quantity keys, so the row's OnAdjust sends the row its own FXS_ARROW_RIGHT /
+// FXS_ARROW_LEFT and speaks the new count and line total. Enter anywhere is the SCREEN's Enter
+// (OnConfirmButtonClicked), because that is what the screen itself does with the key ahead of its
+// navigator — and nothing is marked for sale until the player marks it.
+
+constexpr const char* kBlackMarketReaderClass = "X2AccessBlackMarketReader";
+
+// The entry menu's one companion fact, the interest sentence, keyed on the screen alone: it is
+// fixed for the month, and RefreshButtons (which runs on every return to this screen) never
+// touches it.
+WireCache gBlackMarketWords(kBlackMarketReaderClass, "DescribeBlackMarket");
+
+// The trading post's words — names, owned counts, interest flags, the card. Keyed on the rows and
+// the SELECTION (the card is the selection's shadow, exactly as on the commodity list) and
+// deliberately NOT on the quantities: +/- changes NumSelling, which native reads off the row, and
+// never a word the companion supplied — so a press costs no outbound call. The owned count is
+// carried RAW (Item.Quantity) for the same reason: the row draws owned minus selling, and the
+// subtraction is done here against the live number.
+WireCache gSellWords(kBlackMarketReaderClass, "DescribeBlackMarketSell");
+
+const std::vector<WireRecord>& FetchSellWords(const GameUI::SellView& view)
+{
+    return FetchWordsKeyedOnRows(gSellWords, view.screen, view.rows, view.selected);
+}
+
+// One of the entry menu's two buttons.
+void AddMarketButton(GraphBuilder& b, const char* key, const GameUI::BlackMarketButton& button,
+    bool sellSide)
+{
+    if (!button.handle || button.label.empty())
+        return;
+
+    // Not in gFocus: Navigator.Clear() left these buttons in no navigator, so there is nothing
+    // for the game's focus to follow onto — Click() is the whole activation.
+    NodeVtable vt;
+    vt.Type = &ButtonType();
+    vt.Announcements.emplace_back(NodeAnnouncement::Static(button.label));
+    vt.Announcements.back().Kind = AnnouncementKinds::Label;
+    if (button.disabled) {
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+        vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        if (!button.reason.empty()) {
+            // The game's own why — SOLD OUT THIS MONTH, EMPTY INVENTORY — which a sighted player
+            // reads off the hover tooltip and which is the only explanation the screen gives.
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(button.reason));
+            vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+        }
+    }
+    // Offered even when greyed: UIButton.Click refuses a disabled button itself, and the pointer
+    // is re-read on the press rather than closed over — RefreshButtons runs on every
+    // OnReceiveFocus, so the button can have changed under a graph one poll old.
+    vt.OnActivate = [sellSide]() {
+        GameUI::BlackMarketView live = GameUI::ReadBlackMarket(gScreen);
+        GameUI::ClickButton(sellSide ? live.sell.handle : live.buy.handle);
+    };
+    vt.OnTooltip = PanelTooltipAction(button.handle);
+    b.AddItem(ControlId::Structural(key), std::move(vt));
+}
+
+std::unique_ptr<GraphRender> BuildBlackMarket()
+{
+    GameUI::BlackMarketView view = GameUI::ReadBlackMarket(gScreen);
+    const std::vector<WireRecord>& records = gBlackMarketWords.Get({view.screen});
+
+    GraphBuilder b;
+    b.BeginStop("market");
+
+    // The welcome line, while the capture still holds it. Build-time text: BuildScreen pushes it
+    // once and nothing repaints it for the life of the screen.
+    if (!view.quote.empty())
+        b.AddLabel(ControlId::Structural("market/quote"), [text = view.quote]() { return text; });
+
+    // "INTERESTS THIS MONTH:" and the sentence, as one node — the caption alone says nothing and
+    // the sentence names its own subject. The caption is the screen's own localized var; the
+    // sentence is the companion's re-expansion, empty when the market wants nothing this month
+    // (GetInterestsString returns "" and the game draws the caption over a blank).
+    std::string interests;
+    if (const WireRecord* rec = FindRecord(records, "interest"))
+        interests = RecField(*rec, "text");
+    const std::string interestLine = JoinPhrases(view.interestTitle, interests);
+    if (!interestLine.empty()) {
+        b.AddLabel(
+            ControlId::Structural("market/interests"), [interestLine]() { return interestLine; });
+    }
+
+    AddMarketButton(b, "market/buy", view.buy, /*sellSide*/ false);
+    AddMarketButton(b, "market/sell", view.sell, /*sellSide*/ true);
+
+    AddResourceStop(b);
+    return b.Build();
+}
+
+std::string BlackMarketName()
+{
+    const GameUI::BlackMarketView view = GameUI::ReadBlackMarket(gScreen);
+    return view.title.empty() ? std::string(Vocab::ScreenBlackMarketFallback) : view.title;
+}
+
+// ---- the trading post ----
+
+SheetConfig SellSheetConfig()
+{
+    return SheetConfig{Vocab::TableBlank, Vocab::RoleTable, &TextType()};
+}
+
+const WireRecord* FindSellRow(const std::vector<WireRecord>& records, int index)
+{
+    for (const WireRecord& rec : records) {
+        if (RecField(rec, "kind") == "row" && atoi(RecField(rec, "index").c_str()) == index)
+            return &rec;
+    }
+    return nullptr;
+}
+
+// A heading and its value, the way the flat reading and the total line say them: "QTY 3". Empty
+// when the value is, so a column the row is not drawing contributes no part.
+std::string Headed(const std::string& heading, const std::string& value)
+{
+    if (value.empty())
+        return std::string();
+    if (heading.empty())
+        return value;
+    return heading + " " + value;
+}
+
+// The four cells a row draws, from the numbers native read and the owned count the companion
+// carried. `owned` < 0 means the companion had no answer, and the QTY cell stays blank.
+struct SellCells {
+    std::string qty;     // Item.Quantity - NumSelling, as the row draws it
+    std::string cost;    // the credits prefix and the unit price
+    std::string selling; // NumSelling — the row draws "-" for none; the number is what it means
+    std::string total;   // prefix and price × selling; EMPTY when nothing is marked, as the row's is
+};
+
+SellCells ComposeSellCells(const GameUI::SellRow& row, int owned, const std::string& prefix)
+{
+    SellCells c;
+    if (owned >= 0)
+        c.qty = std::to_string(owned - row.selling);
+    c.cost = prefix + std::to_string(row.price);
+    c.selling = std::to_string(row.selling);
+    if (row.selling > 0)
+        c.total = prefix + std::to_string(row.price * row.selling);
+    return c;
+}
+
+int SellOwned(const WireRecord* rec)
+{
+    if (!rec)
+        return -1;
+    const std::string qty = RecField(*rec, "qty");
+    return qty.empty() ? -1 : atoi(qty.c_str());
+}
+
+std::string SellPrefix(const std::vector<WireRecord>& records)
+{
+    const WireRecord* header = FindRecord(records, "header");
+    return header ? RecField(*header, "prefix") : std::string();
+}
+
+// What a +/- press changed, read LIVE off the row's own numbers: "SELL 2, TOTAL §40". The cells
+// re-render from the same numbers, so this is the reading the next arrow press confirms.
+std::string SellRowState(int index)
+{
+    const GameUI::SellView live = GameUI::ReadBlackMarketSell(gScreen);
+    const std::vector<WireRecord>& records = FetchSellWords(live);
+    for (const GameUI::SellRow& row : live.rows) {
+        if (row.index != index)
+            continue;
+        const SellCells cells
+            = ComposeSellCells(row, SellOwned(FindSellRow(records, index)), SellPrefix(records));
+        std::string line = Headed(live.sellLabel, cells.selling);
+        AppendPhrase(line, Headed(live.totalLabel, cells.total));
+        return line;
+    }
+    return std::string();
+}
+
+// The footer's running total, live: "TOTAL §40".
+std::string SellTotalLine()
+{
+    const GameUI::SellView live = GameUI::ReadBlackMarketSell(gScreen);
+    const std::string prefix = SellPrefix(FetchSellWords(live));
+    return Headed(live.totalLabel, prefix + std::to_string(live.saleAmount));
+}
+
+void ConfirmSale()
+{
+    GameUI::ConfirmBlackMarketSale(GameUI::ReadBlackMarketSell(gScreen));
+    // A sale respawns every row (PopulateData → ClearItems), and the fresh panels can land on the
+    // freed addresses — the WireCache hazard — so the words are dropped rather than trusted.
+    gSellWords.Invalidate();
+}
+
+// One metadata cell, built by hand rather than through GraphSheet::Row so it can carry the row's
+// adjust verb and its state line — the sheet passes activate, secondary and tooltip down to its
+// cells, and those two are this screen's own.
+NodeVtable SellCell(const std::string& text, const std::string& rowName, int index)
+{
+    NodeVtable vt;
+    vt.Type = &TextType();
+    vt.Announcements.emplace_back(NodeAnnouncement::Static(text));
+    vt.Announcements.back().Kind = AnnouncementKinds::Label;
+    vt.SearchText = [rowName]() { return rowName; };
+    vt.OnAdjust = [index](int sign, bool) {
+        GameUI::AdjustBlackMarketSellRow(GameUI::ReadBlackMarketSell(gScreen), index, sign);
+    };
+    vt.StateText = [index]() { return SellRowState(index); };
+    return vt;
+}
+
+// The card — PopulateItemCard's lines, one node each, read at ANNOUNCE time with the build-time
+// text as the fallback, for the reason the commodity card earned it: the card is repopulated the
+// instant our write-back moves the selection, and the graph is up to one poll old.
+void BuildSellCard(GraphBuilder& b, const WireRecord& card)
+{
+    struct Line {
+        const char* label;
+        const char* value;
+    };
+    const Line lines[] = {
+        {nullptr, "title"},
+        {"costLabel", "cost"},
+        {nullptr, "interested"},
+        {nullptr, "desc"},
+    };
+    bool any = false;
+    for (const Line& line : lines) {
+        if (RecField(card, line.value).empty())
+            continue;
+        if (!any) {
+            b.BeginStop("details");
+            any = true;
+        }
+        std::string fallback = ComposeCardLine(card, line.label, line.value);
+        b.AddLabel(ControlId::Structural(std::string("sell/card/") + line.value),
+            [labelKey = std::string(line.label ? line.label : ""),
+                valueKey = std::string(line.value), fallback]() {
+                const std::vector<WireRecord>& fresh
+                    = FetchSellWords(GameUI::ReadBlackMarketSell(gScreen));
+                const WireRecord* live = FindRecord(fresh, "card");
+                if (!live)
+                    return fallback;
+                std::string text = ComposeCardLine(
+                    *live, labelKey.empty() ? nullptr : labelKey.c_str(), valueKey.c_str());
+                return text.empty() ? fallback : text;
+            });
+    }
+}
+
+std::unique_ptr<GraphRender> BuildBlackMarketSell()
+{
+    GameUI::SellView view = GameUI::ReadBlackMarketSell(gScreen);
+    const std::vector<WireRecord>& records = FetchSellWords(view);
+    const std::string prefix = SellPrefix(records);
+
+    GraphBuilder b;
+    b.BeginStop("items");
+
+    if (view.rows.empty()) {
+        // Transient at most: PopulateData closes the screen itself when nothing is left to sell.
+        b.AddLabel(ControlId::Structural("sell/empty"), []() {
+            return std::string(Vocab::CommodityEmpty) + ". " + Vocab::CommodityLeaveHint;
+        });
+        return b.Build();
+    }
+
+    // The headings, in the order the row draws its columns: quantity owned, unit value, number
+    // selling, line total. ⚠ The pairing of heading to column is read off the .uc's push order
+    // and the loc strings, not off the Flash layout — the first live pass checks it against a
+    // screenshot (docs/next-steps.md).
+    const std::vector<std::string> columns
+        = {view.quantityLabel, view.costLabel, view.sellLabel, view.totalLabel};
+
+    GraphSheet sheet(b, "sell/", SellSheetConfig());
+    // No region label: the screen is already named by the recipe, and a second title here would
+    // repeat it on every entry.
+    sheet.Region("", columns);
+
+    ControlId start;
+    bool haveStart = false;
+    const int rowCount = static_cast<int>(view.rows.size());
+    int position = 0;
+
+    for (const GameUI::SellRow& row : view.rows) {
+        const WireRecord* rec = FindSellRow(records, row.index);
+        std::string name = rec ? RecField(*rec, "name") : std::string();
+        if (name.empty())
+            name = Vocab::SellItemFallback;
+        const bool interested = rec && RecField(*rec, "interested") == "1";
+        const SellCells cells = ComposeSellCells(row, SellOwned(rec), prefix);
+        const int index = row.index;
+        position++;
+
+        NodeVtable primary;
+        primary.Type = &TextType();
+        primary.Announcements.emplace_back(NodeAnnouncement::Static(name));
+        primary.Announcements.back().Kind = AnnouncementKinds::Label;
+        // The row's other cells as extra parts, each under its heading — "QTY 3, COST §20" —
+        // because unlike a roster's rank or class a bare number here means nothing without one.
+        // Value-kind, declaration order, left to right as the row is drawn; the selling pair only
+        // once something is marked, which is when the row draws them.
+        const std::string parts[] = {Headed(columns[0], cells.qty), Headed(columns[1], cells.cost),
+            row.selling > 0 ? Headed(columns[2], cells.selling) : std::string(),
+            Headed(columns[3], cells.total)};
+        for (const std::string& part : parts) {
+            if (part.empty())
+                continue;
+            primary.Announcements.emplace_back(NodeAnnouncement::Static(part));
+            primary.Announcements.back().Kind = AnnouncementKinds::Value;
+        }
+        if (interested) {
+            // The market's premium item. The screen sorts these to the top and the card says
+            // VERY INTERESTED for the selected one — and the selection is on this row whenever it
+            // is read, because the focus write-back puts it there.
+            primary.Announcements.emplace_back(NodeAnnouncement::Static(view.interestedLabel));
+            primary.Announcements.back().Kind = kKindAttention;
+        }
+        // A sheet is raw mode underneath, so the builder stamps no automatic positions; "3 of 9"
+        // is added explicitly, Position-kind so the per-kind filter still governs it.
+        primary.Announcements.emplace_back(
+            NodeAnnouncement::Static(Vocab::Position(position, rowCount)));
+        primary.Announcements.back().Kind = AnnouncementKinds::Position;
+
+        primary.OnActivate = ConfirmSale;
+        primary.OnAdjust = [index](int sign, bool) {
+            GameUI::AdjustBlackMarketSellRow(GameUI::ReadBlackMarketSell(gScreen), index, sign);
+        };
+        primary.StateText = [index]() { return SellRowState(index); };
+
+        std::vector<std::pair<int, NodeVtable>> cellNodes;
+        if (!cells.qty.empty())
+            cellNodes.emplace_back(1, SellCell(cells.qty, name, index));
+        cellNodes.emplace_back(2, SellCell(cells.cost, name, index));
+        cellNodes.emplace_back(3, SellCell(cells.selling, name, index));
+        // Sparse when nothing is marked: the row draws nothing there, and an unlandable column
+        // keeps its number, so Up/Down still match the TOTAL column across rows.
+        if (!cells.total.empty())
+            cellNodes.emplace_back(4, SellCell(cells.total, name, index));
+
+        sheet.RowAt(std::move(primary), row.handle, std::move(cellNodes));
+
+        // Every cell inherits the row's list index: the selection is what the card shadows, and a
+        // player pressing + from column 3 is pressing it on the row they are in.
+        for (int col = 0; col <= 4; col++) {
+            std::string key = GraphSheet::RowKey("sell/", row.handle, col);
+            gFocus[key] = FocusTarget{index, nullptr, false, nullptr};
+            if (col == 0 && !haveStart && (index == view.selected || position == 1)) {
+                start = ControlId::Referenced(row.handle, key);
+                haveStart = index == view.selected;
+            }
+        }
+    }
+    sheet.Finish();
+
+    // The footer: the running total and CONFIRM. Both live — the total moves on every +/- and
+    // the button greys itself the moment the total is zero (UpdateTotalValue).
+    b.BeginStop("confirm");
+    b.AddLabel(ControlId::Structural("sell/total"), []() { return SellTotalLine(); });
+    if (view.confirm && !view.confirmLabel.empty()) {
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(view.confirmLabel));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.Announcements.emplace_back(NodeAnnouncement(
+            []() {
+                return GameUI::ReadBlackMarketSell(gScreen).confirmDisabled
+                    ? std::string(Vocab::Disabled)
+                    : std::string();
+            },
+            false, AnnouncementKinds::Enabled));
+        // The screen's own Enter rather than Click(): OnConfirmButtonClicked answers a greyed
+        // button with the game's refusal sound, where Click() would answer it with nothing.
+        vt.OnActivate = ConfirmSale;
+        vt.StateText = SellTotalLine;
+        b.AddItem(ControlId::Structural("sell/confirm"), std::move(vt));
+    }
+
+    if (const WireRecord* card = FindRecord(records, "card"))
+        BuildSellCard(b, *card);
+
+    AddResourceStop(b);
+
+    // Land where the game does: BuildScreen ends with List.SetSelectedIndex(0, true) under
+    // Navigator.SetSelected(List), so the list — not the footer — is where a sighted player is.
+    if (start.IsValid())
+        b.SetStart(std::move(start));
+    return b.Build();
+}
+
+std::string BlackMarketSellName()
+{
+    return NameFromHeader(FetchSellWords(GameUI::ReadBlackMarketSell(gScreen)),
+        Vocab::ScreenBlackMarketSellFallback);
+}
+
+bool SetBlackMarketSellListIndex(void* screen, int index)
+{
+    return GameUI::SetBlackMarketSellSelection(GameUI::ReadBlackMarketSell(screen), index);
+}
+
 } // namespace
 
 // ---- the recipes this file defines ----
@@ -1729,6 +2153,17 @@ const Recipe kResearchReportRecipe{
 const Recipe kResearchUnlockedRecipe{"research unlocked",
     ProbeFocused<GameUI::FindResearchUnlockedScreen>,
     BuildResearchUnlocked, ResearchUnlockedName};
+
+// The shop's entry menu: pushed over the geoscape by the POI, and UNDER both of its own screens —
+// the Buy side (the commodity recipe) and the trading post — so it lists after both. No
+// SetListIndex: two buttons in no navigator.
+const Recipe kBlackMarketRecipe{"black market", ProbeFocused<GameUI::FindBlackMarketScreen>,
+    BuildBlackMarket, BlackMarketName};
+
+// The trading post: pushed over the entry menu, and only the game's dialogs stack over it.
+const Recipe kBlackMarketSellRecipe{"black market sell",
+    ProbeFocused<GameUI::FindBlackMarketSellScreen>, BuildBlackMarketSell, BlackMarketSellName,
+    SetBlackMarketSellListIndex};
 
 // ---- the Avenger HUD (UIAvengerHUD) — the ant farm's ambient Tab layer ----
 //

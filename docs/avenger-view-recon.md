@@ -2025,3 +2025,76 @@ does with `SelectedStaffSlot`, and whether the picker's rows are present on the 
 after it opens — `PopulateListSequentially` adds them one per realized item, so an early
 render may see an empty list and the candidate-only graph must be re-rendered by the differ
 as they arrive.
+
+## 19. The black market (2026-09-03, built from source, unexercised)
+
+**Status: BUILT, not run.** `FindBlackMarketScreen` / `ReadBlackMarket` /
+`FindBlackMarketSellScreen` / `ReadBlackMarketSell` in `src/game_ui_avenger.cpp`, the
+`black market` and `black market sell` recipes in `src/recipes/recipe_avenger.cpp`, companion
+`X2AccessBlackMarketReader.uc`. Rules: `surfaces/avenger.md` "Black market". Measured from
+`SrcOrig` and the generated SDK only — no `/gui`, no `/props`, no screenshot yet.
+
+## 19.1 Three screens, one already read
+
+`XComHQPresentationLayer.UIBlackMarket()` spawns `UIBlackMarket` (the POI's
+`UIStrategyMapItem_BlackMarket` opens it, and so does a finished scan); its two buttons call
+`UIBlackMarketBuy()` → `UIBlackMarket_Buy extends UISimpleCommodityScreen` (§14's family,
+already read) and `UIBlackMarketSell()` → `UIBlackMarket_Sell extends UIScreen`, which is NOT
+in the family: its own `UIList` of `UIBlackMarket_SellItem extends UIPanel` rows and its own
+`UpdateItemCard` push. The dead `UIStrategyMap_BlackMarket` (`ui-inventory.md`) is unrelated.
+
+## 19.2 The entry menu — what a sighted player sees, what is retained
+
+`BuildScreen` draws: a random welcome line (`m_strWelcome[Rand(7)]` → `SetMenuQuote`), the
+interest block (`SetMenuInterest` with `m_strInterestTitle` and `GetInterestsString()`), BUY
+(`Button1`, 0x558) and SELL INVENTORY (`Button2`, 0x560), a hidden `Button3`, the greeble
+footer (SECURING LINE / RECEIVING TRANSMISSION / BLACK MARKET — decorative, not read), and the
+HUD's Back nav help. `RefreshButtons` (also on every `OnReceiveFocus`) greys BUY with
+`m_strEmptyThisMonth` and SELL with `m_strEmptyInventory` as `SetDisabled` tooltips.
+
+| Fact | Retained where | Read by |
+|---|---|---|
+| button labels | `UIButton.Text` (InitButton → SetText) | native |
+| greyed state | `UIButton.IsDisabled` | native |
+| greyed reason | the tooltip manager (`SetDisabled(true, reason)`) | native `ReadPanelTooltip` |
+| interest caption | `m_strInterestTitle` (0x520) | native |
+| interest sentence | nowhere — `GetInterestsString()` is a game-state expansion | companion, re-run |
+| welcome line | nowhere — the random index is not stored | Flash capture, best effort |
+
+**Keyboard in vanilla: none.** `Navigator.Clear()` in `BuildScreen`; `OnUnrealCommand` accepts
+`FXS_BUTTON_A` (buy) and `FXS_BUTTON_X` (sell) only, plus Escape to close. So the recipe's
+activation is `UIButton.Click()` — the delegate path, with the screen's own guards.
+
+## 19.3 The trading post — a table with the words in Flash
+
+`UIBlackMarket_SellItem.PopulateData` pushes FIVE strings through `populateData`: the name,
+`Item.Quantity - NumSelling`, `§Price`, `NumSelling` (or "-" when zero), and `§Price×NumSelling`
+(or "" when zero). It retains `NumSelling` (0x400), `ItemRef` (0x404), `ItemTemplate`, `Price`
+(0x410) and the `BlackMarketItemPrice`. `UpdateSellInfo` pushes the captions — INVENTORY, SELL,
+TOTAL, CONFIRM, QTY — all localized vars on the screen (0x430-0x480); `UpdateSellTotal` pushes
+the running total (`SaleAmount`, 0x410, retained); `UpdateItemCard` pushes image, title,
+COST caption, price, VERY INTERESTED (or ""), an empty warning slot, and the brief summary.
+
+**Keyboard in vanilla: complete but wordless.** `Navigator.SetSelected(List)`, Up/Down through
+the list, the row's own `OnUnrealCommand` answers Left/Right with `ChangeQuantity(∓1)`, the
+screen's `OnUnrealCommand` answers Enter/Space with `OnConfirmButtonClicked` (no confirmation
+dialog — that exists only on the controller's `FXS_BUTTON_X`) and Escape with `CloseScreen`.
+
+**Design calls, each to be confirmed live:**
+
+1. A `GraphSheet` with four columns, headings QTY / COST / SELL / TOTAL in the row's push
+   order. ⚠ Which caption sits over which column on the Flash side is NOT measured — the
+   Flash layout is opaque from source — and `m_strInventoryLabel` is taken to be the list's
+   heading rather than a column's. A screenshot settles it.
+2. The quantity verb on `+`/`-` (the kernel's `TryAdjust`), because a sheet spends Left/Right.
+3. Enter routed to the SCREEN from every node, as the screen itself does.
+4. The name is `class'UIBlackMarket'.default.m_strSell`: `[UIBlackMarket_Sell]` ships an
+   `m_strTitle` in the loc file, but the class declares no such var.
+
+## 19.4 What the first live pass must answer
+
+The checklist is `next-steps.md` (live-run debt). The three things only a run can say: the
+heading pairing above; whether `SendRowCommand` with the arrow's PRESS action reaches
+`ChangeQuantity` (the helper's convention, unexercised on a row of this class); and what the
+player hears after a sale — the rows respawn, so the differ's landing is the feedback, and if
+the freed addresses are reused the fallback is the row's own "SELL 0".

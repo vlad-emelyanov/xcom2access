@@ -537,7 +537,14 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     // the pause menu — resolves above it; squad select is its pre-mission twin and the two are
     // never on the stack at once, so their relative order is free.
     &kAfterActionRecipe,
+    // The trading post: pushed over the black market's entry menu (listed below), and never on
+    // the stack beside the Buy side — the menu opens one or the other — so its place against
+    // the commodity recipe is free. Only dialogs stack over it.
+    &kBlackMarketSellRecipe,
     &kCommodityRecipe,
+    // The black market's entry menu: UNDER both of its own screens — the trading post and the Buy
+    // side, both above — and over the geoscape the POI opened it from.
+    &kBlackMarketRecipe,
     // The mission blade: below every modal that pushes over it (dialogs, alerts, the sitrep
     // detail popup — all listed above), above the geoscape tray it covers.
     &kMissionBladeRecipe,

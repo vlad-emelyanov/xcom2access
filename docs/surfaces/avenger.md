@@ -579,3 +579,65 @@ and `SwitchTab` announces the change only into Flash); the SORT header; and the 
 - ⛔ Words are cached on the row pointers but **NOT keyed on the selection**, unlike the commodity
   list's: nothing here is the selection's shadow, so keying on it would walk the whole roster
   through `XCOMHISTORY` once per arrow press for no new words.
+
+## Black market
+
+Three screens behind the geoscape POI. The BUY side (`UIBlackMarket_Buy`) is a
+`UISimpleCommodityScreen` and rides the commodity recipe; the ENTRY MENU (`UIBlackMarket`) and the
+TRADING POST (`UIBlackMarket_Sell`) are their own recipes — `black market` and `black market sell`
+— sharing one companion class, `X2AccessBlackMarketReader`. Built 2026-09-03 straight from source
+(recon `../avenger-view-recon.md` §19); **not yet run live**, so every ⛔ below is a reading of the
+game's code rather than a bug earned, and the first pass (`../next-steps.md`) is what promotes or
+demotes each.
+
+- ⛔ **The entry menu is mouse-only in vanilla, and the fix is `Click()`.** `BuildScreen` calls
+  `Navigator.Clear()`, and `OnUnrealCommand`'s only accept branches are `FXS_BUTTON_A` and
+  `FXS_BUTTON_X` — controller constants — so a keyboard player can open the shop and never buy or
+  sell. The two buttons are activated through `UIButton.Click`, which runs the screen's own
+  `OnBuyClicked` / `OnSellClicked` guards (`HasItemsForSale`, `PlayerHasItemsToSell`) and refuses a
+  disabled button itself. Nothing goes in `gFocus`: there is no navigator to hold it.
+- **The greyed reason is the button's TOOLTIP.** `RefreshButtons` calls
+  `SetDisabled(true, m_strEmptyThisMonth)` / `SetDisabled(true, m_strEmptyInventory)`, and
+  `UIButton.SetDisabled` parks the string in the tooltip manager and removes it again on
+  re-enable — so `ReadPanelTooltip` on a disabled button IS the reason, read only while
+  `IsDisabled` is set.
+- **One mechanism per fact, chosen by what only it can do.** The welcome line is
+  `m_strWelcome[Rand(7)]` pushed through `LibraryPanel.SetMenuQuote` with the index stored nowhere,
+  so it is the Flash capture's and best effort: evicted, the recipe has no quote node and says
+  nothing about it. The interest sentence is real information (which items sell at a premium), so
+  the companion re-runs the screen's own `GetInterestsString()` rather than trusting the capture;
+  the caption (`m_strInterestTitle`) and the button labels are native FString reads.
+- ⛔ **The trading post is a TABLE and is emitted as one** (`GraphSheet`, like the roster) — it
+  draws headings over its columns. Column 0 is the item name carrying the cells as
+  HEADING-PREFIXED parts ("QTY 3, COST §20"), unlike the roster's bare cells, because a number
+  under a heading the player cannot see means nothing. ⚠ The heading-to-column pairing — QTY over
+  the owned count, COST over the unit value, SELL over the number selling, TOTAL over the line
+  total — is read off `UpdateSellInfo`'s push order and the loc strings, NOT off the Flash layout,
+  and is the first thing the live pass checks against a screenshot.
+- ⛔ **The quantity verb is the kernel's ADJUST on `+`/`-`, not Left/Right.** The game's own keys
+  for it are the row's `FXS_ARROW_LEFT`/`_RIGHT`, but inside a sheet the arrows are column travel
+  and cannot be both. Every cell of a row carries `OnAdjust`, which sends the ROW its own arrow
+  command (`SendRowCommand`) — the click sound, `ChangeQuantity`'s clamp to what the player owns,
+  `UpdateTotalValue` and the card refresh come with it — and `StateText` re-reads the row's
+  numbers: "SELL 2, TOTAL §40". The claim is general (`OnAdjustKey` → `TryAdjust`,
+  `../input-map.md`), so the same keys adjust a slider or a spinner on any screen.
+- **Numbers native, words companion, and the payload is independent of the numbers.** A row
+  retains `NumSelling`, `Price` and `ItemRef` and pushes everything else into Flash. The companion
+  carries the name, the RAW owned count (`Item.Quantity`, not the `Quantity - NumSelling` the row
+  draws) and the interest flag; native subtracts the live `NumSelling` and multiplies the total, so
+  a `+` press changes no word the companion supplied and re-asks nothing. The card is keyed on the
+  selection (it is the selection's shadow — `List.OnSelectionChanged = SelectedItemChanged`), so an
+  arrow press is one outbound call, as on the commodity list.
+- ⛔ **Enter anywhere is the SCREEN's Enter.** `UIBlackMarket_Sell.OnUnrealCommand` answers
+  `FXS_KEY_ENTER` with `OnConfirmButtonClicked` ahead of its navigator — a sighted keyboard player
+  sells from any row — so the rows and the CONFIRM node all route to `SendScreenCommand(Enter)`,
+  never to `Click()`: the screen's handler answers a greyed button (nothing marked) with the game's
+  refusal sound, where `Click()` would answer it with nothing. A sale respawns every row, so the
+  verb invalidates the wire cache (the address-reuse hazard).
+- **The screen has no title.** The loc file ships `[UIBlackMarket_Sell] m_strTitle=TRADING POST`,
+  but the class declares no such var, so that string exists nowhere at runtime; the recipe is named
+  by the entry menu's own SELL INVENTORY label (`class'UIBlackMarket'.default.m_strSell`), the
+  button the player pressed to get here.
+- **A row with nothing marked draws "-" and a blank.** The SELL cell speaks the number (0) and the
+  TOTAL cell is SPARSE — unlandable, column number kept, so Up/Down still match the TOTAL column
+  across rows. The flat reading omits both until something is marked, as the row does.

@@ -96,6 +96,28 @@ still clears by keyboard (the shared builder replaced its own). Then shape-count
 fallback for a template with no display function, and would mean a slot kind the words never
 covered.
 
+**The black market** (2026-09-03, built from source, never run — `surfaces/avenger.md` "Black
+market", recon §19; the `black market` and `black market sell` recipes plus
+`X2AccessBlackMarketReader`). The companion compiled clean SDK-side at 18:20 that day but the
+game was running, so the `.u` under `Mods/` is the OLD one. ⛔ `just go-full` with the game
+stopped before anything else: the trading post's words and the entry menu's interest sentence are
+companion-side, so without the fresh `.u` every row reads as "Item" and the interest node is the
+bare caption. The pass, from a geoscape with the market scanned: (a) the entry menu must attach
+as "The Black Market" and read the welcome line, "INTERESTS THIS MONTH:" with its sentence, then
+BUY and SELL INVENTORY as buttons — a greyed one must carry its reason (SOLD OUT THIS MONTH /
+EMPTY INVENTORY) — and Enter on BUY must land in the commodity recipe on "This Month's Goods";
+(b) on the trading post the FIRST thing to settle is the heading-to-column pairing, `just
+dev-shot` beside `just dev-speech`: the sheet assumes QTY over the owned count, COST over the
+unit value, SELL over the number selling and TOTAL over the line total, read off
+`UpdateSellInfo`'s push order and the loc strings and never off the Flash layout, and a swap
+there miscaptions every cell; (c) `+` on a row must click and say "SELL 1, TOTAL §N", `-` back
+to zero must say "SELL 0" with no total, Right from the name must read "QTY, n" and the further
+cells under their headings, and the CONFIRM node must lose "unavailable" the moment something
+is marked; (d) Enter must sell, respawn the rows and leave focus on a row rather than detaching,
+and the resource stop must show the new supplies; (e) `Escape` must close both screens
+(unclaimed). Then shape-count the ring and `grep -P '  '` it: an empty heading leaves a double
+space, which is the localized-var trap.
+
 ## Unexercised paths inside surfaces that HAVE run
 
 ⚠ Everything in this section belongs to a surface whose MAIN PATH has been walked live. What is

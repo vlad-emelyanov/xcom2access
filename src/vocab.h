@@ -194,6 +194,15 @@ inline constexpr const char* CommodityLeaveHint = "Escape to go back";
 inline constexpr const char* CommodityUnaffordable = "cannot afford";
 inline constexpr const char* CommodityOwned = "owned";
 
+// The black market's two non-commodity screens. The entry menu names itself (m_strTitle) and the
+// trading post takes the entry menu's own SELL INVENTORY label through the companion, so both
+// fallbacks fire only in the window before those reads answer; the third is a sell row whose
+// name the companion had not supplied. Every other word on both screens is the game's — the
+// button labels, the greyed-out reasons, the column headings, the credits prefix.
+inline constexpr const char* ScreenBlackMarketFallback = "Black market";
+inline constexpr const char* ScreenBlackMarketSellFallback = "Sell inventory";
+inline constexpr const char* SellItemFallback = "Item";
+
 // Choosing what to build in a room (UIChooseFacility). It carries its own localized title and
 // list heading and reaches this only in the window between attaching and the companion answering.
 inline constexpr const char* ScreenChooseFacilityFallback = "Build facility";

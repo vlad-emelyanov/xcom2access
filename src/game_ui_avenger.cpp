@@ -1404,6 +1404,171 @@ ChooseFacilityView ReadChooseUpgrade(void* screen)
     return ReadChooseFacility(screen);
 }
 
+// ---- the black market (UIBlackMarket entry menu, UIBlackMarket_Sell) ---------------------------
+//
+// See the header for what each screen retains. The Buy side is the commodity reader's.
+
+namespace {
+
+// UIBlackMarket
+constexpr int32_t kBlackMarketTitleOffset = 0x410;         // m_strTitle
+constexpr int32_t kBlackMarketInterestTitleOffset = 0x520; // m_strInterestTitle
+constexpr int32_t kBlackMarketLibraryPanelOffset = 0x550;  // LibraryPanel — the quote's Flash panel
+constexpr int32_t kBlackMarketBuyButtonOffset = 0x558;     // Button1
+constexpr int32_t kBlackMarketSellButtonOffset = 0x560;    // Button2
+// The welcome line's Flash call (UIBlackMarket.BuildScreen): one string operand.
+constexpr const char* kBlackMarketQuoteCall = "SetMenuQuote";
+
+// UIBlackMarket_Sell
+constexpr int32_t kSellSaleAmountOffset = 0x410;      // SaleAmount
+constexpr int32_t kSellConfirmButtonOffset = 0x418;   // ConfirmButton
+constexpr int32_t kSellInventoryLabelOffset = 0x430;  // m_strInventoryLabel
+constexpr int32_t kSellSellLabelOffset = 0x440;       // m_strSellLabel
+constexpr int32_t kSellTotalLabelOffset = 0x450;      // m_strTotalLabel
+constexpr int32_t kSellCostLabelOffset = 0x460;       // m_strCostLabel
+constexpr int32_t kSellInterestedLabelOffset = 0x470; // m_strInterestedLabel
+constexpr int32_t kSellQuantityLabelOffset = 0x480;   // m_strQuantityLabel
+constexpr int32_t kSellListOffset = 0x4C0;            // List
+
+// UIBlackMarket_SellItem
+constexpr int32_t kSellItemNumSellingOffset = 0x400; // NumSelling
+constexpr int32_t kSellItemRefOffset = 0x404;        // ItemRef.ObjectID
+constexpr int32_t kSellItemPriceOffset = 0x410;      // Price
+
+// BuildScreen sizes the list for sixteen rows; the market's BuyPrices table is the real bound,
+// and a modded market could be longer. Loud when clipped, like every list walk in this file.
+constexpr int kMaxSellRows = 64;
+
+BlackMarketButton ReadMarketButton(void* button)
+{
+    BlackMarketButton b;
+    b.handle = button;
+    if (!button)
+        return b;
+    b.label = CleanText(ReadFStringField(button, kButtonTextOffset));
+    b.disabled = (ReadU32Raw(button, kButtonFlagsOffset) & kButtonDisabled) != 0;
+    // RefreshButtons hands SetDisabled the reason as its tooltip text, and SetDisabled(false)
+    // removes the tooltip again — so the tooltip IS the reason, present exactly while greyed.
+    if (b.disabled)
+        b.reason = CleanText(ReadPanelTooltip(button));
+    return b;
+}
+
+std::string ReadLabel(void* obj, int32_t offset)
+{
+    return CleanText(ReadFStringField(obj, offset));
+}
+
+} // namespace
+
+void* FindBlackMarketScreen()
+{
+    // Exact class. The Buy and Sell screens are pushed OVER this one and are separate classes,
+    // so the stack walk's name match cannot confuse the three.
+    return FindStackScreenRaw("UIBlackMarket");
+}
+
+BlackMarketView ReadBlackMarket(void* screen)
+{
+    BlackMarketView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+    v.title = ReadLabel(screen, kBlackMarketTitleOffset);
+    v.interestTitle = ReadLabel(screen, kBlackMarketInterestTitleOffset);
+    v.buy = ReadMarketButton(ReadPtrRaw(screen, kBlackMarketBuyButtonOffset));
+    v.sell = ReadMarketButton(ReadPtrRaw(screen, kBlackMarketSellButtonOffset));
+
+    // The welcome line: m_strWelcome[Rand(NUM_WELCOMES)], chosen in BuildScreen and pushed through
+    // LibraryPanel.MC.FunctionString("SetMenuQuote"). The index is never stored, so the capture
+    // is the only reader that can know which of the seven was drawn. Best effort by design: an
+    // evicted capture leaves the quote empty and the recipe simply has no line for it.
+    void* library = ReadPtrRaw(screen, kBlackMarketLibraryPanelOffset);
+    const int32_t index = library ? FlashShadow::PanelCacheIndex(library) : -1;
+    FlashShadow::Call call;
+    if (index >= 0 && FlashShadow::GetCall(index, kBlackMarketQuoteCall, call))
+        v.quote = CleanText(FlashArg(call.StringArgs(), 0));
+    return v;
+}
+
+void* FindBlackMarketSellScreen()
+{
+    return FindStackScreenRaw("UIBlackMarket_Sell");
+}
+
+SellView ReadBlackMarketSell(void* screen)
+{
+    SellView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+    v.saleAmount = ReadI32Raw(screen, kSellSaleAmountOffset);
+    v.confirm = ReadPtrRaw(screen, kSellConfirmButtonOffset);
+    if (v.confirm) {
+        v.confirmLabel = ReadLabel(v.confirm, kButtonTextOffset);
+        v.confirmDisabled = (ReadU32Raw(v.confirm, kButtonFlagsOffset) & kButtonDisabled) != 0;
+    }
+    v.inventoryLabel = ReadLabel(screen, kSellInventoryLabelOffset);
+    v.quantityLabel = ReadLabel(screen, kSellQuantityLabelOffset);
+    v.costLabel = ReadLabel(screen, kSellCostLabelOffset);
+    v.sellLabel = ReadLabel(screen, kSellSellLabelOffset);
+    v.totalLabel = ReadLabel(screen, kSellTotalLabelOffset);
+    v.interestedLabel = ReadLabel(screen, kSellInterestedLabelOffset);
+
+    v.list = ReadPtrRaw(screen, kSellListOffset);
+    if (!v.list)
+        return v;
+    v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
+
+    void* rows[kMaxSellRows] = {};
+    int rowCount = TakeListItemsRaw("Black market: sell rows", v.list, rows, kMaxSellRows);
+    for (int i = 0; i < rowCount; i++) {
+        // PopulateData spawns nothing but sell items into this list, but the index stays the
+        // game's own either way — SetSelectedIndex and the companion's records are expressed in it.
+        if (!rows[i] || !IsKindOfRaw(rows[i], "UIBlackMarket_SellItem"))
+            continue;
+        SellRow r;
+        r.handle = rows[i];
+        r.index = i;
+        r.selling = ReadI32Raw(rows[i], kSellItemNumSellingOffset);
+        r.price = ReadI32Raw(rows[i], kSellItemPriceOffset);
+        r.itemId = ReadI32Raw(rows[i], kSellItemRefOffset);
+        v.rows.push_back(r);
+    }
+    return v;
+}
+
+bool SetBlackMarketSellSelection(const SellView& view, int index)
+{
+    // List.OnSelectionChanged = SelectedItemChanged repopulates the item card, as on the
+    // commodity list — this is what keeps the card stop describing the row under focus.
+    return SetListIndex(view.list, index);
+}
+
+bool AdjustBlackMarketSellRow(const SellView& view, int index, int delta)
+{
+    if (!view.screen || delta == 0)
+        return false;
+    for (const SellRow& row : view.rows) {
+        if (row.index != index)
+            continue;
+        // The row's OWN arrow handler: the click sound, ChangeQuantity (which refuses past what
+        // the player owns and below zero), the screen's UpdateTotalValue and the card refresh —
+        // one unit per press, the way the key itself works.
+        return SendRowCommand(row.handle, delta > 0 ? kCmdArrowRight : kCmdArrowLeft);
+    }
+    return false;
+}
+
+bool ConfirmBlackMarketSale(const SellView& view)
+{
+    if (!view.screen)
+        return false;
+    // The top of the game's own routing: the screen's OnUnrealCommand answers Enter itself with
+    // OnConfirmButtonClicked, ahead of the navigator and the list.
+    return SendScreenCommand(view.screen, kCmdEnter);
+}
+
 } // namespace GameUI
 
 #ifdef _MSC_VER

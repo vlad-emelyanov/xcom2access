@@ -33,6 +33,7 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Facility upgrades (`UIChooseUpgrade`) | `game_ui_avenger.cpp` | `X2AccessUpgradeReader.uc`, `facility upgrades` | avenger.md | `avenger-view-recon.md` §18 |
 | Commodity list (13 screens) | `game_ui_avenger.cpp` | `X2AccessCommodityReader.uc`, `commodity list` | avenger.md | `avenger-view-recon.md` §14 |
 | Personnel roster | `game_ui_avenger.cpp` | `X2AccessPersonnelReader.uc`, `personnel roster` | avenger.md | `avenger-view-recon.md` §15 |
+| Black market — entry menu + trading post (the Buy side is the commodity list's) | `game_ui_avenger.cpp` (buttons, numbers, headings; the welcome line via Flash capture) | `X2AccessBlackMarketReader.uc`, `black market` + `black market sell` | avenger.md | `avenger-view-recon.md` §19 |
 | Choose facility | `game_ui_avenger.cpp` | `X2AccessBuildFacilityReader.uc`, `choose facility` | avenger.md | `avenger-view-recon.md` §16 |
 | Research report | `game_ui_avenger.cpp` (Flash capture) | — (no companion), `research report` | — | `research-report-recon.md` |
 | Research available (post-mission deck) | `game_ui_avenger.cpp` (Flash capture) | — (no companion), `research unlocked` | — | `research-unlocked-recon.md` |

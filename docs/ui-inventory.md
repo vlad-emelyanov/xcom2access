@@ -58,9 +58,9 @@ promotion screens sat here for weeks after they were written.)
 6. **`UICovertActionReport`** — the covert-action RESULT screen. The PICKER is built (`covert
    actions` recipe), and the soldier picker and confirm modal ride the personnel and popup
    recipes, so this is the one screen of that loop still unread — `covert-actions-recon.md` §8b.
-7. **`UIRecruitSoldiers`**, **`UIBlackMarket`** + **`UIBlackMarket_Sell`** — recruiting and
-   selling. (`_Sell` is explicitly NOT in the commodity family — own list, own card call;
-   `avenger-view-recon.md` §14.1.)
+7. **`UIRecruitSoldiers`** — recruiting. (The black market's entry menu and trading post came
+   off this list on 2026-09-03 — the `black market` and `black market sell` recipes, built from
+   source and unexercised live; `avenger-view-recon.md` §19.)
 
 ## 1. Boot, shell, main menu
 
@@ -278,8 +278,10 @@ external references in the shipped sources.
 
 ## Black market (splits across three rows above, gathered here)
 
-`UIBlackMarket` (entry) ⬜ P1 · `UIBlackMarket_Buy` ✅ commodity · `UIBlackMarket_Sell` ⬜ P1
-(own layout, NOT commodity-family).
+`UIBlackMarket` (entry) ✅ `black market` recipe · `UIBlackMarket_Buy` ✅ commodity ·
+`UIBlackMarket_Sell` ✅ `black market sell` recipe, a `GraphSheet` (own layout, NOT
+commodity-family). Both new recipes 2026-09-03, built from source, **unexercised live** and the
+companion not yet deployed to the game (`next-steps.md`); `surfaces/avenger.md` "Black market".
 
 ## Not screens, but real work items
 

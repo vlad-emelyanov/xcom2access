@@ -657,4 +657,95 @@ void* FindChooseUpgradeScreen();
 /// Same layout as UIChooseFacility, same reader; see above. Game thread only.
 ChooseFacilityView ReadChooseUpgrade(void* screen);
 
+// ---- the black market (UIBlackMarket entry menu, UIBlackMarket_Sell) ----
+//
+// The geoscape POI's shop is three screens. The BUY side (UIBlackMarket_Buy) is a
+// UISimpleCommodityScreen and rides the commodity reader above untouched; the other two are this
+// section. UIBlackMarket is a two-button menu — BUY and SELL INVENTORY — under a random welcome
+// line and the month's interests, and it is MOUSE-ONLY in vanilla: BuildScreen calls
+// Navigator.Clear(), and its OnUnrealCommand answers FXS_BUTTON_A / FXS_BUTTON_X, both controller
+// constants. UIBlackMarket_Sell is a UIList of UIBlackMarket_SellItem rows under column headings,
+// with a CONFIRM button and a running total; Up/Down, Left/Right (the quantity) and Enter (sell)
+// already work there on a keyboard.
+//
+// What each retains, and what does not:
+//   * The entry menu's buttons keep their Text (InitButton → SetText) and their IsDisabled bit,
+//     and RefreshButtons hands SetDisabled the reason — SOLD OUT THIS MONTH, EMPTY INVENTORY —
+//     as the tooltip text, so label, state and the why are all native reads. The welcome line
+//     is m_strWelcome[Rand(7)] pushed through LibraryPanel's SetMenuQuote and retained NOWHERE:
+//     only the Flash capture knows which of the seven was drawn. The interest sentence is
+//     GetInterestsString(), a game-state expansion the companion re-runs on the live screen.
+//   * A sell row keeps its NUMBERS — NumSelling, Price, ItemRef — and pushes its name and every
+//     column through MC.BeginFunctionOp("populateData"); the words come from the companion, the
+//     numbers from here. The screen keeps SaleAmount (the running total) and every column
+//     heading as a localized var, so the headings are native reads too.
+
+struct BlackMarketButton {
+    void* handle = nullptr;
+    std::string label;     // UIButton::Text — "BUY" / "SELL INVENTORY"
+    bool disabled = false; // IsDisabled
+    std::string reason;    // the SetDisabled tooltip, present only while greyed
+};
+
+struct BlackMarketView {
+    void* screen = nullptr;
+    std::string title;         // m_strTitle — the screen's own name for itself
+    std::string quote;         // the welcome line, off the Flash capture; empty when not captured
+    std::string interestTitle; // m_strInterestTitle ("INTERESTS THIS MONTH:")
+    BlackMarketButton buy;     // Button1
+    BlackMarketButton sell;    // Button2
+};
+
+/// The entry menu, when it is on the stack (exact class). Game thread only.
+void* FindBlackMarketScreen();
+
+BlackMarketView ReadBlackMarket(void* screen);
+
+struct SellRow {
+    void* handle = nullptr; // UIBlackMarket_SellItem
+    int index = 0;          // the game's own list index
+    int selling = 0;        // NumSelling
+    int price = 0;          // Price per unit, after the market's markup and the engineering cap
+    int itemId = 0;         // ItemRef.ObjectID
+};
+
+struct SellView {
+    void* screen = nullptr;
+    void* list = nullptr; // UIBlackMarket_Sell::List
+    std::vector<SellRow> rows;
+    int selected = -1;            // UIList::SelectedIndex
+    int saleAmount = 0;           // SaleAmount — the running total, before the credits prefix
+    void* confirm = nullptr;      // ConfirmButton
+    std::string confirmLabel;     // its Text ("CONFIRM")
+    bool confirmDisabled = false; // IsDisabled — UpdateTotalValue greys it while the total is zero
+    // The screen's own captions, localized vars on the instance: the list heading, the four column
+    // headings and the card's interest line.
+    std::string inventoryLabel;
+    std::string quantityLabel;
+    std::string costLabel;
+    std::string sellLabel;
+    std::string totalLabel;
+    std::string interestedLabel;
+};
+
+/// The trading post, when it is on the stack (exact class). Game thread only.
+void* FindBlackMarketSellScreen();
+
+SellView ReadBlackMarketSell(void* screen);
+
+/// P11 write-back: UIList::SetSelectedIndex. Load-bearing as on the commodity list — the list's
+/// OnSelectionChanged is what repopulates the item card. Game thread only.
+bool SetBlackMarketSellSelection(const SellView& view, int index);
+
+/// Change a row's selling count by one, through the row's OWN arrow handler
+/// (UIBlackMarket_SellItem.OnUnrealCommand with FXS_ARROW_RIGHT / FXS_ARROW_LEFT): the click
+/// sound, ChangeQuantity's clamp to what the player owns, the screen's total and the card refresh
+/// all come with it. `delta` is the sign only. Game thread only.
+bool AdjustBlackMarketSellRow(const SellView& view, int index, int delta);
+
+/// Sell everything marked, through the SCREEN's own Enter — UIBlackMarket_Sell.OnUnrealCommand
+/// answers FXS_KEY_ENTER with OnConfirmButtonClicked ahead of its navigator, and a greyed button
+/// (nothing marked) gets the game's refusal sound there. Game thread only.
+bool ConfirmBlackMarketSale(const SellView& view);
+
 } // namespace GameUI

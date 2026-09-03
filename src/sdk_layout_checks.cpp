@@ -789,4 +789,39 @@ static_assert(offsetof(AUISoldierBondListItem, UnitRef) == 0x4C4, "UISoldierBond
 static_assert(offsetof(AUISoldierBondListItem, ActivateBondButton) == 0x4CC,
     "UISoldierBondListItem::ActivateBondButton");
 
+// ---- the black market (game_ui_avenger.cpp: UIBlackMarket, UIBlackMarket_Sell, _SellItem) ----
+//
+// The entry menu: its title and the interest caption are read as FStrings, its two buttons
+// through UIButton's generic Text / flag dword (pinned above), and LibraryPanel is the Flash
+// panel whose cache index keys the welcome line's capture.
+static_assert(offsetof(AUIBlackMarket, m_strTitle) == 0x410, "UIBlackMarket::m_strTitle");
+static_assert(offsetof(AUIBlackMarket, m_strInterestTitle) == 0x520,
+    "UIBlackMarket::m_strInterestTitle");
+static_assert(offsetof(AUIBlackMarket, LibraryPanel) == 0x550, "UIBlackMarket::LibraryPanel");
+static_assert(offsetof(AUIBlackMarket, Button1) == 0x558, "UIBlackMarket::Button1 (buy)");
+static_assert(offsetof(AUIBlackMarket, Button2) == 0x560, "UIBlackMarket::Button2 (sell)");
+// The trading post: the running total, the confirm button, six localized captions, the list.
+static_assert(offsetof(AUIBlackMarket_Sell, SaleAmount) == 0x410, "UIBlackMarket_Sell::SaleAmount");
+static_assert(offsetof(AUIBlackMarket_Sell, ConfirmButton) == 0x418,
+    "UIBlackMarket_Sell::ConfirmButton");
+static_assert(offsetof(AUIBlackMarket_Sell, m_strInventoryLabel) == 0x430,
+    "UIBlackMarket_Sell::m_strInventoryLabel");
+static_assert(offsetof(AUIBlackMarket_Sell, m_strSellLabel) == 0x440,
+    "UIBlackMarket_Sell::m_strSellLabel");
+static_assert(offsetof(AUIBlackMarket_Sell, m_strTotalLabel) == 0x450,
+    "UIBlackMarket_Sell::m_strTotalLabel");
+static_assert(offsetof(AUIBlackMarket_Sell, m_strCostLabel) == 0x460,
+    "UIBlackMarket_Sell::m_strCostLabel");
+static_assert(offsetof(AUIBlackMarket_Sell, m_strInterestedLabel) == 0x470,
+    "UIBlackMarket_Sell::m_strInterestedLabel");
+static_assert(offsetof(AUIBlackMarket_Sell, m_strQuantityLabel) == 0x480,
+    "UIBlackMarket_Sell::m_strQuantityLabel");
+static_assert(offsetof(AUIBlackMarket_Sell, List) == 0x4C0, "UIBlackMarket_Sell::List");
+// A sell row: the three numbers it retains (its words all went into Flash).
+static_assert(offsetof(AUIBlackMarket_SellItem, NumSelling) == 0x400,
+    "UIBlackMarket_SellItem::NumSelling");
+static_assert(offsetof(AUIBlackMarket_SellItem, ItemRef) == 0x404,
+    "UIBlackMarket_SellItem::ItemRef");
+static_assert(offsetof(AUIBlackMarket_SellItem, Price) == 0x410, "UIBlackMarket_SellItem::Price");
+
 } // namespace
