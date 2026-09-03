@@ -141,9 +141,9 @@ along. `avenger-view-recon.md` §14.
 | `UIArmory_Loadout` | loadout | ✅ |
 | `UIArmory_WeaponUpgrade` | weapon mods | ⬜ **P1** |
 | `UIArmory_WeaponTrait` | TLE legacy weapon customization | ⬜ P3 |
-| `UIArmory_Promotion` | ability tree (base classes) | ◐ built — `promotion` recipe + `X2AccessPromotionReader` (one recipe, all three classes); first live pass owed |
-| `UIArmory_PromotionHero` | faction-hero / Training-Center tree | ◐ built — same recipe. ⛔ Vanilla here is a KEYBOARD DEAD END (`game_ui_strategy.h`): its `OnUnrealCommand` takes DPAD/LStick only and `InitPromotion` calls `DisableNavigation()`, so the layer is the ONLY way in without a mouse |
-| `UIArmory_PromotionPsiOp` | psi-op training tree | ◐ built — same recipe |
+| `UIArmory_Promotion` | ability tree (base classes) | ✅ `promotion` recipe + `X2AccessPromotionReader` — one recipe, all three classes |
+| `UIArmory_PromotionHero` | faction-hero / Training-Center tree | ◐ same recipe, branch unexercised (`next-steps.md`). ⛔ Vanilla here is a KEYBOARD DEAD END (`game_ui_strategy.h`): its `OnUnrealCommand` takes DPAD/LStick only and `InitPromotion` calls `DisableNavigation()`, so the layer is the ONLY way in without a mouse |
+| `UIArmory_PromotionPsiOp` | psi-op training tree | ◐ same recipe, branch unexercised — needs a Psi Lab and a trained operative |
 | `UIArmory_Implants` | PCS slots | ⬜ **P1** |
 | `UIAbilityInfoScreen` | ability details viewer (from armory & challenge) | ⬜ P2 |
 | `UIManageEquipmentMenu` | equipment mgmt popup (from loadout & squad select) | ⬜ P2 |
@@ -175,15 +175,17 @@ the pool itself are not cosmetic — P2, and the voice picker matters most.
 | `UISkyrangerArrives` | squad-return overlay | ⬜ P3 |
 | `UIStrategyMap_BlackMarket`/`_BuyIntel`/`_Outpost`/`_PoiChoice`/`_VisitCommander` | EU/EW leftovers, zero references | 🚫 dead |
 
-## 10. Mission launch — `UIMission` family, ◐ built, 17 classes
+## 10. Mission launch — `UIMission` family, ✅ built and run, 17 classes
 
 `UIMission` (base) + `_GOps`, `_Council`, `_Retaliation`, `_SupplyRaid`, `_LandedUFO`,
 `_AlienFacility`, `_GoldenPath`, `_ResOps`, `_RescueSoldier`, `_ChosenAmbush`,
 `_ChosenStronghold`, `_ChosenAvengerAssault`, `_LostAndAbandoned`, `_GPIntelOptions`,
 DLC_2 `_AlienNest`, DLC_3 `_LostTowers`. One layout family (`UIX2SimpleScreen` panels +
-launch/cancel). ◐ built 2026-08-31 — `mission blade` recipe + `X2AccessMissionReader`
-(probe is IsKindOf `UIMission`, so the DLC pair and mod blades match too); recon and the
-first-pass checklist in `mission-blade-recon.md`, live-run debt in `next-steps.md`.
+launch/cancel). ✅ built and run 2026-08-31 — `mission blade` recipe + `X2AccessMissionReader`
+(probe is IsKindOf `UIMission`, so the DLC pair and mod blades match too); recon in
+`mission-blade-recon.md`. The blades the campaign has not produced yet, and the two deliberate
+v1 punts (`_GPIntelOptions` cannot purchase; the sitrep info button has no node), are in
+`next-steps.md`.
 
 ## 11. Popups and alerts — ✅ popup recipe + transient reader
 
@@ -209,9 +211,9 @@ first-pass checklist in `mission-blade-recon.md`, live-run debt in `next-steps.m
 | `UIMissionIntro` | mission-type intro banner | ⬜ P2 |
 | `UIMissionSummary` | post-mission stats | ◐ built — `mission summary` recipe, Flash capture, no companion (`mission-summary-recon.md`); first live pass owed |
 | `UIChosenMissionSummary` | Chosen encounter result | ◐ built — `chosen summary` recipe, Flash capture, no companion (`mission-summary-recon.md`); first live pass owed |
-| `UIAfterAction` | post-mission squad walk-up (wounds, promotions) | ◐ built — `after action` recipe + `X2AccessAfterActionReader` (`after-action-recon.md`); first live pass owed |
+| `UIAfterAction` | post-mission squad walk-up (wounds, promotions) | ✅ `after action` recipe + `X2AccessAfterActionReader` (`after-action-recon.md`). ⚠ The soldier-wording unification (`04a264c`) postdates the deployed companion — re-walk after the next `just go-full` |
 | `UIResearchReport` | research complete | ✅ research report recipe (`research-report-recon.md`) |
-| `UIResearchUnlocked` | new research available | ◐ built — `research unlocked` recipe, Flash capture, no companion (`research-unlocked-recon.md`); first live pass owed |
+| `UIResearchUnlocked` | new research available | ✅ `research unlocked` recipe, Flash capture, no companion (`research-unlocked-recon.md`); multi-card decks and shadow projects still unheard (`next-steps.md`) |
 | `UIEndGameStats` | campaign-end stats | ⬜ P3 |
 | `UISoldierIntroCinematic` | soldier intro cinematic card | ⬜ P3 (mostly visual) |
 

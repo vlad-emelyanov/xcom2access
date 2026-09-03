@@ -26,80 +26,15 @@ silent), and a grep for `no localized text for cue` — that line is the only pl
 text we failed to resolve would show up, and its absence is what says the loc lookup found the
 right package.
 
-⛔ **The geoscape's `Enter` fix is UNVERIFIED and its predecessor was wrong twice**
-(`geoscape-recon.md` §15). Focus write-back moved the game's navigator but not
-`SelectedMapItem` — `UINavigator.SetSelected` fires no delegate — so `Enter` acted on tray icon
-0 for the whole session, which read to the player as *"Enter just starts the scan where I am"*.
-Activation no longer consults that state at all: it is now the mouse's own click on the ICON
-(`OnMouseEvent(FXS_L_MOUSE_UP_DELAYED)` — 400, and 391 is a silent no-op), whose
-`OnClickedDelegate` the game bound to that icon's own site. `SetTraySelection` also calls
-`SetSelectedMapItem` now, but only for the 3D cursor and nav-help. The pass that closes this
-must actually fly the Avenger to a POI.
-
-**The pause menu's mod-row activation fix is UNVERIFIED** (2026-08-31): `ActivatePauseMenuItem`
-now sends Enter to the LIST (`SendRowCommand`) instead of calling `OnChildClicked` by name, so a
-mod-wrapped `OnItemClicked` delegate finally runs — found live on Remove Missing Mods Redux's
-"Remove Missing Mods" row (6 of 8, tactical pause), where Enter did nothing. The pass: with that
-workshop mod enabled, Enter on its row must raise its confirm dialog, and every VANILLA row
-(return, save, load, options, exit) must still activate — the same call now also routes through
-`UIPauseMenu.SetSelected`, which is new for those. `SetPauseMenuIndex` keeping
-`m_iCurrentSelection` in sync is part of the same change.
-
-**Not yet run live** (builds clean, unexercised): Skyranger briefing, modal/popup
-recipe, commlink transient reader, armory loadout, personnel roster, commodity list, inside-a-room
-recipe, selected-unit readout, objectives readout (`Ctrl+X`), research report
-(`research-report-recon.md` §7 — the Flash capture's SECOND consumer, so the pass must also
-check `just dev-flashqueue` against `just dev-speech`, and must cover the Shadow Chamber path,
-which is the only one that puts this screen on the 2D movie), **research unlocked**
-(`research-unlocked-recon.md` §5 — built 2026-08-31 with the game LIVE on the screen, so the
-capture, both offsets and the two-card deck are already confirmed; what is unexercised is the
-recipe itself: the flip announcement on Continue with ≥2 cards, the clean close into whatever
-follows — `UIRewardsRecap` on the tutorial-objective path is UNCOVERED and is this chain's next
-hole — and a shadow-project card, whose Flash styling nobody has seen beside the payload yet),
-covert actions
-(`covert-actions-recon.md` §9 — the checklist there is the pass, and its two live-only questions
-are whether `LaunchButton.Click()` really reaches the confirm popup and whether the destructive
-row selection behaves as the source says), the geoscape's **region actions** stop
-(`geoscape-recon.md` §16 — make contact / install a radio relay, the two pin buttons vanilla
-wires to no key; needs a save with `ResistanceRadio` researched, and its confirm alert is the
-Flash capture's `Alert_MakeContact` panel, also unexercised), resistance orders
-(`UIStrategyPolicy` — the PLAYABLE window ran live 2026-08-31, twice: attach with 11 targets
-after the duplicate-id fix, board and hand walked, cards picked up, placed and removed,
-Continue's orders-left dialog answered, and after the same-day second wave deployed, "drop
-target" was heard on legal slots — including one that then ACCEPTED the drop — and "cannot
-place here" on locked slots. Still owed: the READ-ONLY visit (`PolicyReadOnly` on the name,
-verbs raising `UICantChangeOrders`), a direct swap of two slotted cards, Backspace-cancels-hold,
-and the empty-hands refusals `PolicyCantPick`/`PolicyCantMove` — none heard live yet),
-the **after-action walk-up** (`after-action-recon.md` — step 0 is DONE: every
-§3 offset plus both §5 predictions were read off a live walk-up 2026-08-31, with the OLD ASI
-deployed, so what remains is the recipe's own first pass — the promote → promotion screen →
-back loop, the bond icon into `UISoldierBondScreen` (which has no recipe: expect Escape-only),
-a KIA card's Memorialize into the photobooth (likewise uncovered), the wounded/days line
-against the panel, and Continue through to loot recovered). Each needs a first pass against
-`just dev-speech` and a shape-count of the speech ring afterwards. For the objectives readout the
-OFFSETS are already confirmed live (2026-08-23, `LostAndAbandonedB`) and the `static_assert`s
-pass — what is unexercised is the spoken COMPOSITION, plus the Avenger/dark-event and
-counter-row branches, which need the ship and a Retaliation-style mission respectively.
-
-**The promotion screens** (`UIArmory_Promotion` / `_PromotionHero` / `_PromotionPsiOp` — one
-`promotion` recipe + `X2AccessPromotionReader` over all three). ⚠ **Built in a "work in
-progress" commit and then recorded NOWHERE** — it was still listed as unbuilt in
-`ui-inventory.md`'s P1 list and absent from the surface registry until 2026-09-03, which is why
-it has no recon doc and no first-pass checklist. It needs both halves of a pass:
-
-- **Classic** (`UIArmory_Promotion`): a squaddie promotion and a mid-rank one, taken from the
-  after-action screen's promote banner AND from the armory, since the two entry paths differ in
-  what is on the stack behind. Check that a locked rank's ability names stay UNSPOKEN — the
-  reader resolves names in script precisely so `m_strAbilityLockedTitle` substitutes, and a
-  regression there leaks information no sighted player has.
-- **Hero** (`_PromotionHero`): the one screen in the game where the layer is not a convenience
-  but the ONLY keyboard route — vanilla handles DPAD/LStick only and `InitPromotion` calls
-  `DisableNavigation()`. Needs a faction hero, or any class after the Training Center retrofit.
-  Buying an ability with AP is the verb to exercise, including the refusal when AP is short.
-- **PsiOp** (`_PromotionPsiOp`): needs a Psi Lab and a trained operative.
-- Across all three: rank headings read as tree index + 1 (a `ClassRowItem.Rank` of 0 must say
-  "Squaddie", not "Rookie"), descriptions arrive EXPANDED with the unit's own numbers rather
-  than raw `LocLongDescription` tags, and nothing anywhere is spoken in `Caps()`.
+⛔ **TWO COMPANION COMMITS POSTDATE THE DEPLOYED `.u`.** The build in the game is the ASI of
+2026-08-31 17:00 beside the companion of 16:57, and the whole live-run debt below it was
+retired against THAT pair — but `04a264c` (16:58, `X2AccessAfterActionReader` /
+`X2AccessHelper` / `X2AccessSquadReader`: the soldier reading identically on both bookends) and
+`169019d` (`X2AccessTileReader`) both landed after it. So the after-action card wording, squad
+select's card wording and the tile readout in the game are the versions BEFORE those changes,
+and whatever was verified about them does not carry. `just go-full` first, then re-walk those
+three; the unification commit is the one that matters, because its whole claim is that two
+surfaces now say the same thing and only a live pass can show that they do.
 
 **The mission bookends** (2026-09-03, built, never run — `mission-summary-recon.md`; the
 `mission summary` and `chosen summary` recipes, both Flash-capture-only, no companion). This is
@@ -122,67 +57,60 @@ encounter (its `SetChosenReward` is pushed with three EMPTY strings and must sta
 knowledge extraction, and a soldier kidnapped — and the reward branch needs a Chosen actually
 killed, which is the rarest of the four.
 
-⚠ The popup recipe has a NEW first-pass question on top of the usual one: `UIAlert`'s words now
-come from the Flash command-queue capture, so the pass must check `just dev-flashqueue` against
-`just dev-speech` for the same alert, and grep the log for `dropped asset-looking operand` —
-that line is the asset filter reporting exactly what it removed, and it is the only place a
-wrongly-dropped LINE would show up. Alerts worth hitting: an image-carrying splash
-(`BuildGOpsAlert` / retaliation / supply raid, which push an image path mid-list) and any alert
-whose confirm label should be matched out of the prose by the button filter.
-
-⚠ The commlink reader's first pass now has a SECOND branch to cover: it obeys the game's
-Show Subtitles setting (`surfaces/strategy.md`), so the same conversation must be heard once
-with subtitles on and once with them off — off must be silent, and turning them back on
-mid-conversation must announce the line still in progress rather than swallow it.
-
-**The mission blade family** (2026-08-31, built — `mission-blade-recon.md`; the `mission blade`
-recipe + `X2AccessMissionReader`, covering all 16 `UIMission` subclasses through the base
-skeleton). The first pass RAN the same day, live on a Russian campaign: a retaliation blade
-end-to-end (attach → lines → Chosen strip → ПОДТВЕРДИТЬ → squad select), a locked alien
-facility (locked text + Back only), and an unlocked facility with a reward and a second Chosen —
-and it earned `PushValuePair` (recon §6: a caption whose value is absent is dropped whole; the
-locked blade spoke a naked "НАГРАДА"). ⚠ That fix is SOURCE-ONLY until the next companion
-compile, and re-checking the facility blade after it is part of closing this entry. Still
-unexercised: a GOps blade with 2+ missions (the selector buttons are mouse-only in vanilla, and
-clicking one must re-announce the switched mission via the MissionRef extra-key), the ambush
-blade (its Chosen strip must stay correctly SILENT), and the Shadow Chamber / sitrep sections
-(silent so far only because the campaign has neither — the gates themselves are untested in the
-positive direction). Known v1 gaps, each a deliberate punt: `UIMission_GPIntelOptions` reads its
-intel options (name + cost + totals) but cannot PURCHASE one yet (the rows are `UIMechaListItem`
-checkboxes; the toggle path and the purchased-state read are owed together), and the sitrep
-panel's mouse-only info button (opens `UISitRepInformation`, which the popup recipe already
-reads) has no node yet — low value, since the reader already speaks each sitrep's name AND
-description inline.
-
-**The tactical HUD graph** (2026-08-31, built, never run — `surfaces/tactical.md` "Tactical HUD
-graph" holds the design; this is the navigator's FIRST ambient recipe, so the focus split itself
-is also unexercised; all four stops are in: Soldier, Abilities, Commands, Objectives). The pass,
-on Gatecrasher with the harness armed: (a) mission start attaches
-silently (`/health` navigator line reads `attached (tactical HUD, unfocused)`) and the tile
-cursor still works — the split's whole point; (b) `Ctrl+Tab` speaks "HUD" + the Soldier stop's
-first line (rank + name), arrows walk the facts (health, actions, aim, weapon + ammo, effects)
-and Tab reaches Abilities, Commands and Objectives — the objectives stop must read word-for-word
-what `Ctrl+X` reads, the soldier facts word-for-word what `;` says where they overlap, and the
-abilities row Left/Right with cooldown/charges/hotkey per icon; (c) `Escape` speaks "Map" and the
-arrows drive the cursor again; (d) Enter on an available ability raises targeting, the targeting
-poll announces ability + default target, and the layer is UNFOCUSED afterwards (no arrow
-swallowing — the game cycles targets); (e) Enter on an unavailable one says "unavailable" and
-raises nothing; (f) a soldier switch while focused re-lands cleanly with the NEW soldier's
-abilities (the stale-antenna trap — count the bar against the sighted icon count) AND the new
-soldier's facts (the Soldier stop's ObjectID-keyed identities — watch for a stale weapon line);
-(g) a pause menu and a modal dialog over tactical still attach their own recipes (the dialog is
-the load-bearing one — the probe's own refusal is all that yields it); (h) `Shift+Tab` inside the
-HUD does NOT cycle the soldier on release (the widened Shift swallow). Commands-stop specifics:
-(i) the strip reads its five fixed buttons with the player's ACTUAL bound keys (the log carries
-the one-time `TButtonItems stride 0x..` line — 0x21 vs 0x24 is the open layout question the
-first pass settles); (j) on a mission with evac available, slot 6 appears ("Place evac zone"-
-family label) and Enter on it raises free aim; (k) Enter on End Turn ends the turn — and note
-whether staying HUD-focused through the enemy turn is livable or the stop should hand back to
-Map mode on its own (a design question only a live run can answer); (l) Enter on Next/Prev
-soldier moves the selection and the switch line speaks. Then shape-count the speech ring as
-always.
-
 ## Unexercised paths inside surfaces that HAVE run
+
+⚠ Everything in this section belongs to a surface whose MAIN PATH has been walked live. What is
+listed is the branch that has not: a state the campaign has not reached, a mod that has to be
+installed, a setting that has to be off. Treat a line here as "nobody has heard this yet", not
+as "this is broken".
+
+The branches carried over when the 2026-08-31 build's live-run debt was retired (main paths all
+confirmed in play):
+
+- **Pause menu, mod rows.** `ActivatePauseMenuItem` sends Enter to the LIST (`SendRowCommand`)
+  rather than calling `OnChildClicked` by name, so a mod-wrapped `OnItemClicked` delegate runs.
+  The vanilla rows are confirmed; the MOD row that motivated it is not — with Remove Missing
+  Mods Redux enabled, Enter on its row (6 of 8, tactical pause) must raise its confirm dialog.
+- **Popup recipe, image-carrying alerts.** `UIAlert`'s words come from the Flash capture, and
+  the asset filter reports what it removed as `dropped asset-looking operand`. Unheard: a splash
+  that pushes an image path MID-LIST (`BuildGOpsAlert` / retaliation / supply raid), and an
+  alert whose confirm label has to be matched out of the prose by the button filter. Grep the
+  log for that line and check `just dev-flashqueue` against `just dev-speech`.
+- **Commlink with subtitles OFF.** The reader obeys the game's Show Subtitles setting
+  (`surfaces/strategy.md`): off must be SILENT, and turning it back on mid-conversation must
+  announce the line still in progress rather than swallow it.
+- **Research report from the Shadow Chamber** — the only path that puts that screen on the 2D
+  movie (`research-report-recon.md` §7).
+- **Research available**: a deck of ≥2 cards (the flip announcement on Continue), a
+  shadow-project card, and the close into `UIRewardsRecap` on the tutorial-objective path —
+  which is UNCOVERED and is that chain's next hole (`research-unlocked-recon.md` §5).
+- **Geoscape region actions** (`geoscape-recon.md` §16): make contact and install a radio relay,
+  the two pin buttons vanilla wires to no key. Needs a save with `ResistanceRadio` researched;
+  its confirm alert is the Flash capture's `Alert_MakeContact` panel.
+- **Resistance orders**: the READ-ONLY visit (`PolicyReadOnly` on the name, verbs raising
+  `UICantChangeOrders`), a direct swap of two slotted cards, Backspace-cancels-hold, and the
+  empty-hands refusals `PolicyCantPick` / `PolicyCantMove`.
+- **After action**: a KIA card's Memorialize into the photobooth and the bond icon into
+  `UISoldierBondScreen` — neither of those two screens has a recipe, so expect Escape-only.
+- **Objectives readout** (`Ctrl+X`): the Avenger / dark-event branch and the counter-row branch,
+  which need the ship and a Retaliation-style mission respectively.
+- **Mission blade**: a GOps blade with 2+ missions (the selector buttons are mouse-only in
+  vanilla, and clicking one must re-announce the switched mission via the MissionRef extra-key),
+  the ambush blade (its Chosen strip must stay correctly SILENT), and the Shadow Chamber /
+  sitrep sections — silent so far only because the campaign has neither, so the gates are
+  untested in the POSITIVE direction.
+- **Tactical HUD graph**: on a mission with evac available, Commands slot 6 appears ("Place evac
+  zone"-family label) and Enter on it must raise free aim. And one design question a live run
+  has to answer rather than a check: whether staying HUD-focused through the enemy turn is
+  livable, or whether End Turn should hand back to Map mode on its own.
+- **Promotion screens**: the classic tree is walked, the other two are not. `_PromotionHero`
+  needs a faction hero (or any class after the Training Center retrofit) and its verb is buying
+  an ability with AP, including the refusal when AP is short — ⛔ and it is the one screen where
+  our layer is the ONLY keyboard route, since vanilla handles DPAD/LStick only and
+  `InitPromotion` calls `DisableNavigation()`. `_PromotionPsiOp` needs a Psi Lab and a trained
+  operative. On any of the three, a locked rank's ability names must stay UNSPOKEN — the reader
+  resolves names in script precisely so `m_strAbilityLockedTitle` substitutes, and a regression
+  there leaks what no sighted player can read.
 
 Tactical narration's panic / shields / evac
 events; the hacking screen's cancel line and any hack whose slot 0 is `bBadThing`; the ant farm's
@@ -297,7 +225,12 @@ a repeating announcement.
    bearing appended as a labelled aid, Enter → `DirectTargetObject`). Soldier (2026-08-31,
    `X2AccessUnitReader.BuildSoldierRecords` — the wire bridge went in that class, next to its
    composers, not in `X2AccessTacticalReader` as the plan sketched) and Commands (native —
-   `GameUI::ReadMouseControls`) are built and ride the live-run-debt checklist above. Still owed:
-   the spoken REASON on an unavailable ability (`AvailableCode` needs the companion vocabulary —
-   the FName must never be spoken raw), and a decision on End Turn's focus hand-back (checklist
-   item (k)).
+   `GameUI::ReadMouseControls`) are built and have run. Still owed: the spoken REASON on an
+   unavailable ability (`AvailableCode` needs the companion vocabulary — the FName must never be
+   spoken raw), and a decision on End Turn's focus hand-back.
+9. The mission blade's two v1 punts, each a deliberate gap rather than test debt:
+   `UIMission_GPIntelOptions` reads its intel options (name + cost + totals) but cannot PURCHASE
+   one — the rows are `UIMechaListItem` checkboxes, so the toggle path and the purchased-state
+   read are owed together — and the sitrep panel's mouse-only info button (it opens
+   `UISitRepInformation`, which the popup recipe already reads) has no node. The second is low
+   value: the reader already speaks each sitrep's name AND description inline.
