@@ -640,3 +640,54 @@ demotes each.
 - **A row with nothing marked draws "-" and a blank.** The SELL cell speaks the number (0) and the
   TOTAL cell is SPARSE — unlandable, column number kept, so Up/Down still match the TOTAL column
   across rows. The flat reading omits both until something is marked, as the row does.
+
+## Recruits
+
+The Armory's RECRUIT door (`UIRecruitSoldiers`, spawned by `UIFacility_Armory.Recruit()` alone).
+The `recruits` recipe with `X2AccessRecruitReader`. Built 2026-09-03 from source
+(`../recruit-recap-recon.md` §1); **not yet run live**, so each ⛔ is a reading of the code and the
+first pass promotes or demotes it.
+
+- ⛔ **A row is joined to its recruit by POSITION, and that is the game's own guarantee.**
+  `UIRecruitmentListItem` retains no name, no `metadataInt`, nothing — only `bDisabled`. The
+  screen rebuilds `m_arrRecruits` and the list in ONE loop of `UpdateData`, so `m_arrRecruits[i]`
+  is row i; the companion walks the array by the list's index and native stamps the same index.
+  A join on anything else would be a guess.
+- ⛔ **Enter is the SCREEN's Enter, selection first.** `OnUnrealCommand` calls
+  `OnRecruitSelected(List, List.SelectedIndex)` and ignores the widget the key came through; the
+  row's own RECRUIT button is `DisableNavigation()`ed. The purchase is immediate — no confirm —
+  and respawns every row, so the verb invalidates the wire cache (the address-reuse hazard).
+- **A greyed row keeps its activation.** `InitRecruitItem`'s `SetDisabled` means the supplies were
+  short at build time; the game still takes Enter there and answers with its own NOT ENOUGH
+  SUPPLIES dialog, which the dialog recipe reads. Spoken as `unavailable` + `cannot afford`, the
+  commodity list's wording for the same colour.
+- **The panel is the selection's shadow** (`OnRecruitChanged` repaints it on every move), so the
+  wire cache is keyed on the selection and the details nodes read at announce time, exactly as the
+  commodity card does. The cost is GLOBAL (`GetRecruitSupplyCost`); the time line is
+  `m_strInstant` unconditionally, which is what the screen draws whatever `RecruitOrderTime` is.
+- The flag beside a name is spoken as the country's `DisplayName` — the icon's meaning, not its
+  path.
+
+## Rewards recap
+
+The post-mission council letter (`UIRewardsRecap`) — the tail of the loot → research-available →
+recap chain, NOT the monthly report's (`../recruit-recap-recon.md` §2.1). The `rewards recap`
+recipe with `X2AccessRecapReader`. Built 2026-09-03 from source; **not yet run live**.
+
+- ⛔ **No widget on the screen holds a word.** The class declares no list, no text, no button;
+  `BuildScreen` pushes locals into Flash. Every line comes from the screen's own PUBLIC accessors —
+  `GetOpNameString`, `GetOpLocationString`, `GetOpSummaryString`, `GetRewardStrings` — re-run on
+  the live instance by the companion; native supplies the finder only.
+- ⛔ **Read before Continue, never after.** `OnContinue` → `ExitPostMissionSequence` →
+  `ClearRewardsRecapData` empties the reward and effect arrays and clears `MissionRef`. The
+  companion returns empty once either is gone, and the wire cache keys on the screen alone so
+  nothing re-asks on the way out.
+- **The outcome is colour alone on this screen** (the name is green or red), so the companion
+  borrows `UIMissionSummary`'s `m_strMissionComplete` / `m_strMissionFailed` — the words the
+  player heard one screen earlier — keyed on `WasMissionSuccessful()`.
+- **Rewards and effects are one node each**, where the screen compacts the rewards into slots and
+  fuses the effects into one space-joined string. The reward index carried is the SLOT (empties
+  skipped, as `BuildScreen` skips them); the effects come off the plain `RecapGlobalEffectsGood` /
+  `…Bad` arrays, good first. The captions ride the header only when the screen would draw them.
+- **Every key is Continue** (A, Enter, Escape, B, right-click; Space is swallowed; Tab only outside
+  `FINAL_RELEASE`), so the one button is the whole action list and Escape is left to the game.

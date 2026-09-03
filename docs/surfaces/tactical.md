@@ -596,6 +596,52 @@ that goes away uncommitted was cancelled.
   (never re-derived — sitreps, Gremlins and Skullmining all move the inputs) and are
   truncated, matching Flash: 6.42 and 2.75 print as 6% and 2%.
 
+## Loot receipt
+
+`UIInventoryTactical`, the `loot` recipe with `X2AccessLootReader`. Built 2026-09-03 from source
+(`../tactical-modals-recon.md` §1); **not yet run live**.
+
+- ⛔ **It is a receipt the game is waiting on.** The loot is already in the soldier's inventory
+  when the screen opens (`LootAbility_BuildGameState`), TAKE ALL / DUMP ALL are commented out of
+  the shipped source, and `X2Action_Loot` sleeps until the screen's callback fires — so OK is the
+  one verb and it must always be reachable. The Loot ability auto-fires at the end of a move, so
+  the screen appears unprompted.
+- ⛔ **Not a `UIInventory`.** The commodity recipe's finder never matches it and its rows are plain
+  UIPanels with one int (`GameStateObjectID`) — no flag dword, no text. The companion re-derives
+  each row's name (with the ` xN` suffix the row draws) and its hover description from that id.
+- **OK goes through the SCREEN's Enter**: `OnUnrealCommand` maps every key it handles to
+  `OnButtonClicked(m_kButton_OK)`, the button is `DisableNavigation()`ed, and `OnCancel` is dead
+  code that would not close the screen. Escape is left to the game — it is OK too.
+- The gate marks the screen `blocked` (not in `kTacticalPassives`, deliberately: it consumes every
+  key), which is what lets this recipe probe after the HUD layer detaches.
+
+## Soldier sheet
+
+`UITacticalCharInfoScreen`, the `soldier info` recipe, and the HUD graph's soldier-info button
+with `X2AccessCharInfoReader.OpenCharInfo`. Built 2026-09-03 from source
+(`../tactical-modals-recon.md` §2); **not yet run live**.
+
+- ⛔ **Nothing on a keyboard opens it in vanilla.** `Stick_L3` (the gamepad's stick click) is the
+  screen's only spawn site; F1 is a commented-out no-op; the mouse-controls strip has no
+  soldier-info button. The HUD graph's soldier stop therefore carries a button — named with the
+  HUD's own `m_strNavHelpCharShow`, the label its controller-only hint uses — and the companion
+  reproduces `Stick_L3`'s body behind `CanCharInfoShow`. It is offered only while the shot HUD is
+  down, the same gate. This re-provides a route the game ships for gamepads; it hands out no fact
+  a sighted gamepad player cannot see.
+- ✅ **A pure widget read.** Every label keeps its `Text` and every effect row keeps its
+  `UISummary_UnitEffect` by value — `GetUISummary_UnitEffectsByCategory`'s own output, the `;`
+  readout's oracle — so there is no companion and no Flash capture. The labels are found by
+  MCName because the screen keeps no pointer to them.
+- ⛔ **A probe can win before the sheet exists.** `InitCharacterInfoScreen` runs before the push
+  and `OnInit` (which spawns `ListPerks`) after it, so the reader answers `valid = false` on a
+  null list and the recipe treats that as not-yet-open.
+- **The stats are the FLA's seven** (HEALTH, AIM, HACK, WILL, ARMOR, DODGE, PSI) and nothing else
+  — Mobility and Defense are in the struct and not on the screen. `---` is the screen's marker for
+  zero and is said as `none`. The effect headings are the game's own, present only for a
+  non-empty category, and become contexts.
+- Nothing activates; scrolling is gamepad-only in vanilla and the graph is the way to read a long
+  list. Escape is the game's close, which `Show()`s the HUD again.
+
 ## Tactical combat narration and the replay path
 
 Moved out of `CLAUDE.md` (which keeps the ownership rules and points here): the design of

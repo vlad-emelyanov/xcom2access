@@ -239,7 +239,7 @@ Native reads the list (tier 1) and the structure; one companion — `X2AccessCov
 owns every word in tiers 2 and 3, joined on `metadataInt`. Two verbs the companion must re-provide
 because the keyboard cannot reach them: `LaunchButton.Click()` and `HandleClick("theButton2")`.
 
-## 8b. `UICovertActionReport`
+## 8b. `UICovertActionReport` — built 2026-09-03 (`covert report`), unexercised
 
 Same slot container, different consumer. `UICovertActionSlot.Update` takes the **report** branch
 there (`UICovertActionSlot.uc:57`), which passes `PromoteLabel` / `Value1..Value4` — and those
@@ -248,6 +248,52 @@ through `SlotContainer.ActionSlots`, which is reflection over a `UObject` array,
 tree). The rest — header, action name, post-mission `GetSummary()`, reward, faction — is the same
 Flash pipe and the same re-derivation. `ContinueButton` is `DisableNavigation()`ed only in the
 controller branch, so on mouse+keyboard it stays navigable.
+
+What the build settled, from a full read of the class:
+
+- **When it exists.** One spawn site, `XComHQPresentationLayer.UIActionCompleted`, reached only
+  from the geoscape tick: the action's clock runs out → `StartActionCompleteSequence` → camera pan
+  → `ShowActionCompletePopups` → `TriggerActionCompletePopup`. Never from the Ring, a map pin or
+  the event queue (those open the PICKER). ⛔ The rewards are GRANTED before the screen opens
+  (`CompleteCovertAction` → `GiveRewards`): it is a receipt.
+- ⛔ **Escape is Continue.** `OnUnrealCommand` answers A, Enter, Space AND Escape with one call,
+  `OnContinueClicked` → `CloseScreen` + `UIActionCompleteRewards`, which raises the reward popups
+  and then `RemoveEntity`s the action — `GetAction()` answers none from then on. No abort, no
+  second verb; the companion returns empty after that point rather than dereferencing.
+- ⛔ **No slot verbs.** `HandleClick` gates on `!bStarted` (staff) / `!bCompleted` (cost), both
+  false forever on a completed action. `IsDisabled` is never set here either (`DisableAllSlots`
+  is the picker's). `ClickCovertActionSlot` / `EditCovertActionLoadout` are not offered.
+- **Two widgets only**: `ContinueButton` (a `UILargeButton` whose `Text` really is retained —
+  `m_strGenericContinue`, icon-injected on a controller) and `SlotContainer`, whose
+  `ActionSlotPanels` is EMPTY on this screen (`InitSlotContainer` spawns the `slotMC_N` panels
+  under `UICovertActions` alone). `/gui` shows two nodes.
+- **`GetRewardString()` means the GRANTED values** (`GetRewardValuesString`) here, the preview
+  (`GetRewardDescriptionString`) on the picker. The companion asks the screen, never copies the
+  picker's line.
+- **The per-soldier card** is `Label` (a local — re-derived from `StaffSlotRef` as
+  `GetNameDisplayString`, or `GetStrategyCostString` for a cost slot) plus the retained five:
+  `PromoteLabel` (PROMOTE when `ShowPromoteIcon`), `Value1` Gained XP, `Value2` cohesion (or the
+  reward when nobody else went), `Value3` the reward, `Value4` in RED — `GetStaffRisksAppliedString`
+  or SOLDIER KILLED; a captured soldier gets `Value4` alone. ⛔ Read OFF THE SLOT, never
+  recomputed: the Highlander's #810 (`RewardsNotGivenOnCompletion`) changes the XP/cohesion
+  branch, and reading the retained values is right under both builds for free. Only slots that
+  had somebody in them are built (`ShouldStaffSlotBeDisplayed` hides unfilled ones once
+  `bCompleted`).
+- `CovertOpsReport_Ambushed` looks unreachable in the shipped flow (`bAmbushed` is cleared in the
+  same `Update` pass that raises the completion flag); the description accessor is called as
+  written, so a mod that sets the flag is still read.
+- **Offsets** (`AUICovertActionReport`, packed): `ActionRef` 0x440, `ContinueButton` 0x444,
+  `SlotContainer` 0x44C. Pinned. Nothing else on the class is read natively.
+
+As built: three stops — the card (name, narrative, REWARD: line, faction), RESULTS: one node per
+slot card with PROMOTE as an attention part and the four value lines as parts, then CONTINUE
+over the screen's own Enter. Named `COVERT ACTION REPORT:` + the action.
+
+First live pass: (1) a completed two-soldier action must attach on the geoscape after the camera
+pan and read the card, then Tab to RESULTS with one node per soldier carrying Gained XP and the
+cohesion line; (2) an action with a risk that fired must put the risk's name LAST on that
+soldier's node; (3) Enter on CONTINUE must raise the reward popups (popup recipe) and `just
+dev-log` must carry no companion error after it; (4) `/gui` must show exactly two nodes.
 
 ## 9. What the first live pass must answer
 

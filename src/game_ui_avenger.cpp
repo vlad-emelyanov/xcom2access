@@ -1124,6 +1124,7 @@ CommodityView ReadCommodity(void* screen)
         return v;
     v.screen = screen;
     v.tabbed = IsKindOfRaw(screen, "UIInventory_BuildItems");
+    v.implants = IsKindOfRaw(screen, "UIInventory_Implants");
     v.list = ReadPtrRaw(screen, kInventoryListOffset);
     if (!v.list)
         return v;
@@ -1569,6 +1570,108 @@ bool ConfirmBlackMarketSale(const SellView& view)
     // The top of the game's own routing: the screen's OnUnrealCommand answers Enter itself with
     // OnConfirmButtonClicked, ahead of the navigator and the list.
     return SendScreenCommand(view.screen, kCmdEnter);
+}
+
+// ---- recruiting (UIRecruitSoldiers) --------------------------------------------------------------
+//
+// See the header for what the screen retains (nothing on a row; the recruit array beside the
+// list). Four offsets, all pinned in sdk_layout_checks.cpp.
+
+namespace {
+
+constexpr int32_t kRecruitListOffset = 0x410;       // List
+constexpr int32_t kRecruitArrayOffset = 0x418;      // m_arrRecruits (TArray<XComGameState_Unit*>)
+constexpr int32_t kRecruitTitleOffset = 0x428;      // m_strListTitle
+constexpr int32_t kRecruitNoRecruitsOffset = 0x438; // m_strNoRecruits
+
+// ResistanceHQ.Recruits is refilled to a handful each month; a modded pool could be longer. Loud
+// when clipped, like every list walk in this file.
+constexpr int kMaxRecruitRows = 64;
+
+} // namespace
+
+void* FindRecruitScreen()
+{
+    // Exact class, focused only: the not-enough-supplies dialog it raises pushes no screen, so
+    // the recruit screen stays focused under it and the dialog recipe wins by probe order.
+    void* screen = FindStackScreenRaw("UIRecruitSoldiers");
+    return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
+}
+
+RecruitView ReadRecruits(void* screen)
+{
+    RecruitView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+    v.title = ReadLabel(screen, kRecruitTitleOffset);
+    v.emptyText = ReadLabel(screen, kRecruitNoRecruitsOffset);
+    // The COUNT only. The elements are game-state objects the companion resolves for itself off
+    // the same array, and a pointer read here would be a UObject held for nothing.
+    const int32_t recruits = ReadArrayCountRaw(screen, kRecruitArrayOffset);
+    v.recruits = recruits < 0 ? 0 : recruits;
+
+    v.list = ReadPtrRaw(screen, kRecruitListOffset);
+    if (!v.list)
+        return v;
+    v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
+
+    void* rows[kMaxRecruitRows] = {};
+    const int rowCount = TakeListItemsRaw("Recruits: rows", v.list, rows, kMaxRecruitRows);
+    for (int i = 0; i < rowCount; i++) {
+        // UpdateData spawns nothing but recruit rows, but the index stays the game's own either
+        // way — SetSelectedIndex, OnRecruitSelected and m_arrRecruits are all expressed in it.
+        if (!rows[i] || !IsKindOfRaw(rows[i], "UIRecruitmentListItem"))
+            continue;
+        RecruitRow r;
+        r.handle = rows[i];
+        r.index = i;
+        // UIListItemString::bDisabled — InitRecruitItem's SetDisabled(true) when the supplies
+        // were short of the cost at build time. The game still lets the row be selected and
+        // activated; it is the purchase it refuses, with its own dialog.
+        r.disabled = (ReadU32Raw(rows[i], kListItemStringFlagsOffset) & kListItemDisabled) != 0;
+        v.rows.push_back(r);
+    }
+
+    // The two halves are rebuilt together, so a mismatch means a read caught the screen
+    // mid-UpdateData — worth a line, never a crash.
+    if (v.recruits != static_cast<int>(v.rows.size())) {
+        static int sLastReported = -1;
+        if (sLastReported != v.recruits) {
+            sLastReported = v.recruits;
+            LOG_INFO("Recruits: %d state object(s) against %zu row(s)", v.recruits, v.rows.size());
+        }
+    }
+    return v;
+}
+
+bool SetRecruitSelection(const RecruitView& view, int index)
+{
+    // List.OnSelectionChanged = OnRecruitChanged repaints the right-hand panel, as the commodity
+    // list's does its card — this is what keeps the details stop describing the row under focus.
+    return SetListIndex(view.list, index);
+}
+
+bool RecruitSelected(const RecruitView& view, int index)
+{
+    if (!view.screen || !view.list)
+        return false;
+    // Select first, then the SCREEN's Enter: UIRecruitSoldiers.OnUnrealCommand answers
+    // FXS_KEY_ENTER with OnRecruitSelected(List, List.SelectedIndex) ahead of its navigator, and
+    // the row's own RECRUIT button is out of the navigator entirely (SetConfirmButtonStyle calls
+    // DisableNavigation on it). From here down, the index is the argument.
+    SetListIndex(view.list, index);
+    return SendScreenCommand(view.screen, kCmdEnter);
+}
+
+// ---- the post-mission rewards recap (UIRewardsRecap) ---------------------------------------------
+//
+// A finder and nothing else: the screen has no widgets and every word is the companion's.
+
+void* FindRewardsRecapScreen()
+{
+    void* screen = FindStackScreenRaw("UIRewardsRecap");
+    return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
 }
 
 } // namespace GameUI

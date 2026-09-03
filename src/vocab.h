@@ -193,6 +193,10 @@ inline constexpr const char* CommodityEmpty = "Nothing to choose here";
 inline constexpr const char* CommodityLeaveHint = "Escape to go back";
 inline constexpr const char* CommodityUnaffordable = "cannot afford";
 inline constexpr const char* CommodityOwned = "owned";
+/// The PCS picker's bIsBad (UIInventory_Implants.CanEquipImplant): the same red as the price
+/// tint elsewhere in the family, meaning a weaker implant of a stat already boosted, or a psi
+/// implant on a soldier who is not a psi operative. The game states neither in words.
+inline constexpr const char* ImplantCannotEquip = "cannot equip";
 
 // The black market's two non-commodity screens. The entry menu names itself (m_strTitle) and the
 // trading post takes the entry menu's own SELL INVENTORY label through the companion, so both
@@ -354,6 +358,74 @@ inline std::string Fraction(int value, int max)
 {
     return std::to_string(value) + " out of " + std::to_string(max);
 }
+
+// ---- recruiting (UIRecruitSoldiers) ----
+//
+// The screen names itself (m_strListTitle) and draws its own empty-list line (m_strNoRecruits);
+// both fallbacks fire only in the window before the companion answers. Every other word — the
+// names, the countries, the cost and the bio — is the game's own.
+inline constexpr const char* ScreenRecruitsFallback = "Recruits";
+inline constexpr const char* RecruitsEmpty = "No recruits available";
+
+// ---- the post-mission rewards recap (UIRewardsRecap) ----
+//
+// The screen has no title of its own worth speaking (its heading is a "SECURE TRANSMISSION"
+// greeble), so it is named by the operation the companion reads off it and falls back to this.
+// The Continue is the nav help's, whose label lives in the movie, so it reuses the report's word.
+inline constexpr const char* ScreenRewardsRecapFallback = "Mission rewards";
+/// Recognised the screen, the companion answered nothing. Said for ReportNoText's reason: the
+/// player still has to press Continue, and silence is indistinguishable from no screen at all.
+inline constexpr const char* RecapNoText = "Rewards readout unavailable";
+
+// ---- the covert action report (UICovertActionReport) ----
+//
+// The screen carries its own heading (COVERT ACTION REPORT:) and its Continue really is a
+// retained UILargeButton label, so both of these are attach-window fallbacks only.
+inline constexpr const char* ScreenCovertReportFallback = "Covert action report";
+inline constexpr const char* CovertReportNoText = "Report readout unavailable";
+/// A results card whose label the companion could not resolve (its staff slot's state object was
+/// gone). It still gets a node: the retained result lines on it are the point of the screen.
+inline constexpr const char* CovertReportCardFallback = "Result";
+
+// ---- the armory hub (UIArmory_MainMenu) ----
+//
+// The screen is named by the soldier (the companion's header line, as the loadout is); this is
+// the attach window's word. The row fallback is for a mod-inserted row whose retained Text read
+// empty — it still gets a node, since dropping it would renumber nothing but would hide a verb.
+inline constexpr const char* ScreenArmoryFallback = "Armory";
+inline constexpr const char* ArmoryRowFallback = "Menu entry";
+
+// ---- weapon upgrades (UIArmory_WeaponUpgrade) and the pattern picker (UIArmory_WeaponTrait) ----
+//
+// The screen is named by the weapon (the companion's header line); the picker by the heading its
+// caller passed it. Both fallbacks fire only in the attach window. The stop words are ours: the
+// game draws the stat block and the customize rows as unlabelled panels, and the two lists' titles
+// are the game's own (carried by the companion) and so need no word here.
+inline constexpr const char* ScreenWeaponUpgradeFallback = "Weapon upgrades";
+inline constexpr const char* ScreenWeaponPatternFallback = "Weapon pattern";
+inline constexpr const char* StopWeaponStats = "Weapon stats";
+/// The slots list while the upgrade picker is open — a read-only mirror the game has switched
+/// off, as the loadout's equipped list is; the word tells the player why Enter does nothing there.
+inline constexpr const char* WeaponSlotsMirror = "current slots";
+
+// ---- the loot receipt (UIInventoryTactical) ----
+//
+// The screen names itself (m_strTitle, LOOT RECOVERY) and its OK is m_strGenericOK retained on the
+// button, so both fallbacks fire only in the attach window. The empty line is ours: UpdateData
+// draws a row only for items that reached the soldier's inventory and says nothing when none did.
+inline constexpr const char* ScreenLootFallback = "Loot recovered";
+inline constexpr const char* LootEmpty = "Nothing recovered";
+inline constexpr const char* LootOkFallback = "OK";
+
+// ---- soldier info (UITacticalCharInfoScreen) ----
+//
+// The screen has no title of its own — its heading IS the soldier's name — so this is the attach
+// window's word. SoldierInfoFallback names the HUD graph's button when the HUD's own hint label
+// (m_strNavHelpCharShow) reads empty. CharInfoNoValue is what a stat the screen draws as "---"
+// (its own marker for zero) is said as; dashes read as dashes.
+inline constexpr const char* ScreenCharInfoFallback = "Soldier info";
+inline constexpr const char* SoldierInfoFallback = "Soldier info";
+inline constexpr const char* CharInfoNoValue = "none";
 
 // The geoscape's mission tray. Almost nothing here is ours: each icon's Title and Body are the
 // game's own hover tooltip, already localized and already exactly what a sighted player reads.

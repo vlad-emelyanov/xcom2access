@@ -113,9 +113,9 @@ Description split on `\n` before `CleanText`, empties dropped after the position
 1. **The flip announcement.** Press Continue on card 1 of ≥2: the differ should speak card 2's
    title (with "2 of N") within a poll tick. If focus was mid-description, same thing.
 2. **The close.** Continue on the last card: Flash sends `NoMoreResearch`, the screen pops —
-   confirm detach is clean and note what attaches next. `UIRewardsRecap` is ⬜ uncovered, so on
-   the tutorial-objective path the player walks from a covered screen into silence; that is the
-   next hole in this chain, not a defect here.
+   confirm detach is clean and note what attaches next. `UIRewardsRecap` now has the `rewards
+   recap` recipe (2026-09-03, unexercised — `recruit-recap-recon.md` §2), so the next thing to
+   attach should be it, named by the operation.
 3. **A shadow project card** (`bShadowProject` true — WOTC Chosen research). Does Flash restyle
    or relabel the card in a way arg 0 does not carry? Screenshot beside `/flashqueue`. Until
    answered, the bool is captured but unspoken — speaking a word the screen does not show would

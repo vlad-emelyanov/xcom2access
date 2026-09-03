@@ -238,6 +238,8 @@ private function AppendCard(UIInventory Screen)
 		AddField(Rec, "desc",
 			FormatReq(Row.ItemTemplate.GetItemBriefSummary(Row.ItemRef.ObjectID)));
 		AppendItemCost(Screen, Row, Rec);
+		if (UIInventory_Implants(Screen) != none)
+			AddField(Rec, "delta", ImplantDelta(UIInventory_Implants(Screen), Row));
 	}
 	else
 	{
@@ -351,6 +353,56 @@ private function AppendResearchCost(UIInventory Screen, UIInventory_ListItem Row
 	}
 
 	AddCostFields(Screen, Rec, Cost, TimeLabel, Time, CommodityReqString(Row));
+}
+
+// The PCS screen's one extra: what installing the selected implant would do to the soldier.
+// UIInventory_Implants.SelectedItemChanged computes this with its own GetStatBoostString (Integrated
+// Warfare and Beta Strike folded in) and writes it into the ARMORY HUB's header, one screen down —
+// ⛔ with the arguments in the wrong order (Will lands under HEALTH, Aim under MOBILITY, and so on:
+// a shipped bug in the labels). The boosts are re-asked of the screen's own function and paired
+// with the stat they actually change, under the header's own captions. Same shape as the loadout's
+// `delta`, and it rides the CARD for the same reason: our write-back lands after the render.
+private function string ImplantDelta(UIInventory_Implants Screen, UIInventory_ListItem Row)
+{
+	local UIArmory_MainMenu Armory;
+	local XComGameState_Unit Unit;
+	local array<XComGameState_Item> EquippedImplants;
+	local XComGameState_Item ImplantToAdd, ImplantToRemove;
+	local string Result;
+
+	Armory = UIArmory_MainMenu(Screen.Movie.Pres.ScreenStack.GetScreen(class'UIArmory_MainMenu'));
+	if (Armory == none)
+		return "";
+	Unit = Armory.GetUnit();
+	if (Unit == none)
+		return "";
+
+	ImplantToAdd = XComGameState_Item(`XCOMHISTORY.GetGameStateForObjectID(Row.ItemRef.ObjectID));
+	EquippedImplants = Unit.GetAllItemsInSlot(eInvSlot_CombatSim);
+	if (EquippedImplants.Length > 0)
+		ImplantToRemove = XComGameState_Item(`XCOMHISTORY.GetGameStateForObjectID(EquippedImplants[0].ObjectID));
+
+	AppendBoost(Result, class'UISoldierHeader'.default.m_strAimLabel,
+		Screen.GetStatBoostString(ImplantToAdd, ImplantToRemove, eStat_Offense));
+	AppendBoost(Result, class'UISoldierHeader'.default.m_strHealthLabel,
+		Screen.GetStatBoostString(ImplantToAdd, ImplantToRemove, eStat_HP));
+	AppendBoost(Result, class'UISoldierHeader'.default.m_strMobilityLabel,
+		Screen.GetStatBoostString(ImplantToAdd, ImplantToRemove, eStat_Mobility));
+	AppendBoost(Result, class'UISoldierHeader'.default.m_strWillLabel,
+		Screen.GetStatBoostString(ImplantToAdd, ImplantToRemove, eStat_Will));
+	AppendBoost(Result, class'UISoldierHeader'.default.m_strTechLabel,
+		Screen.GetStatBoostString(ImplantToAdd, ImplantToRemove, eStat_Hacking));
+	if (Unit.IsPsiOperative())
+		AppendBoost(Result, class'UISoldierHeader'.default.m_strPsiLabel,
+			Screen.GetStatBoostString(ImplantToAdd, ImplantToRemove, eStat_PsiOffense));
+	return Result;
+}
+
+private function AppendBoost(out string Result, string Label, string Boost)
+{
+	if (Boost == "")
+		return;
+	class'X2AccessHelper'.static.AppendComma(Result, Label @ Boost);
 }
 
 // bTech picks a DIFFERENT requirement formatter, not a different wording of the same one:

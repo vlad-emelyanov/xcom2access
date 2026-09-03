@@ -519,6 +519,10 @@ struct CommodityView {
     std::vector<CommodityRow> rows;
     int selected = -1; // UIList::SelectedIndex
     bool tabbed = false; // a UIInventory_BuildItems, i.e. it carries the three-category strip
+    /// A UIInventory_Implants — the PCS picker the armory hub opens. Same family, one different
+    /// meaning: its rows' bIsBad is CanEquipImplant saying no (a weaker implant of the same stat,
+    /// or a psi implant on a non-psi soldier), not the price. The word changes with it.
+    bool implants = false;
 };
 
 /// The commodity screen, when one is the CURRENT screen (topmost non-null stack entry, matching
@@ -747,5 +751,74 @@ bool AdjustBlackMarketSellRow(const SellView& view, int index, int delta);
 /// answers FXS_KEY_ENTER with OnConfirmButtonClicked ahead of its navigator, and a greyed button
 /// (nothing marked) gets the game's refusal sound there. Game thread only.
 bool ConfirmBlackMarketSale(const SellView& view);
+
+// ---- recruiting (UIRecruitSoldiers) ----
+//
+// The Armory's RECRUIT door: a UIList of UIRecruitmentListItems down the left (a country flag and
+// a name each) and a panel on the right — cost, time, the recruit's background paragraph and a
+// headshot — repainted on every selection change. Spawned by UIFacility_Armory.Recruit() alone;
+// no presentation-layer function opens it.
+//
+// ⛔ A ROW RETAINS NOTHING IDENTIFYING. InitRecruitItem pushes the flag and the name through
+// MC.BeginFunctionOp("populateData") and never calls SetText nor writes metadataInt, so Text is
+// EMPTY on a row visibly showing a name, and the only join between a row and its recruit is
+// POSITION: the screen keeps `m_arrRecruits` index-parallel to the list, both rebuilt together in
+// UpdateData. The companion (X2AccessRecruitReader) walks that array; native reads the list, the
+// selection and the one useful bit a row does keep — bDisabled, which InitRecruitItem sets when
+// supplies are short of the (global) recruit cost.
+//
+// Vanilla's keyboard already walks here: Up/Down through the list, Enter/Space recruit the
+// SELECTED row (OnUnrealCommand reads List.SelectedIndex and ignores the widget it was handed),
+// Escape leaves. What it lacks is every WORD — the names, the cost and the bio are all Flash —
+// and the row's own RECRUIT button is DisableNavigation()ed, which is why activation goes through
+// the screen's Enter and never the button.
+
+struct RecruitRow {
+    void* handle = nullptr; // UIRecruitmentListItem
+    int index = 0;          // the list's own item index, which is also m_arrRecruits'
+    bool disabled = false;  // bDisabled: supplies < GetRecruitSupplyCost() when the row was built
+};
+
+struct RecruitView {
+    void* screen = nullptr;
+    void* list = nullptr; // UIRecruitSoldiers::List
+    std::vector<RecruitRow> rows;
+    int selected = -1;     // UIList::SelectedIndex
+    int recruits = 0;      // m_arrRecruits.Length — the COUNT only; the elements are the companion's
+    std::string title;     // m_strListTitle ("RECRUITS")
+    std::string emptyText; // m_strNoRecruits — the line UpdateData pushes through setEmpty
+};
+
+/// The recruit screen, when it is the focused stack entry. Game thread only.
+void* FindRecruitScreen();
+
+RecruitView ReadRecruits(void* screen);
+
+/// P11 write-back: UIList::SetSelectedIndex. Load-bearing — List.OnSelectionChanged is
+/// OnRecruitChanged, which is what repaints the cost/bio panel. Game thread only.
+bool SetRecruitSelection(const RecruitView& view, int index);
+
+/// Recruit the soldier on `index`, by the game's own keyboard path: select, then hand the SCREEN
+/// an Enter — its OnUnrealCommand calls OnRecruitSelected(List, List.SelectedIndex) itself, ahead
+/// of the navigator, so selecting first is the argument. A short-of-supplies row is passed
+/// through: the screen answers it with its own NOT ENOUGH SUPPLIES dialog, which the dialog
+/// recipe reads. On success the game buys the recruit at once, with no confirmation, and rebuilds
+/// every row. Game thread only.
+bool RecruitSelected(const RecruitView& view, int index);
+
+// ---- the post-mission rewards recap (UIRewardsRecap) ----
+//
+// The tail of the post-mission chain — loot recovered → (research available) → THIS → the
+// geoscape. The council's after-action letter: the operation's name and region, a paragraph, the
+// rewards, the global effects. ⛔ It has NO widget tree at all — no list, no text field, not even
+// its own Continue (the nav help's) — and every word goes through MC.BeginFunctionOp. What it does
+// keep is a set of public accessors that ARE what BuildScreen called (GetOpNameString,
+// GetOpSummaryString, GetRewardStrings, GetGlobalEffectsStrings), so X2AccessRecapReader re-runs
+// them on the live screen and native supplies only the finder. Every key but Start is Continue,
+// Escape included: OnUnrealCommand swallows everything and never reaches a navigator.
+
+/// The rewards recap, when it is the focused stack entry. Pushed on the 3D movie by
+/// XComHQPresentationLayer.UIRewardsRecap() — the same stack. Game thread only.
+void* FindRewardsRecapScreen();
 
 } // namespace GameUI

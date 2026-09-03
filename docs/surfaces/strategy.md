@@ -282,6 +282,66 @@ can never both be showing, which is why their lines cannot collide.
   are dispatched from mouse handlers and controller trigger codes, and unequip is the row's X
   button.
 
+## Armory hub
+
+`UIArmory_MainMenu`, the `armory` recipe with `X2AccessArmoryReader`. Built 2026-09-03 from source
+(`../armory-recon.md` §1); **not yet run live**.
+
+- ⛔ **Written against the Highlander's rewrite of the class (Issue #47), on purpose.** The mod
+  requires the Highlander; its `UIArmory_MainMenu` names every row (`ArmoryMainMenu_<X>Button`),
+  keeps them as fields, lets mods insert rows through `OnArmoryMainMenuUpdate`, and respawns all
+  of them on every `OnReceiveFocus`. So **a row is identified by MCName on both halves** — never
+  by index (a mod may reorder) and never by pointer (they die on every focus return). A dump
+  without the eight fields is a vanilla dump, which `just sdk-adopt` refuses.
+- ✅ **The rows retain their words** (`InitListItem` → `SetText`), so the labels are native; the
+  promote row's `<img>` prefix is `CleanText`'s. What they do not retain — the disabled REASON
+  (`SetDisabled` parks it in the tooltip manager) and the description under the list (a Flash
+  child written by `OnSelectionChanged`) — the companion re-derives from the same cascades and the
+  same object-identity switch the screen uses.
+- **Enter is select-then-screen-Enter**, as on the loadout: `OnAccept` reads the selection and, in
+  the Highlander, re-sends Enter to the list so a mod-wrapped delegate runs. A greyed row keeps
+  its node; `OnAccept` refuses it with the game's own sound.
+- **The soldier cycle is re-provided as a spinner** on the soldier node, gated exactly as
+  `UIArmory.OnUnrealCommand` gates Tab/LeftShift (which the layer displaces), and the
+  abilities/traits toggle — a nav-help button with no key — as a node under the summary. Both are
+  the screen's own functions.
+- **The header composers are shared with the loadout** (`X2AccessHelper.DescribeArmorySoldier` /
+  `DescribeArmoryStats`), so the two screens cannot name a soldier differently — the
+  two-surfaces-must-agree rule.
+
+## Weapon upgrades
+
+`UIArmory_WeaponUpgrade` and its pattern picker `UIArmory_WeaponTrait`, one `weapon upgrades`
+recipe with `X2AccessWeaponUpgradeReader`. Built 2026-09-03 from source (`../armory-recon.md`
+§2); **not yet run live**.
+
+- ⛔ **The layout is the Highlander's** (`WeaponViewOffsets` heads the class, Issue #832): every
+  screen offset is 0x10 past vanilla, and the pin on that field is what refuses a vanilla dump.
+- ⛔ **One list is live, and the slots list is never moved under an open picker.** `ActiveList` is
+  the mode bit, as on the loadout; `PreviewUpgrade` reads the SLOT from the slots list's selection
+  whichever list the cursor is in, so a write-back there while the picker is open would preview
+  the wrong slot. The slots become a read-only mirror titled `current slots`, with the frozen
+  (`bIsLocked`) slot marked selected, and the picker is the landing stop.
+- ✅ **The rows retain their words** (title, the effect line, Count, three bits); the greyed
+  REASON is the one thing they lose — `disabledText` is never assigned and no tooltip gets it —
+  so the companion re-runs the two tests the screen made.
+- ⛔ **The stat block is a preview of a state that does not exist.** `UIArmory_WeaponUpgradeStats`
+  has no members; the game feeds it from a throwaway change state with the selected upgrade
+  applied. The companion reproduces that change state (never submitted) so the numbers spoken
+  are the numbers drawn, and the stats read at announce time because the selection is what our
+  write-back moves.
+- **Enter is the screen's own** (`OnAccept` → `OnItemClicked` on the active list): the picker's
+  open animation, the confirm dialog and the reuse-upgrades shortcut all live inside it. The
+  customize rows — otherwise reached only through `OnAccept`'s no-selection forward, or the
+  D-pad — activate through their own row handler. Escape is left to the game: it backs out of the
+  picker, then the colour selector, then the screen.
+- **The pattern picker** is the same recipe (a subclass, topmost when up): a plain list with the
+  current pattern marked selected and landed on, Enter picks and closes, ⛔ Escape REVERTS to the
+  starting pattern and closes — vanilla's own meaning, and the reason the current row says
+  `selected`.
+- ⚠ The colour row opens `UIColorSelector`, D-pad-driven in vanilla and unread here; the name
+  row opens the text-entry dialog, which the observer echoes.
+
 ## Covert actions
 
 The WOTC core strategy loop (`docs/covert-actions-recon.md` is the survey). It fails in three
@@ -345,6 +405,30 @@ different ways at once, and each half of the mod owns one.
   struct declarations, so `StaffSlots`/`CostSlots`/`Risks`/`NegatedRisks` all move against a
   vanilla dump. Nothing native reads them, but it is the concrete case `just sdk-adopt`'s vanilla
   refusal exists for.
+
+## Covert action report
+
+The loop's RESULT screen (`UICovertActionReport`), the `covert report` recipe with
+`X2AccessCovertActionReader.DescribeCovertActionReport`. Built 2026-09-03 from source
+(`../covert-actions-recon.md` §8b); **not yet run live**.
+
+- ⛔ **Escape is Continue, and Continue deletes the action.** `OnUnrealCommand` answers A, Enter,
+  Space and Escape with `OnContinueClicked`, which closes, raises the reward popups and
+  `RemoveEntity`s the action's state object. There is no back and no abort; the recipe offers one
+  button over the screen's own Enter, and the companion answers empty once `GetAction()` is none
+  rather than dereferencing.
+- ⛔ **The slot verbs are dead here and are not offered.** `HandleClick` gates on `!bStarted` /
+  `!bCompleted`, both false forever on a completed action. The picker's `ClickCovertActionSlot` /
+  `EditCovertActionLoadout` would be silent no-ops.
+- ✅ **The per-soldier results are READ OFF THE SLOT OBJECTS, never recomputed.** `UpdateData`
+  writes `PromoteLabel` / `Value1..Value4` onto `UICovertActionSlot` and the report branch of
+  `Update()` hands exactly those to Flash — so the retained values ARE the card's argument list,
+  and they are right under the Highlander's `RewardsNotGivenOnCompletion` (#810) for free. Only
+  the label is a local, re-derived as the picker does (`GetNameDisplayString`, the cost string).
+- **The reward line is the GRANTED values** (`GetRewardValuesString`), not the picker's preview;
+  the screen's own `GetRewardString()` answers with the right one and is what is called.
+- The widget tree is two nodes: `ActionSlotPanels` is empty on this screen, and `ContinueButton`'s
+  `Text` is a real retained label (icon-injected on a controller, cleaned).
 
 ## Resistance orders
 

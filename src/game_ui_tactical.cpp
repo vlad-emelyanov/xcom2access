@@ -977,6 +977,186 @@ ChosenSummaryView ReadChosenSummary(void* screen)
     return v;
 }
 
+// ---- the loot receipt (UIInventoryTactical) -------------------------------------------------
+//
+// See the header. The list, the OK button and the title off the screen; the item's ObjectID off
+// a row, which retains nothing else. All pinned in sdk_layout_checks.cpp.
+
+namespace {
+
+constexpr int32_t kLootListOffset = 0x418;      // m_kLootList
+constexpr int32_t kLootOkButtonOffset = 0x428;  // m_kButton_OK
+constexpr int32_t kLootTitleOffset = 0x458;     // m_strTitle
+constexpr int32_t kLootRowItemIdOffset = 0x3D8; // UIInventoryTactical_LootingItem::GameStateObjectID
+
+// A corpse yields a handful of items, a supply crate a few more. Loud when clipped.
+constexpr int kMaxLootRows = 32;
+
+} // namespace
+
+void* FindLootScreen()
+{
+    void* screen = FindStackScreenRaw("UIInventoryTactical");
+    return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
+}
+
+LootView ReadLoot(void* screen)
+{
+    LootView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+    v.title = ReadFStringField(screen, kLootTitleOffset);
+    v.okButton = ReadPtrRaw(screen, kLootOkButtonOffset);
+    if (v.okButton) {
+        // InitButton → SetText, so Text is retained: m_strGenericOK wrapped in AlignCenter's
+        // <p align='CENTER'> markup, which the cleaning read strips.
+        v.okLabel = ReadFStringField(v.okButton, kButtonTextOffset);
+    }
+
+    v.list = ReadPtrRaw(screen, kLootListOffset);
+    if (!v.list)
+        return v;
+    void* rows[kMaxLootRows] = {};
+    const int rowCount = TakeListItemsRaw("Loot: rows", v.list, rows, kMaxLootRows);
+    for (int i = 0; i < rowCount; i++) {
+        if (!rows[i] || !IsKindOfRaw(rows[i], "UIInventoryTactical_LootingItem"))
+            continue;
+        LootRow r;
+        r.handle = rows[i];
+        r.index = i;
+        r.itemId = ReadI32Raw(rows[i], kLootRowItemIdOffset);
+        v.rows.push_back(r);
+    }
+    return v;
+}
+
+bool CloseLoot(const LootView& view)
+{
+    if (!view.screen)
+        return false;
+    // The screen's own Enter. OnUnrealCommand answers it — and Space, Escape, A and B alike —
+    // with OnButtonClicked(m_kButton_OK): the looting sound, CloseScreen, and the callback the
+    // visualizer is sleeping on. The button itself is out of the navigator.
+    return SendScreenCommand(view.screen, kCmdEnter);
+}
+
+// ---- soldier info (UITacticalCharInfoScreen) ------------------------------------------------
+//
+// See the header. Everything is a retained widget read; the labels are found by Flash name
+// because the screen keeps no pointer to them.
+
+namespace {
+
+constexpr int32_t kCharInfoListOffset = 0x410;       // UITacticalCharInfoScreen::ListPerks
+constexpr int32_t kTacHudCharInfoHintOffset = 0x510; // UITacticalHUD::m_strNavHelpCharShow
+constexpr int32_t kPanelMCNameOffset = 0x27C;        // UIPanel::MCName
+// UIText::Text and UIScrollingText::Text sit at the same offset; both classes are read here.
+constexpr int32_t kWidgetTextOffset = 0x3D8;
+// UIListItemPerk::Perk — a UISummary_UnitEffect held BY VALUE on the row, so its members are the
+// row's own offsets.
+constexpr int32_t kPerkNameOffset = 0x3E0;        // Perk.Name
+constexpr int32_t kPerkDescriptionOffset = 0x3F0; // Perk.Description
+constexpr int32_t kPerkSourceOffset = 0x418;      // Perk.AbilitySourceName (FName)
+// The FLA's seven fixed stat slots (mc_statLabel00..06 / mc_statValue00..06).
+constexpr int kCharInfoStatSlots = 7;
+// Headings and effects interleaved; a veteran with a long passive list is still far below this.
+constexpr int kMaxCharInfoRows = 128;
+constexpr int kMaxCharInfoChildren = 64;
+
+// A direct child of `panel` named `name` in Flash, or null. The sheet spawns its labels into
+// LOCALS and keeps no pointer to them, so the widget's Flash name is the only handle they have.
+void* FindChildByMCName(void* panel, const char* name)
+{
+    void* children[kMaxCharInfoChildren] = {};
+    const int count = TakeArrayRaw(
+        "CharInfo: children", panel, kPanelChildPanelsOffset, children, kMaxCharInfoChildren);
+    for (int i = 0; i < count; i++) {
+        if (!children[i])
+            continue;
+        char buf[64];
+        if (FNameAtAnsiRaw(static_cast<const uint8_t*>(children[i]) + kPanelMCNameOffset, buf,
+                sizeof(buf))
+            && strcmp(buf, name) == 0)
+            return children[i];
+    }
+    return nullptr;
+}
+
+// A named label's retained text, cleaned — SetCenteredText stores the <p align='CENTER'> wrapper
+// with it, which the cleaning read strips.
+std::string ChildText(void* panel, const std::string& name)
+{
+    void* child = FindChildByMCName(panel, name.c_str());
+    return child ? ReadFStringField(child, kWidgetTextOffset) : std::string();
+}
+
+} // namespace
+
+std::string ReadCharInfoHint(void* hud)
+{
+    return hud ? ReadFStringField(hud, kTacHudCharInfoHintOffset) : std::string();
+}
+
+void* FindCharInfoScreen()
+{
+    void* screen = FindStackScreenRaw("UITacticalCharInfoScreen");
+    return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
+}
+
+CharInfoView ReadCharInfo(void* screen)
+{
+    CharInfoView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+    // The list is spawned in OnInit, which runs AFTER the push (InitCharacterInfoScreen comes
+    // first in Stick_L3) — a null here is the screen before it has built itself.
+    void* list = ReadPtrRaw(screen, kCharInfoListOffset);
+    if (!list)
+        return v;
+    v.valid = true;
+
+    v.name = ChildText(screen, "mc_nameLabel");
+    v.className = ChildText(screen, "mc_classLabel");
+    for (int i = 0; i < kCharInfoStatSlots; i++) {
+        CharInfoStat stat;
+        stat.label = ChildText(screen, "mc_statLabel0" + std::to_string(i));
+        stat.value = ChildText(screen, "mc_statValue0" + std::to_string(i));
+        if (stat.label.empty() && stat.value.empty())
+            continue;
+        v.stats.push_back(std::move(stat));
+    }
+
+    void* rows[kMaxCharInfoRows] = {};
+    const int rowCount = TakeListItemsRaw("CharInfo: effects", list, rows, kMaxCharInfoRows);
+    for (int i = 0; i < rowCount; i++) {
+        if (!rows[i])
+            continue;
+        CharInfoEntry e;
+        e.handle = rows[i];
+        e.index = i;
+        // ⛔ Two kinds of row, matched by CLASS: AddEffectsToList spawns a bare UIText for each
+        // category heading and a UIListItemPerk per effect, into the same container. An empty
+        // Text cannot tell them apart; the class can.
+        if (ObjectClassNamedRaw(rows[i], "UIText")) {
+            e.header = true;
+            e.text = ReadFStringField(rows[i], kWidgetTextOffset);
+        } else if (ObjectClassNamedRaw(rows[i], "UIListItemPerk")) {
+            e.text = ReadFStringField(rows[i], kPerkNameOffset);
+            e.description = ReadFStringField(rows[i], kPerkDescriptionOffset);
+            char src[64];
+            if (FNameAtAnsiRaw(
+                    static_cast<const uint8_t*>(rows[i]) + kPerkSourceOffset, src, sizeof(src)))
+                e.source = src;
+        } else {
+            continue;
+        }
+        v.entries.push_back(std::move(e));
+    }
+    return v;
+}
+
 } // namespace GameUI
 
 #ifdef _MSC_VER

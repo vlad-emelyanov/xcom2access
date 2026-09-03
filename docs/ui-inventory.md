@@ -28,7 +28,7 @@ priority.
 |---|---|---|
 | Built (✅) | ~93 | done; live-run status in CLAUDE.md |
 | Partial (◐) | 6 | words missing, structure present |
-| TODO P1 | ~38 | the campaign-blocking list below |
+| TODO P1 | 0 | the campaign-blocking list below is empty as of 2026-09-03 — seven ◐ entries owe a live pass |
 | TODO P2 | ~36 | customization, reports, detail screens |
 | TODO P3 | ~17 | login, credits, photobooth, DLC extras |
 | Challenge / TLE | 20 | later, on demand |
@@ -46,23 +46,14 @@ What actually blocks a campaign, in rough play order:
 here and a `◐`/`✅` in the tables below is a contradiction, not a nuance. (It happened: the
 promotion screens sat here for weeks after they were written.)
 
-1. **`UIArmory_MainMenu`** — the armory hub; every soldier operation routes through it. The
-   loadout and promotion screens it opens are both built, which makes the hub itself the one
-   keyboard gap between them.
-2. **`UIArmory_WeaponUpgrade`** + **`UIArmory_Implants`** — weapon mods and PCS.
-3. **`UIInventoryTactical`** — mid-mission loot pickup.
-4. **`UITacticalCharInfoScreen`** — F1 soldier details in tactical.
-5. **`UIRewardsRecap`** — the last unread screen of the monthly chain, and the hole the
-   research-available deck closes into on the tutorial-objective path (`research-unlocked-recon.md`
-   §5). (The report card and its Chosen page came off this list on 2026-09-03 — the `monthly
-   report` and `chosen activity` recipes, built from source and unexercised live;
-   `resistance-report-recon.md`.)
-6. **`UICovertActionReport`** — the covert-action RESULT screen. The PICKER is built (`covert
-   actions` recipe), and the soldier picker and confirm modal ride the personnel and popup
-   recipes, so this is the one screen of that loop still unread — `covert-actions-recon.md` §8b.
-7. **`UIRecruitSoldiers`** — recruiting. (The black market's entry menu and trading post came
-   off this list on 2026-09-03 — the `black market` and `black market sell` recipes, built from
-   source and unexercised live; `avenger-view-recon.md` §19.)
+*Empty as of 2026-09-03.* The last seven came off in one sweep, all built from source and
+unexercised live — their first passes are `next-steps.md`'s: the armory hub and weapon upgrades
+(`armory` and `weapon upgrades`, `armory-recon.md`; the PCS path turned out to be the commodity
+list's already, with `UIArmory_Implants` dead code), the loot receipt and the soldier sheet
+(`loot` and `soldier info`, `tactical-modals-recon.md`), the rewards recap and the recruit list
+(`rewards recap` and `recruits`, `recruit-recap-recon.md`), and the covert action result
+(`covert report`, `covert-actions-recon.md` §8b). What a campaign still cannot be run without is
+now a question for a live pass, not for this list.
 
 ## 1. Boot, shell, main menu
 
@@ -129,7 +120,7 @@ along. `avenger-view-recon.md` §14.
 | Screen | What it is | Status |
 |---|---|---|
 | `UIPersonnel` + 10 subclasses | roster picker (`_Armory`, `_BarMemorial`, `_BoostSoldier`, `_BuildFacility`, `_ChooseResearch`, `_CovertAction`, `_LivingQuarters`, `_SpecialFeature`, `_SquadSelect`, `_TrainingCenter`) | ✅ personnel roster (family via class chain) |
-| `UIRecruitSoldiers` | recruit list | ⬜ **P1** |
+| `UIRecruitSoldiers` | recruit list | ◐ built — `recruits` recipe + `X2AccessRecruitReader` (2026-09-03, unexercised live; `recruit-recap-recon.md` §1). A row retains nothing; the join is position against `m_arrRecruits` |
 | `UIBarMemorial_Details` | fallen-soldier detail card | ⬜ P2 |
 | `UISoldierBondScreen` | bond overview for a soldier | ◐ built — `soldier bonds` recipe + `X2AccessBondReader` (2026-09-03, unexercised live; `chosen-bond-recon.md`). The roster is a `GraphSheet`; CREATE BOND, sorting and the soldier cycle are re-provided |
 | `UISoldierBondConfirmScreen` | confirm-bond screen | ◐ built — `bond confirm` recipe, same reader (2026-09-03, unexercised live) |
@@ -139,14 +130,14 @@ along. `avenger-view-recon.md` §14.
 | Screen | What it is | Status |
 |---|---|---|
 | `UIArmory` | abstract base (unit switching, rotation) | base |
-| `UIArmory_MainMenu` | the armory hub menu | ⬜ **P1** |
+| `UIArmory_MainMenu` | the armory hub menu | ◐ built — `armory` recipe + `X2AccessArmoryReader` (2026-09-03, unexercised live; `armory-recon.md` §1). ⛔ Written against the Highlander's rewrite (Issue #47): rows are keyed on MCName |
 | `UIArmory_Loadout` | loadout | ✅ |
-| `UIArmory_WeaponUpgrade` | weapon mods | ⬜ **P1** |
-| `UIArmory_WeaponTrait` | TLE legacy weapon customization | ⬜ P3 |
+| `UIArmory_WeaponUpgrade` | weapon mods | ◐ built — `weapon upgrades` recipe + `X2AccessWeaponUpgradeReader` (2026-09-03, unexercised live; `armory-recon.md` §2). ⛔ Highlander layout (`WeaponViewOffsets` heads the class); the stat block is a change-state preview reproduced by the companion |
+| `UIArmory_WeaponTrait` | the weapon PATTERN picker (a subclass of the upgrade screen; not TLE-only) | ◐ same recipe — a plain list, Enter picks, Escape reverts |
 | `UIArmory_Promotion` | ability tree (base classes) | ✅ `promotion` recipe + `X2AccessPromotionReader` — one recipe, all three classes |
 | `UIArmory_PromotionHero` | faction-hero / Training-Center tree | ◐ same recipe, branch unexercised (`next-steps.md`). ⛔ Vanilla here is a KEYBOARD DEAD END (`game_ui_strategy.h`): its `OnUnrealCommand` takes DPAD/LStick only and `InitPromotion` calls `DisableNavigation()`, so the layer is the ONLY way in without a mouse |
 | `UIArmory_PromotionPsiOp` | psi-op training tree | ◐ same recipe, branch unexercised — needs a Psi Lab and a trained operative |
-| `UIArmory_Implants` | PCS slots | ⬜ **P1** |
+| `UIArmory_Implants` | DEAD CODE — `XComHQPresentationLayer.UIArmory_Implants()` has no caller in the shipped sources or the Highlander; the hub's PCS row opens `UIInventory_Implants` (the commodity list, §5 — with the implant delta and cannot-equip word added 2026-09-03, `armory-recon.md` §3) | — out of scope |
 | `UIAbilityInfoScreen` | ability details viewer (from armory & challenge) | ⬜ P2 |
 | `UIManageEquipmentMenu` | equipment mgmt popup (from loadout & squad select) | ⬜ P2 |
 
@@ -169,10 +160,10 @@ the pool itself are not cosmetic — P2, and the voice picker matters most.
 | `UIResistanceReport` | monthly council report — the report card | ◐ built — `monthly report` recipe + `X2AccessReportReader` (2026-09-03, unexercised live; `resistance-report-recon.md`) |
 | `UIResistanceReport_ChosenEvents` | the report's Chosen page (knowledge, activities, planned actions) | ◐ built — `chosen activity` recipe + `X2AccessChosenReader` (2026-09-03, unexercised live; `resistance-report-recon.md`) |
 | `UIResistanceReport_FactionEvents` | empty `BuildScreen`, and its presentation-layer opener has no caller in the shipped sources | 🚫 dead |
-| `UIRewardsRecap` | monthly rewards recap | ⬜ **P1** |
+| `UIRewardsRecap` | the POST-MISSION rewards letter (not the monthly chain's — `recruit-recap-recon.md` §2.1) | ◐ built — `rewards recap` recipe + `X2AccessRecapReader` (2026-09-03, unexercised live). No widget tree at all; every word off the screen's own accessors |
 | `UIStrategyPolicy` | resistance orders | ✅ resistance orders recipe (`surfaces/strategy.md`) |
 | `UICovertActions` | covert action picker | ✅ covert actions recipe (`covert-actions-recon.md`) |
-| `UICovertActionReport` | covert action result | ⬜ **P1** — `covert-actions-recon.md` §8b |
+| `UICovertActionReport` | covert action result | ◐ built — `covert report` recipe + `X2AccessCovertActionReader.DescribeCovertActionReport` (2026-09-03, unexercised live; `covert-actions-recon.md` §8b). ⛔ Escape is Continue, and Continue deletes the action |
 | `UIChosenInfo` | Chosen dossier | ◐ built — `chosen dossier` recipe + `X2AccessChosenReader` (2026-09-03, unexercised live; `chosen-bond-recon.md`). ⛔ Vanilla switches Chosen on the D-pad only; the tab nodes re-provide it |
 | `UIChosenEncountered` | first-encounter overlay | ◐ built — popup recipe branch (2026-09-03, unexercised live). Enter-only in vanilla, so one button |
 | `UINotificationMenu` | notification list (opened from `UIToDoWidget`) | ⬜ P2, with the to-do widget work |
@@ -232,8 +223,8 @@ unexercised live — `chosen-bond-recon.md` §1.2-1.3). ✅ transient reader: `U
 | `UIUnitFlagManager` | per-unit HP flags | ◐ — facts come from the unit readout / narration |
 | `UIEnemyArrowContainer` | enemy direction arrows | — (enemy strip aid owns this) |
 | `UITacticalHUDMessageBanner` | mission banner — retains nothing | — Flash-only; state narration covers it |
-| `UITacticalCharInfoScreen` | F1 soldier details | ⬜ **P1** |
-| `UIInventoryTactical` | loot pickup | ⬜ **P1** |
+| `UITacticalCharInfoScreen` | the soldier sheet — ⛔ gamepad L3 only in vanilla (F1 is a commented-out no-op) | ◐ built — `soldier info` recipe, pure widget read, opened from the HUD graph's soldier stop through `X2AccessCharInfoReader.OpenCharInfo` (2026-09-03, unexercised live; `tactical-modals-recon.md` §2) |
+| `UIInventoryTactical` | loot receipt — the loot is already taken when it opens, and the visualizer waits on OK | ◐ built — `loot` recipe + `X2AccessLootReader` (2026-09-03, unexercised live; `tactical-modals-recon.md` §1). Not a `UIInventory` |
 | `UITutorialBox` / `UITutorialHelper` | tutorial blades / pointer overlay | ✅ / ⚠ check the helper carries no unread text |
 | `UIReplay` | tutorial replay control | ✅ |
 | `UIWorldMessageMgr` | world flyovers (polled) | ✅ |

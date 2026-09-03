@@ -1629,6 +1629,294 @@ void* FindResistanceReportScreen()
     return FindFocusedStackScreen("UIResistanceReport", sFinder, sReported);
 }
 
+// ---- the covert action report (UICovertActionReport) — docs/covert-actions-recon.md §8b ----
+
+namespace {
+
+// UICovertActionReport. ⚠ Packed, not 8-aligned: the button pointer sits right after the 4-byte
+// ref, exactly as the picker's ActionRef/arrActions pair does. Pinned in sdk_layout_checks.cpp.
+constexpr int32_t kCovertReportActionRefOffset = 0x440;      // ActionRef (ObjectID first)
+constexpr int32_t kCovertReportContinueOffset = 0x444;       // ContinueButton (UILargeButton*)
+
+} // namespace
+
+void* FindCovertReportScreen()
+{
+    static ScreenFinder sFinder{"UICovertActionReport"};
+    static bool sReported = false;
+    return FindFocusedStackScreen("UICovertActionReport", sFinder, sReported);
+}
+
+CovertReportView ReadCovertReport(void* screen)
+{
+    CovertReportView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+    v.actionId = ReadI32Raw(screen, kCovertReportActionRefOffset);
+    // RefreshConfirmPanel spawns the button LAST in UpdateData, so a read that lands between
+    // BuildScreen and the end of OnInit finds it null — an ordinary answer, and the recipe's
+    // fallback label covers it.
+    v.continueButton = ReadPtrRaw(screen, kCovertReportContinueOffset);
+    if (v.continueButton) {
+        // UILargeButton.InitLargeButton → UIButton.InitButton → SetText, so Text really is
+        // retained here; on a controller the label carries an injected icon, which CleanText
+        // strips.
+        v.continueLabel = CleanText(ReadFStringField(v.continueButton, kButtonTextOffset));
+    }
+    return v;
+}
+
+// ---- the armory hub (UIArmory_MainMenu) — docs/armory-recon.md §1 ----
+
+namespace {
+
+constexpr int32_t kArmoryMenuListOffset = 0x6F0;          // UIArmory_MainMenu::List
+constexpr int32_t kListItemStringAttentionOffset = 0x440; // UIListItemString::AttentionIcon
+constexpr int32_t kPanelMCNameOffset = 0x27C;             // UIPanel::MCName
+
+// Eight in the shipped game; the OnArmoryMainMenuUpdate event lets a mod add more. Loud when
+// clipped.
+constexpr int kMaxArmoryMenuRows = 32;
+
+} // namespace
+
+void* FindArmoryMenuScreen()
+{
+    static ScreenFinder sFinder{"UIArmory_MainMenu"};
+    static bool sReported = false;
+    return FindFocusedStackScreen("UIArmory_MainMenu", sFinder, sReported);
+}
+
+ArmoryMenuView ReadArmoryMenu(void* screen)
+{
+    ArmoryMenuView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+    v.unitId = ReadI32Raw(screen, kArmoryUnitRefOffset);
+    v.list = ReadPtrRaw(screen, kArmoryMenuListOffset);
+    if (!v.list)
+        return v;
+    v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
+
+    void* rows[kMaxArmoryMenuRows] = {};
+    const int rowCount = TakeListItemsRaw("ArmoryMenu: rows", v.list, rows, kMaxArmoryMenuRows);
+    for (int i = 0; i < rowCount; i++) {
+        if (!rows[i] || !IsKindOfRaw(rows[i], "UIListItemString"))
+            continue;
+        ArmoryMenuRow r;
+        r.handle = rows[i];
+        r.index = i;
+        char name[64];
+        if (FNameAtAnsiRaw(static_cast<const uint8_t*>(rows[i]) + kPanelMCNameOffset, name,
+                sizeof(name)))
+            r.key = name;
+        // Retained: InitListItem → SetText. The promote row's Text carries an InjectImage <img>
+        // prefix when the promote icon shows; the cleaning read strips it.
+        r.label = ReadFStringField(rows[i], kListItemStringTextOffset);
+        r.disabled = (ReadU32Raw(rows[i], kListItemStringFlagsOffset) & kListItemDisabled) != 0;
+        // NeedsAttention(true) spawns the icon; the game keeps no bool, so the icon's own
+        // presence and visibility are the state — a child widget, where bIsVisible is meaningful.
+        void* icon = ReadPtrRaw(rows[i], kListItemStringAttentionOffset);
+        r.attention = icon && (ReadU32Raw(icon, kPanelFlagsOffset) & kPanelVisible) != 0;
+        v.rows.push_back(std::move(r));
+    }
+    return v;
+}
+
+bool SetArmoryMenuSelection(const ArmoryMenuView& view, int index)
+{
+    return SetListIndex(view.list, index);
+}
+
+bool ActivateArmoryMenuRow(const ArmoryMenuView& view, int index)
+{
+    if (!view.screen || !view.list)
+        return false;
+    // Select first, then the SCREEN's Enter: UIArmory.OnUnrealCommand answers it with OnAccept,
+    // which reads the list's selection — the Highlander's by re-sending Enter to the list (so a
+    // mod-wrapped delegate runs), vanilla's by switching on selectedIndex. Both ignore whatever
+    // row the caller had in mind, which is why selecting first is the argument.
+    SetListIndex(view.list, index);
+    return SendScreenCommand(view.screen, kCmdEnter);
+}
+
+// ---- weapon upgrades (UIArmory_WeaponUpgrade / UIArmory_WeaponTrait) — docs/armory-recon.md §2 ----
+
+namespace {
+
+// UIArmory_WeaponUpgrade. ⛔ The Highlander's WeaponViewOffsets (Issue #832) sits at the head of
+// the class, so every offset here is 0x10 past vanilla's — the dump this build was cut from is the
+// Highlander's, and the pins below would refuse a vanilla one.
+constexpr int32_t kWeaponUpgradeActiveListOffset = 0x510;    // ActiveList
+constexpr int32_t kWeaponUpgradeSlotsListOffset = 0x520;     // SlotsList
+constexpr int32_t kWeaponUpgradeUpgradesListOffset = 0x530;  // UpgradesList
+constexpr int32_t kWeaponUpgradeWeaponRefOffset = 0x538;     // WeaponRef (ObjectID first)
+constexpr int32_t kWeaponUpgradeCustomizeListOffset = 0x574; // CustomizeList
+// UIArmory_WeaponTrait
+constexpr int32_t kWeaponTraitStartingIndexOffset = 0x704; // StartingIndex
+
+// UIArmory_WeaponUpgradeItem — the loadout row's layout through Count, then its own tail.
+constexpr int32_t kUpgradeItemTitleOffset = 0x3D8;     // title
+constexpr int32_t kUpgradeItemSubtitleOffset = 0x3E8;  // subTitle
+constexpr int32_t kUpgradeItemCountOffset = 0x438;     // Count
+constexpr int32_t kUpgradeItemFlagsOffset = 0x43C;     // bIsLocked | bIsInfinite | bIsDisabled
+constexpr uint32_t kUpgradeItemLocked = 0x1;
+constexpr uint32_t kUpgradeItemInfinite = 0x2;
+constexpr uint32_t kUpgradeItemDisabled = 0x4;
+constexpr int32_t kUpgradeItemTemplateOffset = 0x440;  // UpgradeTemplate
+constexpr int32_t kUpgradeItemSlotIndexOffset = 0x450; // SlotIndex
+
+// A weapon has at most a handful of slots; the inventory's upgrade list and a pattern picker's
+// options are the long ones. Loud when clipped.
+constexpr int kMaxWeaponUpgradeRows = 128;
+
+void ReadUpgradeRows(const char* what, void* list, std::vector<WeaponUpgradeRow>& out)
+{
+    void* rows[kMaxWeaponUpgradeRows] = {};
+    const int rowCount = TakeListItemsRaw(what, list, rows, kMaxWeaponUpgradeRows);
+    for (int i = 0; i < rowCount; i++) {
+        if (!rows[i] || !IsKindOfRaw(rows[i], "UIArmory_WeaponUpgradeItem"))
+            continue;
+        WeaponUpgradeRow r;
+        r.handle = rows[i];
+        r.index = i;
+        r.title = ReadFStringField(rows[i], kUpgradeItemTitleOffset);
+        r.subtitle = ReadFStringField(rows[i], kUpgradeItemSubtitleOffset);
+        r.count = ReadI32Raw(rows[i], kUpgradeItemCountOffset);
+        const uint32_t flags = ReadU32Raw(rows[i], kUpgradeItemFlagsOffset);
+        r.locked = (flags & kUpgradeItemLocked) != 0;
+        r.infinite = (flags & kUpgradeItemInfinite) != 0;
+        r.disabled = (flags & kUpgradeItemDisabled) != 0;
+        r.hasUpgrade = ReadPtrRaw(rows[i], kUpgradeItemTemplateOffset) != nullptr;
+        r.slotIndex = ReadI32Raw(rows[i], kUpgradeItemSlotIndexOffset);
+        out.push_back(std::move(r));
+    }
+}
+
+} // namespace
+
+void* FindWeaponUpgradeScreen()
+{
+    // Topmost non-null entry only: the picker is a subclass pushed OVER the upgrade screen, and
+    // the confirm dialog pushes no screen, so "the top of the stack is one of the family" is
+    // exactly the screen the keys reach.
+    void* screen = TopStackScreenRaw([](void* candidate, const char*) {
+        return IsKindOfRaw(candidate, "UIArmory_WeaponUpgrade");
+    });
+    return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
+}
+
+WeaponUpgradeView ReadWeaponUpgrade(void* screen)
+{
+    WeaponUpgradeView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+    v.trait = ObjectClassNamedRaw(screen, "UIArmory_WeaponTrait");
+    v.unitId = ReadI32Raw(screen, kArmoryUnitRefOffset);
+    v.weaponId = ReadI32Raw(screen, kWeaponUpgradeWeaponRefOffset);
+    v.slotsList = ReadPtrRaw(screen, kWeaponUpgradeSlotsListOffset);
+    v.upgradesList = ReadPtrRaw(screen, kWeaponUpgradeUpgradesListOffset);
+    v.customizeList = ReadPtrRaw(screen, kWeaponUpgradeCustomizeListOffset);
+    void* active = ReadPtrRaw(screen, kWeaponUpgradeActiveListOffset);
+    v.upgradesActive = active && active == v.upgradesList;
+
+    if (v.trait) {
+        // The picker reuses SlotsList as a plain string list, with the options retained on the
+        // rows (UIListItemString.SetText) and the landing index on the screen.
+        v.startingIndex = ReadI32Raw(screen, kWeaponTraitStartingIndexOffset);
+        if (v.slotsList) {
+            v.optionsSelected = ReadI32Raw(v.slotsList, kListSelectedIndexOffset);
+            void* rows[kMaxWeaponUpgradeRows] = {};
+            const int rowCount
+                = TakeListItemsRaw("WeaponTrait: options", v.slotsList, rows, kMaxWeaponUpgradeRows);
+            for (int i = 0; i < rowCount; i++) {
+                if (!rows[i] || !IsKindOfRaw(rows[i], "UIListItemString"))
+                    continue;
+                MenuItem item;
+                item.handle = rows[i];
+                item.index = i;
+                item.label = ReadFStringField(rows[i], kListItemStringTextOffset);
+                v.options.push_back(std::move(item));
+            }
+        }
+        return v;
+    }
+
+    if (v.slotsList) {
+        v.slotsSelected = ReadI32Raw(v.slotsList, kListSelectedIndexOffset);
+        ReadUpgradeRows("WeaponUpgrade: slots", v.slotsList, v.slots);
+    }
+    if (v.upgradesList) {
+        v.upgradesSelected = ReadI32Raw(v.upgradesList, kListSelectedIndexOffset);
+        ReadUpgradeRows("WeaponUpgrade: upgrades", v.upgradesList, v.upgrades);
+    }
+    if (v.customizeList) {
+        v.customizeSelected = ReadI32Raw(v.customizeList, kListSelectedIndexOffset);
+        v.customize = ReadListRows(v.customizeList);
+    }
+    return v;
+}
+
+bool SelectWeaponUpgradeRow(const WeaponUpgradeView& view, WeaponUpgradeList which, int index)
+{
+    if (which == WeaponUpgradeList::Slots) {
+        if (view.upgradesActive)
+            return false; // the game switched the slots list off — see the header
+        return SetListIndex(view.slotsList, index);
+    }
+    if (!view.upgradesActive)
+        return false;
+    return SetListIndex(view.upgradesList, index);
+}
+
+bool ActivateWeaponUpgradeRow(const WeaponUpgradeView& view, WeaponUpgradeList which, int index)
+{
+    if (!view.screen)
+        return false;
+    if (!SelectWeaponUpgradeRow(view, which, index))
+        return false;
+    // The SCREEN's Enter: UIArmory.OnUnrealCommand → OnAccept → OnItemClicked(ActiveList,
+    // ActiveList.SelectedIndex). The disabled refusal, the picker's open animation, the confirm
+    // dialog and the reuse-upgrades shortcut are all inside that call.
+    return SendScreenCommand(view.screen, kCmdEnter);
+}
+
+bool SelectWeaponCustomizeRow(const WeaponUpgradeView& view, int index)
+{
+    return SetListIndex(view.customizeList, index);
+}
+
+bool ActivateWeaponCustomizeRow(const WeaponUpgradeView& view, int index)
+{
+    for (const OptionRow& row : view.customize) {
+        if (row.index != index)
+            continue;
+        // The row's own OnUnrealCommand(Enter) → its OnClickDelegate: OpenWeaponNameInputBox,
+        // WeaponColorSelector or CustomizeWeaponPattern. The game itself only reaches these rows
+        // through OnAccept's no-selection forward, so the row handler is the honest path.
+        return SendRowCommand(row.handle, kCmdEnter);
+    }
+    return false;
+}
+
+bool SelectWeaponPattern(const WeaponUpgradeView& view, int index)
+{
+    return view.trait && SetListIndex(view.slotsList, index);
+}
+
+bool ActivateWeaponPattern(const WeaponUpgradeView& view, int index)
+{
+    if (!view.screen || !view.trait)
+        return false;
+    // UIArmory_WeaponTrait.OnAccept fires OnItemClicked(SlotsList, SlotsList.SelectedIndex) and
+    // closes — select first, then the screen's own Enter.
+    SetListIndex(view.slotsList, index);
+    return SendScreenCommand(view.screen, kCmdEnter);
+}
+
 } // namespace GameUI
 
 #ifdef _MSC_VER

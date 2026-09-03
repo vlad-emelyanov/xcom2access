@@ -514,9 +514,13 @@ void SpeakStateAfterChange()
 //  · Settings stacks on the shell, so the shell is last.
 // Each recipe's own definition in src/recipes/ carries the rest of its ordering argument.
 const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchReportRecipe,
-    &kResearchUnlockedRecipe,
+    // The rewards recap beside the research deck it follows: the last modal of the post-mission
+    // chain, sequential with the deck and never stacked with it.
+    &kResearchUnlockedRecipe, &kRewardsRecapRecipe,
     &kNarrativeRecipe, &kIronManRecipe,
     &kSoundtrackRecipe, &kOptionsRecipe, &kDifficultyRecipe, &kSaveLoadRecipe, &kPauseMenuRecipe,
+    // The recruit list: pushed over the Armory room, raising only its own dialog (listed first).
+    &kRecruitsRecipe,
     // The upgrade picker beside the facility picker: both are pushed over the room or the grid
     // they were opened from and raise only dialogs above themselves.
     &kPersonnelRecipe, &kChooseFacilityRecipe, &kChooseUpgradeRecipe, &kPromotionRecipe,
@@ -526,9 +530,17 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     // and the photobooth.
     &kBondConfirmRecipe, &kBondScreenRecipe,
     &kArmoryLoadoutRecipe,
+    // Weapon upgrades (and the pattern picker pushed over them): opened from the hub below, and
+    // pushing only the rename dialog and confirm dialogs, both listed earlier.
+    &kWeaponUpgradeRecipe,
+    // The armory hub: under every screen it opens (all listed above), over the Armory room.
+    &kArmoryMenuRecipe,
     // Below BOTH screens it opens: a slot asking for a soldier pushes UIPersonnel_CovertAction,
     // and the EDIT verb pushes UIArmory_Loadout. Above the Resistance Ring it was pushed over.
     &kCovertActionsRecipe,
+    // The action's RESULT screen: over the geoscape, under the reward popups its Continue raises
+    // (the popup recipe, listed first), never stacked with the picker.
+    &kCovertReportRecipe,
     // Its own modal: raised OVER the Resistance Report and over the Ring, and it pushes only
     // dialogs and alerts (both above it here), so nothing it opens competes with it.
     &kStrategyPolicyRecipe,
@@ -561,6 +573,10 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     // with each other (the Chosen screen pops itself before pushing the summary), so their
     // relative order is free; below every modal a mission can still raise, all listed earlier.
     &kChosenSummaryRecipe, &kMissionSummaryRecipe,
+    // The loot receipt and the soldier sheet: the same band, for the same reason — pushed over the
+    // HUD, raising only the pause menu (listed earlier), and never on the stack with each other or
+    // with the bookends.
+    &kLootRecipe, &kCharInfoRecipe,
     // The ambient Avenger recipe — the ant farm's Tab layer. Below every screen that stacks over
     // the grid (dialogs, popups, the pickers, the rooms, the geoscape — all of which make the
     // grid not-current, which is its probe's whole test), and it can never contend with the

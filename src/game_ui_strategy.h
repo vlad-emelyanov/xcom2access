@@ -844,4 +844,178 @@ ChosenEventsView ReadChosenEvents(void* screen);
 /// Game thread only.
 void* FindResistanceReportScreen();
 
+// ---- the covert action report (UICovertActionReport) — docs/covert-actions-recon.md §8b ----
+//
+// The RESULT screen of the covert-action loop: pushed by XComHQPresentationLayer.UIActionCompleted
+// once the action's clock has run out and the geoscape camera has finished panning to it — never
+// from the Ring, the map pin or the event queue. The action's name and post-mission narrative, the
+// reward it GRANTED (already given by the time the screen exists), the faction, and one card per
+// soldier who went: promotion, XP, cohesion, the slot reward, and — in red — the risks that fired
+// on them, or SOLDIER KILLED.
+//
+// The widget tree is two nodes (the CONTINUE button and an empty slot container — on this screen
+// InitSlotContainer spawns no slotMC_N panels), so native reads the button and the action's id and
+// X2AccessCovertActionReader.DescribeCovertActionReport supplies the words. ✅ The per-soldier
+// results are the one part of the whole covert-action family that IS retained: UICovertActionSlot
+// (a UObject, not a panel) keeps PromoteLabel and Value1..Value4, and the report's Update branch is
+// what passes them to Flash — so the companion reads them off the slot object rather than
+// re-deriving, which also makes it immune to the Highlander's RewardsNotGivenOnCompletion change.
+//
+// ⛔ ESCAPE IS CONTINUE. OnUnrealCommand answers A, Enter, Space and Escape with one call,
+// OnContinueClicked, which closes the screen, raises the reward popups and DELETES the action's
+// state object — GetAction() answers none from then on. There is no abort, no second verb, and no
+// slot verb either (HandleClick gates on !bStarted, which is false forever on a completed action).
+
+struct CovertReportView {
+    void* screen = nullptr;
+    int actionId = 0;               // ActionRef.ObjectID — the wire cache's discriminator
+    void* continueButton = nullptr; // ContinueButton (UILargeButton), once RefreshConfirmPanel ran
+    std::string continueLabel;      // its retained Text — m_strGenericContinue on mouse+keyboard
+};
+
+/// The focused UICovertActionReport, or null. Game thread only.
+void* FindCovertReportScreen();
+
+CovertReportView ReadCovertReport(void* screen);
+
+// ---- the armory hub (UIArmory_MainMenu) — docs/armory-recon.md §1 ----
+//
+// The menu every soldier operation routes through: the soldier header, a list of eight verbs
+// (customize, loadout, PCS, weapon upgrade, promote, propaganda, bonds, dismiss) with a description
+// panel under it, and the ability / trait summary on the right. ⛔ THE HIGHLANDER REWROTE THIS
+// SCREEN (Issue #47): the rows are named fields with MCNames `ArmoryMainMenu_<X>Button`, a mod
+// may insert rows through `OnArmoryMainMenuUpdate`, and OnAccept re-sends Enter to the list. So a
+// row's identity is its MCNAME, never its index, and the reader is written against the Highlander
+// class the mod requires.
+//
+// ✅ The rows RETAIN their words — plain UIListItemStrings through InitListItem → SetText — along
+// with bDisabled and the attention icon; what they do not keep is the disabled REASON (SetDisabled
+// parks it in the tooltip manager) or the description (OnSelectionChanged writes it straight into
+// a Flash child), and the header and the summary panel are MC ops. X2AccessArmoryReader supplies
+// those. Vanilla's keyboard walks the list and Enters already; what it lacks beyond the words is
+// the soldier cycle (Tab / LeftShift, both the layer's) and the abilities/traits toggle
+// (FXS_BUTTON_X, or a nav-help button the mouse reaches).
+
+struct ArmoryMenuRow {
+    void* handle = nullptr; // UIListItemString
+    int index = 0;          // the list's own item index (SetSelectedIndex's)
+    std::string key;        // MCName — `ArmoryMainMenu_LoadoutButton` …; the join to the companion
+    std::string label;      // Text, cleaned — the promote row's <img> prefix stripped
+    bool disabled = false;  // bDisabled
+    bool attention = false; // the "!" badge: an AttentionIcon spawned and showing
+};
+
+struct ArmoryMenuView {
+    void* screen = nullptr;
+    void* list = nullptr; // UIArmory_MainMenu::List
+    std::vector<ArmoryMenuRow> rows;
+    int selected = -1; // UIList::SelectedIndex
+    int unitId = 0;    // UIArmory::UnitReference.ObjectID — the wire cache's discriminator
+};
+
+/// The focused UIArmory_MainMenu, or null — every screen it opens pushes over it. Game thread only.
+void* FindArmoryMenuScreen();
+
+ArmoryMenuView ReadArmoryMenu(void* screen);
+
+/// P11 write-back: UIList::SetSelectedIndex, which fires OnSelectionChanged and repaints the
+/// description panel. Game thread only.
+bool SetArmoryMenuSelection(const ArmoryMenuView& view, int index);
+
+/// Activate a row by the game's own keyboard path: select, then hand the SCREEN an Enter —
+/// UIArmory.OnUnrealCommand → OnAccept, which reads the list's selection and (Highlander) re-sends
+/// Enter to the list so a mod-wrapped row delegate runs. A greyed row is passed through: OnAccept
+/// answers it with the game's own refusal sound. Game thread only.
+bool ActivateArmoryMenuRow(const ArmoryMenuView& view, int index);
+
+// ---- weapon upgrades (UIArmory_WeaponUpgrade) and its pattern picker (UIArmory_WeaponTrait)
+//      — docs/armory-recon.md §2 ----
+//
+// The weapon-mod screen the hub's WEAPON UPGRADE row opens: the soldier header, a left list of
+// the weapon's upgrade SLOTS (filled ones first, then EMPTY SLOT rows), a right list of the
+// upgrades in the inventory that opens when a slot is chosen, the customize rows under the left
+// list (name, colour, pattern), the previewed stat block and the upgrade description box.
+//
+// ⛔ ONLY ONE OF THE TWO UPGRADE LISTS IS LIVE, and `ActiveList` says which — the loadout's
+// arrangement exactly. ChangeActiveList DisableNavigation()s the other container, so the slots list
+// becomes a read-only mirror while the upgrade picker is open (the selected slot row is bIsLocked
+// then), and Escape backs out of the picker before it leaves the screen. Both lists' rows are
+// UIArmory_WeaponUpgradeItems and RETAIN their words (title, subTitle, Count and three bits — the
+// loadout row's layout through Count); what they do not keep is a greyed row's reason
+// (`disabledText` is never assigned, and here not even a tooltip gets it). Everything else on the
+// screen — the panel titles, the slot counter, whose weapon it is, the description box, the whole
+// stat block (UIArmory_WeaponUpgradeStats has no members at all) — is Flash, and
+// X2AccessWeaponUpgradeReader supplies it, including the PREVIEW the stats show for the row under
+// the cursor.
+//
+// Enter is OnAccept → OnItemClicked(ActiveList, ActiveList.SelectedIndex): on a slot row it opens
+// the picker, on an upgrade row it raises the confirm dialog (or commits outright under the
+// reuse-upgrades continent bonus). With NO selection in the active list, OnAccept forwards to the
+// customize list — the customize rows are otherwise reached by D-pad only, so they are activated
+// through their own row handler here. The pattern picker is a SUBCLASS that reuses SlotsList as a
+// plain UIListItemString list with the options retained in `Data`; Enter picks, Escape REVERTS.
+
+enum class WeaponUpgradeList { Slots, Upgrades };
+
+struct WeaponUpgradeRow {
+    void* handle = nullptr;  // UIArmory_WeaponUpgradeItem (or a UIListItemString on the picker)
+    int index = 0;           // the list's own item index
+    std::string title;       // the upgrade's name, or m_strEmptySlot
+    std::string subtitle;    // GetUpgradeEffectForUI — "Aim +10", or m_strUpgradeAvailable
+    int count = 0;           // Count: how many are in the inventory (upgrade rows)
+    bool infinite = false;   // bIsInfinite
+    bool locked = false;     // bIsLocked — the chosen slot, frozen while the picker is open
+    bool disabled = false;   // bIsDisabled
+    bool hasUpgrade = false; // UpgradeTemplate != none (a filled slot; every upgrade row)
+    int slotIndex = -1;      // SlotIndex — the weapon's slot number on slot rows, -1 on upgrade rows
+};
+
+struct WeaponUpgradeView {
+    void* screen = nullptr;
+    bool trait = false; // a UIArmory_WeaponTrait — the pattern picker
+    void* slotsList = nullptr;
+    void* upgradesList = nullptr;
+    void* customizeList = nullptr;
+    bool upgradesActive = false; // ActiveList == UpgradesList
+    std::vector<WeaponUpgradeRow> slots;
+    int slotsSelected = -1;
+    std::vector<WeaponUpgradeRow> upgrades;
+    int upgradesSelected = -1;
+    std::vector<OptionRow> customize; // the three UIMechaListItems: name, colour, pattern
+    int customizeSelected = -1;
+    int weaponId = 0; // WeaponRef.ObjectID — the wire cache's discriminator
+    int unitId = 0;   // UIArmory::UnitReference.ObjectID
+    // The pattern picker: SlotsList's UIListItemString rows, and where the game landed.
+    std::vector<MenuItem> options;
+    int startingIndex = -1;
+    int optionsSelected = -1;
+};
+
+/// The focused UIArmory_WeaponUpgrade or UIArmory_WeaponTrait, or null. The picker is pushed OVER
+/// the upgrade screen, so the topmost-entry test is what tells them apart. Game thread only.
+void* FindWeaponUpgradeScreen();
+
+WeaponUpgradeView ReadWeaponUpgrade(void* screen);
+
+/// P11 write-back into one of the two upgrade lists. ⛔ Refuses the SLOTS list while the picker
+/// is open: the game has DisableNavigation()ed it, and PreviewUpgrade reads the slot from that
+/// list's selection whichever list the cursor is in — moving it under an open picker would
+/// preview the wrong slot. Game thread only.
+bool SelectWeaponUpgradeRow(const WeaponUpgradeView& view, WeaponUpgradeList which, int index);
+
+/// Activate a row by the game's own path: select, then hand the SCREEN an Enter (UIArmory's
+/// OnUnrealCommand → OnAccept → OnItemClicked on the active list). Game thread only.
+bool ActivateWeaponUpgradeRow(const WeaponUpgradeView& view, WeaponUpgradeList which, int index);
+
+/// P11 write-back into the customize list. Game thread only.
+bool SelectWeaponCustomizeRow(const WeaponUpgradeView& view, int index);
+
+/// Press a customize row through its own OnUnrealCommand(Enter) — the rename dialog, the colour
+/// selector, the pattern picker. Game thread only.
+bool ActivateWeaponCustomizeRow(const WeaponUpgradeView& view, int index);
+
+/// The pattern picker's write-back and activation: its rows live in SlotsList. Game thread only.
+bool SelectWeaponPattern(const WeaponUpgradeView& view, int index);
+bool ActivateWeaponPattern(const WeaponUpgradeView& view, int index);
+
 } // namespace GameUI

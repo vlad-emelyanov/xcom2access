@@ -739,6 +739,10 @@ void BuildCommodityCard(GraphBuilder& b, const WireRecord& card)
         {"timeLabel", "time"},
         {nullptr, "req"},
         {nullptr, "desc"},
+        // The PCS picker's stat change ("AIM +5"), which the game draws in the armory hub's header
+        // one screen down — with mislabelled stats (X2AccessCommodityReader.ImplantDelta). Absent
+        // on every other screen of the family, so the line simply never appears there.
+        {nullptr, "delta"},
     };
 
     bool any = false;
@@ -825,8 +829,9 @@ std::unique_ptr<GraphRender> BuildCommodity()
                 vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
             }
             if (state->bad) {
-                vt.Announcements.emplace_back(
-                    NodeAnnouncement::Static(Vocab::CommodityUnaffordable));
+                // The same red on the PCS picker means CanEquipImplant said no, not the price.
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(
+                    view.implants ? Vocab::ImplantCannotEquip : Vocab::CommodityUnaffordable));
                 vt.Announcements.back().Kind = AnnouncementKinds::Reason;
             }
             if (state->warning) {
@@ -2093,6 +2098,280 @@ bool SetBlackMarketSellListIndex(void* screen, int index)
     return GameUI::SetBlackMarketSellSelection(GameUI::ReadBlackMarketSell(screen), index);
 }
 
+// ---- recruiting (UIRecruitSoldiers) ----
+//
+// The Armory's RECRUIT door. game_ui_avenger.h for what the screen retains (nothing on a row; the
+// recruit array beside the list), docs/surfaces/avenger.md "Recruits" for the rules. Vanilla walks
+// the list and recruits on Enter already — what it lacks is every WORD: a row's name is a Flash
+// push it keeps nothing of, and the cost, the time and the bio on the right are repainted straight
+// into Flash on every selection change.
+//
+// TWO STOPS in the screen's own order: the list (name and country per row, greyed when supplies
+// are short — the game still lets Enter through there and answers with its own NOT ENOUGH SUPPLIES
+// dialog, which the dialog recipe reads), then the panel as one node per line. Enter recruits
+// through the SCREEN's own Enter, which acts on the selection the write-back already moved; the
+// purchase is immediate, with no confirmation, and rebuilds every row.
+
+constexpr const char* kRecruitReaderClass = "X2AccessRecruitReader";
+
+// Keyed on the rows and the SELECTION: the panel is the selection's shadow (OnRecruitChanged
+// repaints it), exactly as the commodity card is. A purchase respawns every row (UpdateData:
+// ClearItems + a fresh panel each), so the verb invalidates as well — the address-reuse hazard.
+WireCache gRecruitWords(kRecruitReaderClass, "DescribeRecruits");
+
+const std::vector<WireRecord>& FetchRecruitWords(const GameUI::RecruitView& view)
+{
+    return FetchWordsKeyedOnRows(gRecruitWords, view.screen, view.rows, view.selected);
+}
+
+const WireRecord* FindRecruitRow(const std::vector<WireRecord>& records, int index)
+{
+    for (const WireRecord& rec : records) {
+        if (RecField(rec, "kind") == "row" && atoi(RecField(rec, "index").c_str()) == index)
+            return &rec;
+    }
+    return nullptr;
+}
+
+void RecruitRowAt(int index)
+{
+    GameUI::RecruitSelected(GameUI::ReadRecruits(gScreen), index);
+    gRecruitWords.Invalidate();
+}
+
+// The right-hand panel — cost, time, the bio — one node per line, read at ANNOUNCE time with the
+// build-time text as the fallback, for the reason the commodity card earned it: the panel is
+// repainted the instant our write-back moves the selection, and the graph is up to one poll old.
+void BuildRecruitCard(GraphBuilder& b, const WireRecord& card)
+{
+    struct Line {
+        const char* label;
+        const char* value;
+    };
+    const Line lines[] = {
+        {"costLabel", "cost"},
+        {"timeLabel", "time"},
+        {nullptr, "desc"},
+    };
+    bool any = false;
+    for (const Line& line : lines) {
+        if (RecField(card, line.value).empty())
+            continue;
+        if (!any) {
+            b.BeginStop("details");
+            any = true;
+        }
+        std::string fallback = ComposeCardLine(card, line.label, line.value);
+        b.AddLabel(ControlId::Structural(std::string("recruits/card/") + line.value),
+            [labelKey = std::string(line.label ? line.label : ""),
+                valueKey = std::string(line.value), fallback]() {
+                const std::vector<WireRecord>& fresh
+                    = FetchRecruitWords(GameUI::ReadRecruits(gScreen));
+                const WireRecord* live = FindRecord(fresh, "card");
+                if (!live)
+                    return fallback;
+                std::string text = ComposeCardLine(
+                    *live, labelKey.empty() ? nullptr : labelKey.c_str(), valueKey.c_str());
+                return text.empty() ? fallback : text;
+            });
+    }
+}
+
+std::unique_ptr<GraphRender> BuildRecruits()
+{
+    GameUI::RecruitView view = GameUI::ReadRecruits(gScreen);
+    const std::vector<WireRecord>& records = FetchRecruitWords(view);
+
+    GraphBuilder b;
+    b.BeginStop("recruits");
+
+    if (view.rows.empty()) {
+        // The game's own line — the one UpdateData pushes through setEmpty — then the way out.
+        const WireRecord* empty = FindRecord(records, "empty");
+        std::string text = empty ? RecField(*empty, "text") : std::string();
+        if (text.empty())
+            text = view.emptyText;
+        if (text.empty())
+            text = Vocab::RecruitsEmpty;
+        text += ". ";
+        text += Vocab::CommodityLeaveHint;
+        b.AddLabel(ControlId::Structural("recruits/empty"), [text]() { return text; });
+        AddResourceStop(b);
+        return b.Build();
+    }
+
+    ControlId start;
+    bool haveStart = false;
+    for (const GameUI::RecruitRow& row : view.rows) {
+        const WireRecord* rec = FindRecruitRow(records, row.index);
+        std::string name = rec ? RecField(*rec, "name") : std::string();
+        if (name.empty())
+            name = Vocab::SoldierFallback;
+        const int index = row.index;
+
+        ControlId id = ControlId::Referenced(row.handle, "recruits/row/" + std::to_string(index));
+        gFocus[id.StructuralKey] = FocusTarget{index, nullptr, false, nullptr};
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(name));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        // The flag beside the name is the country; its name is what the flag means.
+        const std::string country = rec ? RecField(*rec, "country") : std::string();
+        if (!country.empty()) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(country));
+            vt.Announcements.back().Kind = AnnouncementKinds::Value;
+        }
+        if (row.disabled) {
+            // Greyed at build time because supplies were short of the cost — the commodity
+            // list's bIsBad, worded the same. The game still takes Enter here and explains
+            // itself with its own dialog, so the activation stays.
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+            vt.Announcements.emplace_back(
+                NodeAnnouncement::Static(Vocab::CommodityUnaffordable));
+            vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+        }
+        vt.OnActivate = [index]() { RecruitRowAt(index); };
+        vt.OnTooltip = ListItemTooltipAction(row.handle);
+
+        // Land where the game does: UpdateData ends with SetSelectedIndex(0), and a return from
+        // its dialog rebuilds and lands there again.
+        if (!haveStart && (index == view.selected || !start.IsValid())) {
+            start = id;
+            haveStart = index == view.selected;
+        }
+        b.AddItem(std::move(id), std::move(vt));
+    }
+
+    if (const WireRecord* card = FindRecord(records, "card"))
+        BuildRecruitCard(b, *card);
+
+    AddResourceStop(b);
+    if (start.IsValid())
+        b.SetStart(std::move(start));
+    return b.Build();
+}
+
+std::string RecruitsName()
+{
+    return NameFromHeader(
+        FetchRecruitWords(GameUI::ReadRecruits(gScreen)), Vocab::ScreenRecruitsFallback);
+}
+
+bool SetRecruitListIndex(void* screen, int index)
+{
+    return GameUI::SetRecruitSelection(GameUI::ReadRecruits(screen), index);
+}
+
+// ---- the post-mission rewards recap (UIRewardsRecap) ----
+//
+// The tail of the post-mission chain, and the hole docs/research-unlocked-recon.md §5 named: the
+// council's after-action letter. game_ui_avenger.h for why native supplies only the finder — the
+// screen has no widget tree at all, and X2AccessRecapReader re-runs the accessors BuildScreen used.
+//
+// ONE DOCUMENT STOP, then Continue. The letter is read in the screen's own order — the outcome
+// (borrowed from the mission summary's own words, because the recap states it in COLOUR alone),
+// the operation and its region, the paragraph, the rewards under their caption, the global effects
+// under theirs — with the rewards and the effects one node each rather than the run-on strings the
+// screen paints, because speech is serial. Every key but Start is Continue on this screen, Escape
+// included, so the button is the whole action list.
+
+constexpr const char* kRecapReaderClass = "X2AccessRecapReader";
+
+// Keyed on the screen alone: BuildScreen runs once, in InitScreen, and nothing repaints after it.
+WireCache gRecapWords(kRecapReaderClass, "DescribeRewardsRecap");
+
+const std::vector<WireRecord>& FetchRecapWords()
+{
+    return gRecapWords.Get({gScreen});
+}
+
+std::unique_ptr<GraphRender> BuildRewardsRecap()
+{
+    const std::vector<WireRecord>& records = FetchRecapWords();
+    const WireRecord* header = FindRecord(records, "header");
+
+    GraphBuilder b;
+    b.BeginStop("report");
+    // A document: no positions, as on the research report and the mission summary.
+    b.PushContext("", "", /*positions*/ false);
+
+    int added = 0;
+    ControlId start;
+    auto line = [&](const std::string& id, const std::string& text) {
+        if (text.empty())
+            return;
+        ControlId node = ControlId::Structural("recap/" + id);
+        if (!start.IsValid())
+            start = node;
+        b.AddLabel(node, [text]() { return text; });
+        added++;
+    };
+
+    if (header) {
+        line("result", RecField(*header, "result"));
+        line("mission", JoinParts(*header, {"mission", "location"}));
+    }
+    if (const WireRecord* summary = FindRecord(records, "summary"))
+        line("summary", RecField(*summary, "text"));
+
+    // The rewards, under the caption the screen draws only when it drew a reward.
+    bool context = false;
+    for (const WireRecord& rec : records) {
+        if (RecField(rec, "kind") != "reward")
+            continue;
+        if (!context) {
+            b.PushContext(header ? RecField(*header, "rewardlabel") : std::string(), "",
+                /*positions*/ true);
+            context = true;
+        }
+        line("reward/" + RecField(rec, "index"), RecField(rec, "text"));
+    }
+    if (context)
+        b.PopContext();
+
+    // The global effects, under theirs — good first, then bad, the screen's own order.
+    context = false;
+    for (const WireRecord& rec : records) {
+        if (RecField(rec, "kind") != "effect")
+            continue;
+        if (!context) {
+            b.PushContext(header ? RecField(*header, "effectslabel") : std::string(), "",
+                /*positions*/ true);
+            context = true;
+        }
+        line("effect/" + RecField(rec, "index"), RecField(rec, "text"));
+    }
+    if (context)
+        b.PopContext();
+
+    // Recognised the screen, the companion answered nothing — said for ReportNoText's reason.
+    if (added == 0)
+        line("empty", Vocab::RecapNoText);
+    b.PopContext();
+
+    // The nav help's Continue, whose label lives in the movie; the screen's own Enter is the path.
+    b.BeginStop("actions");
+    NodeVtable vt;
+    vt.Type = &ButtonType();
+    vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::ReportContinue));
+    vt.Announcements.back().Kind = AnnouncementKinds::Label;
+    vt.OnActivate = []() { GameUI::SendScreenCommand(gScreen, GameUI::kCmdEnter); };
+    b.AddItem(ControlId::Structural("recap/continue"), std::move(vt));
+
+    if (start.IsValid())
+        b.SetStart(std::move(start));
+    return b.Build();
+}
+
+std::string RewardsRecapName()
+{
+    const WireRecord* header = FindRecord(FetchRecapWords(), "header");
+    const std::string name = header ? RecField(*header, "mission") : std::string();
+    return name.empty() ? std::string(Vocab::ScreenRewardsRecapFallback) : name;
+}
+
 } // namespace
 
 // ---- the recipes this file defines ----
@@ -2164,6 +2443,17 @@ const Recipe kBlackMarketRecipe{"black market", ProbeFocused<GameUI::FindBlackMa
 const Recipe kBlackMarketSellRecipe{"black market sell",
     ProbeFocused<GameUI::FindBlackMarketSellScreen>, BuildBlackMarketSell, BlackMarketSellName,
     SetBlackMarketSellListIndex};
+
+// The recruit list: pushed over the Armory room it is opened from, and raising only its own
+// not-enough-supplies dialog, which the dialog recipe resolves first.
+const Recipe kRecruitsRecipe{"recruits", ProbeFocused<GameUI::FindRecruitScreen>, BuildRecruits,
+    RecruitsName, SetRecruitListIndex};
+
+// HIGH, beside the research deck it follows: the last modal of the post-mission chain, over the
+// whole Avenger sequence, with only the dialog and popup recipes above it. No SetListIndex — no
+// UIList, no navigable widget of any kind.
+const Recipe kRewardsRecapRecipe{"rewards recap", ProbeFocused<GameUI::FindRewardsRecapScreen>,
+    BuildRewardsRecap, RewardsRecapName};
 
 // ---- the Avenger HUD (UIAvengerHUD) — the ant farm's ambient Tab layer ----
 //

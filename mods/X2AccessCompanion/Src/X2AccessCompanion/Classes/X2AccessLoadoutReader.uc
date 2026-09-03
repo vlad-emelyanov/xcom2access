@@ -108,7 +108,9 @@ private function string DescribeHeader(UIArmory_Loadout Screen)
 	if (Unit == none)
 		return Rec;
 
-	AddField(Rec, "who", DescribeSoldier(Unit));
+	// The name line and the stat column are X2AccessHelper's — the same composers the armory hub
+	// uses, so the two screens name a soldier identically.
+	AddField(Rec, "who", class'X2AccessHelper'.static.DescribeArmorySoldier(Unit));
 
 	if (Unit.IsAlive())
 	{
@@ -119,7 +121,7 @@ private function string DescribeHeader(UIArmory_Loadout Screen)
 		AddField(Rec, "status", StatusDesc);
 	}
 
-	AddField(Rec, "stats", DescribeStats(Unit, Screen));
+	AddField(Rec, "stats", class'X2AccessHelper'.static.DescribeArmoryStats(Unit, Screen.CheckGameState));
 
 	// The three strip verbs are localized on UISquadSelect even here, and their labels are the
 	// one thing native cannot read off THIS screen.
@@ -127,69 +129,6 @@ private function string DescribeHeader(UIArmory_Loadout Screen)
 	AddField(Rec, "stripweapons", class'UISquadSelect'.default.m_strStripWeapons);
 	AddField(Rec, "stripgear", class'UISquadSelect'.default.m_strStripGear);
 	return Rec;
-}
-
-private function string DescribeSoldier(XComGameState_Unit Unit)
-{
-	local string Result;
-
-	Result = Unit.GetName(eNameType_FullNick);
-	if (Unit.GetRank() > 0)
-	{
-		AppendComma(Result, class'X2ExperienceConfig'.static.GetRankName(Unit.GetRank(),
-			Unit.GetSoldierClassTemplateName()));
-		if (Unit.GetSoldierClassTemplate() != none)
-			AppendComma(Result, Unit.GetSoldierClassTemplate().DisplayName);
-	}
-	return Result;
-}
-
-// The header's own stat column, mirroring UISoldierHeader.PopulateData: the base stat plus what
-// abilities give, then the inventory's contribution as the signed bonus the screen prints beside
-// it. Psi is included only for a psi operative, exactly as the header gates it.
-private function string DescribeStats(XComGameState_Unit Unit, UIArmory_Loadout Screen)
-{
-	local string Result;
-	local XComGameState CheckState;
-
-	CheckState = Screen.CheckGameState;
-
-	AppendComma(Result, StatLine(class'UISoldierHeader'.default.m_strAimLabel, Unit, CheckState,
-		eStat_Offense));
-	AppendComma(Result, StatLine(class'UISoldierHeader'.default.m_strHealthLabel, Unit, CheckState,
-		eStat_HP));
-	AppendComma(Result, StatLine(class'UISoldierHeader'.default.m_strMobilityLabel, Unit,
-		CheckState, eStat_Mobility));
-	AppendComma(Result, StatLine(class'UISoldierHeader'.default.m_strWillLabel, Unit, CheckState,
-		eStat_Will));
-	AppendComma(Result, StatLine(class'UISoldierHeader'.default.m_strArmorLabel, Unit, CheckState,
-		eStat_ArmorMitigation));
-	AppendComma(Result, StatLine(class'UISoldierHeader'.default.m_strDodgeLabel, Unit, CheckState,
-		eStat_Dodge));
-	AppendComma(Result, StatLine(class'UISoldierHeader'.default.m_strTechLabel, Unit, CheckState,
-		eStat_Hacking));
-	if (Unit.IsPsiOperative())
-		AppendComma(Result, StatLine(class'UISoldierHeader'.default.m_strPsiLabel, Unit,
-			CheckState, eStat_PsiOffense));
-
-	return Result;
-}
-
-private function string StatLine(string Label, XComGameState_Unit Unit, XComGameState CheckState,
-	ECharStatType Stat)
-{
-	local int Base, Bonus;
-	local string Result;
-
-	Base = int(Unit.GetCurrentStat(Stat)) + Unit.GetUIStatFromAbilities(Stat);
-	Bonus = Unit.GetUIStatFromInventory(Stat, CheckState);
-
-	Result = Label @ string(Base);
-	if (Bonus > 0)
-		Result $= " +" $ string(Bonus);
-	else if (Bonus < 0)
-		Result $= " " $ string(Bonus);
-	return Result;
 }
 
 // ---------------------------------------------------------------------------------------

@@ -47,6 +47,9 @@ extern const Recipe kBondScreenRecipe;   // soldier bonds (UISoldierBondScreen)
 extern const Recipe kBondConfirmRecipe;  // bond confirmation (UISoldierBondConfirmScreen)
 extern const Recipe kResistanceReportRecipe; // the monthly council report (UIResistanceReport)
 extern const Recipe kChosenEventsRecipe;     // its Chosen page (UIResistanceReport_ChosenEvents)
+extern const Recipe kCovertReportRecipe;     // the covert action result (UICovertActionReport)
+extern const Recipe kArmoryMenuRecipe;       // the armory hub (UIArmory_MainMenu)
+extern const Recipe kWeaponUpgradeRecipe;    // weapon mods + the pattern picker (UIArmory_WeaponUpgrade)
 
 // ---- Avenger (recipe_avenger.cpp) ----
 extern const Recipe kRoomRecipe;
@@ -60,14 +63,18 @@ extern const Recipe kResearchUnlockedRecipe;
 extern const Recipe kAvengerHudRecipe; // ambient — the ant farm's Tab layer
 extern const Recipe kBlackMarketRecipe;     // the shop's entry menu (UIBlackMarket)
 extern const Recipe kBlackMarketSellRecipe; // the trading post (UIBlackMarket_Sell)
+extern const Recipe kRecruitsRecipe;        // the Armory's recruit list (UIRecruitSoldiers)
+extern const Recipe kRewardsRecapRecipe;    // the post-mission rewards recap (UIRewardsRecap)
 
 // ---- tactical (recipe_tactical.cpp) ----
 extern const Recipe kTacticalHudRecipe;
 extern const Recipe kMissionSummaryRecipe;
 extern const Recipe kChosenSummaryRecipe;
+extern const Recipe kLootRecipe;     // the mid-mission loot receipt (UIInventoryTactical)
+extern const Recipe kCharInfoRecipe; // the soldier sheet (UITacticalCharInfoScreen)
 
 // How many of the above kRecipes must list. Pinned by a static_assert next to the array.
-constexpr std::size_t kRecipeCount = 37;
+constexpr std::size_t kRecipeCount = 44;
 
 } // namespace Recipes
 } // namespace MenuNavigator

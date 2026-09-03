@@ -836,4 +836,99 @@ static_assert(offsetof(AUIBlackMarket_SellItem, ItemRef) == 0x404,
     "UIBlackMarket_SellItem::ItemRef");
 static_assert(offsetof(AUIBlackMarket_SellItem, Price) == 0x410, "UIBlackMarket_SellItem::Price");
 
+// ---- recruiting (game_ui_avenger.cpp: UIRecruitSoldiers) ----
+//
+// The list, the recruit array (its COUNT only — the elements are the companion's) and the two
+// captions read as FStrings. A row is a UIRecruitmentListItem, read through UIListItemString's
+// generic flag dword; it retains no words and no metadata of its own.
+static_assert(offsetof(AUIRecruitSoldiers, List) == 0x410, "UIRecruitSoldiers::List");
+static_assert(offsetof(AUIRecruitSoldiers, m_arrRecruits) == 0x418,
+    "UIRecruitSoldiers::m_arrRecruits");
+static_assert(offsetof(AUIRecruitSoldiers, m_strListTitle) == 0x428,
+    "UIRecruitSoldiers::m_strListTitle");
+static_assert(offsetof(AUIRecruitSoldiers, m_strNoRecruits) == 0x438,
+    "UIRecruitSoldiers::m_strNoRecruits");
+
+// ---- the covert action report (game_ui_strategy.cpp: UICovertActionReport) ----
+//
+// The action's ref and the CONTINUE button (a UILargeButton, read through UIButton::Text above).
+// SlotContainer is pinned as the neighbour that proves the packed layout — the 8-byte button
+// pointer really does sit 4 bytes after the ref — though the container itself is walked
+// companion-side. UIRewardsRecap needs no pin: a finder only, every word companion-side.
+static_assert(offsetof(AUICovertActionReport, ActionRef) == 0x440,
+    "UICovertActionReport::ActionRef");
+static_assert(offsetof(AUICovertActionReport, ContinueButton) == 0x444,
+    "UICovertActionReport::ContinueButton");
+static_assert(offsetof(AUICovertActionReport, SlotContainer) == 0x44C,
+    "UICovertActionReport::SlotContainer");
+
+// ---- the armory hub (game_ui_strategy.cpp: UIArmory_MainMenu) ----
+//
+// The list, plus the unit ref inherited from UIArmory (pinned under promotion). A row is a
+// UIListItemString read through its generic Text / flag dword / AttentionIcon, all pinned above;
+// its MCName (UIPanel::MCName, pinned at the top) is the row's identity. DismissButton is the
+// class's tail, pinned as the neighbour that proves the Highlander's eight named fields are in
+// the dump this build was cut from.
+static_assert(offsetof(AUIArmory_MainMenu, List) == 0x6F0, "UIArmory_MainMenu::List");
+static_assert(offsetof(AUIArmory_MainMenu, DismissButton) == 0x740,
+    "UIArmory_MainMenu::DismissButton (Highlander Issue #47 fields)");
+
+// ---- weapon upgrades (game_ui_strategy.cpp: UIArmory_WeaponUpgrade, _WeaponTrait, _WeaponUpgradeItem) ----
+//
+// The three lists, the active-list pointer and the weapon ref on the screen — every one of them
+// 0x10 past vanilla because the Highlander's WeaponViewOffsets heads the class (Issue #832), so
+// the first pin is also the Highlander detector. The row is the loadout row's layout through
+// Count (its flag dword at 0x43C is bracketed by Count and UpgradeTemplate); the picker subclass
+// adds the landing index.
+static_assert(offsetof(AUIArmory_WeaponUpgrade, WeaponViewOffsets) == 0x4FC,
+    "UIArmory_WeaponUpgrade::WeaponViewOffsets (Highlander Issue #832 — a vanilla dump lacks it)");
+static_assert(offsetof(AUIArmory_WeaponUpgrade, ActiveList) == 0x510, "UIArmory_WeaponUpgrade::ActiveList");
+static_assert(offsetof(AUIArmory_WeaponUpgrade, SlotsList) == 0x520, "UIArmory_WeaponUpgrade::SlotsList");
+static_assert(offsetof(AUIArmory_WeaponUpgrade, UpgradesList) == 0x530,
+    "UIArmory_WeaponUpgrade::UpgradesList");
+static_assert(offsetof(AUIArmory_WeaponUpgrade, WeaponRef) == 0x538, "UIArmory_WeaponUpgrade::WeaponRef");
+static_assert(offsetof(AUIArmory_WeaponUpgrade, CustomizeList) == 0x574,
+    "UIArmory_WeaponUpgrade::CustomizeList");
+static_assert(offsetof(AUIArmory_WeaponTrait, StartingIndex) == 0x704,
+    "UIArmory_WeaponTrait::StartingIndex");
+static_assert(offsetof(AUIArmory_WeaponUpgradeItem, Title) == 0x3D8, "UIArmory_WeaponUpgradeItem::Title");
+static_assert(offsetof(AUIArmory_WeaponUpgradeItem, Subtitle) == 0x3E8,
+    "UIArmory_WeaponUpgradeItem::Subtitle");
+static_assert(offsetof(AUIArmory_WeaponUpgradeItem, Count) == 0x438, "UIArmory_WeaponUpgradeItem::Count");
+static_assert(offsetof(AUIArmory_WeaponUpgradeItem, UpgradeTemplate) == 0x440,
+    "UIArmory_WeaponUpgradeItem::UpgradeTemplate (the flag dword precedes at 0x43C)");
+static_assert(offsetof(AUIArmory_WeaponUpgradeItem, SlotIndex) == 0x450,
+    "UIArmory_WeaponUpgradeItem::SlotIndex");
+
+// ---- the loot receipt (game_ui_tactical.cpp: UIInventoryTactical) ----
+//
+// The list, the OK button (read through UIButton::Text above) and the title; a row is a plain
+// UIPanel keeping the item's ObjectID and nothing else.
+static_assert(offsetof(AUIInventoryTactical, m_kLootList) == 0x418, "UIInventoryTactical::m_kLootList");
+static_assert(offsetof(AUIInventoryTactical, m_kButton_OK) == 0x428,
+    "UIInventoryTactical::m_kButton_OK");
+static_assert(offsetof(AUIInventoryTactical, m_strTitle) == 0x458, "UIInventoryTactical::m_strTitle");
+static_assert(offsetof(AUIInventoryTactical_LootingItem, GameStateObjectID) == 0x3D8,
+    "UIInventoryTactical_LootingItem::GameStateObjectID");
+
+// ---- soldier info (game_ui_tactical.cpp: UITacticalCharInfoScreen) ----
+//
+// The effects list, and the HUD's hint label the soldier stop's button is named with. The stat
+// labels and the name are found by MCName (pinned above) and read as UIScrollingText — UIText
+// shares that offset, pinned here because the section headings are bare UITexts. An effect row
+// holds its UISummary_UnitEffect BY VALUE, so the struct's members are pinned as the row's own.
+static_assert(offsetof(AUITacticalCharInfoScreen, ListPerks) == 0x410,
+    "UITacticalCharInfoScreen::ListPerks");
+static_assert(offsetof(AUITacticalHUD, m_strNavHelpCharShow) == 0x510,
+    "UITacticalHUD::m_strNavHelpCharShow");
+static_assert(offsetof(AUIText, Text) == 0x3D8, "UIText::Text");
+static_assert(offsetof(AUIListItemPerk, Perk) == 0x3E0, "UIListItemPerk::Perk");
+static_assert(offsetof(AUIListItemPerk, TitlePanel) == 0x420,
+    "UIListItemPerk::TitlePanel (the struct ends before it)");
+static_assert(offsetof(FUISummary_UnitEffect, Name) == 0x00, "UISummary_UnitEffect::Name");
+static_assert(offsetof(FUISummary_UnitEffect, Description) == 0x10,
+    "UISummary_UnitEffect::Description");
+static_assert(offsetof(FUISummary_UnitEffect, AbilitySourceName) == 0x38,
+    "UISummary_UnitEffect::AbilitySourceName");
+
 } // namespace

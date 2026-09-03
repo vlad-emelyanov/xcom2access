@@ -57,4 +57,12 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Soldier bonds (`UISoldierBondScreen`) + bond confirmation (`UISoldierBondConfirmScreen`) | `game_ui_strategy.cpp` | `X2AccessBondReader.uc`, `soldier bonds` + `bond confirm` | — | `chosen-bond-recon.md` |
 | Monthly council report (`UIResistanceReport`) | `game_ui_strategy.cpp` (finder only) | `X2AccessReportReader.uc`, `monthly report` | — | `resistance-report-recon.md` |
 | The report's Chosen page (`UIResistanceReport_ChosenEvents`) | `game_ui_strategy.cpp` | `X2AccessChosenReader.DescribeChosenEvents`, `chosen activity` | — | `resistance-report-recon.md` |
+| Covert action result (`UICovertActionReport`) | `game_ui_strategy.cpp` | `X2AccessCovertActionReader.DescribeCovertActionReport`, `covert report` | strategy.md | `covert-actions-recon.md` §8b |
+| Armory hub (`UIArmory_MainMenu`) | `game_ui_strategy.cpp` | `X2AccessArmoryReader.uc`, `armory` | strategy.md | `armory-recon.md` §1 |
+| Weapon upgrades + the pattern picker (`UIArmory_WeaponUpgrade`, `UIArmory_WeaponTrait`) | `game_ui_strategy.cpp` | `X2AccessWeaponUpgradeReader.uc`, `weapon upgrades` | strategy.md | `armory-recon.md` §2 |
+| PCS picker (`UIInventory_Implants`) — the commodity list, plus the implant delta and the cannot-equip word | `game_ui_avenger.cpp` | `X2AccessCommodityReader.ImplantDelta`, `commodity list` | avenger.md | `armory-recon.md` §3 |
+| Recruits (`UIRecruitSoldiers`) | `game_ui_avenger.cpp` | `X2AccessRecruitReader.uc`, `recruits` | avenger.md | `recruit-recap-recon.md` §1 |
+| Post-mission rewards recap (`UIRewardsRecap`) | `game_ui_avenger.cpp` (finder only) | `X2AccessRecapReader.uc`, `rewards recap` | avenger.md | `recruit-recap-recon.md` §2 |
+| Loot receipt (`UIInventoryTactical`) | `game_ui_tactical.cpp` | `X2AccessLootReader.uc`, `loot` | tactical.md | `tactical-modals-recon.md` §1 |
+| Soldier sheet (`UITacticalCharInfoScreen`) + the HUD stop's open verb | `game_ui_tactical.cpp` (widget reads) | `X2AccessCharInfoReader.OpenCharInfo` (the verb only), `soldier info` | tactical.md | `tactical-modals-recon.md` §2 |
 

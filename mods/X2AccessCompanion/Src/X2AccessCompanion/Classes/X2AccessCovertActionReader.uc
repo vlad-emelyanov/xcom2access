@@ -449,6 +449,132 @@ private function string CostSlotRecord(UICovertActions Screen, UICovertActionCos
 }
 
 // ---------------------------------------------------------------------------------------
+// The report (UICovertActionReport) — docs/covert-actions-recon.md §8b
+// ---------------------------------------------------------------------------------------
+
+// The RESULT screen, shown once an action's clock runs out. Same slot container, different
+// consumer — and a different set of words, so DescribeCovertActions above does NOT transfer:
+//   * there is no list, no risk panel, no influence row, no duration, no lock overlay;
+//   * the slot verbs are dead (HandleClick gates on !bStarted, false forever once completed),
+//     so no button fields ride the slot records;
+//   * the per-soldier RESULTS — promotion, XP, cohesion, the slot reward, the risks that fired in
+//     red, or SOLDIER KILLED — are the one thing in the family that IS retained: UpdateData
+//     writes them into UICovertActionSlot.PromoteLabel / Value1..Value4 and the report branch of
+//     Update() is what hands exactly those five to Flash. They are READ OFF THE SLOT, never
+//     recomputed: that is the card's own argument list, and it is right under the Highlander's
+//     RewardsNotGivenOnCompletion change (#810) for free.
+//
+// Records:
+//   kind=screen   header  slotsheader
+//   kind=card     name  narrative  rewardlabel  reward  rewarddetails
+//   kind=faction  title  name
+//   kind=slot     index  slot=staff|cost  label  promote  value1  value2  value3  value4
+//
+// `reward` here is GetRewardValuesString — what was GRANTED — where the picker's is the preview;
+// the screen's own GetRewardString() answers with the right one. Every value comes off the screen's
+// public accessors, exactly as RefreshMainPanel and RefreshFactionPanel composed it.
+function DescribeCovertActionReport()
+{
+	local UICovertActionReport Screen;
+	local string Rec;
+
+	NativeResult = "";
+
+	Screen = UICovertActionReport(`SCREENSTACK.GetCurrentScreen());
+	// ⛔ GetAction() answers none the moment Continue has been pressed: OnContinueClicked deletes
+	// the action's state object. An empty answer is "the screen is on its way out".
+	if (Screen == none || Screen.GetAction() == none)
+		return;
+
+	Emit("kind=screen"
+		$ FLD_SEP $ "header=" $ Screen.CovertActions_ScreenHeader
+		$ FLD_SEP $ "slotsheader=" $ Screen.CovertActions_SlotsHeader);
+
+	Rec = "kind=card";
+	AddField(Rec, "name", Screen.GetActionName());
+	AddField(Rec, "narrative", Screen.GetActionDescription());
+	// RefreshMainPanel blanks all three when the action had no rewards — reproduced, or the card
+	// grows a REWARD: caption with nothing under it.
+	if (Screen.DoesActionHaveRewards())
+	{
+		AddField(Rec, "rewardlabel", class'UICovertActions'.default.CovertActions_RewardHeader);
+		AddField(Rec, "reward", Screen.GetRewardString());
+		AddField(Rec, "rewarddetails", Screen.GetRewardDetailsString());
+	}
+	Emit(Rec);
+
+	Rec = "kind=faction";
+	AddField(Rec, "title", Caps(Screen.GetFactionTitle()));
+	AddField(Rec, "name", Caps(Screen.GetFactionName()));
+	Emit(Rec);
+
+	BuildReportSlotRecords(Screen);
+}
+
+// One record per slot the container BUILT — which on the report is only the slots that had
+// somebody in them (ShouldStaffSlotBeDisplayed hides an unfilled slot once bCompleted). The
+// LABEL is the one string the report's Update branch passes through as a local, so it is the
+// one re-derived: the soldier's rank and name for a staff slot, the cost for a cost slot.
+private function BuildReportSlotRecords(UICovertActionReport Screen)
+{
+	local UICovertActionSlot Slot;
+	local UICovertActionStaffSlot StaffSlot;
+	local UICovertActionCostSlot CostSlot;
+	local XComGameState_StaffSlot SlotState;
+	local array<StrategyCostScalar> CostScalars;
+	local string Rec;
+	local int i;
+
+	if (Screen.SlotContainer == none)
+		return;
+	CostScalars.Length = 0;
+
+	for (i = 0; i < Screen.SlotContainer.ActionSlots.Length; i++)
+	{
+		Slot = Screen.SlotContainer.ActionSlots[i];
+		if (Slot == none)
+			continue;
+
+		Rec = "kind=slot" $ FLD_SEP $ "index=" $ string(i);
+
+		StaffSlot = UICovertActionStaffSlot(Slot);
+		CostSlot = UICovertActionCostSlot(Slot);
+		if (StaffSlot != none)
+		{
+			Rec $= FLD_SEP $ "slot=staff";
+			SlotState = XComGameState_StaffSlot(`XCOMHISTORY.GetGameStateForObjectID(
+				StaffSlot.StaffSlotRef.ObjectID));
+			if (SlotState != none)
+				AddField(Rec, "label", SlotState.GetNameDisplayString());
+		}
+		else if (CostSlot != none)
+		{
+			Rec $= FLD_SEP $ "slot=cost";
+			AddField(Rec, "label",
+				class'UIUtilities_Strategy'.static.GetStrategyCostString(CostSlot.Cost, CostScalars));
+		}
+		else
+		{
+			continue;
+		}
+
+		// The retained five, in the order the card draws them. Value4 is the risks that fired
+		// (or SOLDIER KILLED) — the card colours it red; the words say what it is.
+		AddField(Rec, "promote", Slot.PromoteLabel);
+		AddField(Rec, "value1", Slot.Value1);
+		AddField(Rec, "value2", Slot.Value2);
+		AddField(Rec, "value3", Slot.Value3);
+		AddField(Rec, "value4", Slot.Value4);
+		Emit(Rec);
+	}
+}
+
+private function AddField(out string Rec, string Key, string Value)
+{
+	class'X2AccessWire'.static.AddField(Rec, Key, Value);
+}
+
+// ---------------------------------------------------------------------------------------
 // Verbs — the two the keyboard cannot reach
 // ---------------------------------------------------------------------------------------
 

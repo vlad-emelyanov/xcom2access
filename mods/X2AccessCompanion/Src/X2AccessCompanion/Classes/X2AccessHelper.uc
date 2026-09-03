@@ -246,6 +246,77 @@ static function string DescribeSoldierWill(XComGameState_Unit Unit, bool bSkipDe
 }
 
 // ---------------------------------------------------------------------------
+// The armory header — shared by every UIArmory screen that reads it
+// ---------------------------------------------------------------------------
+//
+// UISoldierHeader pushes its name line and its stat column into Flash and retains none of it,
+// so each armory reader has to compose them. ONE implementation, so the loadout and the hub
+// name a soldier identically (the two-surfaces-must-agree rule). Mirrors
+// UISoldierHeader.PopulateData: the base stat plus what abilities give, then the inventory's
+// contribution as the signed bonus the screen prints beside it; psi only for a psi operative,
+// exactly as the header gates it.
+
+// Full name with nickname, then the rank name and the class for anyone past rookie.
+static function string DescribeArmorySoldier(XComGameState_Unit Unit)
+{
+	local string Result;
+
+	Result = Unit.GetName(eNameType_FullNick);
+	if (Unit.GetRank() > 0)
+	{
+		AppendComma(Result, class'X2ExperienceConfig'.static.GetRankName(Unit.GetRank(),
+			Unit.GetSoldierClassTemplateName()));
+		if (Unit.GetSoldierClassTemplate() != none)
+			AppendComma(Result, Unit.GetSoldierClassTemplate().DisplayName);
+	}
+	return Result;
+}
+
+// The header's stat column, in its own order. CheckGameState is the screen's — the loadout
+// previews an equip through it, the hub passes its own (usually none).
+static function string DescribeArmoryStats(XComGameState_Unit Unit, XComGameState CheckGameState)
+{
+	local string Result;
+
+	AppendComma(Result, ArmoryStatLine(class'UISoldierHeader'.default.m_strAimLabel, Unit, CheckGameState,
+		eStat_Offense));
+	AppendComma(Result, ArmoryStatLine(class'UISoldierHeader'.default.m_strHealthLabel, Unit, CheckGameState,
+		eStat_HP));
+	AppendComma(Result, ArmoryStatLine(class'UISoldierHeader'.default.m_strMobilityLabel, Unit,
+		CheckGameState, eStat_Mobility));
+	AppendComma(Result, ArmoryStatLine(class'UISoldierHeader'.default.m_strWillLabel, Unit, CheckGameState,
+		eStat_Will));
+	AppendComma(Result, ArmoryStatLine(class'UISoldierHeader'.default.m_strArmorLabel, Unit, CheckGameState,
+		eStat_ArmorMitigation));
+	AppendComma(Result, ArmoryStatLine(class'UISoldierHeader'.default.m_strDodgeLabel, Unit, CheckGameState,
+		eStat_Dodge));
+	AppendComma(Result, ArmoryStatLine(class'UISoldierHeader'.default.m_strTechLabel, Unit, CheckGameState,
+		eStat_Hacking));
+	if (Unit.IsPsiOperative())
+		AppendComma(Result, ArmoryStatLine(class'UISoldierHeader'.default.m_strPsiLabel, Unit,
+			CheckGameState, eStat_PsiOffense));
+
+	return Result;
+}
+
+static function string ArmoryStatLine(string Label, XComGameState_Unit Unit, XComGameState CheckGameState,
+	ECharStatType Stat)
+{
+	local int Base, Bonus;
+	local string Result;
+
+	Base = int(Unit.GetCurrentStat(Stat)) + Unit.GetUIStatFromAbilities(Stat);
+	Bonus = Unit.GetUIStatFromInventory(Stat, CheckGameState);
+
+	Result = Label @ string(Base);
+	if (Bonus > 0)
+		Result $= " +" $ string(Bonus);
+	else if (Bonus < 0)
+		Result $= " " $ string(Bonus);
+	return Result;
+}
+
+// ---------------------------------------------------------------------------
 // Tactical tile description helpers
 // ---------------------------------------------------------------------------
 

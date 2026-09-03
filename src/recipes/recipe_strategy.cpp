@@ -909,6 +909,575 @@ std::string ArmoryLoadoutName()
                                        : view.inventoryTitle;
 }
 
+// ---- the armory hub (UIArmory_MainMenu) — docs/armory-recon.md §1 ----
+//
+// The menu between the Armory room and everything a soldier can have done to them. Vanilla's
+// keyboard already walks the list and Enters (UIArmory.OnUnrealCommand → OnAccept); what it lacks
+// is the words — the header, the description under the list, a greyed row's reason and the whole
+// ability panel are Flash pushes — and two verbs: the soldier cycle, which vanilla puts on Tab and
+// LeftShift (both the layer's), and the abilities/traits toggle, a nav-help button with no key.
+//
+// THREE STOPS in the screen's own order: the soldier (a spinner while the game offers the cycle,
+// exactly as the bond screen's), the menu rows (label, the "!" badge, the description as a value
+// part, a greyed row's reason), and the ability or trait summary with its toggle. Rows are keyed
+// on their MCName — the Highlander's identity for its eight, and a mod's for any it inserts.
+
+constexpr const char* kArmoryReaderClass = "X2AccessArmoryReader";
+
+// Keyed on the rows and discriminated on the soldier: PopulateData respawns every row on each
+// focus return and on each cycle, and a fresh set landing on the old addresses would otherwise
+// keep the previous soldier's header.
+WireCache gArmoryWords(kArmoryReaderClass, "DescribeArmoryMenu");
+
+const std::vector<WireRecord>& FetchArmoryWords(const GameUI::ArmoryMenuView& view)
+{
+    return FetchWordsKeyedOnRows(gArmoryWords, view.screen, view.rows, view.unitId);
+}
+
+const WireRecord* FindArmoryRow(const std::vector<WireRecord>& words, const std::string& key)
+{
+    if (key.empty())
+        return nullptr;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") == "row" && RecField(rec, "key") == key)
+            return &rec;
+    }
+    return nullptr;
+}
+
+std::string ArmorySoldierLine(const std::vector<WireRecord>& words)
+{
+    const WireRecord* header = FindRecord(words, "header");
+    return header ? RecField(*header, "who") : std::string();
+}
+
+std::unique_ptr<GraphRender> BuildArmoryMenu()
+{
+    const GameUI::ArmoryMenuView view = GameUI::ReadArmoryMenu(gScreen);
+    const std::vector<WireRecord>& words = FetchArmoryWords(view);
+    const WireRecord* header = FindRecord(words, "header");
+    const bool canCycle = header && RecField(*header, "cycle") == "1";
+
+    GraphBuilder b;
+
+    // ---- who this is: the header no focus visits on mouse+keyboard ----
+    b.BeginStop("soldier");
+    b.PushContext("", "", /*positions*/ false);
+    {
+        std::string line = ArmorySoldierLine(words);
+        if (line.empty())
+            line = Vocab::SoldierFallback;
+        NodeVtable vt;
+        vt.Type = canCycle ? &SpinnerType() : &TextType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(line));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (canCycle) {
+            // NextSoldier/PrevSoldier through the companion, behind the screen's own gate; the
+            // rows respawn, so the verb helper's invalidation is what makes the re-read fresh.
+            vt.OnAdjust = [](int sign, bool) {
+                CallCompanionVerb(gArmoryWords, kArmoryReaderClass, "CycleArmorySoldier",
+                    sign > 0 ? 1 : -1);
+            };
+            vt.StateText = []() {
+                return ArmorySoldierLine(FetchArmoryWords(GameUI::ReadArmoryMenu(gScreen)));
+            };
+        }
+        b.AddItem(ControlId::Structural("armory/soldier"), std::move(vt));
+    }
+    if (header) {
+        for (const char* key : {"status", "stats", "bond", "intel", "ap"}) {
+            const std::string text = RecField(*header, key);
+            if (text.empty())
+                continue;
+            b.AddLabel(ControlId::Structural(std::string("armory/header/") + key),
+                [text]() { return text; });
+        }
+    }
+    b.PopContext();
+
+    // ---- the menu ----
+    b.BeginStop("menu");
+    ControlId start;
+    bool haveStart = false;
+    for (const GameUI::ArmoryMenuRow& row : view.rows) {
+        const WireRecord* rec = FindArmoryRow(words, row.key);
+        std::string label = row.label.empty() ? std::string(Vocab::ArmoryRowFallback) : row.label;
+        const int index = row.index;
+
+        // Keyed on the MCName: PopulateData respawns the rows on every focus return, so the
+        // pointer changes while the verb does not, and a mod may reorder the list.
+        ControlId id = ControlId::Referenced(
+            row.handle, "armory/row/" + (row.key.empty() ? std::to_string(index) : row.key));
+        gFocus[id.StructuralKey] = FocusTarget{index, nullptr, false, nullptr};
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (row.attention) {
+            // The "!" badge — a PCS slot to fill, an upgrade to apply, a bond available.
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Attention));
+            vt.Announcements.back().Kind = kKindAttention;
+        }
+        // The description panel under the list, which OnSelectionChanged repaints for the
+        // selected row; one line, so it rides the row rather than earning a stop.
+        const std::string desc = rec ? RecField(*rec, "desc") : std::string();
+        if (!desc.empty()) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(desc));
+            vt.Announcements.back().Kind = AnnouncementKinds::Value;
+        }
+        if (row.disabled) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+            // The tooltip SetDisabled parked for a mouse player, re-derived by the companion.
+            const std::string reason = rec ? RecField(*rec, "reason") : std::string();
+            if (!reason.empty()) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(reason));
+                vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+            }
+        }
+        // Offered even when greyed: OnAccept refuses a disabled row with the game's own sound,
+        // where a missing node would refuse it with nothing.
+        vt.OnActivate = [index]() {
+            GameUI::ActivateArmoryMenuRow(GameUI::ReadArmoryMenu(gScreen), index);
+        };
+        vt.OnTooltip = ListItemTooltipAction(row.handle);
+
+        if (!haveStart && (index == view.selected || !start.IsValid())) {
+            start = id;
+            haveStart = index == view.selected;
+        }
+        b.AddItem(std::move(id), std::move(vt));
+    }
+
+    // ---- the ability / trait summary, and its toggle ----
+    if (const WireRecord* summary = FindRecord(words, "summary")) {
+        b.BeginStop("abilities");
+        const std::string title = RecField(*summary, "title");
+        if (!title.empty())
+            b.PushContext(title, "", /*positions*/ true);
+        for (const WireRecord& rec : words) {
+            if (RecField(rec, "kind") != "ability")
+                continue;
+            const std::string name = RecField(rec, "name");
+            if (name.empty())
+                continue;
+            NodeVtable vt;
+            vt.Type = &TextType();
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(name));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+            const std::string desc = RecField(rec, "desc");
+            if (!desc.empty()) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(desc));
+                vt.Announcements.back().Kind = AnnouncementKinds::Value;
+            }
+            b.AddItem(ControlId::Structural("armory/ability/" + RecField(rec, "index") + "/" + name),
+                std::move(vt));
+        }
+        if (!title.empty())
+            b.PopContext();
+
+        // The nav-help toggle (FXS_BUTTON_X on a gamepad, no key at all otherwise), offered
+        // exactly when the game offers it — a soldier with a trait to switch to.
+        const std::string toggle = RecField(*summary, "toggle");
+        if (!toggle.empty()) {
+            NodeVtable vt;
+            vt.Type = &ButtonType();
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(toggle));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+            vt.OnActivate = []() {
+                CallCompanionVerb(gArmoryWords, kArmoryReaderClass, "ToggleArmoryTraits", 0);
+            };
+            b.AddItem(ControlId::Structural("armory/toggle"), std::move(vt));
+        }
+    }
+
+    AddResourceStop(b);
+    // Land on the menu, where the game itself puts focus (List.Navigator.SelectFirstAvailable).
+    if (start.IsValid())
+        b.SetStart(std::move(start));
+    return b.Build();
+}
+
+std::string ArmoryMenuName()
+{
+    // Whose armory, as the loadout names itself — the question two screens of arrowing makes
+    // urgent.
+    const std::string who = ArmorySoldierLine(FetchArmoryWords(GameUI::ReadArmoryMenu(gScreen)));
+    return who.empty() ? std::string(Vocab::ScreenArmoryFallback) : who;
+}
+
+bool SetArmoryMenuListIndex(void* screen, int index)
+{
+    return GameUI::SetArmoryMenuSelection(GameUI::ReadArmoryMenu(screen), index);
+}
+
+// ---- weapon upgrades (UIArmory_WeaponUpgrade) and the pattern picker — docs/armory-recon.md §2 ----
+//
+// The loadout's shape over a weapon: ONE of two lists is live (ActiveList), the other a mirror.
+// The stops, in the screen's own order: the soldier and the weapon (a spinner while the game
+// offers the soldier cycle), the SLOTS list — or, while the picker is open, its read-only mirror
+// followed by the UPGRADES list — then the previewed stat block with the description box on top,
+// then the customize rows. Enter on a slot opens the picker (the game's own OnAccept); Escape
+// backs out of it (the game's own OnCancel, unclaimed); Enter on an upgrade raises the confirm.
+//
+// The stat block reads at ANNOUNCE time, the commodity card's arrangement: the game repaints it
+// on every selection change (PreviewUpgrade) and our write-back is what moves the selection.
+
+constexpr const char* kWeaponUpgradeReaderClass = "X2AccessWeaponUpgradeReader";
+
+// Keyed on both lists' rows, discriminated on the weapon and the SELECTION of the active list —
+// the preview is that selection's shadow — with the pane folded into the discriminator so a
+// switch that happened to keep every pointer still re-asks.
+WireCache gWeaponUpgradeWords(kWeaponUpgradeReaderClass, "DescribeWeaponUpgrade");
+
+const std::vector<WireRecord>& FetchWeaponUpgradeWords(const GameUI::WeaponUpgradeView& view)
+{
+    std::vector<void*> key;
+    key.reserve(view.slots.size() + view.upgrades.size() + view.options.size() + 1);
+    for (const GameUI::WeaponUpgradeRow& row : view.slots)
+        key.push_back(row.handle);
+    for (const GameUI::WeaponUpgradeRow& row : view.upgrades)
+        key.push_back(row.handle);
+    for (const GameUI::MenuItem& row : view.options)
+        key.push_back(row.handle);
+    key.push_back(view.screen);
+    const long long selected = view.upgradesActive ? view.upgradesSelected : view.slotsSelected;
+    const long long extra = (static_cast<long long>(view.weaponId) << 20)
+        + (view.upgradesActive ? 1 << 16 : 0) + (selected + 1);
+    return gWeaponUpgradeWords.Get(std::move(key), extra);
+}
+
+const WireRecord* FindUpgradeRowRec(
+    const std::vector<WireRecord>& words, const char* list, int index)
+{
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") == "row" && RecField(rec, "list") == list
+            && atoi(RecField(rec, "index").c_str()) == index)
+            return &rec;
+    }
+    return nullptr;
+}
+
+std::string WeaponUpgradeHeaderLine(const std::vector<WireRecord>& words, const char* key)
+{
+    const WireRecord* header = FindRecord(words, "header");
+    return header ? RecField(*header, key) : std::string();
+}
+
+// One upgrade-list or slot row as a node: title, the effect line, the count sentence, the greyed
+// state with its reason.
+NodeVtable UpgradeRowVtable(const GameUI::WeaponUpgradeRow& row, const WireRecord* rec, bool live)
+{
+    NodeVtable vt;
+    vt.Type = live ? &ButtonType() : &TextType();
+    std::string label = row.title.empty() ? std::string(Vocab::SellItemFallback) : row.title;
+    vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+    vt.Announcements.back().Kind = AnnouncementKinds::Label;
+    if (!row.subtitle.empty()) {
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(row.subtitle));
+        vt.Announcements.back().Kind = AnnouncementKinds::Value;
+    }
+    const std::string count = rec ? RecField(*rec, "count") : std::string();
+    if (!count.empty()) {
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(count));
+        vt.Announcements.back().Kind = AnnouncementKinds::Value;
+    }
+    if (row.disabled) {
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+        vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        const std::string reason = rec ? RecField(*rec, "reason") : std::string();
+        if (!reason.empty()) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(reason));
+            vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+        }
+    }
+    return vt;
+}
+
+std::unique_ptr<GraphRender> BuildWeaponPattern(const GameUI::WeaponUpgradeView& view)
+{
+    const std::vector<WireRecord>& words = FetchWeaponUpgradeWords(view);
+    const WireRecord* trait = FindRecord(words, "trait");
+
+    GraphBuilder b;
+    b.BeginStop("options");
+    const std::string title = trait ? RecField(*trait, "title") : std::string();
+    if (!title.empty())
+        b.PushContext(title, "", /*positions*/ true);
+    ControlId start;
+    for (const GameUI::MenuItem& option : view.options) {
+        const int index = option.index;
+        ControlId id
+            = ControlId::Referenced(option.handle, "pattern/row/" + std::to_string(index));
+        gFocus[id.StructuralKey] = FocusTarget{-1, nullptr, false,
+            [index]() { GameUI::SelectWeaponPattern(GameUI::ReadWeaponUpgrade(gScreen), index); }};
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(
+            option.label.empty() ? std::string(Vocab::SellItemFallback) : option.label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        // The pattern the weapon wears now — where the game lands, and what Escape reverts to.
+        if (index == view.startingIndex) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Selected));
+            vt.Announcements.back().Kind = AnnouncementKinds::Selected;
+        }
+        vt.OnActivate = [index]() {
+            GameUI::ActivateWeaponPattern(GameUI::ReadWeaponUpgrade(gScreen), index);
+        };
+        if (index == view.optionsSelected || (!start.IsValid() && index == view.startingIndex))
+            start = id;
+        b.AddItem(std::move(id), std::move(vt));
+    }
+    if (!title.empty())
+        b.PopContext();
+    if (start.IsValid())
+        b.SetStart(std::move(start));
+    return b.Build();
+}
+
+std::unique_ptr<GraphRender> BuildWeaponUpgrade()
+{
+    const GameUI::WeaponUpgradeView view = GameUI::ReadWeaponUpgrade(gScreen);
+    if (view.trait)
+        return BuildWeaponPattern(view);
+
+    const std::vector<WireRecord>& words = FetchWeaponUpgradeWords(view);
+    const WireRecord* header = FindRecord(words, "header");
+    const bool canCycle = header && RecField(*header, "cycle") == "1";
+
+    GraphBuilder b;
+
+    // ---- the soldier and the weapon ----
+    b.BeginStop("weapon");
+    b.PushContext("", "", /*positions*/ false);
+    {
+        std::string who = WeaponUpgradeHeaderLine(words, "who");
+        if (who.empty())
+            who = Vocab::SoldierFallback;
+        NodeVtable vt;
+        vt.Type = canCycle ? &SpinnerType() : &TextType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(who));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (canCycle) {
+            vt.OnAdjust = [](int sign, bool) {
+                CallCompanionVerb(gWeaponUpgradeWords, kWeaponUpgradeReaderClass,
+                    "CycleWeaponUpgradeSoldier", sign > 0 ? 1 : -1);
+            };
+            vt.StateText = []() {
+                return WeaponUpgradeHeaderLine(
+                    FetchWeaponUpgradeWords(GameUI::ReadWeaponUpgrade(gScreen)), "who");
+            };
+        }
+        b.AddItem(ControlId::Structural("wupgrade/soldier"), std::move(vt));
+    }
+    for (const char* key : {"weapon", "equipped", "slots"}) {
+        const std::string text = WeaponUpgradeHeaderLine(words, key);
+        if (!text.empty())
+            b.AddLabel(ControlId::Structural(std::string("wupgrade/header/") + key),
+                [text]() { return text; });
+    }
+    b.PopContext();
+
+    ControlId start;
+
+    // ---- the slots: live, or the mirror while the picker is open ----
+    b.BeginStop("slots");
+    {
+        std::string title = WeaponUpgradeHeaderLine(words, "lefttitle");
+        if (view.upgradesActive)
+            title = JoinPhrases(title, Vocab::WeaponSlotsMirror);
+        if (!title.empty())
+            b.PushContext(title, "", /*positions*/ true);
+        for (const GameUI::WeaponUpgradeRow& row : view.slots) {
+            const WireRecord* rec = FindUpgradeRowRec(words, "slots", row.index);
+            const int index = row.index;
+            ControlId id = ControlId::Referenced(row.handle, "wupgrade/slot/" + std::to_string(index));
+            NodeVtable vt = UpgradeRowVtable(row, rec, /*live*/ !view.upgradesActive);
+            if (view.upgradesActive) {
+                // The slot the picker is open for: the game freezes it (bIsLocked) and every
+                // upgrade row previews against it.
+                if (row.locked) {
+                    vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Selected));
+                    vt.Announcements.back().Kind = AnnouncementKinds::Selected;
+                }
+            } else {
+                gFocus[id.StructuralKey] = FocusTarget{-1, nullptr, false, [index]() {
+                    GameUI::SelectWeaponUpgradeRow(GameUI::ReadWeaponUpgrade(gScreen),
+                        GameUI::WeaponUpgradeList::Slots, index);
+                }};
+                vt.OnActivate = [index]() {
+                    GameUI::ActivateWeaponUpgradeRow(GameUI::ReadWeaponUpgrade(gScreen),
+                        GameUI::WeaponUpgradeList::Slots, index);
+                };
+                if (!start.IsValid() && index == view.slotsSelected)
+                    start = id;
+            }
+            b.AddItem(std::move(id), std::move(vt));
+        }
+        if (!title.empty())
+            b.PopContext();
+    }
+
+    // ---- the upgrade picker, only while the game shows it ----
+    if (view.upgradesActive) {
+        b.BeginStop("upgrades");
+        const std::string title = WeaponUpgradeHeaderLine(words, "righttitle");
+        if (!title.empty())
+            b.PushContext(title, "", /*positions*/ true);
+        ControlId pickerStart;
+        for (const GameUI::WeaponUpgradeRow& row : view.upgrades) {
+            const WireRecord* rec = FindUpgradeRowRec(words, "upgrades", row.index);
+            const int index = row.index;
+            ControlId id
+                = ControlId::Referenced(row.handle, "wupgrade/upgrade/" + std::to_string(index));
+            gFocus[id.StructuralKey] = FocusTarget{-1, nullptr, false, [index]() {
+                GameUI::SelectWeaponUpgradeRow(GameUI::ReadWeaponUpgrade(gScreen),
+                    GameUI::WeaponUpgradeList::Upgrades, index);
+            }};
+            NodeVtable vt = UpgradeRowVtable(row, rec, /*live*/ true);
+            // Offered even when greyed: OnItemClicked refuses with the game's own sound.
+            vt.OnActivate = [index]() {
+                GameUI::ActivateWeaponUpgradeRow(GameUI::ReadWeaponUpgrade(gScreen),
+                    GameUI::WeaponUpgradeList::Upgrades, index);
+            };
+            if (index == view.upgradesSelected || !pickerStart.IsValid())
+                pickerStart = id;
+            b.AddItem(std::move(id), std::move(vt));
+        }
+        if (view.upgrades.empty()) {
+            // The game's own line — m_strNoUpgradeAvailable is the title above — so the node
+            // only gives the player something to stand on and the way back.
+            b.AddLabel(ControlId::Structural("wupgrade/upgrades/empty"),
+                []() { return std::string(Vocab::CommodityLeaveHint); });
+        }
+        if (!title.empty())
+            b.PopContext();
+        // Land in the picker: the game itself moved its navigator there.
+        if (pickerStart.IsValid())
+            start = pickerStart;
+    }
+
+    // ---- the description box and the stat block, previewed for the row under the cursor ----
+    {
+        bool any = false;
+        auto ensure = [&]() {
+            if (any)
+                return;
+            b.BeginStop("stats");
+            b.PushContext(Vocab::StopWeaponStats, "", /*positions*/ false);
+            any = true;
+        };
+        // Live readers: the words for THIS render's selection are the fallback, and a fresh
+        // fetch answers for wherever the write-back has moved the selection since.
+        auto liveField = [](const char* kind, const char* key, int index, std::string fallback) {
+            return [kind, key, index, fallback]() {
+                const std::vector<WireRecord>& fresh
+                    = FetchWeaponUpgradeWords(GameUI::ReadWeaponUpgrade(gScreen));
+                for (const WireRecord& rec : fresh) {
+                    if (RecField(rec, "kind") != kind)
+                        continue;
+                    if (index >= 0 && atoi(RecField(rec, "index").c_str()) != index)
+                        continue;
+                    const std::string text = RecField(rec, key);
+                    return text.empty() ? fallback : text;
+                }
+                return fallback;
+            };
+        };
+        if (const WireRecord* preview = FindRecord(words, "preview")) {
+            ensure();
+            b.AddLabel(ControlId::Structural("wupgrade/preview/name"),
+                liveField("preview", "name", -1, RecField(*preview, "name")));
+            b.AddLabel(ControlId::Structural("wupgrade/preview/desc"),
+                liveField("preview", "desc", -1, RecField(*preview, "desc")));
+        }
+        for (const WireRecord& rec : words) {
+            if (RecField(rec, "kind") != "stat")
+                continue;
+            ensure();
+            const int index = atoi(RecField(rec, "index").c_str());
+            // Label and value as one line — the label already ends in its own colon where the
+            // game gives it one, and AppendPhrase answers that with a plain space.
+            std::string fallback = JoinPhrases(RecField(rec, "label"), RecField(rec, "value"));
+            b.AddLabel(ControlId::Structural("wupgrade/stat/" + std::to_string(index)),
+                [index, fallback]() {
+                    const std::vector<WireRecord>& fresh
+                        = FetchWeaponUpgradeWords(GameUI::ReadWeaponUpgrade(gScreen));
+                    for (const WireRecord& live : fresh) {
+                        if (RecField(live, "kind") != "stat"
+                            || atoi(RecField(live, "index").c_str()) != index)
+                            continue;
+                        const std::string text
+                            = JoinPhrases(RecField(live, "label"), RecField(live, "value"));
+                        return text.empty() ? fallback : text;
+                    }
+                    return fallback;
+                });
+        }
+        if (any)
+            b.PopContext();
+    }
+
+    // ---- the customize rows: name, colour, pattern ----
+    if (!view.customize.empty()) {
+        b.BeginStop("customize");
+        const std::string title = WeaponUpgradeHeaderLine(words, "customtitle");
+        if (!title.empty())
+            b.PushContext(title, "", /*positions*/ true);
+        for (const GameUI::OptionRow& row : view.customize) {
+            const int index = row.index;
+            ControlId id
+                = ControlId::Referenced(row.handle, "wupgrade/customize/" + std::to_string(index));
+            gFocus[id.StructuralKey] = FocusTarget{-1, nullptr, false, [index]() {
+                GameUI::SelectWeaponCustomizeRow(GameUI::ReadWeaponUpgrade(gScreen), index);
+            }};
+            NodeVtable vt;
+            vt.Type = &ButtonType();
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(
+                row.label.empty() ? Vocab::CommandFallback(index) : row.label));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+            // The pattern row's value is its current pattern's name; the colour row is a swatch
+            // with no words at all, and says only its label.
+            if (!row.value.empty()) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(row.value));
+                vt.Announcements.back().Kind = AnnouncementKinds::Value;
+            }
+            if (row.disabled) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+                vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+            }
+            vt.OnActivate = [index]() {
+                GameUI::ActivateWeaponCustomizeRow(GameUI::ReadWeaponUpgrade(gScreen), index);
+            };
+            vt.OnTooltip = PanelTooltipAction(row.handle);
+            b.AddItem(std::move(id), std::move(vt));
+        }
+        if (!title.empty())
+            b.PopContext();
+    }
+
+    AddResourceStop(b);
+    if (start.IsValid())
+        b.SetStart(std::move(start));
+    return b.Build();
+}
+
+std::string WeaponUpgradeName()
+{
+    const GameUI::WeaponUpgradeView view = GameUI::ReadWeaponUpgrade(gScreen);
+    const std::vector<WireRecord>& words = FetchWeaponUpgradeWords(view);
+    if (view.trait) {
+        const WireRecord* trait = FindRecord(words, "trait");
+        const std::string title = trait ? RecField(*trait, "title") : std::string();
+        return title.empty() ? std::string(Vocab::ScreenWeaponPatternFallback) : title;
+    }
+    // The weapon, then whose — the two facts a player wants confirmed on arrival.
+    std::string name = WeaponUpgradeHeaderLine(words, "weapon");
+    AppendPhrase(name, WeaponUpgradeHeaderLine(words, "who"));
+    return name.empty() ? std::string(Vocab::ScreenWeaponUpgradeFallback) : name;
+}
+
 // ---- the geoscape's mission tray (UIStrategyMap) ----
 //
 // The globe itself is unreachable from the keyboard — pin selection is per-frame and
@@ -1946,6 +2515,126 @@ bool SetCovertActionListIndex(void* screen, int index)
     return GameUI::SetCovertActionSelection(GameUI::ReadCovertActions(screen), index);
 }
 
+// ---- the covert action report (UICovertActionReport) — docs/covert-actions-recon.md §8b ----
+//
+// The result screen of the loop the covert-actions recipe opens — game_ui_strategy.h for what it
+// retains and the one ⛔ (Escape is Continue). Vanilla's keyboard is complete here, Enter, Space
+// and Escape all continuing; what it lacks is every WORD: the card and the faction panel are Flash
+// pushes, and the per-soldier result cards are retained on slot OBJECTS no widget walk can see.
+// THREE STOPS in the screen's own order: the card (name, narrative, reward, faction), the RESULTS
+// cards one node each, then CONTINUE — the button's retained label over the screen's own Enter.
+
+constexpr const char* kCovertReportReaderClass = "X2AccessCovertActionReader";
+
+// Keyed on the screen and discriminated on the action: nothing on this screen respawns, and the
+// payload is fixed for the screen's life (BuildScreen runs once, in OnInit).
+WireCache gCovertReportWords(kCovertReportReaderClass, "DescribeCovertActionReport");
+
+const std::vector<WireRecord>& FetchCovertReportWords(const GameUI::CovertReportView& view)
+{
+    return gCovertReportWords.Get({view.screen}, view.actionId);
+}
+
+std::unique_ptr<GraphRender> BuildCovertReport()
+{
+    const GameUI::CovertReportView view = GameUI::ReadCovertReport(gScreen);
+    const std::vector<WireRecord>& words = FetchCovertReportWords(view);
+    const WireRecord* screenRec = FindRecord(words, "screen");
+    const WireRecord* card = FindRecord(words, "card");
+    const WireRecord* faction = FindRecord(words, "faction");
+    std::vector<const WireRecord*> slots;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") == "slot")
+            slots.push_back(&rec);
+    }
+
+    GraphBuilder b;
+
+    b.BeginStop("report");
+    b.PushContext("", "", /*positions*/ false);
+    int added = 0;
+    auto say = [&](const std::string& id, const std::string& text) {
+        if (text.empty())
+            return;
+        b.AddLabel(ControlId::Structural("covertreport/" + id), [text]() { return text; });
+        added++;
+    };
+    if (card) {
+        say("name", RecField(*card, "name"));
+        say("narrative", RecField(*card, "narrative"));
+        say("reward", JoinParts(*card, {"rewardlabel", "reward", "rewarddetails"}));
+    }
+    if (faction)
+        say("faction", JoinParts(*faction, {"title", "name"}));
+    // Recognised the screen and the companion answered nothing at all — said for ReportNoText's
+    // reason, since Continue still has to be pressed to leave.
+    if (added == 0 && slots.empty())
+        say("empty", Vocab::CovertReportNoText);
+    b.PopContext();
+
+    // The RESULTS cards: one node per slot the container built, under the game's own heading.
+    // Each carries the whole card as parts — a card is one thing with one name, which is the
+    // case a flat readout loses nothing on.
+    if (!slots.empty()) {
+        b.BeginStop("results");
+        b.PushContext(screenRec ? RecField(*screenRec, "slotsheader") : std::string(), "",
+            /*positions*/ true);
+        for (const WireRecord* rec : slots) {
+            NodeVtable vt;
+            vt.Type = &TextType();
+            std::string label = RecField(*rec, "label");
+            if (label.empty())
+                label = Vocab::CovertReportCardFallback;
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+            // The promotion badge — the "!" a sighted player reads off the card.
+            const std::string promote = RecField(*rec, "promote");
+            if (!promote.empty()) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(promote));
+                vt.Announcements.back().Kind = kKindAttention;
+            }
+            // The four value lines in the card's own order: XP, cohesion, the slot reward, and
+            // last the risks that fired (or SOLDIER KILLED) — the card draws that one red; the
+            // words say what it is.
+            for (const char* key : {"value1", "value2", "value3", "value4"}) {
+                const std::string value = RecField(*rec, key);
+                if (value.empty())
+                    continue;
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(value));
+                vt.Announcements.back().Kind = AnnouncementKinds::Value;
+            }
+            b.AddItem(ControlId::Structural("covertreport/slot/" + RecField(*rec, "index")),
+                std::move(vt));
+        }
+        b.PopContext();
+    }
+
+    b.BeginStop("actions");
+    NodeVtable vt;
+    vt.Type = &ButtonType();
+    vt.Announcements.emplace_back(NodeAnnouncement::Static(
+        view.continueLabel.empty() ? std::string(Vocab::ReportContinue) : view.continueLabel));
+    vt.Announcements.back().Kind = AnnouncementKinds::Label;
+    // The screen's own input path: OnUnrealCommand answers Enter with OnContinueClicked, which
+    // closes, raises the reward popups and deletes the action. Click() on the button reaches the
+    // same handler; the key is what a sighted player presses.
+    vt.OnActivate = []() { GameUI::SendScreenCommand(gScreen, GameUI::kCmdEnter); };
+    b.AddItem(ControlId::Structural("covertreport/continue"), std::move(vt));
+
+    return b.Build();
+}
+
+std::string CovertReportName()
+{
+    const GameUI::CovertReportView view = GameUI::ReadCovertReport(gScreen);
+    const std::vector<WireRecord>& words = FetchCovertReportWords(view);
+    const WireRecord* screenRec = FindRecord(words, "screen");
+    const WireRecord* card = FindRecord(words, "card");
+    std::string name = screenRec ? RecField(*screenRec, "header") : std::string();
+    AppendPhrase(name, card ? RecField(*card, "name") : std::string());
+    return name.empty() ? std::string(Vocab::ScreenCovertReportFallback) : name;
+}
+
 // ---- resistance orders (UIStrategyPolicy) ----
 //
 // The card board: three faction columns of order SLOTS plus a wild-card column, the HAND of
@@ -2285,6 +2974,19 @@ const Recipe kArmoryLoadoutRecipe{
     "armory loadout", ProbeFocused<GameUI::FindArmoryLoadout>, BuildArmoryLoadout,
     ArmoryLoadoutName};
 
+// The hub: UNDER every screen it opens — the loadout, the promotion screens, the bond screen,
+// the implant and weapon-upgrade lists, the photobooth, its dismiss dialog — and over the Armory
+// room. Its probe insists on focus, which is what stands it down under all of them.
+const Recipe kArmoryMenuRecipe{"armory", ProbeFocused<GameUI::FindArmoryMenuScreen>,
+    BuildArmoryMenu, ArmoryMenuName, SetArmoryMenuListIndex};
+
+// Weapon upgrades and the pattern picker: one recipe, since the picker is a subclass pushed over
+// the upgrade screen and the finder takes the topmost of the family. Over the hub; under the
+// rename dialog (the text-entry observer's, a real screen) and the confirm dialog. No
+// SetListIndex: THREE lists, each written back through its own FocusTarget.
+const Recipe kWeaponUpgradeRecipe{"weapon upgrades",
+    ProbeFocused<GameUI::FindWeaponUpgradeScreen>, BuildWeaponUpgrade, WeaponUpgradeName};
+
 // Above the ant farm and the Avenger HUD it sits over, below anything it pushes (a mission
 // briefing, the pause menu, a dialog) — which is what ProbeGeoscape's "must be the current
 // screen" test enforces, mirroring UIStrategyMap's own input routing.
@@ -2306,6 +3008,12 @@ const Recipe kMissionBladeRecipe{
 // down under the picker, under the confirm popup, and under the armory the EDIT verb opens.
 const Recipe kCovertActionsRecipe{"covert actions", ProbeCovertActions, BuildCovertActions,
     CovertActionsName, SetCovertActionListIndex};
+
+// The result screen: pushed over the geoscape by the action-complete sequence, and above it only
+// the reward popups its Continue raises, which resolve earlier. Never on the stack with the picker.
+// No SetListIndex: no UIList, and the one button is navigable on its own.
+const Recipe kCovertReportRecipe{"covert report", ProbeFocused<GameUI::FindCovertReportScreen>,
+    BuildCovertReport, CovertReportName};
 
 // No SetListIndex: the board is FIVE lists (four columns and the hand), and Recipe's hook takes
 // one index against one screen. Focus write-back goes through FocusTarget::button instead —

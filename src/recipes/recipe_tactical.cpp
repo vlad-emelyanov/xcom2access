@@ -33,6 +33,7 @@
 #include "vocab.h"
 #include "log.h"
 
+#include <cstdlib>
 #include <memory>
 #include <string>
 #include <utility>
@@ -91,6 +92,27 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
             b.AddLabel(ControlId::Structural("thud/sol/" + oid + "/" + std::to_string(n++) + "/"
                            + RecField(rec, "kind")),
                 [text]() { return text; });
+        }
+
+        // The full soldier sheet (UITacticalCharInfoScreen — game_ui_tactical.h). The game opens
+        // it from the gamepad's L3 and from nothing else; its HUD hint is spawned in the
+        // controller branch alone. Re-provided as a button named with that hint's own label, and
+        // offered only while the shot HUD is down — the same gate CanCharInfoShow applies. The
+        // companion reproduces Stick_L3's body.
+        if (!gate.menuRaised) {
+            NodeVtable vt;
+            vt.Type = &ButtonType();
+            std::string label = GameUI::ReadCharInfoHint(gScreen);
+            if (label.empty())
+                label = Vocab::SoldierInfoFallback;
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+            vt.OnActivate = []() {
+                // A verb, not a read: the answer is the screen appearing, which the next poll
+                // attaches to. The helper logs a missing companion itself.
+                FetchCompanionRecords("X2AccessCharInfoReader", "OpenCharInfo");
+            };
+            b.AddItem(ControlId::Structural("thud/sol/" + oid + "/info"), std::move(vt));
         }
         b.PopContext();
     }
@@ -483,6 +505,175 @@ std::string ChosenSummaryName()
     return view.title.empty() ? std::string(Vocab::ScreenChosenSummaryFallback) : view.title;
 }
 
+// ---- the loot receipt (UIInventoryTactical) ----
+//
+// game_ui_tactical.h for what it is — a receipt the visualizer is waiting on, not a picker — and
+// what it retains. TWO STOPS: the items under the corpse or crate's own name, then OK. Space on an
+// item reads the hover description a mouse player gets; nothing else on this screen can be
+// pressed, and every key the game handles is OK anyway.
+
+constexpr const char* kLootReaderClass = "X2AccessLootReader";
+
+// Keyed on the rows and the screen: UpdateData runs at InitScreen and once more on the way out,
+// so the rows are fixed for the screen's life.
+WireCache gLootWords(kLootReaderClass, "DescribeLoot");
+
+const std::vector<WireRecord>& FetchLootWords(const GameUI::LootView& view)
+{
+    return FetchWordsKeyedOnRows(gLootWords, view.screen, view.rows);
+}
+
+const WireRecord* FindLootRow(const std::vector<WireRecord>& records, int index)
+{
+    for (const WireRecord& rec : records) {
+        if (RecField(rec, "kind") == "row" && atoi(RecField(rec, "index").c_str()) == index)
+            return &rec;
+    }
+    return nullptr;
+}
+
+std::unique_ptr<GraphRender> BuildLoot()
+{
+    const GameUI::LootView view = GameUI::ReadLoot(gScreen);
+    const std::vector<WireRecord>& words = FetchLootWords(view);
+    const WireRecord* header = FindRecord(words, "header");
+
+    GraphBuilder b;
+    b.BeginStop("loot");
+    // The panel's own header line: what the loot came off — a corpse, a crate, a chest.
+    b.PushContext(header ? RecField(*header, "source") : std::string(), "", /*positions*/ true);
+    int shown = 0;
+    for (const GameUI::LootRow& row : view.rows) {
+        const WireRecord* rec = FindLootRow(words, row.index);
+        std::string name = rec ? RecField(*rec, "name") : std::string();
+        if (name.empty())
+            name = Vocab::SellItemFallback;
+        NodeVtable vt;
+        vt.Type = &TextType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(name));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        // The description is a mouse-following tooltip in vanilla; here it is the tooltip key.
+        const std::string desc = rec ? RecField(*rec, "desc") : std::string();
+        if (!desc.empty())
+            vt.OnTooltip = [desc]() { TTS::Speak(desc, /*interrupt*/ true); };
+        b.AddItem(ControlId::Referenced(row.handle, "loot/row/" + std::to_string(row.index)),
+            std::move(vt));
+        shown++;
+    }
+    if (shown == 0) {
+        // UpdateData draws a row only for items that reached the soldier's inventory; none is a
+        // legitimate state, and the screen still has to be dismissed.
+        b.AddLabel(
+            ControlId::Structural("loot/empty"), []() { return std::string(Vocab::LootEmpty); });
+    }
+    b.PopContext();
+
+    b.BeginStop("actions");
+    NodeVtable ok;
+    ok.Type = &ButtonType();
+    ok.Announcements.emplace_back(NodeAnnouncement::Static(
+        view.okLabel.empty() ? std::string(Vocab::LootOkFallback) : view.okLabel));
+    ok.Announcements.back().Kind = AnnouncementKinds::Label;
+    ok.OnActivate = []() { GameUI::CloseLoot(GameUI::ReadLoot(gScreen)); };
+    b.AddItem(ControlId::Structural("loot/ok"), std::move(ok));
+    return b.Build();
+}
+
+std::string LootName()
+{
+    // The title bar as the screen composes it: LOOT RECOVERY, then whose. The title is read
+    // natively as the fallback for the window before the companion answers.
+    const GameUI::LootView view = GameUI::ReadLoot(gScreen);
+    const WireRecord* header = FindRecord(FetchLootWords(view), "header");
+    std::string name = header ? RecField(*header, "title") : std::string();
+    if (name.empty())
+        name = view.title;
+    AppendPhrase(name, header ? RecField(*header, "looter") : std::string());
+    return name.empty() ? std::string(Vocab::ScreenLootFallback) : name;
+}
+
+// ---- soldier info (UITacticalCharInfoScreen) ----
+//
+// game_ui_tactical.h: the one tactical screen that retains everything, so this is a pure widget
+// read with no companion. TWO STOPS: the sheet's head — name, class, the seven stats as
+// label/value nodes — then the effects, with the game's own PENALTIES / BONUSES / PASSIVES headings
+// as contexts and one node per effect carrying its description. Nothing activates; Escape is the
+// game's own close.
+
+std::unique_ptr<GraphRender> BuildCharInfo()
+{
+    const GameUI::CharInfoView view = GameUI::ReadCharInfo(gScreen);
+    if (!view.valid)
+        return nullptr; // OnInit has not built the sheet yet — treated as "closed" until it has
+
+    GraphBuilder b;
+    ControlId start;
+
+    b.BeginStop("soldier");
+    b.PushContext("", "", /*positions*/ false);
+    // The name is the screen name too, and stays in the graph re-readable, as the mission
+    // summary's result does.
+    start = AddLine(b, "charinfo/name", JoinPhrases(view.name, view.className));
+    for (const GameUI::CharInfoStat& stat : view.stats) {
+        // The screen draws "---" for a zero (PopulateStatValues: "does not display a 0"); the
+        // dashes are its marker, not its words.
+        GameUI::SummaryStat line;
+        line.label = stat.label;
+        line.value = stat.value == "---" ? std::string(Vocab::CharInfoNoValue) : stat.value;
+        // Keyed on the label: the slots are the FLA's fixed seven, so the caption is the stable
+        // identity and a slot the screen left blank drops out without renumbering the rest.
+        ControlId node = AddStatNode(b, "charinfo/stat/" + stat.label, line);
+        if (node.IsValid() && !start.IsValid())
+            start = node;
+    }
+    b.PopContext();
+
+    // The effects. AddEffectsToList emits a heading only for a category with something in it,
+    // so the headings are the game's own grouping, and an empty category is simply absent.
+    bool any = false;
+    bool context = false;
+    for (const GameUI::CharInfoEntry& e : view.entries) {
+        if (!any) {
+            b.BeginStop("effects");
+            any = true;
+        }
+        if (e.header) {
+            if (context)
+                b.PopContext();
+            b.PushContext(e.text, "", /*positions*/ true);
+            context = true;
+            continue;
+        }
+        NodeVtable vt;
+        vt.Type = &TextType();
+        const std::string name = e.text.empty() ? Vocab::AbilityFallback(e.index) : e.text;
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(name));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (!e.description.empty()) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(e.description));
+            vt.Announcements.back().Kind = AnnouncementKinds::Value;
+        }
+        // Name in the identity: the sheet is rebuilt per soldier, and a different soldier's
+        // effect at the same index must read as a new node.
+        b.AddItem(ControlId::Referenced(
+                      e.handle, "charinfo/effect/" + std::to_string(e.index) + "/" + name),
+            std::move(vt));
+    }
+    if (context)
+        b.PopContext();
+
+    if (start.IsValid())
+        b.SetStart(std::move(start));
+    return b.Build();
+}
+
+std::string CharInfoName()
+{
+    const GameUI::CharInfoView view = GameUI::ReadCharInfo(gScreen);
+    const std::string name = JoinPhrases(view.name, view.className);
+    return name.empty() ? std::string(Vocab::ScreenCharInfoFallback) : name;
+}
+
 } // namespace
 
 // Probed near the end of kRecipes: nothing it can share a stack with is below it there — every
@@ -507,6 +698,16 @@ const Recipe kChosenSummaryRecipe{"chosen summary",
 
 const Recipe kMissionSummaryRecipe{"mission summary",
     ProbeFocused<GameUI::FindMissionSummary>, BuildMissionSummary, MissionSummaryName};
+
+// ⛔ ABOVE the ambient tactical recipe, as the bookends are: both are pushed over UITacticalHUD,
+// and the gate raises `blocked` for either — which is what detaches the HUD layer and lets these
+// probe. Neither raises anything but the pause menu (listed earlier), and the two never share a
+// stack with each other or with the bookends. No SetListIndex on either: the loot list is
+// reachable by no key at all, and the sheet's list has a selection nothing reads.
+const Recipe kLootRecipe{"loot", ProbeFocused<GameUI::FindLootScreen>, BuildLoot, LootName};
+
+const Recipe kCharInfoRecipe{"soldier info", ProbeFocused<GameUI::FindCharInfoScreen>,
+    BuildCharInfo, CharInfoName};
 
 } // namespace Recipes
 } // namespace MenuNavigator

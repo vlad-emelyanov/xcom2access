@@ -362,4 +362,98 @@ void* FindChosenSummary();
 /// Game thread only.
 ChosenSummaryView ReadChosenSummary(void* screen);
 
+// ---- the loot receipt (UIInventoryTactical) ----
+//
+// The window a soldier's Loot ability, a crate, a chest or a successful hack opens over the HUD:
+// LOOT RECOVERY, the soldier's name, the corpse or container's name, and one line per item.
+// ⛔ IT IS A RECEIPT, NOT A PICKER — LootAbility_BuildGameState has already moved every item into
+// the soldier's inventory by the time the screen exists; TAKE ALL and DUMP ALL are commented out
+// in source, and the one button is OK. ⛔ AND THE GAME IS WAITING ON IT: X2Action_Loot sleeps in
+// its visualization until the screen's callback fires, so a player who cannot find OK has stalled
+// the mission. Every key the screen handles — Enter, Space, Escape, A, B, right-click — is OK, and
+// the loot ability fires on its own at the end of a move, so this appears unprompted.
+//
+// A row (UIInventoryTactical_LootingItem, a plain UIPanel) retains the item's ObjectID and nothing
+// else: the name, the quantity suffix and the hover description go into Flash. X2AccessLootReader
+// re-derives them from that id exactly as UpdateData did; native reads the list, the OK button and
+// the title. ⛔ NOT a UIInventory: the commodity recipe's finder never matches it, and the row is
+// not a UIListItemString either, so there is no flag dword to read.
+
+struct LootRow {
+    void* handle = nullptr; // UIInventoryTactical_LootingItem
+    int index = 0;          // the list's own item index
+    int itemId = 0;         // GameStateObjectID — the join key to the companion's row
+};
+
+struct LootView {
+    void* screen = nullptr;
+    void* list = nullptr; // m_kLootList
+    std::vector<LootRow> rows;
+    std::string title;        // m_strTitle ("LOOT RECOVERY")
+    void* okButton = nullptr; // m_kButton_OK — DisableNavigation()ed, so the screen's Enter is the path
+    std::string okLabel;      // its Text: m_strGenericOK inside AlignCenter markup, cleaned
+};
+
+/// The focused UIInventoryTactical, or null. Game thread only.
+void* FindLootScreen();
+
+LootView ReadLoot(void* screen);
+
+/// Dismiss the receipt through the SCREEN's own Enter — OnUnrealCommand answers it with
+/// OnButtonClicked(m_kButton_OK): the looting sound, CloseScreen, and the callback the visualizer
+/// is sleeping on. Game thread only.
+bool CloseLoot(const LootView& view);
+
+// ---- soldier info (UITacticalCharInfoScreen) ----
+//
+// The full-screen soldier sheet: name and class, seven stats, then every effect on the unit under
+// PENALTIES / BONUSES / PASSIVES headings with a description each. ⛔ THE GAME OPENS IT FROM THE
+// GAMEPAD'S L3 AND NOTHING ELSE: XComTacticalInput.Stick_L3 is its only spawn site, F1 in tactical
+// is a commented-out no-op, the mouse-controls strip carries no soldier-info button on
+// mouse+keyboard, and the HUD's CharInfo hint is spawned in the controller branch alone. So the
+// HUD graph's soldier stop carries a button that reproduces Stick_L3 through the companion
+// (X2AccessCharInfoReader.OpenCharInfo), and this reader reads the screen once it is up.
+//
+// ✅ THE SCREEN RETAINS EVERYTHING — the one tactical surface that does. Every label is a
+// UIScrollingHTMLText / UIText that keeps its Text, and each effect row (UIListItemPerk) keeps the
+// whole UISummary_UnitEffect it was built from, which is GetUISummary_UnitEffectsByCategory's own
+// output — the same oracle the `;` readout uses. No companion, no Flash capture. The screen keeps
+// no POINTER to its labels (spawned into locals), so they are found by their Flash names.
+//
+// Scrolling is FXS_VIRTUAL_LSTICK only and every other key is swallowed (OnUnrealCommand never
+// calls super), so there is nothing to activate and the graph is the only way to read a long
+// list. Escape closes it (the game's own), showing the HUD again.
+
+struct CharInfoStat {
+    std::string label; // StatLabelStrings[i] — "HEALTH:", already ending in its colon
+    std::string value; // "5/6", "72", or "---" — the screen's own marker for zero
+};
+
+struct CharInfoEntry {
+    void* handle = nullptr;
+    int index = 0;           // the list's own item index, headings included
+    bool header = false;     // a UIText section heading (PENALTIES / BONUSES / PASSIVES)
+    std::string text;        // the heading, or the effect's Perk.Name
+    std::string description; // Perk.Description; empty on a heading
+    std::string source;      // Perk.AbilitySourceName, for the log — never spoken (an FName)
+};
+
+struct CharInfoView {
+    void* screen = nullptr;
+    bool valid = false;     // ListPerks exists, i.e. OnInit has built the sheet
+    std::string name;       // mc_nameLabel: rank, name, nickname as the screen composed them
+    std::string className;  // mc_classLabel; empty on a non-soldier
+    std::vector<CharInfoStat> stats;    // the seven fixed slots, in screen order
+    std::vector<CharInfoEntry> entries; // ListPerks' rows, headings interleaved, in order
+};
+
+/// The focused UITacticalCharInfoScreen, or null. Game thread only.
+void* FindCharInfoScreen();
+
+CharInfoView ReadCharInfo(void* screen);
+
+/// The HUD's own label for its soldier-info hint (UITacticalHUD::m_strNavHelpCharShow) — the word
+/// the HUD graph's button is named with. Empty when the HUD is not up. Game thread only.
+std::string ReadCharInfoHint(void* hud);
+
 } // namespace GameUI

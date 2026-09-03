@@ -47,7 +47,7 @@ individual popups are then cheap.
 | T7 | `UICombatLose` | Mission failed — Restart / Reload / Exit to main | localized strings ✅, choice list Flash | to verify | ❌ — high value: a blind player must be able to leave a lost mission |
 | T8 | `UIProgressDialogue` | "Saving…" / "Loading…" blocking spinner with optional Cancel | ✅ `m_kData` (`strTitle`/`strDescription`/`strAbortButtonText`) | ✅ Esc (cancel only) | ❌ — trivial, and today it reads as a silent freeze |
 | T9 | `UIRedScreen` | Script error overlay | ✅ `m_strErrorMsg` + `RedscreenLines` | ✅ | ❌ (dev-facing; low priority but free) |
-| T10 | `UIInventoryTactical` | Post-kill loot grab window | `UIInventory` family | ✅ | ⚠ partial — the `commodity list` recipe covers `UIInventory`; this subclass unverified |
+| T10 | `UIInventoryTactical` | Post-kill loot receipt (the loot is already taken when it opens) | ⛔ NOT a `UIInventory` — `extends UIScreen`; rows are plain panels with one ObjectID | ✅ every key is OK | ◐ `loot` recipe + `X2AccessLootReader` (2026-09-03, unexercised — `tactical-modals-recon.md` §1) |
 | T11 | `UIMissionSummary` / `UIChosenMissionSummary` | End-of-mission recap | ❌ | ✅ | ❌ |
 
 Tactical narrative goes through `UINarrativeCommLink` — see §4.

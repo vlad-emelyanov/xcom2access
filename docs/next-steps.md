@@ -132,6 +132,45 @@ and the resource stop must show the new supplies; (e) `Escape` must close both s
 (unclaimed). Then shape-count the ring and `grep -P '  '` it: an empty heading leaves a double
 space, which is the localized-var trap.
 
+**The P1 sweep** (2026-09-03, built from source in one pass, never run — seven screens, each with
+its own checklist in its recon doc; the companion compiled clean but the `.u` under `Mods/` is
+whatever the last `just go-full` left, so **`just go-full` with the game stopped comes first**,
+and every screen below that carries a `X2Access*Reader` reads as bare fallbacks until then).
+- **The armory hub** (`armory`, `armory-recon.md` §1.5). The one most likely to be wrong: it is
+  written against the Highlander's rewrite, so the FIRST check is `just dev-gui` showing the eight
+  `ArmoryMainMenu_*Button` MCNames — a list of unnamed rows means a vanilla `XComGame.upk` and the
+  whole row join is void. Then the soldier spinner (Left/Right must cycle with the header
+  re-reading), a greyed PCS row's reason, and the abilities/traits toggle on a soldier with a
+  trait. ⚠ The loadout's header composers moved into `X2AccessHelper` in the same change, so the
+  loadout's `who` and `stats` lines are re-deployed and must be re-heard.
+- **Recruits** (`recruits`, `recruit-recap-recon.md` §1.6): a row must read `name, country`, the
+  details stop the bio, and Enter with supplies short must raise the game's dialog and land back
+  on the list afterwards.
+- **The rewards recap** (`rewards recap`, `recruit-recap-recon.md` §2.6): needs a mission end
+  with the tutorial objective past `T0_M8_ReturnToAvengerPt2`. Must attach as the operation and
+  land on MISSION COMPLETE / FAILED; Enter on Continue must reach the geoscape with no companion
+  error logged after it.
+- **The covert action result** (`covert report`, `covert-actions-recon.md` §8b): needs an action
+  to complete. RESULTS must carry one node per soldier with the XP and cohesion lines, and a risk
+  that fired must be the LAST value on that soldier's node.
+- **The loot receipt** (`loot`, `tactical-modals-recon.md` §1.5): walk onto a corpse; the HUD
+  layer must detach, the receipt attach under the corpse's name, and Enter on OK must release the
+  visualizer. ⚠ The screen appears unprompted at the end of a move, so a silent stall on a
+  mission is the symptom of this recipe not attaching.
+- **The soldier sheet** (`soldier info`, `tactical-modals-recon.md` §2.5): Ctrl+Tab, Tab to the
+  soldier stop, Down to the info button, Enter — the sheet must open, the seven stats read with
+  `none` for a zero, the headings become contexts, and Escape must bring the HUD back.
+- **Weapon upgrades** (`weapon upgrades`, `armory-recon.md` §2.6): the pin on
+  `WeaponViewOffsets` is the Highlander detector, so a build that fails there is a vanilla dump.
+  Enter on a slot must open the picker with the slots re-read as `current slots`; arrowing the
+  picker must re-read the stat block and the description box per upgrade with no `Accessed None`
+  from the companion's change-state preview; Escape must back out without leaving. The pattern
+  picker must land on the current pattern and Escape there must revert. ⚠ The colour row's
+  `UIColorSelector` has no reader.
+- **The PCS picker's two additions** (`armory-recon.md` §3): on `UIInventory_Implants` a red row
+  must say `cannot equip` (not `cannot afford`), and the card must end in a stat line
+  (`AIM +5`) paired with the RIGHT stat — the game's own header shows it under the wrong label.
+
 ## Unexercised paths inside surfaces that HAVE run
 
 ⚠ Everything in this section belongs to a surface whose MAIN PATH has been walked live. What is
