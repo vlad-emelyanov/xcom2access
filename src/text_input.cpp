@@ -1,4 +1,5 @@
 #include "text_input.h"
+#include "Graph/GraphAnnouncer.hpp"
 #include "game_ui.h"
 #include "input_arbiter.h"
 #include "narrator.h"
@@ -147,7 +148,11 @@ std::string SelectionText(const GameUI::TextFieldState& s)
     const size_t count = static_cast<size_t>(s.selEnd - s.selBegin);
     if (begin + count > s.text.size())
         return {};
-    return Utf8(s.text.substr(begin, count)) + ", " + Vocab::Selected;
+    // AppendPhrase for the same reason AnnounceDialog uses it: the selected run is whatever the
+    // player typed, and a name ending in "?" or ":" must not pick up a comma on top of it.
+    std::string out = Utf8(s.text.substr(begin, count));
+    X2Access::Graph::AppendPhrase(out, Vocab::Selected);
+    return out;
 }
 
 // The whole field, said once when the dialog appears. A fully selected prefill is the case that
@@ -156,14 +161,13 @@ std::string SelectionText(const GameUI::TextFieldState& s)
 // live 2026-08-21 — the save-name box really does open with begin 0, end 12, caret 12.
 void AnnounceDialog(const GameUI::TextInputView& view, const GameUI::TextFieldState& s)
 {
+    // ⛔ AppendPhrase, not a bare ", ". The PROMPT is the game's own string and these end in a
+    // colon — "ВВЕДИТЕ НАЗВАНИЕ:" spoke as "ВВЕДИТЕ НАЗВАНИЕ:, edit box" in the 2026-09-04 ring.
+    // This is the case CLAUDE.md means by "any surface that composes speech outside a recipe owes
+    // the same call": the hand-rolled lambda that used to live here was a fork of the rule.
     std::string line = view.prompt;
-    auto append = [&line](const std::string& part) {
-        if (part.empty())
-            return;
-        if (!line.empty())
-            line += ", ";
-        line += part;
-    };
+    auto append
+        = [&line](const std::string& part) { X2Access::Graph::AppendPhrase(line, part); };
     append(Vocab::TextInputRole);
     append(s.text.empty() ? std::string(Vocab::TextInputEmpty) : Utf8(s.text));
     if (s.HasSelection() && static_cast<size_t>(s.selEnd - s.selBegin) == s.text.size())

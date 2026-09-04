@@ -524,8 +524,7 @@ std::string IronManName()
 {
     GameUI::IronManView view = GameUI::ReadIronMan(gScreen);
     std::string name = view.title.empty() ? Vocab::ScreenIronManFallback : view.title;
-    if (!view.body.empty())
-        name += ". " + view.body;
+    AppendPhrase(name, view.body, ". ");
     return name;
 }
 
@@ -666,9 +665,12 @@ std::unique_ptr<GraphRender> BuildDialog()
     // The question itself is a context, not the screen name: a REPLACED dialog gets no fresh
     // attach to speak a screen name with, and the landing readout carries only the node's own
     // path — so the text has to live in that path to be heard at all.
+    // ⛔ AppendPhrase, not a bare ". ": these titles are the game's OWN sentences and plenty of
+    // them end in a question mark — "Выйти в главное меню?" spoke as "…меню?. Все несохраненные"
+    // in the 2026-09-04 ring, which is the doubled terminator the rule exists to prevent. It also
+    // subsumes the empty-title case the ternary was hand-rolling: no left side, no separator.
     std::string question = view.title;
-    if (!view.body.empty())
-        question += question.empty() ? view.body : ". " + view.body;
+    AppendPhrase(question, view.body, ". ");
     if (!question.empty())
         b.PushContext(question, "", /*positions*/ false);
     b.StartRow();
@@ -903,7 +905,7 @@ std::string SaveLoadName()
     // game's own nav help offers nothing but Back on mouse+keyboard.
     for (const GameUI::SaveSlot& slot : view.slots) {
         if (slot.remove && !slot.deleteLabel.empty()) {
-            name += ". " + slot.deleteLabel + ": " + Vocab::KeyBackspace;
+            AppendPhrase(name, slot.deleteLabel + ": " + Vocab::KeyBackspace, ". ");
             break;
         }
     }
