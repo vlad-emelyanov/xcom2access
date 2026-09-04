@@ -193,6 +193,25 @@ and note that a rule with no measurement under it any more is a rule to delete, 
   last real hover left selected. `GameUI::ReadCallbackTooltip` is that sequence minus the
   `ActivateTooltip`/`UpdateData` Flash push, so nothing appears on screen. The Avenger shortcut
   buttons and the ability icons are (3); nearly everything else is (1).
+- ⛔ **A state object can carry SEVERAL components of the same class, and the game's own code is
+  written so that it never matters.** Every player-visible query is a per-OBJECT boolean, never a
+  count: `Helpers.IsObjectiveTarget(ObjectID)` is `FindComponentObject(class'XComGameState_
+  ObjectiveInfo') != none`; `UIUnitFlag.UpdateFromState`/`Show` and `UISimpleFlag.Show` gate on
+  `History.GetGameStateComponentForObjectID(StoredObjectID, ...) == none`; `XComTacticalMissionManager`
+  builds its objective list by iterating the OBJECTS and asking each one that same boolean; and
+  `UIUnitFlagManager.AddFlag` opens with an explicit «don't add duplicate units» scan over
+  `StoredObjectID`. Meanwhile the creators do not check: `SeqAct_MakeObjective.AddObjectiveInfo`
+  unconditionally `CreateNewStateObject` + `AddComponentObject`, so a mission that re-flags a thing
+  when its stage advances stacks a second component on it. Measured live 2026-09-04 on
+  `Neutralize_Vehicle`, where the VIP carried two — #50208 `AffectsLineOfPlay=true` (the class
+  default, from `CreateObjective_Pawn` at spawn) and #51149 `AffectsLineOfPlay=false`
+  (`SeqAct_MakeObjective`'s defaultproperty, the Kismet re-flag). Of the whole SDK only
+  `SeqAct_GetObjectiveInfo` and `X2AutoPlayManager` iterate these components by class type, and
+  neither draws anything. **So `IterateByClassType` over a COMPONENT class is not the game's idiom
+  for "list the things that are X" and does not answer that question** — it returns attachments,
+  which are many-to-one with the objects a player perceives. Enumerate objects and ask each, or
+  enumerate components and collapse by owner; the object scanner does the latter, keyed on the
+  owner's ObjectID.
 - Best public documentation of Firaxis' UE3 internals: robojumper's "Too Real" series
   (https://robojumper.github.io/too-real/). Highlander event reference:
   https://x2communitycore.github.io/X2WOTCCommunityHighlander/

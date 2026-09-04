@@ -768,6 +768,22 @@ private function AddTutorialMarker(TTile Origin, out array<AccessMarker> Markers
 // UISimpleFlag both special-case an ObjectiveInfo component to keep the flag visible when
 // everything else would hide it, so an objective marker is exactly the thing a sighted player can
 // always see (see docs/object-scanner-recon.md §3.1).
+//
+// ⛔ ONE OBJECT CAN CARRY SEVERAL OF THESE, and this loop is the only thing in the mod that counts
+// them. `SeqAct_MakeObjective.AddObjectiveInfo` creates a component and attaches it with NO check
+// for one already there, so a mission that re-flags a thing when its stage advances stacks a
+// second. Measured live 2026-09-04 on `Neutralize_Vehicle`: the carried VIP (unit 50206) held
+// #50208 `AffectsLineOfPlay=true` (the class default — `CreateObjective_Pawn` at spawn) beside
+// #51149 `AffectsLineOfPlay=false` (`SeqAct_MakeObjective`'s own defaultproperty — the Kismet
+// re-flag when the objective became "evacuate him").
+//
+// The game never notices because NOTHING a player sees counts components: `Helpers.
+// IsObjectiveTarget` is `FindComponentObject(...) != none`, the two flag classes gate on
+// `GetGameStateComponentForObjectID(...) == none`, and `UIUnitFlagManager.AddFlag` carries its own
+// «don't add duplicate units» loop over ObjectID. Only `SeqAct_GetObjectiveInfo` and
+// `X2AutoPlayManager` iterate the components by class the way we do, and neither draws anything.
+// So a sighted player sees ONE marker on that VIP, and the ring must too — which the shared
+// one-key-one-entry guard in InsertByDistance delivers, the key here being the OWNER's ObjectID.
 private function AddObjectiveMarkers(TTile Origin, out array<AccessMarker> Markers)
 {
 	local XComGameStateHistory History;
@@ -1483,9 +1499,29 @@ private function int TileDistance(TTile A, TTile B)
 	return Max(DX, DY) + Abs(A.Z - B.Z);
 }
 
+// ⛔ ONE KEY, ONE ENTRY — and this is the ring's NAVIGABILITY, not merely its tidiness. Selection
+// is remembered by key and resolved with IndexOfKey, which answers with the FIRST match, so a ring
+// holding one key twice cannot be stepped past it: landing on the second copy stores a key that
+// resolves back to the first, and every further step recomputes that same index. Everything after
+// the duplicate is then unreachable going forward, which reads to a blind player as "the ring ends
+// here" — the truncation failure mode, indistinguishable from the truth.
+//
+// Measured live 2026-09-04 on `Neutralize_Vehicle`: the carried VIP owns TWO
+// XComGameState_ObjectiveInfo components (state IDs 50208 and 51149, both OwningObjectId 50206),
+// so AddObjectiveMarkers emitted him twice under one ObjectID. The markers ring read "Objective:
+// David Watson" at 1 of 3, then 2 of 3 forever, and never reached 3 of 3 — the EVAC ZONE, which
+// AddEvac had been building correctly the whole time. Same shape as the LostAndAbandonedB finding
+// AddEvac's own comment records: the evac was read and the answer never reached the player.
+//
+// The guard lives HERE rather than in the contributor because every contributor already keys one
+// entry per state object or per synthetic slot; the invariant they all assume simply had no place
+// that enforced it. The FIRST insertion wins, so the nearest copy is the one kept.
 private function InsertByDistance(TTile Origin, out AccessMarker M, out array<AccessMarker> Markers)
 {
 	local int i;
+
+	if (IndexOfKey(Markers, M.Key) != INDEX_NONE)
+		return;
 
 	M.Dist = TileDistance(Origin, M.Tile);
 	for (i = 0; i < Markers.Length; i++)

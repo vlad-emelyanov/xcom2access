@@ -408,6 +408,34 @@ step); `CAT_EVAC` stays for asking about the zone alone. **When adding a contrib
 a player will actually press to ask that question** — not which category it taxonomically belongs
 to.
 
+⛔ **ONE KEY, ONE ENTRY — a duplicate key does not merely repeat itself, it WALLS OFF everything
+behind it.** The same evac zone went missing a second time on 2026-09-04, on `Neutralize_Vehicle`,
+with the placement lesson above already applied: it was on the `B` ring, entry 3 of 3, read
+correctly, and still unreachable. `AnnounceCategory` remembers the selection by KEY and resolves it
+with `IndexOfKey`, which answers with the FIRST match. The carried VIP owns **two**
+`XComGameState_ObjectiveInfo` components (state IDs 50208 and 51149, both `OwningObjectId` 50206),
+so `AddObjectiveMarkers` emitted him twice under one `ObjectID`; landing on the second copy stored a
+key that resolved back to the first, and every further `B` press recomputed that same index. The
+ring read "Objective: David Watson" at 1 of 3, then 2 of 3 forever. `Shift`+`B` reached the zone,
+because stepping BACKWARD from index 0 wraps past the duplicate.
+
+`InsertByDistance` now refuses an entry whose key is already in the ring — in the shared insert
+rather than in the contributor, because every contributor already keys one entry per state object or
+per synthetic slot and the invariant they all assume simply had no place that enforced it. Two
+things generalize:
+
+- **A "same thing twice" defect in a key-addressed ring is a NAVIGATION defect, not a cosmetic
+  one.** The duplicate is the audible half; the truncation behind it is the expensive half, and it
+  presents as *the ring ends here* — the same failure mode as the clipped `ReadStringProperty`
+  buffer, indistinguishable from the truth and therefore never reported as a bug.
+- **Deduplicating was PARITY, not tidiness.** The two components are real and differently sourced —
+  #50208 from `CreateObjective_Pawn` at spawn, #51149 from a Kismet `SeqAct_MakeObjective` re-flag
+  when the stage became "evacuate him" — but nothing the game DRAWS counts them: every
+  player-visible query is a per-object boolean, and `UIUnitFlagManager.AddFlag` even carries its own
+  «don't add duplicate units» scan. A sighted player sees ONE marker on that VIP. `AddObjectiveMarkers`
+  was the only thing in the game counting attachments instead of objects; the full evidence and the
+  general form of the trap are in `../engine-notes.md`.
+
 ## Tactical HUD graph (the ambient recipe)
 
 The mod's first AMBIENT recipe (`recipes/recipe_tactical.cpp`): attached silently for the whole
