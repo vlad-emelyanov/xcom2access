@@ -14,17 +14,76 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
-⛔ **`movie_subtitles.cpp` has NEVER RUN and its first pass outranks the rest of this list**,
-because it is the only surface in the mod that dereferences a raw C++ object rather than a
-UObject: nothing in it is `static_assert`ed and the vtable check is the whole pin. The FIRST
-thing to confirm is `just dev-log` carrying `MovieSubtitles: movie player at 0x… validated` —
-if it says DISABLED instead, every offset below it is void and nothing else about this surface
-is worth testing. Then a `.bk2` with a cue track (`CIN_XP_PreIntro` is the earliest, on a new
-WOTC campaign; `CIN_XP_Stronghold_*` and the XP autopsies are the rest) checked three ways:
-`just dev-speech` against what is on screen, the same movie with Show Subtitles OFF (must be
-silent), and a grep for `no localized text for cue` — that line is the only place a cue whose
-text we failed to resolve would show up, and its absence is what says the loc lookup found the
-right package.
+**Unit conditions on the squad ring, the soldier sheet and the Targets stop** (2026-09-04,
+`X2AccessHelper.UnlistedPenaltyWords` / `StunWords`, `X2AccessObjectScanner.StatusWords` and its
+`bIsCosmetic` gate, `X2AccessUnitReader.EffectNames`; rules in `surfaces/tactical.md` under the
+object scanner) — compiled clean, NEVER HEARD. Both halves were found in one 2026-09-04 log and
+neither fix has reached a running game: the deploy could not replace the locked `.u`. What to
+listen for: (1) the squad ring counts **6 of 6** on a six-soldier squad, not 7, and no nameless
+"1 of 1 health, 0 tiles" entry follows the Specialist — the GREMLIN is the phantom and the tell is
+that shape; (2) a stunned soldier reads "Оглушение: 2" on `,`, on `;` **and** on the Targets stop,
+with the same words in all three — this is the first thing the shared oracle exists to guarantee,
+so a disagreement between them is the regression to report; (3) a disoriented soldier reads the
+game's own word, not silence, which is what the whole turn after the Assassin's attack sounded
+like before; (4) ⚠ the ring entry is now a longer line than it was — if it reads as a paragraph
+rather than a breath, the penalty list is the part to trim, NOT the pair. A shape-count of the
+speech ring should show "Оглушение"/"Дезориентация" appearing at all, which it never has.
+
+**Sight, flank and the target preview on the tile cursor** (2026-09-04, `X2AccessTileReader.
+DescribeSight` / `DescribeTargetPreview` / `CursorTargetPreview`, the `passThrough` claim kind in
+`input_arbiter.cpp`, the Left Alt claim in `tile_reader.cpp`; the parity case is in
+`surfaces/tactical.md`) — ran live once (2026-09-04, a facility mission with a turret, an Archon
+and a Purifier up). What that run settled: the sight clause and the flank clause both fire and both
+vary (74 "Seen by 1", 20 "Seen by 1, flanked", 15 "Seen by 2", 6 "Seen by 2, flanked"; the flank
+word tracks the cover side against the enemy's bearing), Alt fires through the pass-through claim
+(eight presses, "passed modifier vk 0xA4 through", every answer agreeing with the step readout of
+the same tile, "No targets" where the step carried no preview clause), and with "Show Target
+Preview" ON the preview rides every step (155 lines). Still owed: (1) the game's OWN strip must
+rise under the same Alt press — the log cannot see Flash, only the player can; (2) Alt+F4 in world
+mode must still quit; (3) with "Show Target Preview" OFF, only Alt answers. ⚠ Two design calls that
+run raised rather than settled: the per-step form speaks the game's heading ("ВИДИМЫЕ ЦЕЛИ:", the
+loc string is upper-case) on every arrow press, which may want dropping on the per-step form and
+keeping on Alt; and both clauses answer about the CURSOR tile even when it is out of range, where
+the game's own preview answers about the pawn's clamped destination.
+
+**The HUD graph's Targets stop** (2026-09-04, `X2AccessTacticalReader.BuildEnemyRecords` /
+`SelectEnemyHead`, the stop in `recipe_tactical.cpp`; rules in `surfaces/tactical.md` under the
+HUD graph) — reached once live (2026-09-04), on a ONE-head strip: "Targets, Тяжелая турель,
+button, ХИТ 79 percent, 6 of 6 health, armour 2, 17 tiles, 7 north, 13 west, 4 up" — the name,
+the shot HUD's own hit caption, health, armour, distance and bearing all read; no position, because
+the kernel omits "1 of 1" on purpose, and Left/Right were silent on a single item as they are at
+the ends of Commands. Everything else is still owed, on a mission with a pod up: Left/Right must
+walk several heads in the strip's order with the best shot FIRST; a head the selected ability
+cannot reach must say "not targetable" and a squadsight-only one "via squadsight"; Enter must
+raise the shot HUD on that target (the poll then speaks ability and target) and the layer must
+yield focus silently — `SelectEnemyHead` has never been called. Two things only that pass can
+settle: whether the Selected part lands the stop on the targeted head without stranding the heads
+before it (the kernel's own warning), and whether ten uncached `GetHitChanceForObjectRef` sweeps a
+second cost a visible frame on a twelve-head strip — if they do, the cache key is `m_arrTargets`
+plus the selected ability, not the pointers.
+
+**The Commands stop's Chosen gate** (2026-09-04, `ChosenActivatedRawCall` in
+`game_ui_tactical.cpp`; the pin is in `sdk_layout_checks.cpp`) — fixed from the 2026-09-04 log,
+not yet rebuilt or run. The stop read "Button 7, button, 7 of 7" (the Chosen Info slot with no
+label and no key) ten minutes before the Assassin revealed: the block handed to
+`GetActivatedChosen` omitted its optional `HistoryIndex`, so the engine read index 0 — the OLDEST
+frame — and answered about it, while the game's own `UpdateControls` asks about the latest. The
+live check needs a mission with a Chosen: before the reveal the Commands stop must count SIX
+buttons (five fixed plus the Skyranger call; no "Button 7"), and after it the seventh must read
+with the game's own label and key. ⚠ If a seventh unlabelled button survives the fix, the
+suspect is no longer the frame but the copy-back: log the returned pointer beside
+`ReadMouseControls`' count and set both against what the screen shows (`/screenshot`).
+
+**Four `AppendPhrase` forks removed** (2026-09-04, `recipe_shell.cpp` ×3 + `text_input.cpp` ×2) —
+found by the mandated post-run shape-count of the 2026-09-04 ring, not reported by anyone, which is
+the point of that audit. Two shapes were live: the dialog said **"Выйти в главное меню?. Все
+несохраненные…"** (title + body joined with a bare `". "`, three times) and the save-name box said
+**"ВВЕДИТЕ НАЗВАНИЕ:, edit box"** (prompt + role joined with a bare `", "` by a hand-rolled lambda).
+Both left sides are the GAME's own strings and both end in a terminator. Builds clean, kernel tests
+pass, never run. The check is two keypresses: Escape → exit to main menu must read "…меню? Все
+несохраненные…" with ONE terminator, and Save Game must read "ВВЕДИТЕ НАЗВАНИЕ: edit box". Then
+re-run the audit — `grep -aoP 'TTS!?: "\K[^"]*' X2Access.log | grep -P '[.!?;:](\.\s|,\s)' | grep -v
+'\.\.\.'` must come back empty, where it returned four lines before.
 
 ⛔ **TWO COMPANION COMMITS POSTDATE THE DEPLOYED `.u`.** The build in the game is the ASI of
 2026-08-31 17:00 beside the companion of 16:57, and the whole live-run debt below it was
@@ -44,6 +103,49 @@ ring said "Objective: David Watson" at 1 of 3 then 2 of 3 forever, and the evac 
 unreachable forward (`Shift`+`B` reached it, which is what proved `AddEvac` right). The check is
 one press: on a mission with an evac zone, `B` must reach it without wrapping backwards, and the
 ring must count 2, not 3. Rule filed in `surfaces/tactical.md`.
+
+**The evac zone in the tile readout** (2026-09-04, `X2AccessHelper.DescribeEvacZone` +
+`X2AccessTileReader.DescribeTile`) — same deploy debt, same one-press check: sweep the cursor into
+the zone and every tile inside the game's own `GetEvacMinMax` box must say "Evac zone". Two things
+the first pass has to settle. **Does the Z band read right?** The box is three levels tall (the
+2D footprint ±1 in Z), so the tile a level BELOW the painted square is inside it and must say so —
+that is the game's rule, not ours, and it is the half a player would never guess. **Does
+"no clearance" ever fire, and does it fire anywhere sensible?** `ValidateEvacTile` is a qualifier
+rather than a gate on purpose (a silent tile inside a painted zone reads as "the zone ends here"),
+but if that phrase turns up on ordinary standable ground the qualifier is wrong, not the tile.
+Shape-count the ring afterwards: "Evac zone" and "Evac zone, no clearance" should partition the
+footprint, and an all-or-nothing split is the distribution tell.
+
+**The rank out of the name column** (2026-09-04, `X2AccessPersonnelReader.SoldierCells` and
+`X2AccessBondReader.AppendRows`, plus the two native joins in `recipe_avenger.cpp` /
+`recipe_strategy.cpp`) — reported live: the roster read the rank twice, once in the name and once
+in the column beside it, because `eNameType_FullNick` prefixes `GET_RANK_ABBRV`. Now
+`eNameType_Full` plus a separate `nick` field joined native-side. The check is one arrow press per
+screen: on the personnel roster and on the bond screen's roster, column 0 must be the name and the
+nickname with NO rank, and column 1 must still be the rank. The regression to watch for is the
+other half of the fix — a soldier with no nickname must not read a trailing separator (the wire
+sends `" "`, and only native's `CleanText`-before-`JoinParts` order makes it vanish), so find a
+rookie and listen to the end of the line. Untouched on purpose, and not a bug either: the MEMORIAL
+tab's name (the game hands that row `eNameType_FullNick` itself and draws no rank column) and the
+bond screen's HEADER (the game says the rank twice up there).
+
+**Screens raised inside a cutscene** (2026-09-04, reported live: the Chosen reveal was three
+minutes of silence and the player pressed Enter on a screen nobody had read). Cause was the
+navigator refusing the whole layer on `bCinematicMode`; the refusal is now per screen on
+`UIScreen.bShowDuringCinematic` (`engine-notes.md` has the measurement, `CLAUDE.md`'s
+topmost-is-not-reachable rule the statement). `X2AccessPopupReader.DescribeChosenReveal` also
+gained the nickname, the joined rival-faction line and the screen's own single CONFIRM button.
+The live pass, in one Gatecrasher-style mission with a Chosen: (a) the reveal must announce
+itself, and Tab must step class+name+nickname, the STRENGTHS heading and its traits, the
+WEAKNESSES heading and its traits, the rival faction, then one button — Enter closes; (b) an
+UNREVEALED trait must read as the game's "unknown" wording, NOT as the real trait; (c) the log
+must show `cinematic mode on` WITHOUT a layer-wide `UI gated`, and the tactical HUD must NOT
+attach while the cutscene runs (it declares no `bShowDuringCinematic`, so the per-screen refusal
+has to keep doing what the old gate did); (d) the same fix opens the pause menu, `UILoadGame`,
+`UIOptionsPCScreen`, `UIDialogueBox` and the hacking pad during a cutscene — press Escape mid-
+cinematic once and confirm the pause menu now reads. ⚠ Chosen-reveal weaknesses are drawn
+DISABLED when a Dark Event set `bIgnoreWeaknesses`; the game gives that state no words, so we say
+nothing about it either — a known parity gap, not a defect to fix by inventing an English label.
 
 **The Chosen dossier and the bond screens** (2026-09-03, built, never run —
 `chosen-bond-recon.md` §8 is the checklist; the `chosen dossier`, `soldier bonds` and `bond
@@ -220,6 +322,14 @@ as "this is broken".
 The branches carried over when the 2026-08-31 build's live-run debt was retired (main paths all
 confirmed in play):
 
+- **Movie subtitles with Show Subtitles OFF** — the surface's main path ran on 2026-09-04 (see
+  `surfaces/strategy.md`) but the option gate did not. `PumpMovie` blanks the string unless
+  `UEngine.bSubtitlesEnabled` OR the movie's flag `0x80`, and we mirror both; the branch that has
+  never been heard is the OFF one, which must be SILENT — our speech IS the subtitle, and a mod
+  that keeps reading after the player turned subtitles off is the failure. The 0x80 half wants a
+  legal/attract screen, which stays readable with the option off; that is the branch that proves
+  we mirror the flag rather than just the setting.
+
 - ⛔ **The resource strip has NEVER RUN** (built 2026-09-03, `surfaces/avenger.md`). It is
   first-pass debt rather than a branch, and it is cheap to walk because the strip is on screen
   for most of the strategy layer. Four things to confirm, in order:
@@ -268,12 +378,18 @@ confirmed in play):
   strategy.md`, fixed — `IsStructuralBatch`), and the headshot mechanism read right
   (`eAlert_NewStaffAvailableSmall`'s trailing `UpdateImage` dropped, the words kept). Still owed:
   (a) `eAlert_StaffInfo` itself — ВНИМАНИЕ!, the title, the recruit's name, the bonus label and
-  BOTH facility rows, in that order; (b) the alerts that gained batches they never had —
-  `BuildRetributionAlert` (five) and `BuildConfirmCovertActionAlert` (four) — checked for
-  OVER-read against what is on screen, since nothing filters a batch the panel received but does
-  not display; (c) the `UpdateFacilityList` deferral reading the facility rows AFTER the name.
-  The `read N line(s) from the Flash capture (A+B+C, …)` log line names the contributing batches,
-  and a batch name in it that is not an `Update*` is the next leak.
+  BOTH facility rows, in that order; (b) ~~the four- and five-batch alerts checked for
+  over-read~~ — heard 2026-09-04 afternoon, and both over-read exactly as predicted: the
+  covert-action confirmation spoke its slot indices ("0", "1", "2") and Retribution its level
+  badge ("2"), fixed by `IsPositionalOperand` (`surfaces/strategy.md`); still unheard AFTER the
+  fix. Same session, same rule: `addTweenBetween` leaked "_alpha, time, delay" onto
+  `eAlert_FacilityComplete` as a STALE batch on a recycled cache index — `IsStructuralBatch` now
+  names the tween ops, and the reader logs `skipped structural batch(es) … on cache index N`
+  whenever it meets one, which is the line that would show a second recycled index; (c) the
+  `UpdateFacilityList` deferral reading the facility rows AFTER the name. The `read N line(s)
+  from the Flash capture (A+B+C, …)` log line names the contributing batches, and the reader now
+  WARNS on any contributor that is not an `Update*`/`Set*` push — grep `not an Update*/Set* push`
+  after a run.
 - **Commlink with subtitles OFF.** The reader obeys the game's Show Subtitles setting
   (`surfaces/strategy.md`): off must be SILENT, and turning it back on mid-conversation must
   announce the line still in progress rather than swallow it.
@@ -343,6 +459,34 @@ a repeating announcement.
 
 ## Known defects
 
+- ⛔ **An in-engine MATINEE cutscene reads NOTHING, and nothing in the mod currently owns that
+  path.** Found 2026-09-04 in the same log that confirmed movie subtitles working:
+  `CIN_TP_OldGods_pt1` played for **2 minutes 13 seconds in total silence** (13:37:03 → 13:39:16,
+  28 log lines, not one of them speech), and `CIN_TP_ShadowChamberReveal` and `CIN_TP_BuildOutpost`
+  the same. This is NOT a `movie_subtitles.cpp` defect — that surface behaved exactly right, and
+  the reason is on disk: **`CIN_XP_PreIntro` has both a `.bk2` and a `.txt` cue track and read all
+  35 of its cues; the `CIN_TP_*` three have a `.txt` cue track and NO `.bk2` at all.** So the Bink
+  player is handed the NAME (which is why `MovieSubtitles: movie '…' opened` is logged, and why
+  `IsAnyMoviePlaying` gates the navigator with `movie 1`) but never a cue table, and the reader
+  correctly stays quiet. The text exists — 21 cues under `CIN_TP_OldGods_pt1_*` in
+  `XComGame/Localization/<lang>/Subtitles.<lang>`, the same file the Bink path reads — drawn by
+  `RenderExtraSubtitles` timed against the MATINEE rather than a `BINKHANDLE`. ⚠ The per-cutscene
+  `CIN_TP_OldGods_pt1_ART.<lang>` package is a red herring: its `SpokenText` entries are all `""`.
+  `surfaces/strategy.md` assumed `UINarrativeCommLink` covers these (`HideUIForCinematics` spares
+  it); this run says something does not, so the first job is to find out WHICH path draws them —
+  one live pass with `just dev-props` during such a cutscene, looking for who holds the cue index,
+  before any code. The gap is worth the trouble: these are the game's tentpole story beats, they
+  run minutes long, and silence over one is indistinguishable from a hang.
+- **Raw `". "` joins survive in the LEGACY screen listeners** — `UIScreenListener_Difficulty` (six),
+  `UIScreenListener_NarrativeContent` (three), `UIScreenListener_KeyBindings` (two) and
+  `X2AccessGeoScanner` (one) each build `Label $ ". " $ Value` instead of calling
+  `X2AccessHelper.AppendPart`. Same defect as the four fixed on 2026-09-04, and every left side is a
+  game-shipped label, so a language whose labels end in a colon voices a doubled terminator on every
+  row. None showed in the 2026-09-04 ring because those screens were not walked; do not read that as
+  evidence they are fine. Cheap to fix, and the natural moment is when each listener is retired for a
+  recipe rather than as a sweep of its own — a listener that is about to be deleted does not need a
+  patch. ⚠ `X2AccessGeoScanner` is NOT in that category (no recipe is queued for it), so it is the
+  one worth fixing on its own.
 - Two wording defects: the no-target readout doubles a full stop and repeats the same fact in
   two languages (the localized string already ends in a period and carries the meaning); recentering
   says the unit's name three times.
@@ -415,13 +559,12 @@ a repeating announcement.
    labelled as one). ⚠ The resource strip, the to-do widget and the event queue all came off this
    list on 2026-09-03 (`surfaces/avenger.md`) and are **unexercised live** — see the entries
    above.
-8. The tactical HUD recipe's last stop — **Enemies** (the `m_arrTargets` strip, distance and
-   bearing appended as a labelled aid, Enter → `DirectTargetObject`). Soldier (2026-08-31,
-   `X2AccessUnitReader.BuildSoldierRecords` — the wire bridge went in that class, next to its
-   composers, not in `X2AccessTacticalReader` as the plan sketched) and Commands (native —
-   `GameUI::ReadMouseControls`) are built and have run. Still owed: the spoken REASON on an
-   unavailable ability (`AvailableCode` needs the companion vocabulary — the FName must never be
-   spoken raw), and a decision on End Turn's focus hand-back.
+8. The tactical HUD recipe: Soldier (2026-08-31, `X2AccessUnitReader.BuildSoldierRecords`),
+   Commands (native — `GameUI::ReadMouseControls`) and now Targets (2026-09-04,
+   `X2AccessTacticalReader.BuildEnemyRecords` / `SelectEnemyHead` — the live-run debt entry
+   above) are built. Still owed: the spoken REASON on an unavailable ability (`AvailableCode`
+   needs the companion vocabulary — the FName must never be spoken raw), and a decision on End
+   Turn's focus hand-back.
 9. The mission blade's two v1 punts, each a deliberate gap rather than test debt:
    `UIMission_GPIntelOptions` reads its intel options (name + cost + totals) but cannot PURCHASE
    one — the rows are `UIMechaListItem` checkboxes, so the toggle path and the purchased-state
