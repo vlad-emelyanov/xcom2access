@@ -316,4 +316,78 @@ struct TextFieldState {
 /// keystroke, NOT on a free-running poll. Game thread only.
 TextFieldState ReadFocusedTextField(void* screen);
 
+// ---- the character pool (UICharacterPool) and its pool files (UICharacterPool_ListPools)
+//      — docs/customize-recon.md §3 ----
+//
+// The main menu's CHARACTER POOL: the pool's soldiers as CHECKBOX rows (UpdateDataCheckbox — the
+// name retained on the row, the box the selection for export / delete), six buttons the mouse
+// build spawns (create, import, export, delete, select all, deselect all — each greyed with its
+// own reason as a tooltip), a one-row options list holding the pool-usage DROPDOWN, and a
+// UIX2PanelHeader that retains its title and subtitle. ⛔ Vanilla's keyboard here is a dead end:
+// Enter on a row toggles its box and nothing else, and EDIT is FXS_BUTTON_X — a gamepad button —
+// so the reason the screen exists is unreachable without a mouse. EditSoldier is re-provided.
+//
+// The pool-files screen is the import / export picker: the same header saying which of its three
+// modes it is in (a file to export into; a file to import from; a character out of that file),
+// mecha rows retaining the names (Value rows, or Button rows carrying a DELETE button), and
+// ⛔ another dead end — OnAccept picks only under `ISCONTROLLERACTIVE`, and the rows consume Enter
+// (a value row Clicks nothing; a button row presses its DELETE, which looks up a list index the
+// button does not have) before the list's OnItemClicked can fire. The activation calls
+// OnClickLocal with the list and the index, which is exactly the controller branch.
+
+struct CharacterPoolView {
+    void* screen = nullptr;
+    void* list = nullptr;        // UICharacterPool::List
+    std::string title;           // TitleHeader.Title
+    std::string subtitle;        // TitleHeader.Label
+    std::vector<OptionRow> rows; // checkbox rows: label is the name, checked is the selection
+    int selected = -1;           // List.SelectedIndex
+    std::vector<MenuItem> buttons; // the visible ones, in on-screen order
+    std::string editLabel;       // m_strEditCharacter — the verb vanilla puts on a gamepad button
+    std::string emptyLabel;      // m_strNoCharacters — the game's word for an empty pool
+    OptionRow usage;             // the pool-usage dropdown row; handle null when absent
+};
+
+/// The focused UICharacterPool, or null. Game thread only.
+void* FindCharacterPoolScreen();
+
+CharacterPoolView ReadCharacterPool(void* screen);
+
+/// P11 write-back. Game thread only.
+bool SetCharacterPoolSelection(const CharacterPoolView& view, int index);
+
+/// Toggle a row's box: select it, then the screen's own SimulateMouseClickOnCheckbox — the
+/// FXS_BUTTON_A branch minus its bIsVisible gate. Game thread only.
+bool ToggleCharacterPoolRow(const CharacterPoolView& view, int index);
+
+/// Open the customization menu for a row: select it, then the screen's own EditSoldier.
+/// Game thread only.
+bool EditCharacterPoolRow(const CharacterPoolView& view, int index);
+
+struct PoolFilesView {
+    void* screen = nullptr;
+    void* list = nullptr;        // UICharacterPool_ListPools::List
+    std::string title;           // TitleHeader.Title
+    std::string subtitle;        // TitleHeader.Label — the export / import caption, or the file
+    std::vector<OptionRow> rows; // Value rows, or Button rows whose value is the DELETE label
+    int selected = -1;
+    bool exporting = false;      // bIsExporting
+    bool inFile = false;         // bHasSelectedImportLocation — picking a character, not a file
+};
+
+/// The focused UICharacterPool_ListPools, or null. Game thread only.
+void* FindPoolFilesScreen();
+
+PoolFilesView ReadPoolFiles(void* screen);
+
+/// P11 write-back. Game thread only.
+bool SetPoolFilesSelection(const PoolFilesView& view, int index);
+
+/// Pick a row: select, then the screen's own OnClickLocal(List, index). Game thread only.
+bool ActivatePoolFilesRow(const PoolFilesView& view, int index);
+
+/// Delete the row's pool: select, then the screen's FXS_BUTTON_Y — its own confirm dialog
+/// follows. Offered by the recipe only on rows the game draws a DELETE button on. Game thread only.
+bool DeletePoolFilesRow(const PoolFilesView& view, int index);
+
 } // namespace GameUI

@@ -36,6 +36,15 @@ and whatever was verified about them does not carry. `just go-full` first, then 
 three; the unification commit is the one that matters, because its whole claim is that two
 surfaces now say the same thing and only a live pass can show that they do.
 
+**The object scanner's one-key-one-entry guard** (2026-09-04, `X2AccessObjectScanner.
+InsertByDistance`) compiles clean and has not run: it was written mid-mission with the game up, so
+only `just uscript` ran and the deploy robocopy was killed. Diagnosed live on
+`Neutralize_Vehicle` — the carried VIP owned two `XComGameState_ObjectiveInfo` components, the `B`
+ring said "Objective: David Watson" at 1 of 3 then 2 of 3 forever, and the evac zone at 3 of 3 was
+unreachable forward (`Shift`+`B` reached it, which is what proved `AddEvac` right). The check is
+one press: on a mission with an evac zone, `B` must reach it without wrapping backwards, and the
+ring must count 2, not 3. Rule filed in `surfaces/tactical.md`.
+
 **The Chosen dossier and the bond screens** (2026-09-03, built, never run —
 `chosen-bond-recon.md` §8 is the checklist; the `chosen dossier`, `soldier bonds` and `bond
 confirm` recipes + `X2AccessChosenReader` / `X2AccessBondReader`, and two new popup-family
@@ -171,6 +180,35 @@ and every screen below that carries a `X2Access*Reader` reads as bare fallbacks 
 - **The PCS picker's two additions** (`armory-recon.md` §3): on `UIInventory_Implants` a red row
   must say `cannot equip` (not `cannot afford`), and the card must end in a stat line
   (`AIM +5`) paired with the RIGHT stat — the game's own header shows it under the wrong label.
+
+**The P2 pass: customization, the character pool, manage equipment** (2026-09-04, built from
+source in one pass, never run — `customize-recon.md` holds the three checklists, §1.5, §2.6 and
+§3.4; the `customize`, `manage equipment`, `character pool` and `pool files` recipes plus
+`X2AccessCustomizeReader`). ⛔ **Neither layer is in the game.** The ASI built clean (kernel
+tests green) and the companion compiled clean SDK-side, but the game was started mid-build and
+holds both files: `just install` was refused on the `.asi`, and the `.u` under `Mods/` is still
+the 02:24 one (the deploy robocopy stalled and was killed, per the memory note). So **`just
+go-full` with the game stopped comes first**, and until then every screen below reads as the OLD
+build — the customize screens silent, the pool silent. The load-bearing items, in the order they
+are cheapest to reach:
+- **The pool, from the main menu, needs no campaign**: attach as the header, the rows as
+  checkboxes with EDIT CHARACTER advertised, Backspace on a row into the editor (`bInArmory`
+  false — no soldier spinner), Escape back with the row re-read. IMPORT into a file and Escape
+  OUT of it to the file list rather than closing — that is `OnCancel`'s own two-step and the
+  recipe re-attaching on the same screen with new rows.
+- **The colour grid is where this pass is most likely wrong**: nothing in the layer has driven
+  a `UINavigator` through `SetSelectedNavigation` on a grid child before. Enter on HAIR COLOR
+  must land on the chip the game highlighted, arrows must move by row and column WITH the pawn
+  previewing (`just dev-shot` beside `just dev-speech`), Enter must commit and re-read the row's
+  hue, Escape must revert. If the write-back does not preview, the fallback is the chip's own
+  `OnReceiveFocus` by name.
+- **The picker's name** is the opener's selected row, read through the stack past the mouse
+  guard; a picker attaching as *Options* means that walk found no family screen beneath it.
+- **The menu screen's ALLOW checkboxes** toggle through `SimulateMouseClickOnCheckbox` — the
+  one activation in the family that bypasses the input path — and TIME ADDED must read
+  `unavailable` with its timestamp.
+- Then the distribution audit for the hues (every soldier the same hue is the collapse), `grep
+  -n '0x'` over the ring for a swatch that escaped `ColourName`, and `grep -P '  '`.
 
 ## Unexercised paths inside surfaces that HAVE run
 

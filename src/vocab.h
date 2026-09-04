@@ -5,6 +5,10 @@
 // (button labels, log lines) is already localized and passes through untouched. When P7
 // localization lands, this module grows a string table behind the same names.
 
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <cstdlib>
 #include <string>
 
 namespace Vocab {
@@ -366,6 +370,112 @@ inline std::string Fraction(int value, int max)
 // names, the countries, the cost and the bio — is the game's own.
 inline constexpr const char* ScreenRecruitsFallback = "Recruits";
 inline constexpr const char* RecruitsEmpty = "No recruits available";
+
+// ---- soldier customization, manage equipment, the character pool (docs/customize-recon.md) ----
+//
+// Nearly every word on these screens is the game's own: the row labels and the current choices
+// are retained on the mecha rows, the titles are the screens' localized strings, the soldier
+// line rides the wire. What the game states with NO words is a colour — a swatch on a row, a
+// grid of chips in the selector — and that is the one vocabulary this section adds.
+inline constexpr const char* ScreenCustomizeFallback = "Customize soldier";
+/// The option picker names itself by the row that opened it (HAIR, VOICE, NATIONALITY…) — the
+/// game keeps no title on it at all. This is the window before that read lands.
+inline constexpr const char* ScreenCustomizeOptionsFallback = "Options";
+/// The colour selector's grid, which the game likewise titles only by the row that opened it.
+inline constexpr const char* CustomizeColours = "Colours";
+/// A chip whose colour string did not parse. It keeps its node — an unnamed chip is a colour
+/// that silently ceases to exist — and its drawn number still identifies it.
+inline constexpr const char* ColourUnknown = "colour";
+inline constexpr const char* ScreenManageEquipmentFallback = "Manage equipment";
+inline constexpr const char* ScreenCharacterPoolFallback = "Character pool";
+inline constexpr const char* ScreenPoolFilesFallback = "Character pool files";
+inline constexpr const char* PoolEmptyFallback = "No characters";
+inline constexpr const char* PoolEditFallback = "Edit character";
+/// The pool-files list with nothing in it — a file with no importable characters drops even
+/// its IMPORT ENTIRE POOL row (GetImportList empties the array), and an empty stop is
+/// indistinguishable from a broken one.
+inline constexpr const char* PoolFilesEmpty = "Nothing to pick here";
+
+/// ⛔ AN AID, and documented as one: a colour swatch carries no words for anyone, but a sighted
+/// player sees the hue and a blind one hears nothing. Eight hue bands and three lightness bands,
+/// coarse on purpose — "dark red" is honest where "crimson" would be a guess. `hex` is the game's
+/// own Flash colour string ("0x00RRGGBB" from LinearColorToFlashHex; a bare or '#'-prefixed
+/// triplet is accepted too). Empty when the string does not parse.
+inline std::string ColourName(const std::string& hex)
+{
+    std::string digits;
+    for (char c : hex) {
+        if (std::isxdigit(static_cast<unsigned char>(c)))
+            digits += c;
+    }
+    if (digits.size() < 6)
+        return std::string();
+    digits = digits.substr(digits.size() - 6);
+    const unsigned long rgb = std::strtoul(digits.c_str(), nullptr, 16);
+    const double r = ((rgb >> 16) & 0xFF) / 255.0;
+    const double g = ((rgb >> 8) & 0xFF) / 255.0;
+    const double b = (rgb & 0xFF) / 255.0;
+    const double mx = std::max(r, std::max(g, b));
+    const double mn = std::min(r, std::min(g, b));
+    const double l = (mx + mn) / 2.0;
+    const double d = mx - mn;
+    const double s = d <= 0.0 ? 0.0 : d / (1.0 - std::fabs(2.0 * l - 1.0));
+
+    if (l < 0.06)
+        return "black";
+    if (l > 0.96)
+        return "white";
+    if (s < 0.12) {
+        if (l < 0.3)
+            return "dark grey";
+        if (l > 0.7)
+            return "light grey";
+        return "grey";
+    }
+
+    double h;
+    if (mx == r)
+        h = std::fmod((g - b) / d, 6.0);
+    else if (mx == g)
+        h = (b - r) / d + 2.0;
+    else
+        h = (r - g) / d + 4.0;
+    h *= 60.0;
+    if (h < 0.0)
+        h += 360.0;
+
+    const char* hue;
+    if (h < 15.0 || h >= 345.0)
+        hue = "red";
+    else if (h < 45.0)
+        hue = "orange";
+    else if (h < 70.0)
+        hue = "yellow";
+    else if (h < 165.0)
+        hue = "green";
+    else if (h < 195.0)
+        hue = "teal";
+    else if (h < 255.0)
+        hue = "blue";
+    else if (h < 290.0)
+        hue = "purple";
+    else
+        hue = "pink";
+
+    // A dark orange or yellow is what everyone calls brown.
+    if (l < 0.3 && (h >= 15.0 && h < 70.0))
+        return s < 0.35 ? "greyish brown" : "brown";
+
+    std::string name;
+    if (l < 0.3)
+        name = "dark ";
+    else if (l > 0.7)
+        name = "light ";
+    if (s < 0.35)
+        name += "greyish ";
+    name += hue;
+    return name;
+}
 
 // ---- the post-mission rewards recap (UIRewardsRecap) ----
 //

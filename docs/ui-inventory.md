@@ -27,14 +27,14 @@ priority.
 | Bucket | Count | Disposition |
 |---|---|---|
 | Built (✅) | ~93 | done; live-run status in CLAUDE.md |
-| Partial (◐) | 6 | words missing, structure present |
+| Partial (◐) | ~26 | words missing, structure present — or built from source and never run (the customization family, the pool, 2026-09-04) |
 | TODO P1 | 0 | the campaign-blocking list below is empty as of 2026-09-03 — seven ◐ entries owe a live pass |
-| TODO P2 | ~36 | customization, reports, detail screens |
+| TODO P2 | ~15 | reports, detail screens, `UIResistance` gone (dead code) and the customization family gone (built) |
 | TODO P3 | ~17 | login, credits, photobooth, DLC extras |
 | Challenge / TLE | 20 | later, on demand |
 | Multiplayer | 30 | 🚫 deprioritized (needs a second player; revisit on request) |
 | Debug / dev screens | 20 | 🚫 never |
-| Dead code | 6 | 🚫 unreachable in WOTC |
+| Dead code | 7 | 🚫 unreachable in WOTC |
 | Bases / infrastructure / no-words | ~20 | nothing to speak, or spoken via other surfaces |
 
 ## The P1 short list
@@ -139,23 +139,30 @@ along. `avenger-view-recon.md` §14.
 | `UIArmory_PromotionPsiOp` | psi-op training tree | ◐ same recipe, branch unexercised — needs a Psi Lab and a trained operative |
 | `UIArmory_Implants` | DEAD CODE — `XComHQPresentationLayer.UIArmory_Implants()` has no caller in the shipped sources or the Highlander; the hub's PCS row opens `UIInventory_Implants` (the commodity list, §5 — with the implant delta and cannot-equip word added 2026-09-03, `armory-recon.md` §3) | — out of scope |
 | `UIAbilityInfoScreen` | ability details viewer (from armory & challenge) | ⬜ P2 |
-| `UIManageEquipmentMenu` | equipment mgmt popup (from loadout & squad select) | ⬜ P2 |
+| `UIManageEquipmentMenu` | the strip-equipment menu (from loadout & squad select) | ◐ built — `manage equipment` recipe, native only (2026-09-04, unexercised live; `customize-recon.md` §1). The pause menu's shape; its rows consume nothing, so Enter-to-the-list reaches the delegate |
 
-## 8. Customization and character pool — ⬜ P2, one family
+## 8. Customization and character pool — ◐ built, one family
 
 `UICustomize` (base) + `_Menu`, `_Info`, `_Head`, `_Body`, `_Props`, `_Weapon`, `_Trait`,
 `_Voice`, `_TemplarInfo`, `_SkirmisherHead`, DLC_3 `_SparkMenu`, `_SparkInfo`, `_SparkHead`,
 `_SparkBody`, `_SparkProps`, `_SparkWeapon` — 17 classes, one list-based layout family.
+◐ built — one `customize` recipe + `X2AccessCustomizeReader` (2026-09-04, unexercised live;
+`customize-recon.md` §2), probed as the topmost stack entry `IsKindOf UICustomize`, so the SPARK
+classes (absent from the SDK dump) ride along. The rows retain their words; the picker keeps no
+title and is named by the row that opened it; the colour selector reads as a grid of hues (an
+aid). ⛔ Two vanilla keyboard traps: a mecha row consumes Enter before the list's delegate, and the
+menu screen's checkboxes are `bReadOnly`, so they toggle through `SimulateMouseClickOnCheckbox`.
 Plus `UICharacterPool` and `UICharacterPool_ListPools` (pool management, reached from the
-main menu). Cosmetic outcomes are invisible to the player, but names, voices, attitudes and
-the pool itself are not cosmetic — P2, and the voice picker matters most.
+main menu) — ◐ built, `character pool` + `pool files` recipes, native only (2026-09-04,
+unexercised live; `customize-recon.md` §3). ⛔ Both are keyboard dead ends in vanilla (EDIT is a
+gamepad button; the picker picks only for a controller), re-provided.
 
 ## 9. Geoscape
 
 | Screen | What it is | Status |
 |---|---|---|
 | `UIStrategyMap` | the geoscape | ◐ — tray built (`geo_scanner`); map-item details beyond the tray unmeasured |
-| `UIResistance` | region contact/outpost screen (from a region pin) | ⬜ P2 |
+| `UIResistance` | region contact/outpost screen — `XComHQPresentationLayer.UIResistance()` exists, but its only caller (`XComGameState_WorldRegion.DisplaySelectionPrompt`) is commented out in vanilla and the Highlander alike; the region pin's own two verbs are the geoscape tray's stop 2 (`customize-recon.md` §4) | 🚫 dead |
 | `UIAdventOperations` | dark events | ✅ popup recipe |
 | `UIResistanceReport` | monthly council report — the report card | ◐ built — `monthly report` recipe + `X2AccessReportReader` (2026-09-03, unexercised live; `resistance-report-recon.md`) |
 | `UIResistanceReport_ChosenEvents` | the report's Chosen page (knowledge, activities, planned actions) | ◐ built — `chosen activity` recipe + `X2AccessChosenReader` (2026-09-03, unexercised live; `resistance-report-recon.md`) |

@@ -1917,6 +1917,245 @@ bool ActivateWeaponPattern(const WeaponUpgradeView& view, int index)
     return SendScreenCommand(view.screen, kCmdEnter);
 }
 
+// ---- soldier customization (UICustomize family) — docs/customize-recon.md §2 ----
+
+namespace {
+
+// UICustomize, from the dump; every one pinned in sdk_layout_checks.cpp. The flag dword at 0x424
+// carries bInArmory (bit 0) with bInMP, bUsePersonalityAnim, bDisableVeteranOptions,
+// bIsSuperSoldier and bIsXPACSoldier after it.
+constexpr int32_t kCustomizeUnitRefOffset = 0x418;       // UnitRef (ObjectID first)
+constexpr int32_t kCustomizeUnitOffset = 0x41C;          // Unit (XComGameState_Unit*)
+constexpr int32_t kCustomizeFlagsOffset = 0x424;         // flag dword
+constexpr uint32_t kCustomizeInArmory = 0x01;            // bInArmory
+constexpr int32_t kCustomizeListOffset = 0x440;          // List (UIList*)
+constexpr int32_t kCustomizeColorSelectorOffset = 0x47C; // ColorSelector (UIColorSelector*)
+constexpr int32_t kTraitStartingIndexOffset = 0x544;     // UICustomize_Trait::StartingIndex
+
+// UIColorSelector and its chips.
+constexpr int32_t kColorSelectorChipsOffset = 0x400;     // ColorChips (TArray<UIColorChip*>)
+constexpr int32_t kColorSelectorInitialOffset = 0x420;   // InitialSelection
+constexpr int32_t kColorChipBGOffset = 0x3D8;            // UIColorChip::BG (UIBGBox*)
+constexpr int32_t kColorChipIndexOffset = 0x3F8;         // UIColorChip::Index
+constexpr int32_t kColorChipRowOffset = 0x3FC;           // UIColorChip::Row
+constexpr int32_t kColorChipColOffset = 0x400;           // UIColorChip::Col
+constexpr int32_t kBGBoxColorOffset = 0x3D8;             // UIBGBox::BGColor (FString)
+
+// The armour tint palette is the largest the game ships and mods add to it; loud when clipped.
+constexpr int kMaxColorChips = 256;
+
+bool IsCustomizeScreen(void* candidate, const char*)
+{
+    return IsKindOfRaw(candidate, "UICustomize");
+}
+
+// The label of the row selected on the family screen BENEATH the topmost one — the row whose
+// Enter pushed the picker (every UpdateData preserves the selection across the push). The stack
+// holds a mouse guard between the two (bConsumeMouseEvents spawns one under each screen), so this
+// walks to the next screen of the family rather than reading index 1.
+std::string OpenerRowLabel(void* top)
+{
+    void* screens[kMaxStackScreens] = {};
+    const int n = WalkStackRaw(screens, kMaxStackScreens);
+    bool passedTop = false;
+    for (int i = 0; i < n; i++) {
+        if (!screens[i])
+            continue;
+        if (screens[i] == top) {
+            passedTop = true;
+            continue;
+        }
+        if (!passedTop || !IsKindOfRaw(screens[i], "UICustomize"))
+            continue;
+        void* list = ReadPtrRaw(screens[i], kCustomizeListOffset);
+        if (!list)
+            return std::string();
+        const int selected = ReadI32Raw(list, kListSelectedIndexOffset);
+        if (selected < 0)
+            return std::string();
+        // The opener's rows: a selection is one row, so the bounded read is sized by the
+        // screen's own list and is loud if a picker ever opens from a row past it.
+        void* rows[kMaxListRows] = {};
+        const int count = TakeListItemsRaw("Customize: opener rows", list, rows, kMaxListRows);
+        if (selected >= count)
+            return std::string();
+        OptionRow row;
+        if (!MakeRow(rows[selected], selected, &row))
+            return std::string();
+        return row.label;
+    }
+    return std::string();
+}
+
+} // namespace
+
+void* FindCustomizeScreen()
+{
+    // Topmost entry only. The picker is pushed OVER the screen that opened it, the colour
+    // selector is a child and not a screen, and the name-edit dialog pushed over any of them takes
+    // the top away — which is the right answer for as long as it is up.
+    void* screen = TopStackScreenRaw(IsCustomizeScreen);
+    return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
+}
+
+CustomizeView ReadCustomize(void* screen)
+{
+    CustomizeView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+    v.trait = IsKindOfRaw(screen, "UICustomize_Trait");
+    v.inArmory = (ReadU32Raw(screen, kCustomizeFlagsOffset) & kCustomizeInArmory) != 0;
+    v.unit = ReadPtrRaw(screen, kCustomizeUnitOffset);
+    v.unitId = ReadI32Raw(screen, kCustomizeUnitRefOffset);
+    v.list = ReadPtrRaw(screen, kCustomizeListOffset);
+    if (v.list) {
+        v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
+        // Sized from the list: a picker holds as many options as the DLC and mods installed.
+        v.rows = ReadListRowsAll("Customize: rows", v.list);
+    }
+    if (v.trait) {
+        v.startingIndex = ReadI32Raw(screen, kTraitStartingIndexOffset);
+        v.openerLabel = OpenerRowLabel(screen);
+    }
+    v.colorSelector = ReadPtrRaw(screen, kCustomizeColorSelectorOffset);
+    if (v.colorSelector) {
+        v.initialColor = ReadI32Raw(v.colorSelector, kColorSelectorInitialOffset);
+        void* chips[kMaxColorChips] = {};
+        const int n = TakeArrayRaw("Customize: colour chips", v.colorSelector,
+            kColorSelectorChipsOffset, chips, kMaxColorChips);
+        for (int i = 0; i < n; i++) {
+            if (!chips[i])
+                continue;
+            ColorChip c;
+            c.handle = chips[i];
+            c.index = ReadI32Raw(chips[i], kColorChipIndexOffset);
+            c.row = ReadI32Raw(chips[i], kColorChipRowOffset);
+            c.col = ReadI32Raw(chips[i], kColorChipColOffset);
+            // The hex string is an identifier for Vocab::ColourName, never a phrase: raw read.
+            if (void* bg = ReadPtrRaw(chips[i], kColorChipBGOffset))
+                c.hex = ReadFStringFieldRaw(bg, kBGBoxColorOffset);
+            c.focused = (ReadU32Raw(chips[i], kPanelFlagsOffset) & kPanelFocused) != 0;
+            v.chips.push_back(std::move(c));
+        }
+    }
+    return v;
+}
+
+bool SetCustomizeSelection(const CustomizeView& view, int index)
+{
+    return SetListIndex(view.list, index);
+}
+
+bool ActivateCustomizeRow(const CustomizeView& view, int index)
+{
+    if (!view.screen || !view.list)
+        return false;
+    SetListIndex(view.list, index);
+    for (const OptionRow& row : view.rows) {
+        if (row.index != index)
+            continue;
+        // A checkbox row: the box is bReadOnly on the menu screen, so the row's own Enter is
+        // consumed without toggling. SimulateMouseClickOnCheckbox is the screen's own answer to
+        // FXS_BUTTON_A, on the selection just made.
+        if (row.widget == OptionWidget::Checkbox)
+            return InvokeScreenVerb(view.screen, "SimulateMouseClickOnCheckbox");
+        break;
+    }
+    return SendScreenCommand(view.screen, kCmdEnter);
+}
+
+bool PressCustomizeRow(const CustomizeView& view, int index)
+{
+    if (!view.list)
+        return false;
+    SetListIndex(view.list, index);
+    for (const OptionRow& row : view.rows) {
+        if (row.index == index)
+            return SendRowCommand(row.handle, kCmdEnter);
+    }
+    return false;
+}
+
+bool SelectColorChip(const CustomizeView& view, int index)
+{
+    for (const ColorChip& chip : view.chips) {
+        if (chip.index == index)
+            return FocusButton(chip.handle);
+    }
+    return false;
+}
+
+bool ActivateColorChip(const CustomizeView& view, int index)
+{
+    if (!view.screen || !SelectColorChip(view, index))
+        return false;
+    return SendScreenCommand(view.screen, kCmdEnter);
+}
+
+// ---- manage equipment (UIManageEquipmentMenu) — docs/customize-recon.md §1 ----
+
+namespace {
+
+constexpr int32_t kManageEquipListOffset = 0x410;  // UIManageEquipmentMenu::List
+constexpr int32_t kManageEquipTitleOffset = 0x440; // m_strTitleLabel (FString)
+
+} // namespace
+
+void* FindManageEquipmentScreen()
+{
+    static ScreenFinder sFinder{"UIManageEquipmentMenu"};
+    static bool sReported = false;
+    return FindFocusedStackScreen("UIManageEquipmentMenu", sFinder, sReported);
+}
+
+ManageEquipmentView ReadManageEquipment(void* screen)
+{
+    ManageEquipmentView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+    v.title = ReadFStringField(screen, kManageEquipTitleOffset);
+    v.list = ReadPtrRaw(screen, kManageEquipListOffset);
+    if (!v.list)
+        return v;
+    v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
+    // Three rows in the shipped game (AddItem × 3 from both openers); the pause menu's cap.
+    void* rows[kMaxListRows] = {};
+    const int count = TakeListItemsRaw("ManageEquipment: rows", v.list, rows, kMaxListRows);
+    for (int i = 0; i < count; i++) {
+        if (!rows[i] || !IsKindOfRaw(rows[i], "UIListItemString"))
+            continue;
+        MenuItem item;
+        item.handle = rows[i];
+        item.index = i;
+        item.label = ReadFStringField(rows[i], kListItemStringTextOffset);
+        if (item.label.empty())
+            continue;
+        item.disabled
+            = (ReadU32Raw(rows[i], kListItemStringFlagsOffset) & kListItemDisabled) != 0;
+        item.focused = i == v.selected;
+        v.options.push_back(std::move(item));
+    }
+    return v;
+}
+
+bool SetManageEquipmentSelection(const ManageEquipmentView& view, int index)
+{
+    return SetListIndex(view.list, index);
+}
+
+bool ActivateManageEquipmentRow(const ManageEquipmentView& view, int index)
+{
+    if (!view.list)
+        return false;
+    // Select, then Enter to the LIST: a UIListItemString with no confirm button consumes
+    // nothing, so UIList.OnUnrealCommand reaches its own OnItemDoubleClicked / OnItemClicked —
+    // both OnSelectionPressed — which runs the row's callback and closes the menu.
+    SetListIndex(view.list, index);
+    return SendRowCommand(view.list, kCmdEnter);
+}
+
 } // namespace GameUI
 
 #ifdef _MSC_VER

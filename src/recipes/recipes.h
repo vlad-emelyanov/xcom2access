@@ -31,6 +31,8 @@ extern const Recipe kSoundtrackRecipe;
 extern const Recipe kPauseMenuRecipe;
 extern const Recipe kDialogRecipe;
 extern const Recipe kSaveLoadRecipe;
+extern const Recipe kCharacterPoolRecipe; // the main menu's character pool (UICharacterPool)
+extern const Recipe kPoolFilesRecipe;     // its import / export picker (UICharacterPool_ListPools)
 
 // ---- strategy (recipe_strategy.cpp) ----
 extern const Recipe kSquadSelectRecipe;
@@ -50,6 +52,8 @@ extern const Recipe kChosenEventsRecipe;     // its Chosen page (UIResistanceRep
 extern const Recipe kCovertReportRecipe;     // the covert action result (UICovertActionReport)
 extern const Recipe kArmoryMenuRecipe;       // the armory hub (UIArmory_MainMenu)
 extern const Recipe kWeaponUpgradeRecipe;    // weapon mods + the pattern picker (UIArmory_WeaponUpgrade)
+extern const Recipe kCustomizeRecipe;        // soldier customization, the whole UICustomize family
+extern const Recipe kManageEquipmentRecipe;  // the strip-equipment menu (UIManageEquipmentMenu)
 
 // ---- Avenger (recipe_avenger.cpp) ----
 extern const Recipe kRoomRecipe;
@@ -74,7 +78,7 @@ extern const Recipe kLootRecipe;     // the mid-mission loot receipt (UIInventor
 extern const Recipe kCharInfoRecipe; // the soldier sheet (UITacticalCharInfoScreen)
 
 // How many of the above kRecipes must list. Pinned by a static_assert next to the array.
-constexpr std::size_t kRecipeCount = 44;
+constexpr std::size_t kRecipeCount = 48;
 
 } // namespace Recipes
 } // namespace MenuNavigator

@@ -1018,4 +1018,118 @@ bool ActivateWeaponCustomizeRow(const WeaponUpgradeView& view, int index);
 bool SelectWeaponPattern(const WeaponUpgradeView& view, int index);
 bool ActivateWeaponPattern(const WeaponUpgradeView& view, int index);
 
+// ---- soldier customization (UICustomize and its family) — docs/customize-recon.md §2 ----
+//
+// One list of UIMechaListItems under a soldier header, on every screen of the family: the
+// category menu (UICustomize_Menu), the category screens (Info, Head, Body, Weapon, Props — the
+// Templar / Skirmisher / SPARK variants are subclasses that only change the rows), and the option
+// picker (UICustomize_Trait; UICustomize_Voice is its controller-only variant). ✅ THE ROWS RETAIN
+// THEIR WORDS: every one is built through UpdateDataDescription / UpdateDataValue /
+// UpdateDataColorChip / UpdateDataCheckbox / UpdateDataButton, so the label, the current choice,
+// a checkbox's state, a swatch's colour and a button's label are all on the widget, and a greyed
+// row's reason is the tooltip SetDisabled parks on its BG. What is NOT retained: the soldier
+// header (a Flash push — X2AccessCustomizeReader re-derives it with the loadout's composer), the
+// info screen's biography (setCharacterBio, likewise), and the picker's TITLE — UpdateTrait never
+// stores the string it is handed, so the picker is named by the row on the screen beneath that
+// opened it, which keeps its selection across the push.
+//
+// ⛔ THE COLOUR SELECTOR REPLACES THE LIST. GetColorSelector hides the list and spawns a
+// UIColorSelector: a grid of UIColorChips, each retaining its Index / Row / Col and its colour on
+// its BG box, and the screen routes every key to the selector first for as long as it exists
+// (ColorSelector != none). Accepting a chip runs the screen's own Set* delegate — commit,
+// UpdateData, CloseColorSelector — and Escape is the screen's own OnCancel → CloseColorSelector(true),
+// which REVERTS to InitialSelection.
+//
+// Enter is the screen's own OnUnrealCommand: UICustomize routes it to the list, whose selected row
+// answers it (a description / value / colour row Clicks its delegate), and UICustomize_Trait
+// answers it at SCREEN level (OnClickLocal: pick, then close). ⛔ The menu screen's checkboxes are
+// bReadOnly (UICustomize_Menu.OnListInited), so the row's own Enter is CONSUMED WITHOUT TOGGLING —
+// the game's route is FXS_BUTTON_A → SimulateMouseClickOnCheckbox, and that function is what a
+// checkbox row's activation calls (directly: the A-button branch is gated on bIsVisible, the flag
+// the game leaves false on screens it is plainly showing).
+
+struct ColorChip {
+    void* handle = nullptr; // UIColorChip
+    int index = 0;          // Index — the accept delegate's argument, and the number the chip draws
+    int row = 0;            // Row / Col — the grid position the game laid the chip out at
+    int col = 0;
+    std::string hex;        // BG.BGColor, the game's own "0x00RRGGBB"
+    bool focused = false;   // the chip the container's navigator holds (its highlight is showing)
+};
+
+struct CustomizeView {
+    void* screen = nullptr;
+    void* list = nullptr;   // UICustomize::List
+    bool trait = false;     // a UICustomize_Trait (or _Voice): the option picker
+    bool inArmory = false;  // bInArmory — the soldier cycle exists only there
+    void* unit = nullptr;   // UICustomize::Unit — a wire-cache KEY, compared and never dereferenced
+    int unitId = 0;         // UnitRef.ObjectID (0 for a character-pool unit, which is in no history)
+    std::vector<OptionRow> rows;
+    int selected = -1;      // List.SelectedIndex
+    // The picker: where the game landed (the current choice, which Escape reverts to), and the
+    // label of the row beneath that opened it.
+    int startingIndex = -1;
+    std::string openerLabel;
+    // The colour selector, while it is open.
+    void* colorSelector = nullptr;
+    std::vector<ColorChip> chips; // in Index order, which is row-major
+    int initialColor = -1;        // InitialSelection — the colour worn now
+};
+
+/// The topmost screen of the family, focused, or null: the picker is pushed OVER the screen that
+/// opened it, so the top of the stack being one of the family is exactly the screen the keys
+/// reach. Game thread only.
+void* FindCustomizeScreen();
+
+CustomizeView ReadCustomize(void* screen);
+
+/// P11 write-back into the list — UIList.SetSelectedIndex, which on a picker fires the
+/// OnSelectionChanged delegate that previews the option on the pawn. Game thread only.
+bool SetCustomizeSelection(const CustomizeView& view, int index);
+
+/// Activate a row by the game's own path: select, then the SCREEN's Enter — or, for a checkbox
+/// row, the screen's SimulateMouseClickOnCheckbox (see the comment above). Game thread only.
+bool ActivateCustomizeRow(const CustomizeView& view, int index);
+
+/// The row's OWN Enter, with the row selected: on a picker row carrying a button (the voice
+/// picker's PREVIEW) that presses the button, and nothing closes. Game thread only.
+bool PressCustomizeRow(const CustomizeView& view, int index);
+
+/// P11 write-back onto a colour chip: SetSelectedNavigation, i.e. the chip container's
+/// navigator, whose OnSelectedIndexChanged previews the colour on the pawn exactly as the game's
+/// own arrowing does. Game thread only.
+bool SelectColorChip(const CustomizeView& view, int index);
+
+/// Accept a chip: select it, then the screen's Enter — routed to the selector, and by the
+/// selector to the chip its navigator holds. Game thread only.
+bool ActivateColorChip(const CustomizeView& view, int index);
+
+// ---- manage equipment (UIManageEquipmentMenu) — docs/customize-recon.md §1 ----
+//
+// The three-row menu the loadout and squad select open from a nav-help button (a gamepad's LT;
+// no key on mouse+keyboard): strip items, strip gear, strip weapons. Modelled on the pause menu
+// by its author and read like it — UIListItemString rows retaining their Text, the title a
+// localized string on the screen — and, unlike the pause menu, the rows consume nothing on Enter,
+// so an Enter sent to the LIST reaches its OnItemClicked delegate (the screen's OnSelectionPressed,
+// which runs the callback and closes).
+
+struct ManageEquipmentView {
+    void* screen = nullptr;
+    void* list = nullptr;          // UIManageEquipmentMenu::List
+    std::string title;             // m_strTitleLabel — the title SetTitle pushes
+    std::vector<MenuItem> options; // rows in list order; handle is the UIListItemString
+    int selected = -1;             // List.SelectedIndex
+};
+
+/// The focused UIManageEquipmentMenu, or null. Game thread only.
+void* FindManageEquipmentScreen();
+
+ManageEquipmentView ReadManageEquipment(void* screen);
+
+/// P11 write-back. Game thread only.
+bool SetManageEquipmentSelection(const ManageEquipmentView& view, int index);
+
+/// Select, then Enter to the LIST. Game thread only.
+bool ActivateManageEquipmentRow(const ManageEquipmentView& view, int index);
+
 } // namespace GameUI

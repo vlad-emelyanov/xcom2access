@@ -39,8 +39,9 @@ struct MenuItem {
 // so one row type and one reader serve them all.
 
 /// The widget a row carries (UIMechaListItem's EUILineItemType, folded to what the recipes
-/// distinguish: SpinnerAndButton reads as Spinner, ColorChip as Value).
-enum class OptionWidget { Description, Spinner, Dropdown, Slider, Checkbox, Button, Value };
+/// distinguish: SpinnerAndButton reads as Spinner). A ColorChip row's `value` is the swatch's
+/// own Flash colour string ("0x00RRGGBB"), for Vocab::ColourName — never spoken raw.
+enum class OptionWidget { Description, Spinner, Dropdown, Slider, Checkbox, Button, Value, ColorChip };
 
 struct OptionRow {
     void* handle = nullptr; // AUIMechaListItem* — opaque
@@ -137,6 +138,9 @@ inline constexpr int kCmdEscape = 510;
 // bottom-bar buttons are the case in point: UIFacility_RoomFunc.OnUnrealCommand tests
 // FXS_BUTTON_A and nothing else, which is why they are mouse-or-gamepad in vanilla.
 inline constexpr int kCmdButtonA = 300;
+// The controller's Y button, for the same reason: UICharacterPool_ListPools answers DELETE on
+// FXS_BUTTON_Y alone (its rows' DELETE buttons look up a list index the button does not have).
+inline constexpr int kCmdButtonY = 303;
 
 /// Feed one input command to a row (UIMechaListItem.OnUnrealCommand with the release action —
 /// the phase the game's own handlers act on). Game thread only.

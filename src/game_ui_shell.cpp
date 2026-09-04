@@ -824,6 +824,156 @@ TextFieldState ReadFocusedTextField(void* screen)
     return s;
 }
 
+// ---- the character pool (UICharacterPool) and its pool files — docs/customize-recon.md §3 ----
+
+namespace {
+
+// UICharacterPool, from the dump; pinned in sdk_layout_checks.cpp.
+constexpr int32_t kPoolListOffset = 0x420;         // List (UIList*)
+constexpr int32_t kPoolTitleHeaderOffset = 0x428;  // TitleHeader (UIX2PanelHeader*)
+// Create, Import, Export, Delete, SelectAll, DeselectAll — spawned only when the mouse is active,
+// which on PC it is; each stays null otherwise.
+constexpr int32_t kPoolButtonOffsets[6] = {0x430, 0x438, 0x440, 0x448, 0x450, 0x458};
+constexpr int32_t kPoolEditLabelOffset = 0x4D4;    // m_strEditCharacter (FString)
+constexpr int32_t kPoolNoCharactersOffset = 0x554; // m_strNoCharacters (FString)
+constexpr int32_t kPoolOptionsListOffset = 0x5F8;  // OptionsList (UIList*) — the usage dropdown
+
+// UICharacterPool_ListPools.
+constexpr int32_t kPoolFilesListOffset = 0x420;        // List
+constexpr int32_t kPoolFilesTitleHeaderOffset = 0x430; // TitleHeader
+constexpr int32_t kPoolFilesFlagsOffset = 0x468;       // bIsExporting / bHasSelectedImportLocation
+constexpr uint32_t kPoolFilesExporting = 0x01;
+constexpr uint32_t kPoolFilesInFile = 0x02;
+
+// UIX2PanelHeader retains what SetText was handed.
+constexpr int32_t kPanelHeaderTitleOffset = 0x3D8; // Title (FString)
+constexpr int32_t kPanelHeaderLabelOffset = 0x3E8; // Label (FString)
+
+void ReadPanelHeader(void* screen, int32_t offset, std::string* title, std::string* subtitle)
+{
+    void* header = ReadPtrRaw(screen, offset);
+    if (!header)
+        return;
+    *title = ReadFStringField(header, kPanelHeaderTitleOffset);
+    *subtitle = ReadFStringField(header, kPanelHeaderLabelOffset);
+}
+
+} // namespace
+
+void* FindCharacterPoolScreen()
+{
+    static ScreenFinder sFinder{"UICharacterPool"};
+    static bool sReported = false;
+    void* screen = PreferStack("UICharacterPool", sFinder, sReported);
+    return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
+}
+
+CharacterPoolView ReadCharacterPool(void* screen)
+{
+    CharacterPoolView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+    ReadPanelHeader(screen, kPoolTitleHeaderOffset, &v.title, &v.subtitle);
+    v.editLabel = ReadFStringField(screen, kPoolEditLabelOffset);
+    v.emptyLabel = ReadFStringField(screen, kPoolNoCharactersOffset);
+    v.list = ReadPtrRaw(screen, kPoolListOffset);
+    if (v.list) {
+        v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
+        // Sized from the list: a pool holds as many soldiers as the player has made.
+        v.rows = ReadListRowsAll("CharacterPool: rows", v.list);
+    }
+    for (int32_t offset : kPoolButtonOffsets) {
+        MenuItem btn = ReadButtonField(screen, offset);
+        if (btn.handle)
+            v.buttons.push_back(std::move(btn));
+    }
+    if (void* options = ReadPtrRaw(screen, kPoolOptionsListOffset)) {
+        std::vector<OptionRow> rows = ReadListRows(options);
+        if (!rows.empty())
+            v.usage = rows.front();
+    }
+    return v;
+}
+
+bool SetCharacterPoolSelection(const CharacterPoolView& view, int index)
+{
+    return SetListIndex(view.list, index);
+}
+
+bool ToggleCharacterPoolRow(const CharacterPoolView& view, int index)
+{
+    if (!view.screen || !view.list)
+        return false;
+    SetListIndex(view.list, index);
+    return InvokeScreenVerb(view.screen, "SimulateMouseClickOnCheckbox");
+}
+
+bool EditCharacterPoolRow(const CharacterPoolView& view, int index)
+{
+    if (!view.screen || !view.list)
+        return false;
+    // EditSoldier reads List.GetSelectedItem() — the accept-handler-reads-its-own-selection
+    // rule, so the selection lands first.
+    SetListIndex(view.list, index);
+    return InvokeScreenVerb(view.screen, "EditSoldier");
+}
+
+void* FindPoolFilesScreen()
+{
+    static ScreenFinder sFinder{"UICharacterPool_ListPools"};
+    static bool sReported = false;
+    void* screen = PreferStack("UICharacterPool_ListPools", sFinder, sReported);
+    return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
+}
+
+PoolFilesView ReadPoolFiles(void* screen)
+{
+    PoolFilesView v;
+    if (!screen)
+        return v;
+    v.screen = screen;
+    ReadPanelHeader(screen, kPoolFilesTitleHeaderOffset, &v.title, &v.subtitle);
+    const uint32_t flags = ReadU32Raw(screen, kPoolFilesFlagsOffset);
+    v.exporting = (flags & kPoolFilesExporting) != 0;
+    v.inFile = (flags & kPoolFilesInFile) != 0;
+    v.list = ReadPtrRaw(screen, kPoolFilesListOffset);
+    if (v.list) {
+        v.selected = ReadI32Raw(v.list, kListSelectedIndexOffset);
+        // Sized from the list: inside a file the rows are that file's characters.
+        v.rows = ReadListRowsAll("PoolFiles: rows", v.list);
+    }
+    return v;
+}
+
+bool SetPoolFilesSelection(const PoolFilesView& view, int index)
+{
+    return SetListIndex(view.list, index);
+}
+
+bool ActivatePoolFilesRow(const PoolFilesView& view, int index)
+{
+    if (!view.screen || !view.list)
+        return false;
+    SetListIndex(view.list, index);
+    // OnClickLocal(UIList _list, int iItemIndex): the list's own OnItemClicked target, and what
+    // OnAccept's controller branch calls with the selection. Padded to the engine's 4-byte pack.
+    struct {
+        void* List;
+        int32_t Index;
+        int32_t pad;
+    } params{view.list, index, 0};
+    return CallNamedFunction(view.screen, "OnClickLocal", &params);
+}
+
+bool DeletePoolFilesRow(const PoolFilesView& view, int index)
+{
+    if (!view.screen || !view.list)
+        return false;
+    SetListIndex(view.list, index);
+    return SendScreenCommand(view.screen, kCmdButtonY);
+}
+
 } // namespace GameUI
 
 #ifdef _MSC_VER

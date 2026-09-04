@@ -65,4 +65,7 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Post-mission rewards recap (`UIRewardsRecap`) | `game_ui_avenger.cpp` (finder only) | `X2AccessRecapReader.uc`, `rewards recap` | avenger.md | `recruit-recap-recon.md` §2 |
 | Loot receipt (`UIInventoryTactical`) | `game_ui_tactical.cpp` | `X2AccessLootReader.uc`, `loot` | tactical.md | `tactical-modals-recon.md` §1 |
 | Soldier sheet (`UITacticalCharInfoScreen`) + the HUD stop's open verb | `game_ui_tactical.cpp` (widget reads) | `X2AccessCharInfoReader.OpenCharInfo` (the verb only), `soldier info` | tactical.md | `tactical-modals-recon.md` §2 |
+| Manage equipment (`UIManageEquipmentMenu`) | `game_ui_strategy.cpp` | — (no companion), `manage equipment` | strategy.md | `customize-recon.md` §1 |
+| Soldier customization (`UICustomize` + 16 subclasses, the option picker, the colour selector) | `game_ui_strategy.cpp` | `X2AccessCustomizeReader.uc`, `customize` | strategy.md | `customize-recon.md` §2 |
+| Character pool (`UICharacterPool`) + its import / export picker (`UICharacterPool_ListPools`) | `game_ui_shell.cpp` | — (no companion), `character pool` + `pool files` | shell.md | `customize-recon.md` §3 |
 

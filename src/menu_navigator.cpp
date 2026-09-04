@@ -529,10 +529,18 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     // select, after action and the armory, all listed below. Neither raises anything but dialogs
     // and the photobooth.
     &kBondConfirmRecipe, &kBondScreenRecipe,
+    // The strip-equipment menu: pushed over the loadout and over squad select (both below), and
+    // raising only its confirm dialogs above itself.
+    &kManageEquipmentRecipe,
     &kArmoryLoadoutRecipe,
     // Weapon upgrades (and the pattern picker pushed over them): opened from the hub below, and
     // pushing only the rename dialog and confirm dialogs, both listed earlier.
     &kWeaponUpgradeRecipe,
+    // Soldier customization, one recipe for the family: the category menu is pushed over the hub
+    // (below) or the character pool (near the end), each category screen over the menu and the
+    // picker over that — the probe takes the TOPMOST of the family, so their relative order needs
+    // no entry here. It raises the name-edit dialog (no recipe; the observer) and dialogs.
+    &kCustomizeRecipe,
     // The armory hub: under every screen it opens (all listed above), over the Armory room.
     &kArmoryMenuRecipe,
     // Below BOTH screens it opens: a slot asking for a soldier pushes UIPersonnel_CovertAction,
@@ -585,7 +593,11 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     // The ambient tactical recipe. Below every overlay a mission can raise (dialog, popup,
     // pause menu — all resolve above), and it can never contend with the strategy screens:
     // its probe requires a tactical gate no strategy stack can satisfy.
-    &kTacticalHudRecipe, &kMainMenuRecipe};
+    &kTacticalHudRecipe,
+    // The character pool's import / export picker is pushed over the pool, and the pool over the
+    // shell; both raise only dialogs, the text-entry dialog and the customization family (all
+    // listed above).
+    &kPoolFilesRecipe, &kCharacterPoolRecipe, &kMainMenuRecipe};
 static_assert(sizeof(kRecipes) / sizeof(kRecipes[0]) == Recipes::kRecipeCount,
     "a recipe was declared in recipes.h and not listed above — it would never be probed");
 

@@ -57,6 +57,8 @@ constexpr int32_t kMechaDescOffset = 0x404;       // UIMechaListItem::Desc (UISc
 constexpr int32_t kMechaFlagsOffset = 0x414;      // UIMechaListItem flag dword
 constexpr uint32_t kMechaDisabled = 0x01;         // bDisabled
 constexpr int32_t kMechaValueOffset = 0x418;      // UIMechaListItem::Value (UIScrollingText*)
+constexpr int32_t kMechaColorChipOffset = 0x420;  // UIMechaListItem::ColorChip (UIBGBox*)
+constexpr int32_t kBGBoxColorOffset = 0x3D8;      // UIBGBox::BGColor (FString, "0x00RRGGBB")
 constexpr int32_t kMechaSpinnerOffset = 0x428;    // UIMechaListItem::Spinner (UIListItemSpinner*)
 constexpr int32_t kMechaDropdownOffset = 0x430;   // UIMechaListItem::Dropdown (UIDropdown*)
 constexpr int32_t kMechaButtonOffset = 0x438;     // UIMechaListItem::Button (UIButton*)
@@ -1356,8 +1358,7 @@ bool ReadOptionRowRaw(void* item, RawOptionRow* out)
                 out->value, 256);
         break;
     }
-    case kLineValue:
-    case kLineColorChip: {
+    case kLineValue: {
         void* value = ReadPtrRaw(item, kMechaValueOffset);
         if (value) {
             if (CopyFStringRaw(reinterpret_cast<const uint8_t*>(value) + kScrollHtmlOffset,
@@ -1365,6 +1366,16 @@ bool ReadOptionRowRaw(void* item, RawOptionRow* out)
                 CopyFStringRaw(reinterpret_cast<const uint8_t*>(value) + kScrollTextOffset,
                     out->value, 256);
         }
+        break;
+    }
+    case kLineColorChip: {
+        // The swatch keeps its colour on the UIBGBox (SetColor → BGColor). UpdateDataColorChip
+        // HIDES the box for "0x00000000" — the weapon-colour default, drawn as no swatch at all —
+        // so a hidden chip reads as no colour, exactly as it looks.
+        void* chip = ReadPtrRaw(item, kMechaColorChipOffset);
+        if (chip && (ReadU32Raw(chip, kPanelFlagsOffset) & kPanelVisible))
+            CopyFStringRaw(reinterpret_cast<const uint8_t*>(chip) + kBGBoxColorOffset, out->value,
+                256);
         break;
     }
     default:
@@ -1382,8 +1393,8 @@ OptionWidget WidgetOf(uint8_t type)
     case kLineSlider: return OptionWidget::Slider;
     case kLineCheckbox: return OptionWidget::Checkbox;
     case kLineButton: return OptionWidget::Button;
-    case kLineValue:
-    case kLineColorChip: return OptionWidget::Value;
+    case kLineValue: return OptionWidget::Value;
+    case kLineColorChip: return OptionWidget::ColorChip;
     default: return OptionWidget::Description;
     }
 }
@@ -1419,6 +1430,27 @@ std::vector<OptionRow> ReadListRows(void* list)
     for (int i = 0; i < count; i++) {
         OptionRow row;
         if (MakeRow(items[i], i, &row))
+            rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
+// The same read sized from the list itself, for a list whose length the GAME decides and
+// nothing on screen bounds: a character pool holds as many soldiers as the player has made, and
+// a customization picker as many helmets as the DLC and mods installed. GetItem(i) IS
+// ItemContainer.ChildPanels[i], so the container's array is the list.
+std::vector<OptionRow> ReadListRowsAll(const char* what, void* list)
+{
+    std::vector<OptionRow> rows;
+    if (!list)
+        return rows;
+    void* container = ReadPtrRaw(list, kListItemContainerOffset);
+    if (!container)
+        return rows;
+    const std::vector<void*> items = ReadPtrArrayAllRaw(what, container, kPanelChildPanelsOffset);
+    for (size_t i = 0; i < items.size(); i++) {
+        OptionRow row;
+        if (MakeRow(items[i], static_cast<int>(i), &row))
             rows.push_back(std::move(row));
     }
     return rows;

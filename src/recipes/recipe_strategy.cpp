@@ -1438,9 +1438,13 @@ std::unique_ptr<GraphRender> BuildWeaponUpgrade()
                 row.label.empty() ? Vocab::CommandFallback(index) : row.label));
             vt.Announcements.back().Kind = AnnouncementKinds::Label;
             // The pattern row's value is its current pattern's name; the colour row is a swatch
-            // with no words at all, and says only its label.
-            if (!row.value.empty()) {
-                vt.Announcements.emplace_back(NodeAnnouncement::Static(row.value));
+            // with no words at all, named by its hue (Vocab::ColourName — an aid) and silent
+            // while the weapon wears the default, which the game draws as no swatch.
+            const std::string value = row.widget == GameUI::OptionWidget::ColorChip
+                ? Vocab::ColourName(row.value)
+                : row.value;
+            if (!value.empty()) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(value));
                 vt.Announcements.back().Kind = AnnouncementKinds::Value;
             }
             if (row.disabled) {
@@ -1476,6 +1480,356 @@ std::string WeaponUpgradeName()
     std::string name = WeaponUpgradeHeaderLine(words, "weapon");
     AppendPhrase(name, WeaponUpgradeHeaderLine(words, "who"));
     return name.empty() ? std::string(Vocab::ScreenWeaponUpgradeFallback) : name;
+}
+
+// ---- soldier customization (the UICustomize family) — docs/customize-recon.md §2 ----
+//
+// One recipe for the whole family, because the family is one layout: a soldier header over a
+// list of mecha rows, on the category menu, on every category screen, and on the option picker
+// pushed over any of them. The rows retain their words (label, current choice, checkbox state,
+// button label, a swatch's colour), so the companion supplies only the header line, the screen's
+// localized title and the info screen's biography box.
+//
+// THREE STOPS in the screen's own order: the soldier (a spinner while the game offers the cycle,
+// which vanilla puts on Tab and LeftShift — both the layer's, and only inside the armory), the
+// rows under the screen's title (the picker's rows under the label of the row that opened it,
+// since the picker keeps no title of its own), and on the info screen the biography. While the
+// COLOUR SELECTOR is up the whole graph is its grid instead: one row per grid row, so Up/Down
+// keep the column, each chip named by its hue (an aid — the game draws a swatch and a number).
+//
+// Enter is the screen's own; Escape stays the game's (the picker reverts, the selector reverts,
+// the screen closes). The picker's PREVIEW button — the voice picker's, on every row — is the
+// row's secondary action, so a voice can be heard without being chosen.
+
+constexpr const char* kCustomizeReaderClass = "X2AccessCustomizeReader";
+
+// Keyed on the rows, the screen and the UNIT pointer, discriminated on the unit id: the family
+// REUSES its rows across UpdateData (GetListItem spawns only past ItemCount), so a soldier cycle
+// changes neither the row set nor the screen — the unit is what changes, and a character-pool
+// unit has no ObjectID to discriminate on, hence the pointer. A name or biography edit goes
+// through the text-entry dialog, whose push detaches this recipe and drops the cache on the way.
+WireCache gCustomizeWords(kCustomizeReaderClass, "DescribeCustomize");
+
+const std::vector<WireRecord>& FetchCustomizeWords(const GameUI::CustomizeView& view)
+{
+    std::vector<void*> key;
+    key.reserve(view.rows.size() + 2);
+    for (const GameUI::OptionRow& row : view.rows)
+        key.push_back(row.handle);
+    key.push_back(view.unit);
+    key.push_back(view.screen);
+    return gCustomizeWords.Get(std::move(key), view.unitId);
+}
+
+std::string CustomizeHeaderField(const std::vector<WireRecord>& words, const char* key)
+{
+    const WireRecord* header = FindRecord(words, "header");
+    return header ? RecField(*header, key) : std::string();
+}
+
+// The soldier stop every screen of the family opens with — the armory hub's shape: the header
+// line, a spinner while the game offers the cycle, through the companion behind the screen's own
+// gate (the rows are reused, so the verb helper's invalidation is what makes the re-read fresh).
+void AddCustomizeSoldierStop(GraphBuilder& b, const std::vector<WireRecord>& words, bool canCycle)
+{
+    b.BeginStop("soldier");
+    b.PushContext("", "", /*positions*/ false);
+    std::string who = CustomizeHeaderField(words, "who");
+    if (who.empty())
+        who = Vocab::SoldierFallback;
+    NodeVtable vt;
+    vt.Type = canCycle ? &SpinnerType() : &TextType();
+    vt.Announcements.emplace_back(NodeAnnouncement::Static(who));
+    vt.Announcements.back().Kind = AnnouncementKinds::Label;
+    if (canCycle) {
+        vt.OnAdjust = [](int sign, bool) {
+            CallCompanionVerb(
+                gCustomizeWords, kCustomizeReaderClass, "CycleCustomizeSoldier", sign > 0 ? 1 : -1);
+        };
+        vt.StateText = []() {
+            return CustomizeHeaderField(FetchCustomizeWords(GameUI::ReadCustomize(gScreen)), "who");
+        };
+    }
+    b.AddItem(ControlId::Structural("customize/soldier"), std::move(vt));
+    b.PopContext();
+}
+
+// One row of a category screen as a node: the label, the current choice as a value (a swatch by
+// its hue, a checkbox by its state), a greyed row's state with the reason the game parked in its
+// tooltip. Every non-checkbox row opens something when pressed, which makes it a button.
+NodeVtable CustomizeRowVtable(const GameUI::OptionRow& row)
+{
+    NodeVtable vt;
+    vt.Announcements.emplace_back(NodeAnnouncement::Static(row.label));
+    vt.Announcements.back().Kind = AnnouncementKinds::Label;
+
+    std::string valueText;
+    switch (row.widget) {
+    case GameUI::OptionWidget::Checkbox:
+        vt.Type = &CheckboxType();
+        valueText = row.checked ? Vocab::Checked : Vocab::Unchecked;
+        break;
+    case GameUI::OptionWidget::ColorChip:
+        vt.Type = &ButtonType();
+        valueText = Vocab::ColourName(row.value);
+        break;
+    default:
+        vt.Type = &ButtonType();
+        valueText = row.value;
+        break;
+    }
+    if (!valueText.empty()) {
+        // LIVE: a colour accepted or a class changed repaints the row under the cursor, and the
+        // fresh render's closure answers the synchronous feedback path.
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(valueText));
+        vt.Announcements.back().Kind = AnnouncementKinds::Value;
+        vt.Announcements.back().Live = true;
+        vt.StateText = [valueText]() { return valueText; };
+    }
+    if (row.disabled) {
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+        vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        // SetDisabled(disabled, Reason) parks the why on the row's BG tooltip; read here so the
+        // reason rides the row, as the armory hub's does, rather than waiting for Space.
+        const std::string reason = GameUI::ReadRowTooltip(row.handle);
+        if (!reason.empty()) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(reason));
+            vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+        }
+    }
+    vt.OnTooltip = [handle = row.handle]() {
+        std::string tip = GameUI::ReadRowTooltip(handle);
+        if (!tip.empty())
+            TTS::SpeakInterrupt(tip);
+    };
+    return vt;
+}
+
+// One option of the picker: the option's name, the PREVIEW button's label where the row carries
+// one, and `selected` on the choice the soldier wears now — where the game lands, and what
+// Escape reverts to (the pattern picker's rule).
+NodeVtable CustomizeOptionVtable(const GameUI::OptionRow& row, const GameUI::CustomizeView& view)
+{
+    NodeVtable vt;
+    vt.Type = &ButtonType();
+    vt.Announcements.emplace_back(NodeAnnouncement::Static(row.label));
+    vt.Announcements.back().Kind = AnnouncementKinds::Label;
+    if (row.widget == GameUI::OptionWidget::Button && !row.value.empty()) {
+        // Advertised as well as bound: an unadvertised verb is one nobody presses.
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(row.value));
+        vt.Announcements.back().Kind = AnnouncementKinds::Value;
+    }
+    if (row.index == view.startingIndex) {
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Selected));
+        vt.Announcements.back().Kind = AnnouncementKinds::Selected;
+    }
+    if (row.disabled) {
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+        vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+    }
+    return vt;
+}
+
+std::unique_ptr<GraphRender> BuildColorSelector(const GameUI::CustomizeView& view)
+{
+    GraphBuilder b;
+    b.BeginStop("colours");
+    // The list is hidden under the grid but keeps its selection: the row that opened the grid
+    // names it (HAIR COLOR, MAIN COLOR…), as it does for a sighted player who just pressed it.
+    std::string title;
+    for (const GameUI::OptionRow& row : view.rows) {
+        if (row.index == view.selected) {
+            title = row.label;
+            break;
+        }
+    }
+    if (title.empty())
+        title = Vocab::CustomizeColours;
+    b.PushContext(title, "", /*positions*/ false);
+
+    ControlId start;
+    int currentRow = -1;
+    bool rowOpen = false;
+    for (const GameUI::ColorChip& chip : view.chips) {
+        if (chip.row != currentRow) {
+            if (rowOpen)
+                b.EndRow();
+            // One key for every grid row: column-preserving Up/Down across the whole grid.
+            b.StartRow("chips");
+            currentRow = chip.row;
+            rowOpen = true;
+        }
+        const int index = chip.index;
+        ControlId id = ControlId::Referenced(chip.handle, "customize/chip/" + std::to_string(index));
+        gFocus[id.StructuralKey] = FocusTarget{-1, nullptr, false,
+            [index]() { GameUI::SelectColorChip(GameUI::ReadCustomize(gScreen), index); }};
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        std::string name = Vocab::ColourName(chip.hex);
+        if (name.empty())
+            name = Vocab::ColourUnknown;
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(std::move(name)));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        // The number the chip draws in its corner — the game's own identity for it.
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(std::to_string(index)));
+        vt.Announcements.back().Kind = AnnouncementKinds::Value;
+        if (index == view.initialColor) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Selected));
+            vt.Announcements.back().Kind = AnnouncementKinds::Selected;
+        }
+        vt.OnActivate
+            = [index]() { GameUI::ActivateColorChip(GameUI::ReadCustomize(gScreen), index); };
+
+        // Land where the game's navigator is (the chip it highlighted on opening is the colour
+        // worn now), else on that colour.
+        if (chip.focused || (!start.IsValid() && index == view.initialColor))
+            start = id;
+        b.AddItem(std::move(id), std::move(vt));
+    }
+    if (rowOpen)
+        b.EndRow();
+    b.PopContext();
+    if (start.IsValid())
+        b.SetStart(std::move(start));
+    return b.Build();
+}
+
+std::unique_ptr<GraphRender> BuildCustomize()
+{
+    const GameUI::CustomizeView view = GameUI::ReadCustomize(gScreen);
+    if (view.colorSelector)
+        return BuildColorSelector(view);
+
+    const std::vector<WireRecord>& words = FetchCustomizeWords(view);
+    const bool canCycle = CustomizeHeaderField(words, "cycle") == "1";
+
+    GraphBuilder b;
+    AddCustomizeSoldierStop(b, words, canCycle);
+
+    // ---- the rows ----
+    b.BeginStop("options");
+    std::string title = view.trait ? view.openerLabel : CustomizeHeaderField(words, "title");
+    if (title.empty())
+        title = view.trait ? Vocab::ScreenCustomizeOptionsFallback : Vocab::ScreenCustomizeFallback;
+    b.PushContext(title, "", /*positions*/ true);
+    ControlId start;
+    bool haveStart = false;
+    for (const GameUI::OptionRow& row : view.rows) {
+        const int index = row.index;
+        ControlId id = ControlId::Referenced(row.handle, "customize/row/" + std::to_string(index));
+        gFocus[id.StructuralKey] = FocusTarget{index, nullptr, false};
+
+        NodeVtable vt = view.trait ? CustomizeOptionVtable(row, view) : CustomizeRowVtable(row);
+        // Offered even when greyed: the row's own Click refuses a disabled row silently, where
+        // a missing node would refuse it with nothing either — and a checkbox row's box is
+        // toggled through the screen, which is the one path its read-only box answers.
+        vt.OnActivate
+            = [index]() { GameUI::ActivateCustomizeRow(GameUI::ReadCustomize(gScreen), index); };
+        if (view.trait && row.widget == GameUI::OptionWidget::Button) {
+            // The PREVIEW button: hear the voice without choosing it. Vanilla reaches it by
+            // mouse only — the screen's own Enter picks and closes before the row sees it.
+            vt.OnSecondary
+                = [index]() { GameUI::PressCustomizeRow(GameUI::ReadCustomize(gScreen), index); };
+        }
+
+        // Land on the game's own selection — on the picker that is the choice worn now.
+        if (!haveStart && (index == view.selected || !start.IsValid())) {
+            start = id;
+            haveStart = index == view.selected;
+        }
+        b.AddItem(std::move(id), std::move(vt));
+    }
+    b.PopContext();
+
+    // ---- the biography box, on the info screen ----
+    if (const WireRecord* bio = FindRecord(words, "bio")) {
+        b.BeginStop("biography");
+        // Label and text as one line: the box is a caption over a paragraph, and an empty
+        // paragraph still leaves the caption — which is what the screen draws.
+        const std::string line = JoinPhrases(RecField(*bio, "label"), RecField(*bio, "text"));
+        if (!line.empty())
+            b.AddLabel(ControlId::Structural("customize/bio"), [line]() { return line; });
+    }
+
+    AddResourceStop(b);
+    if (start.IsValid())
+        b.SetStart(std::move(start));
+    return b.Build();
+}
+
+std::string CustomizeName()
+{
+    const GameUI::CustomizeView view = GameUI::ReadCustomize(gScreen);
+    if (view.trait) {
+        // The picker keeps no title: the row that opened it is what a sighted player just read.
+        return view.openerLabel.empty() ? std::string(Vocab::ScreenCustomizeOptionsFallback)
+                                        : view.openerLabel;
+    }
+    const std::vector<WireRecord>& words = FetchCustomizeWords(view);
+    std::string name = CustomizeHeaderField(words, "title");
+    if (name.empty())
+        name = Vocab::ScreenCustomizeFallback;
+    // Then whose — the fact a soldier cycle two screens up makes worth confirming.
+    AppendPhrase(name, CustomizeHeaderField(words, "who"));
+    return name;
+}
+
+bool SetCustomizeListIndex(void* screen, int index)
+{
+    return GameUI::SetCustomizeSelection(GameUI::ReadCustomize(screen), index);
+}
+
+// ---- manage equipment (UIManageEquipmentMenu) — docs/customize-recon.md §1 ----
+//
+// The pause menu's shape over three rows: strip items, strip gear, strip weapons. Each Enter
+// raises the game's own confirmation (the dialog recipe) and closes this menu behind it. On
+// mouse+keyboard the menu itself is reached only through a nav-help button, which the loadout
+// and squad-select recipes expose as their own verbs.
+std::unique_ptr<GraphRender> BuildManageEquipment()
+{
+    const GameUI::ManageEquipmentView view = GameUI::ReadManageEquipment(gScreen);
+    if (view.options.empty())
+        return nullptr; // OnInit has not built the rows yet
+
+    GraphBuilder b;
+    b.BeginStop("options");
+    for (const GameUI::MenuItem& opt : view.options) {
+        const int index = opt.index;
+        ControlId id = ControlId::Referenced(opt.handle, "manage/" + std::to_string(index));
+        gFocus[id.StructuralKey] = FocusTarget{index, nullptr, false};
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(opt.label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (opt.disabled) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        }
+        vt.Announcements.emplace_back(NodeAnnouncement(
+            [selected = opt.focused]() {
+                return selected ? std::string(Vocab::Selected) : std::string();
+            },
+            false, AnnouncementKinds::Selected));
+        vt.OnActivate = [index]() {
+            GameUI::ActivateManageEquipmentRow(GameUI::ReadManageEquipment(gScreen), index);
+        };
+        vt.OnTooltip = ListItemTooltipAction(opt.handle);
+        b.AddItem(std::move(id), std::move(vt));
+    }
+    return b.Build();
+}
+
+std::string ManageEquipmentName()
+{
+    const std::string title = GameUI::ReadManageEquipment(gScreen).title;
+    return title.empty() ? std::string(Vocab::ScreenManageEquipmentFallback) : title;
+}
+
+bool SetManageEquipmentListIndex(void* screen, int index)
+{
+    return GameUI::SetManageEquipmentSelection(GameUI::ReadManageEquipment(screen), index);
 }
 
 // ---- the geoscape's mission tray (UIStrategyMap) ----
@@ -2984,6 +3338,15 @@ const Recipe kArmoryMenuRecipe{"armory", ProbeFocused<GameUI::FindArmoryMenuScre
 // the upgrade screen and the finder takes the topmost of the family. Over the hub; under the
 // rename dialog (the text-entry observer's, a real screen) and the confirm dialog. No
 // SetListIndex: THREE lists, each written back through its own FocusTarget.
+// Soldier customization: pushed over the armory hub or the character pool, the picker over any
+// screen of its own family (the probe resolves that itself), raising only the text-entry dialog
+// and dialogs. The colour selector is a child of the screen, not a stack entry.
+const Recipe kCustomizeRecipe{"customize", ProbeFocused<GameUI::FindCustomizeScreen>,
+    BuildCustomize, CustomizeName, SetCustomizeListIndex};
+// The strip-equipment menu: over the loadout and over squad select, under its own confirmations.
+const Recipe kManageEquipmentRecipe{"manage equipment",
+    ProbeFocused<GameUI::FindManageEquipmentScreen>, BuildManageEquipment, ManageEquipmentName,
+    SetManageEquipmentListIndex};
 const Recipe kWeaponUpgradeRecipe{"weapon upgrades",
     ProbeFocused<GameUI::FindWeaponUpgradeScreen>, BuildWeaponUpgrade, WeaponUpgradeName};
 

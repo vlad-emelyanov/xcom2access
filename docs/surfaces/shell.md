@@ -43,6 +43,32 @@ a reader, not a rescue — deliberately the thinnest recipe in the file.
   is serial, and a list of autosaves differs in its description, not the minute it was written.
   The companion emits `time` and `desc` as separate fields for exactly this.
 
+## Character pool
+
+`UICharacterPool` and its import / export picker `UICharacterPool_ListPools` — the `character
+pool` and `pool files` recipes, native only. Built 2026-09-04 from source (`../customize-recon.md`
+§3); **not yet run live**. The editor they open is the customization family's recipe
+(`strategy.md`, "Soldier customization").
+
+- ⛔ **Both screens are keyboard dead ends in vanilla, in different ways.** On the pool, Enter
+  toggles a row's checkbox and EDIT — the reason the screen exists — is a gamepad button
+  (`FXS_BUTTON_X` → `EditSoldier`) with no keyboard equivalent. On the picker, `OnAccept` picks
+  only under `ISCONTROLLERACTIVE`, and Enter sent to the list is consumed by the row (a value row
+  clicks nothing; a button row presses its DELETE, whose handler looks the BUTTON up as a list
+  item and finds nothing). So EDIT is re-provided (Backspace on a row, and a button in the
+  actions stop), and the picker's Enter calls `OnClickLocal(List, index)` — the exact call the
+  controller branch makes with the selection.
+- **Backspace deletes a pool only where the game draws a DELETE button.** The game's own Y
+  button has no such gate and, in export mode, would delete `EnumeratedFilenames[-1]` from the
+  CREATE NEW POOL row. The verb is `FXS_BUTTON_Y` after selecting, so the game's own confirm
+  dialog follows.
+- The list keeps its selection under the action buttons (write-back onto a button does not
+  clear it): EDIT CHARACTER as a button acts on the row last visited.
+- The pool is `Hide()`n for up to two seconds after the push while the camera flies in
+  (`ForceShow`), and `OnCancel` animates out for three seconds before it pops. The recipe attaches
+  and detaches on focus, not on visibility, so it may speak into both windows; the words are
+  right either way.
+
 ## Text-entry dialog
 
 `UIInputDialogue` — naming a new save, and the error reporter. The player types into a **Flash

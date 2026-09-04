@@ -211,6 +211,14 @@ std::unique_ptr<GraphRender> BuildOptions()
                 GameUI::SendRowCommand(handle, GameUI::kCmdEnter);
             };
             break;
+        case GameUI::OptionWidget::ColorChip:
+            // No settings row is a swatch; if one ever is, its hue is the value.
+            vt.Type = &TextType();
+            valueText = Vocab::ColourName(row.value);
+            vt.OnActivate = [handle = row.handle]() {
+                GameUI::SendRowCommand(handle, GameUI::kCmdEnter);
+            };
+            break;
         case GameUI::OptionWidget::Value:
         case GameUI::OptionWidget::Description:
             vt.Type = &TextType();
@@ -902,6 +910,232 @@ std::string SaveLoadName()
     return name;
 }
 
+// ---- the character pool (UICharacterPool) and its pool files — docs/customize-recon.md §3 ----
+//
+// The main menu's roster of hand-made soldiers. THREE STOPS: the characters (checkbox rows —
+// Enter toggles the box as the game's own row Enter does; Backspace opens the character, which
+// vanilla puts on a gamepad button and nowhere on a keyboard), the actions (the edit verb again,
+// as a button, then the six buttons the mouse build draws, each greyed with the game's reason),
+// and the pool-usage dropdown. Escape stays the game's: OnCancel animates out and closes after
+// its own delay.
+
+std::unique_ptr<GraphRender> BuildCharacterPool()
+{
+    const GameUI::CharacterPoolView view = GameUI::ReadCharacterPool(gScreen);
+    const std::string editLabel
+        = view.editLabel.empty() ? std::string(Vocab::PoolEditFallback) : view.editLabel;
+
+    GraphBuilder b;
+
+    // ---- the characters ----
+    b.BeginStop("characters");
+    b.PushContext(view.title.empty() ? std::string(Vocab::ScreenCharacterPoolFallback) : view.title,
+        "", /*positions*/ true);
+    ControlId start;
+    bool haveStart = false;
+    for (const GameUI::OptionRow& row : view.rows) {
+        const int index = row.index;
+        ControlId id = ControlId::Referenced(row.handle, "pool/row/" + std::to_string(index));
+        gFocus[id.StructuralKey] = FocusTarget{index, nullptr, false};
+
+        NodeVtable vt;
+        vt.Type = &CheckboxType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(row.label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        const std::string state = row.checked ? Vocab::Checked : Vocab::Unchecked;
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(state));
+        vt.Announcements.back().Kind = AnnouncementKinds::Value;
+        vt.Announcements.back().Live = true;
+        vt.StateText = [state]() { return state; };
+        // The edit verb, advertised on the row the way the game's own nav help advertises it:
+        // an unadvertised verb is one nobody presses.
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(editLabel));
+        vt.Announcements.back().Kind = AnnouncementKinds::Value;
+        vt.OnActivate = [index]() {
+            GameUI::ToggleCharacterPoolRow(GameUI::ReadCharacterPool(gScreen), index);
+        };
+        vt.OnSecondary = [index]() {
+            GameUI::EditCharacterPoolRow(GameUI::ReadCharacterPool(gScreen), index);
+        };
+        vt.OnTooltip = PanelTooltipAction(row.handle);
+
+        if (!haveStart && (index == view.selected || !start.IsValid())) {
+            start = id;
+            haveStart = index == view.selected;
+        }
+        b.AddItem(std::move(id), std::move(vt));
+    }
+    if (view.rows.empty()) {
+        // The game's own line for an empty pool is the reason it greys SELECT ALL with.
+        const std::string empty
+            = view.emptyLabel.empty() ? std::string(Vocab::PoolEmptyFallback) : view.emptyLabel;
+        b.AddLabel(ControlId::Structural("pool/empty"), [empty]() { return empty; });
+    }
+    b.PopContext();
+
+    // ---- the actions ----
+    b.BeginStop("actions");
+    b.StartRow();
+    {
+        // EDIT as a button too, for a player who Tabs to the actions before hearing the row
+        // help. It acts on the row selected in the list, which the write-back keeps.
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(editLabel));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (view.rows.empty()) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        }
+        vt.OnActivate = []() {
+            const GameUI::CharacterPoolView fresh = GameUI::ReadCharacterPool(gScreen);
+            if (fresh.selected >= 0)
+                GameUI::EditCharacterPoolRow(fresh, fresh.selected);
+        };
+        b.AddItem(ControlId::Structural("pool/edit"), std::move(vt));
+    }
+    for (const GameUI::MenuItem& btn : view.buttons) {
+        ControlId id = ControlId::Referenced(btn.handle, "pool/btn/" + btn.label);
+        // The list keeps its selection under the buttons: EDIT reads it.
+        gFocus[id.StructuralKey] = FocusTarget{-1, btn.handle, false};
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(btn.label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (btn.disabled) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+            // DisableButton(reason) parks the why as the button's tooltip — nothing selected,
+            // nothing to select, everything already selected.
+            const std::string reason = GameUI::ReadPanelTooltip(btn.handle);
+            if (!reason.empty()) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(reason));
+                vt.Announcements.back().Kind = AnnouncementKinds::Reason;
+            }
+        }
+        vt.OnActivate = [handle = btn.handle]() { GameUI::ClickButton(handle); };
+        vt.OnTooltip = PanelTooltipAction(btn.handle);
+        b.AddItem(std::move(id), std::move(vt));
+    }
+    b.EndRow();
+
+    // ---- pool usage ----
+    if (view.usage.handle) {
+        const GameUI::OptionRow& row = view.usage;
+        b.BeginStop("usage");
+        ControlId id = ControlId::Referenced(row.handle, "pool/usage");
+        NodeVtable vt;
+        vt.Type = &DropdownType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(row.label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        if (!row.value.empty()) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(row.value));
+            vt.Announcements.back().Kind = AnnouncementKinds::Value;
+            vt.Announcements.back().Live = true;
+            vt.StateText = [value = row.value]() { return value; };
+        }
+        if (row.disabled) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
+            vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+        } else {
+            vt.OnAdjust = [handle = row.handle](int sign, bool) {
+                GameUI::AdjustDropdown(handle, sign);
+            };
+        }
+        // The row's BG carries the game's own explanation of the setting (m_strUsage_Tooltip).
+        vt.OnTooltip = [handle = row.handle]() {
+            std::string tip = GameUI::ReadRowTooltip(handle);
+            if (!tip.empty())
+                TTS::SpeakInterrupt(tip);
+        };
+        b.AddItem(std::move(id), std::move(vt));
+    }
+
+    if (start.IsValid())
+        b.SetStart(std::move(start));
+    return b.Build();
+}
+
+std::string CharacterPoolName()
+{
+    const GameUI::CharacterPoolView view = GameUI::ReadCharacterPool(gScreen);
+    std::string name = view.title.empty() ? std::string(Vocab::ScreenCharacterPoolFallback) : view.title;
+    AppendPhrase(name, view.subtitle);
+    return name;
+}
+
+bool SetCharacterPoolListIndex(void* screen, int index)
+{
+    return GameUI::SetCharacterPoolSelection(GameUI::ReadCharacterPool(screen), index);
+}
+
+// The import / export picker: one list, whose meaning the header states (a pool to export
+// into, a pool to import from, a character inside that pool). Enter picks — through the
+// screen's own OnClickLocal, since its keyboard path picks only for a controller — and
+// Backspace deletes a pool, offered exactly where the game draws a DELETE button.
+std::unique_ptr<GraphRender> BuildPoolFiles()
+{
+    const GameUI::PoolFilesView view = GameUI::ReadPoolFiles(gScreen);
+
+    GraphBuilder b;
+    b.BeginStop("files");
+    b.PushContext(view.title.empty() ? std::string(Vocab::ScreenPoolFilesFallback) : view.title,
+        "", /*positions*/ true);
+    ControlId start;
+    bool haveStart = false;
+    for (const GameUI::OptionRow& row : view.rows) {
+        const int index = row.index;
+        ControlId id = ControlId::Referenced(row.handle, "poolfiles/row/" + std::to_string(index));
+        gFocus[id.StructuralKey] = FocusTarget{index, nullptr, false};
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(row.label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.OnActivate = [index]() {
+            GameUI::ActivatePoolFilesRow(GameUI::ReadPoolFiles(gScreen), index);
+        };
+        if (row.widget == GameUI::OptionWidget::Button && !row.value.empty()) {
+            // The row's DELETE button, as the secondary action — advertised by its own label.
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(row.value));
+            vt.Announcements.back().Kind = AnnouncementKinds::Value;
+            vt.OnSecondary = [index]() {
+                GameUI::DeletePoolFilesRow(GameUI::ReadPoolFiles(gScreen), index);
+            };
+        }
+        vt.OnTooltip = PanelTooltipAction(row.handle);
+
+        if (!haveStart && (index == view.selected || !start.IsValid())) {
+            start = id;
+            haveStart = index == view.selected;
+        }
+        b.AddItem(std::move(id), std::move(vt));
+    }
+    if (view.rows.empty()) {
+        b.AddLabel(ControlId::Structural("poolfiles/empty"),
+            []() { return std::string(Vocab::PoolFilesEmpty); });
+    }
+    b.PopContext();
+    if (start.IsValid())
+        b.SetStart(std::move(start));
+    return b.Build();
+}
+
+std::string PoolFilesName()
+{
+    const GameUI::PoolFilesView view = GameUI::ReadPoolFiles(gScreen);
+    std::string name = view.title.empty() ? std::string(Vocab::ScreenPoolFilesFallback) : view.title;
+    // The subtitle is the mode — or, inside a file, that file's name.
+    AppendPhrase(name, view.subtitle);
+    return name;
+}
+
+bool SetPoolFilesListIndex(void* screen, int index)
+{
+    return GameUI::SetPoolFilesSelection(GameUI::ReadPoolFiles(screen), index);
+}
+
 } // namespace
 
 // ---- the recipes this file defines ----
@@ -939,6 +1173,14 @@ const Recipe kMainMenuRecipe{"main menu", ProbeMainMenu, BuildMainMenu, MainMenu
 // Above the pause menu and the shell it is opened from, below any dialog it raises.
 const Recipe kSaveLoadRecipe{
     "save/load", ProbeFocused<GameUI::FindSaveLoadScreen>, BuildSaveLoad, SaveLoadName};
+
+// The character pool over the shell; its picker over the pool; the customization family over
+// either (its own recipe, in the strategy file). All three raise only dialogs and the text-entry
+// dialog above themselves.
+const Recipe kCharacterPoolRecipe{"character pool", ProbeFocused<GameUI::FindCharacterPoolScreen>,
+    BuildCharacterPool, CharacterPoolName, SetCharacterPoolListIndex};
+const Recipe kPoolFilesRecipe{"pool files", ProbeFocused<GameUI::FindPoolFilesScreen>,
+    BuildPoolFiles, PoolFilesName, SetPoolFilesListIndex};
 
 } // namespace Recipes
 } // namespace MenuNavigator

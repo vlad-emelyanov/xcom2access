@@ -347,8 +347,57 @@ recipe with `X2AccessWeaponUpgradeReader`. Built 2026-09-03 from source (`../arm
   current pattern marked selected and landed on, Enter picks and closes, ⛔ Escape REVERTS to the
   starting pattern and closes — vanilla's own meaning, and the reason the current row says
   `selected`.
-- ⚠ The colour row opens `UIColorSelector`, D-pad-driven in vanilla and unread here; the name
-  row opens the text-entry dialog, which the observer echoes.
+- The colour row opens `UIColorSelector`, which the customize recipe reads (below) — it is the
+  same widget, and the topmost-of-the-family probe there does not cover this screen, so its
+  grid is unread HERE until the weapon-upgrade recipe learns the same build. The row itself now
+  names its swatch by hue. The name row opens the text-entry dialog, which the observer echoes.
+
+## Manage equipment
+
+`UIManageEquipmentMenu`, the `manage equipment` recipe, native only. Built 2026-09-04 from source
+(`../customize-recon.md` §1); **not yet run live**.
+
+- **The pause menu's shape, and the pause menu's activation** — select, then Enter to the LIST.
+  It works here for the reason the rows are plain: a `UIListItemString` without a confirm button
+  consumes nothing, so `UIList.OnUnrealCommand` reaches its own `OnItemClicked`. ⛔ That is a
+  property of THIS row class; see the customize rules below for the row class where it fails.
+- The opener is a nav-help button with no key (a gamepad's LT), which the loadout and
+  squad-select recipes already expose as verbs of their own. Escape stays the game's.
+
+## Soldier customization
+
+The `UICustomize` family — the category menu, the category screens, the option picker, and the
+colour selector inside any of them — one `customize` recipe with `X2AccessCustomizeReader`, probed
+as the TOPMOST stack entry that `IsKindOf UICustomize`. Built 2026-09-04 from source
+(`../customize-recon.md` §2); **not yet run live**.
+
+- ⛔ **A `UIMechaListItem` CONSUMES Enter, so "send Enter to the list" does not reach the list's
+  delegate on these rows.** `HandleClickableControls` answers any row with a `Desc` (every mecha
+  row) by `Click()`ing its delegate and returning true, and `HandleCustomControls` answers a
+  checkbox row through its box first — a `bReadOnly` box (the menu screen's three ALLOW rows)
+  returns true WITHOUT toggling. So the activation is the SCREEN's own Enter (which is what
+  reaches the row, and on the picker what picks-and-closes), and a checkbox row is toggled
+  through the screen's `SimulateMouseClickOnCheckbox` on the selection — the game's own
+  FXS_BUTTON_A body, minus a `bIsVisible` gate the game leaves false on screens it shows.
+- ⛔ **The picker keeps no title** (`UpdateTrait` drops the string it is handed), and the screen
+  beneath keeps its selection across the push. The picker is named by THAT row's label — the
+  word a sighted player just read — found by walking the stack to the next screen of the
+  family, past the mouse guard `bConsumeMouseEvents` pushes under every screen.
+- **The rows are REUSED across a soldier cycle** (`GetListItem` spawns only past `ItemCount`),
+  so the wire cache is keyed on the `Unit` POINTER as well as the rows, and discriminated on
+  `UnitRef.ObjectID` — which is 0 for a character-pool unit, hence the pointer.
+- **Escape stays the game's, and it REVERTS**: the picker re-fires its delegate with
+  `StartingIndex`, the colour selector closes with `InitialSelection`. Both are marked `selected`
+  and landed on, the pattern picker's rule.
+- **The colour grid is an AID**, labelled as one in `Vocab::ColourName`: the game draws a swatch
+  and a number, and the hue name is ours — coarse on purpose (eight hues, three lightnesses).
+  Distribution audit: every soldier's hair reading the same hue is the collapsed-value failure.
+- **The voice picker's PREVIEW is the row's secondary action** (Backspace): the screen's own
+  Enter picks and closes before the row's button could see it, so vanilla reaches PREVIEW by
+  mouse only.
+- The soldier cycle is re-provided as a spinner exactly as the armory hub's, behind the same
+  gate vanilla puts on Tab / LeftShift (`bInArmory` and a soldier to cycle to); in the character
+  pool's editor there is no cycle and no spinner.
 
 ## Covert actions
 

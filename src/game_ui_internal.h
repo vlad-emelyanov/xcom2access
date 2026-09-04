@@ -304,6 +304,10 @@ bool MakeRow(void* item, int index, OptionRow* out);
 // Every visible row of a UIList, indices preserved.
 std::vector<OptionRow> ReadListRows(void* list);
 
+// The same read sized from the list's own item array — for a list the GAME decides the length of
+// (the character pool, a customization picker). `what` names the site for the refusal line.
+std::vector<OptionRow> ReadListRowsAll(const char* what, void* list);
+
 // A visible UIButton at `offset` on `screen` as a MenuItem; handle stays null when the button
 // is absent, hidden, or unlabelled.
 MenuItem ReadButtonField(void* screen, int32_t offset);

@@ -139,6 +139,8 @@ static_assert(offsetof(AUIList, SelectedIndex) == 0x404, "UIList::SelectedIndex"
 static_assert(offsetof(AUIMechaListItem, Desc) == 0x404, "row Desc");
 static_assert(offsetof(AUIMechaListItem, BG) == 0x40C, "row BG");
 static_assert(offsetof(AUIMechaListItem, Value) == 0x418, "row Value");
+static_assert(offsetof(AUIMechaListItem, ColorChip) == 0x420, "row ColorChip");
+static_assert(offsetof(AUIBGBox, BGColor) == 0x3D8, "UIBGBox::BGColor");
 static_assert(offsetof(AUIMechaListItem, Spinner) == 0x428, "row Spinner");
 static_assert(offsetof(AUIMechaListItem, dropdown) == 0x430, "row Dropdown");
 static_assert(offsetof(AUIMechaListItem, Button) == 0x438, "row Button");
@@ -930,5 +932,62 @@ static_assert(offsetof(FUISummary_UnitEffect, Description) == 0x10,
     "UISummary_UnitEffect::Description");
 static_assert(offsetof(FUISummary_UnitEffect, AbilitySourceName) == 0x38,
     "UISummary_UnitEffect::AbilitySourceName");
+
+// ---- soldier customization (game_ui_strategy.cpp: UICustomize family, UIColorSelector, UIColorChip) ----
+//
+// The unit ref and pointer, the list and the colour selector on the base class; IdleAnimName is
+// the neighbour that pins the flag dword at 0x424 (bInArmory bit 0). The picker subclass adds the
+// landing index (Data heads its tail). The selector keeps its chips and the colour worn now; a
+// chip keeps its BG box (whose BGColor is pinned under the row above) and its grid position.
+static_assert(offsetof(AUICustomize, UnitRef) == 0x418, "UICustomize::UnitRef");
+static_assert(offsetof(AUICustomize, Unit) == 0x41C, "UICustomize::Unit");
+static_assert(offsetof(AUICustomize, IdleAnimName) == 0x428,
+    "UICustomize::IdleAnimName (the flag dword precedes at 0x424)");
+static_assert(offsetof(AUICustomize, List) == 0x440, "UICustomize::List");
+static_assert(offsetof(AUICustomize, ColorSelector) == 0x47C, "UICustomize::ColorSelector");
+static_assert(offsetof(AUICustomize_Trait, Data) == 0x514, "UICustomize_Trait::Data");
+static_assert(offsetof(AUICustomize_Trait, StartingIndex) == 0x544,
+    "UICustomize_Trait::StartingIndex");
+static_assert(offsetof(AUIColorSelector, ColorChips) == 0x400, "UIColorSelector::ColorChips");
+static_assert(offsetof(AUIColorSelector, Colors) == 0x410, "UIColorSelector::Colors");
+static_assert(offsetof(AUIColorSelector, InitialSelection) == 0x420,
+    "UIColorSelector::InitialSelection");
+static_assert(offsetof(AUIColorChip, BG) == 0x3D8, "UIColorChip::BG");
+static_assert(offsetof(AUIColorChip, Index) == 0x3F8, "UIColorChip::Index");
+static_assert(offsetof(AUIColorChip, Row) == 0x3FC, "UIColorChip::Row");
+static_assert(offsetof(AUIColorChip, Col) == 0x400, "UIColorChip::Col");
+
+// ---- manage equipment (game_ui_strategy.cpp: UIManageEquipmentMenu) ----
+static_assert(offsetof(AUIManageEquipmentMenu, List) == 0x410, "UIManageEquipmentMenu::List");
+static_assert(offsetof(AUIManageEquipmentMenu, m_strTitleLabel) == 0x440,
+    "UIManageEquipmentMenu::m_strTitleLabel");
+
+// ---- the character pool (game_ui_shell.cpp: UICharacterPool, UICharacterPool_ListPools, UIX2PanelHeader) ----
+//
+// The list, the header, the six buttons, the two labels the recipe speaks and the options list;
+// on the files screen m_strTitle is the neighbour that pins the flag dword at 0x468.
+static_assert(offsetof(AUICharacterPool, List) == 0x420, "UICharacterPool::List");
+static_assert(offsetof(AUICharacterPool, TitleHeader) == 0x428, "UICharacterPool::TitleHeader");
+static_assert(offsetof(AUICharacterPool, CreateButton) == 0x430, "UICharacterPool::CreateButton");
+static_assert(offsetof(AUICharacterPool, ImportButton) == 0x438, "UICharacterPool::ImportButton");
+static_assert(offsetof(AUICharacterPool, ExportButton) == 0x440, "UICharacterPool::ExportButton");
+static_assert(offsetof(AUICharacterPool, DeleteButton) == 0x448, "UICharacterPool::DeleteButton");
+static_assert(offsetof(AUICharacterPool, SelectAllButton) == 0x450,
+    "UICharacterPool::SelectAllButton");
+static_assert(offsetof(AUICharacterPool, DeselectAllButton) == 0x458,
+    "UICharacterPool::DeselectAllButton");
+static_assert(offsetof(AUICharacterPool, m_strEditCharacter) == 0x4D4,
+    "UICharacterPool::m_strEditCharacter");
+static_assert(offsetof(AUICharacterPool, m_strNoCharacters) == 0x554,
+    "UICharacterPool::m_strNoCharacters");
+static_assert(offsetof(AUICharacterPool, OptionsList) == 0x5F8, "UICharacterPool::OptionsList");
+static_assert(offsetof(AUICharacterPool_ListPools, List) == 0x420,
+    "UICharacterPool_ListPools::List");
+static_assert(offsetof(AUICharacterPool_ListPools, TitleHeader) == 0x430,
+    "UICharacterPool_ListPools::TitleHeader");
+static_assert(offsetof(AUICharacterPool_ListPools, m_strTitle) == 0x46C,
+    "UICharacterPool_ListPools::m_strTitle (the flag dword precedes at 0x468)");
+static_assert(offsetof(AUIX2PanelHeader, Title) == 0x3D8, "UIX2PanelHeader::Title");
+static_assert(offsetof(AUIX2PanelHeader, Label) == 0x3E8, "UIX2PanelHeader::Label");
 
 } // namespace
