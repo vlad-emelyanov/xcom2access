@@ -219,6 +219,8 @@ uint64_t gDetachMs = 0;
 uint64_t gGapLogMs = 0;
 uint64_t gLoadSaidMs = 0; // last "Loading" cue, 0 while none has been spoken this gap
 bool gGated = false;      // the game had the UI gated as of the last poll
+bool gCinematic = false;  // bCinematicMode as of the last poll — logged because it decides
+                          // attachment per SCREEN rather than for the whole layer
 
 std::unique_ptr<KeyGraph> gGraph;
 
@@ -888,7 +890,16 @@ void OnTick()
         // otherwise, and they are the same ones the game consults before opening its pause menu.
         GameUI::StackState stack = GameUI::ReadStackState();
         bool movie = GameUI::MoviePlaying();
-        bool gated = movie || (stack.valid && !stack.Interactive());
+        bool gated = movie || (stack.valid && stack.Blocked());
+        // ⛔ Cinematic mode is NOT one of those gates, and treating it as one cost a player three
+        // minutes of silence on the Chosen reveal. HideUIForCinematics() hides only the screens
+        // that do NOT declare bShowDuringCinematic; the ones that do stay inited, focused, on
+        // top and taking input — which is how the pause menu opens during a cutscene at all. So
+        // the refusal moves down to the SCREEN, one bit the game itself consults.
+        bool cinematic = stack.valid && stack.cinematic;
+        auto hiddenByCinematic = [&](void* screen) {
+            return cinematic && !GameUI::ScreenShowsDuringCinematic(screen);
+        };
         if (gated != gGated) {
             gGated = gated;
             LOG_INFO("MenuNavigator: UI %s (movie %d, input blocked %d, screens hidden %d, "
@@ -896,9 +907,21 @@ void OnTick()
                 gated ? "gated — nothing is navigable" : "ungated", movie, stack.inputBlocked,
                 stack.screensHidden, stack.cinematic);
         }
+        if (cinematic != gCinematic) {
+            gCinematic = cinematic;
+            LOG_INFO("MenuNavigator: cinematic mode %s — screens declaring bShowDuringCinematic "
+                     "stay attachable",
+                cinematic ? "on" : "off");
+        }
         if (gated) {
             if (gAttached)
                 Detach();
+            return;
+        }
+        // A cutscene that started UNDER an attached recipe takes its screen away exactly as a
+        // hard gate would.
+        if (gAttached && hiddenByCinematic(gScreen)) {
+            Detach();
             return;
         }
 
@@ -907,6 +930,12 @@ void OnTick()
             void* screen = nullptr;
             for (const Recipe* recipe : kRecipes) {
                 screen = recipe->Probe();
+                // A screen a cutscene has hidden still reads inited and focused (cinematic mode
+                // clears bIsVisible and nothing else), so every probe would happily find its
+                // corpse. Keep looking: the screen the cutscene LEFT up may be further down the
+                // roster than the one it took away.
+                if (screen && hiddenByCinematic(screen))
+                    screen = nullptr;
                 if (screen) {
                     found = recipe;
                     break;

@@ -70,6 +70,12 @@ struct StackState {
     bool cinematic = false;      // HideUIForCinematics()
 
     bool Interactive() const { return !inputBlocked && !screensHidden && !cinematic; }
+
+    /// Gated by something that takes the WHOLE UI away — no screen survives it. Cinematic mode
+    /// is deliberately not here: it takes away only the screens that do not declare
+    /// bShowDuringCinematic, and the ones that do (the pause menu, a dialog, the hacking pad,
+    /// the Chosen reveal) stay live and keep taking input. See ScreenShowsDuringCinematic.
+    bool Blocked() const { return inputBlocked || screensHidden; }
 };
 
 /// Game thread only. `valid` is false when there is no readable stack, in which case callers
@@ -108,6 +114,15 @@ std::string DescribeScreenStack();
 /// The raw UIPanel state dword behind IsScreenFocused. Diagnostics only — the navigator must
 /// key off IsScreenFocused, never off bits picked out of this by hand.
 uint32_t ScreenStateBits(void* screen);
+
+/// Does this screen survive a cutscene? `UIScreen.bShowDuringCinematic`, read off the SCREEN's
+/// own flag dword — the very bit `HideForCinematics()` consults before hiding anything. Seventeen
+/// shipped classes set it, and they are exactly the ones a player can still act on while the
+/// camera is doing something: the pause menu, the options and load screens, `UIDialogueBox`, the
+/// hacking pad, the dropship briefing, `UIChosenReveal`. ⛔ This is NOT `bIsVisible` — cinematic
+/// mode clears that bit on the screens it hides and leaves inited/focused alone, so the visible
+/// bit still cannot tell a live screen from a hidden one (the never-gate-on-bIsVisible rule).
+bool ScreenShowsDuringCinematic(void* screen);
 
 /// P11 write-back: drive the game's own navigation onto this button
 /// (UIPanel.SetSelectedNavigation) — brings the game's highlight and hover sound with it.

@@ -193,9 +193,12 @@ v1 punts (`_GPIntelOptions` cannot purchase; the sitrep info button has no node)
 
 ✅ recipe: `UIAlert` (118 variants), `UIAlert_DLC_Day60`, `UIAlert_DLC_Day90`,
 `UIFactionPopup`, `UIAbilityPopup`, `UISoldierBondAlert`, `UIChosenFragmentRecovered`,
-`UIChosenLevelUp`, `UIChosenReveal`, `UIUFOAttack`, `UISitRepInformation`, `UICombatLose`,
+`UIChosenLevelUp`, `UIUFOAttack`, `UISitRepInformation`, `UICombatLose`,
 `UIProgressDialogue`, `UIRedScreen`; ◐ `UIChosenEncountered`, `UISoldierCaptured` (2026-09-03,
-unexercised live — `chosen-bond-recon.md` §1.2-1.3). ✅ transient reader: `UINarrativeCommLink`,
+unexercised live — `chosen-bond-recon.md` §1.2-1.3); ◐ `UIChosenReveal` — the branch shipped
+2026-09-03 but the screen is pushed inside the reveal cinematic and the navigator's layer-wide
+cinematic gate never let it attach (fixed 2026-09-04, unexercised live —
+`popup-inventory.md` T6). ✅ transient reader: `UINarrativeCommLink`,
 `UIEventNotices` (fed by `UIEventNoticesTactical`, which is an `Object`, not a screen),
 `UIStrategyTutorialBox`.
 

@@ -161,6 +161,28 @@ and note that a rule with no measurement under it any more is a rule to delete, 
   reader's `UIWorldMessageMgr` polling is not a nicety there but the ONLY narration source.
   ✅ `X2AccessReplayNarration.uc` answers the gap: in a replay the history IS the event stream, so it
   walks frames instead of waiting for events, through the SAME builders.
+- **Cinematic mode hides SOME screens, and the stack flag says nothing about which.** Read from
+  source 2026-09-04, after the Chosen reveal read as three minutes of silence in a live Gatecrasher
+  run (`X2Access.log` 12:42:50 → 12:45:54 — "UI gated … cinematic 1", one detach, no attach, and the
+  player pressed Enter on an unread screen). `UIScreenStack.HideUIForCinematics()` sets
+  `bCinematicMode` and then walks `Screens` calling `UIScreen.HideForCinematics()`, whose whole body
+  is `if( !bShowDuringCinematic ) { super.Hide(); bIsVisiblePreCinematic = bPreviouslyViz; }`. So:
+  - The hide is per screen, and it touches `bIsVisible` ONLY — inited, focused, navigable and the
+    screen's place on the stack all survive it. A screen the cutscene took away is therefore
+    indistinguishable from one it left alone by every bit the readiness predicate is allowed to use
+    (the never-gate-on-`bIsVisible` rule). `bShowDuringCinematic` itself is the only tell.
+  - Seventeen shipped classes declare it: `UIChosenReveal`, `UIPauseMenu`, `UIOptionsPCScreen`,
+    `UILoadGame`, `UIDialogueBox`, `UIHackingScreen`, `UIDropShipBriefingBase`, `UIDropShipHUD`,
+    `UIInventoryTactical`, `UITactical_Photobooth`, `UINarrativeCommLink`, `UIStrategyTutorialBox`,
+    `UIWorldMessageMgr`, `UIAnchoredMessageMgr`, `UIMultiplayerChatManager`, `UIDebugInfo`,
+    `UIRedscreen`. Half of those are surfaces we already read, so the layer-wide refusal was
+    silencing the pause menu, the load screen, a dialog and the hacking pad mid-cutscene too.
+  - The game agrees it is not a gate: `XComPresentationLayerBase.UIPauseMenu(bAllowCinematicMode,
+    …)` refuses only on `ScreenStack.IsInputBlocked`, and takes cinematic mode as a PARAMETER.
+  - Offsets: the stack's flag dword is at 0x60 (`IsInputBlocked` 0x1, `ScreensVisible` 0x2,
+    `bCinematicMode` 0x8); `UIScreen`'s own is at 0x3E0 with `bShowDuringCinematic` = 0x10 —
+    a different dword from `UIPanel`'s at 0x284, and pinned by `UIScreen::Package` (0x3D8) and
+    `IdleDistortionAnimationLength` (0x3E4) in `sdk_layout_checks.cpp`.
 - **The tactical HUD holds no text.** Unlike the shell screens, every panel of `UITacticalHUD` is a
   write-only pipe into Flash: `SetStats` resolves name, rank, class, aim and effects out of the game
   state and hands them straight to `MC.BeginFunctionOp` / `QueueString`, retaining nothing

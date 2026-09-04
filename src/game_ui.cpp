@@ -123,6 +123,13 @@ constexpr uint32_t kStackScreensVisible = 0x2; // ScreensVisible — the whole U
 constexpr uint32_t kStackCinematic = 0x8;      // bCinematicMode — screens hidden for cinematics
 constexpr int32_t kStackScreensOffset = 0x6C;  // UIScreenStack::Screens (TArray<UIScreen*>)
 
+// ---- UIScreen's own flag dword (UIPanel's is at 0x284; this one is the SCREEN subclass's) ----
+// bShowDuringCinematic is the game's OWN answer to "does a cutscene take this screen away":
+// HideUIForCinematics() walks the stack calling HideForCinematics(), which hides a screen only
+// when the flag is CLEAR. See ScreenShowsDuringCinematic.
+constexpr int32_t kScreenFlagsOffset = 0x3E0;
+constexpr uint32_t kScreenShowDuringCinematic = 0x10;
+
 // EUILineItemType values (must match UIMechaListItem.uc / Flash).
 constexpr uint8_t kLineDescription = 0;
 constexpr uint8_t kLineColorChip = 1;
@@ -1587,6 +1594,13 @@ bool IsScreenFocused(void* screen)
 uint32_t ScreenStateBits(void* screen)
 {
     return screen ? ReadU32Raw(screen, kPanelFlagsOffset) : 0;
+}
+
+bool ScreenShowsDuringCinematic(void* screen)
+{
+    if (!screen)
+        return false;
+    return (ReadU32Raw(screen, kScreenFlagsOffset) & kScreenShowDuringCinematic) != 0;
 }
 
 void HintScreenChange()

@@ -43,7 +43,7 @@ individual popups are then cheap.
 | T3 | `UIWorldMessageMgr` | Anchored flyovers, damage numbers, "Unconscious", tutorial blades | ✅ `m_arrMsgs` | n/a (auto-expire) | ✅ **done** |
 | T4 | `UIEventNoticesTactical` / `UIEventNotices` | Top-right toast stack: "Concealment lost", objective ticks, banner notices | ✅ **`Notices` retained in full** — `DisplayString`, `Label`, `Value`, `eState`, `MaxDisplayTime` | n/a | ❌ **not read** — cheap win, poll it exactly like `m_arrMsgs`. ⚠ corrects CLAUDE.md, which says this retains nothing |
 | T5 | `UITacticalHUDMessageBanner` | The big dramatic banner: Chosen kidnap, Chosen extract, Chosen defeated, `SeqAct_ShowDramaticMessage` | ❌ pure `MC.FunctionString("SetBanner", …)` | n/a | ❌ — but the SOURCE is reachable: `X2Action_PlayMessageBanner.AddMessageBanner(Title, Icon, Msg1, Msg2, Color)` is a visualization action, so the companion catches it there rather than at the widget |
-| T6 | `UIChosenReveal` | Chosen first-encounter reveal (strength / weakness / rival faction) | ❌ built from templates into Flash | ✅ Enter/Space/Esc | ❌ |
+| T6 | `UIChosenReveal` | Chosen first-encounter reveal (strength / weakness / rival faction) | ❌ built from templates into Flash | ✅ Enter/Space/Esc | ◐ popup branch + `DescribeChosenReveal`. ⛔ Pushed DURING the reveal cinematic (`bShowDuringCinematic`), so it read as silence until the navigator's cinematic gate moved from the layer to the screen (2026-09-04) — see `engine-notes.md`. First live pass owed |
 | T7 | `UICombatLose` | Mission failed — Restart / Reload / Exit to main | localized strings ✅, choice list Flash | to verify | ❌ — high value: a blind player must be able to leave a lost mission |
 | T8 | `UIProgressDialogue` | "Saving…" / "Loading…" blocking spinner with optional Cancel | ✅ `m_kData` (`strTitle`/`strDescription`/`strAbortButtonText`) | ✅ Esc (cancel only) | ❌ — trivial, and today it reads as a silent freeze |
 | T9 | `UIRedScreen` | Script error overlay | ✅ `m_strErrorMsg` + `RedscreenLines` | ✅ | ❌ (dev-facing; low priority but free) |
@@ -284,6 +284,12 @@ Covered: `UIAlert` (+ both DLC subclasses), `UIFactionPopup`, `UIAbilityPopup`,
 `UIAdventOperations`, plus §4's three transient surfaces. Added 2026-09-03, unexercised:
 `UIChosenEncountered` and `UISoldierCaptured` (`chosen-bond-recon.md` §1.2-1.3) — both answer
 Enter/Space and NOT Escape, so their record carries a single button.
+
+⛔ **A popup can be raised INSIDE a cutscene**, and until 2026-09-04 the navigator refused the whole
+layer whenever `bCinematicMode` was set — so `UIChosenReveal` (raised by `X2Action_RevealAIBegin`
+mid-reveal), the pause menu, the load screen and `UIDialogueBox` were all unreadable there. The
+refusal is now per screen, on the game's own `UIScreen.bShowDuringCinematic`. When a popup reads as
+silence, check the log for `cinematic mode on` before suspecting the branch that builds its words.
 
 The popup family hand-transcribes **no offsets** and adds **no `static_assert`s** — activation is
 each screen's own `OnUnrealCommand`, so there are no button offsets to pin.

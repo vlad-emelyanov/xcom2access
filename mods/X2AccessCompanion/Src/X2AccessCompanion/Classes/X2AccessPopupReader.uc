@@ -326,7 +326,10 @@ private function DescribeChosenLevelUp(UIChosenLevelUp Popup)
 // "unknown" wording for any trait whose AbilityRevealEvent has not fired yet — so "you do not
 // know this one" is exactly what a sighted player is told, and substituting the real trait we
 // could look up would hand a blind player intel the game is withholding. This mirrors
-// UIChosenReveal.PopulateData's own two branches, per trait, in its order.
+// UIChosenReveal.OnInit's own two branches, per trait, in its order.
+//
+// ⚠ The screen is pushed DURING the reveal cinematic (bShowDuringCinematic), which is why it
+// went unread for so long — see the navigator's cinematic gate, not this class.
 private function DescribeChosenReveal(UIChosenReveal Popup)
 {
 	local XComGameState_Unit UnitState;
@@ -334,6 +337,7 @@ private function DescribeChosenReveal(UIChosenReveal Popup)
 	local XComGameState_HeadquartersAlien AlienHQ;
 	local XComGameState_ResistanceFaction Faction;
 	local array<X2AbilityTemplate> Traits;
+	local string Line;
 	local int i;
 
 	if (Popup == none)
@@ -356,8 +360,12 @@ private function DescribeChosenReveal(UIChosenReveal Popup)
 	if (Chosen == none)
 		return;
 
-	PushLine(Chosen.GetChosenClassName());
-	PushLine(Chosen.GetChosenName());
+	// The three slots SetChosenName pushes, in its order: class, name, nickname — one line, the
+	// same shape the encountered popup uses for the same three words.
+	Line = Chosen.GetChosenClassName();
+	class'X2AccessHelper'.static.AppendComma(Line, Chosen.GetChosenName());
+	class'X2AccessHelper'.static.AppendComma(Line, Chosen.GetChosenNickname());
+	PushLine(Line);
 
 	PushLine(Popup.ChosenStrengthTitle);
 	Traits = Chosen.GetChosenStrengths();
@@ -370,12 +378,23 @@ private function DescribeChosenReveal(UIChosenReveal Popup)
 	for (i = 0; i < Traits.Length; i++)
 		PushTrait(Popup, Chosen, Traits[i]);
 
+	// The rival faction is the last WEAKNESS row on screen — "Adversary: Templars" — drawn as one
+	// row from SetWeaknessFaction(RivalFactionTitle, FactionName), so it is one line here too.
+	// AppendComma is the join because the title ends in its own colon and must not take another
+	// separator (X2AccessHelper.AppendJoined's terminator test).
 	Faction = Chosen.GetRivalFaction();
 	if (Faction != none)
 	{
-		PushLine(Popup.RivalFactionTitle);
-		PushLine(Faction.GetFactionName());
+		Line = Popup.RivalFactionTitle;
+		class'X2AccessHelper'.static.AppendComma(Line, Faction.GetFactionName());
+		PushLine(Line);
 	}
+
+	// ONE button, because the screen draws one: its NavHelp offers CONFIRM and nothing else, and
+	// Escape merely closes the same way. The generic Continue/Dismiss fallback would invent a
+	// second verb that does the same thing.
+	PushButton(0, class'UIUtilities_Text'.default.m_strGenericConfirm,
+		class'UIUtilities_Input'.const.FXS_KEY_ENTER);
 }
 
 // One trait row, revealed or not — the reveal test is the screen's own.

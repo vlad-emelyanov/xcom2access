@@ -321,12 +321,23 @@ path-API survey, the field maps — is **`docs/engine-notes.md`**. What it oblig
   screen that passes every readiness test, reads as empty, and leaves the layer silently detached
   with the menu open. Screen scans must FILTER by the usability predicate (which must reject
   `bIsRemoved`), never pick by position. The durable fix is walking `UIScreenStack.Screens` (0x6C).
-- **Topmost is not the same as reachable.** Starting a campaign pops the narrative screen and leaves
-  `UIShellDifficulty` underneath inited, focused and top of the stack for the ~12 s the loading movie
-  plays. The stack carries the game's own answer in its flag dword at 0x60: `IsInputBlocked` (0x1),
-  `ScreensVisible` (0x2, so hidden when CLEAR) and `bCinematicMode` (0x8) — the same gates the game
-  consults before opening its pause menu. Any of them set means nothing is navigable;
+- **Topmost is not the same as reachable — and "gated" is not one question but two.** Starting a
+  campaign pops the narrative screen and leaves `UIShellDifficulty` underneath inited, focused and
+  top of the stack for the ~12 s the loading movie plays. The stack carries the game's own answer in
+  its flag dword at 0x60: `IsInputBlocked` (0x1) and `ScreensVisible` (0x2, so hidden when CLEAR)
+  take the WHOLE UI away, and so does a full-screen movie (not a UI flag at all —
+  `XComEngine.IsAnyMoviePlaying`). Any of those three means nothing is navigable;
   `MenuNavigator::OnTick` detaches and refuses to attach while gated.
+  - ⛔ **`bCinematicMode` (0x8) is NOT one of them, and reading it as one cost a player three
+    minutes of silence on the Chosen reveal.** `UIScreenStack.HideUIForCinematics()` hides only the
+    screens that do NOT declare `UIScreen.bShowDuringCinematic` (0x10 in the SCREEN's own flag dword
+    at 0x3E0, distinct from UIPanel's at 0x284). Seventeen shipped classes declare it, and they are
+    exactly the ones a player can still act on mid-cutscene: the pause menu — whose spawner takes a
+    `bAllowCinematicMode` parameter and consults only `IsInputBlocked` — the options and load
+    screens, `UIDialogueBox`, `UIHackingScreen`, the dropship briefing, `UIChosenReveal`. So the
+    cinematic refusal is per SCREEN (`GameUI::ScreenShowsDuringCinematic`), never for the layer, and
+    it cannot be inferred from `bIsVisible`: that is the bit the hide clears, and the next rule says
+    why it answers nothing on its own.
 - **Never gate screen readiness on `bIsVisible`** (UIPanel flag dword bit 0x20). The game leaves it
   FALSE on screens it is plainly showing: a live, focused pause menu reads 0x259 and so does the
   exit-to-main-menu confirmation dialog over it — `bIsNavigable|bIsFocused|bIsInited`, no visible

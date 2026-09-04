@@ -42,6 +42,13 @@ static_assert(offsetof(AUIPanel, CachedTooltipId) == 0x2AC, "UIPanel::CachedTool
 static_assert(offsetof(AUIPanel, MCPath) == 0x2B0, "UIPanel::MCPath");
 static_assert(offsetof(AUIPanel, Movie) == 0x2B8, "UIPanel::Movie");
 
+// ---- UIScreen (its OWN flag dword at 0x3E0 is bitfields; Package and the float after it pin
+// the layout on both sides). bShowDuringCinematic (0x10) is what MenuNavigator reads to tell a
+// screen a cutscene HIDES from one it leaves live — the game's own test in HideForCinematics.
+static_assert(offsetof(AUIScreen, Package) == 0x3D8, "UIScreen::Package");
+static_assert(offsetof(AUIScreen, IdleDistortionAnimationLength) == 0x3E4,
+    "UIScreen flag dword precedes IdleDistortionAnimationLength at 0x3E4");
+
 // ---- UIMovie / presentation / tooltip chain ----
 static_assert(offsetof(UUIMovie, PRES) == 0x204, "UIMovie::PRES");
 
