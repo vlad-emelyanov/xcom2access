@@ -301,6 +301,9 @@ function CursorMoveTo()
 		// concealment" while the second press is still theirs to withhold.
 		class'X2AccessHelper'.static.AppendComma(Desc, DescribePathRisks(PathingPawn, UnitState));
 		AppendPart(Desc, DescribeCoverEdges(WorldData.GetPositionFromTileCoordinates(Dest), true));
+		// Who would see the soldier there and whether the cover holds — the eye markers and the
+		// red shield the game draws on this very destination while the puck sits on it.
+		AppendPart(Desc, DescribeSight(Dest, WorldData.GetPositionFromTileCoordinates(Dest)));
 		AppendPart(Desc, "Press again to move");
 		NativeResult = Desc;
 		bMovePending = true;
@@ -316,6 +319,48 @@ function CursorMoveTo()
 		NativeResult = "Moving";
 	else
 		NativeResult = "Cannot move there";
+}
+
+// Left Alt — the game's target preview, spoken (DescribeTargetPreview has the parity case). The
+// native side passes the key THROUGH rather than swallowing it, so the game's own strip rises
+// under the same press and nothing vanilla is displaced.
+//
+// Answers about the planted cursor tile, the tile the last readout described. Before the cursor
+// is planted it answers about the pathing pawn's own destination — literally what the strip on
+// screen is showing — and plants nothing: this is a vanilla key, and planting would take the
+// mouse over (lazy plant is lazy takeover, docs/surfaces/tactical.md). A hidden pawn (not the
+// player's turn to move) falls back to the unit's own tile, the one place the question still
+// has an answer.
+function CursorTargetPreview()
+{
+	local XComTacticalController TC;
+	local XCom3DCursor Cursor;
+	local XComWorldData WorldData;
+	local XComPathingPawn PathingPawn;
+	local XComGameState_Unit UnitState;
+	local TTile Tile;
+
+	NativeResult = "";
+	if (!GetContext(TC, Cursor, WorldData))
+		return;
+
+	if (bPlanted && PlantedMissionID == CurrentMissionID())
+		Tile = CurTile();
+	else
+	{
+		UnitState = ActiveUnitState();
+		if (UnitState == none)
+		{
+			NativeResult = "No unit selected";
+			return;
+		}
+		PathingPawn = TC.m_kPathingPawn;
+		if (PathingPawn != none && !PathingPawn.bHidden)
+			Tile = PathingPawn.LastDestinationTile;
+		else
+			Tile = UnitState.TileLocation;
+	}
+	NativeResult = DescribeTargetPreview(Tile, true);
 }
 
 // ---------------------------------------------------------------------------
@@ -372,7 +417,17 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 	AppendPart(Result, UnitPart);
 
 	AppendPart(Result, DescribeInteractives(Tile));
+	// The evac zone, ahead of cover: on the turn it matters, "am I standing in it" outranks
+	// every other fact this line carries. Not fog-gated — the never-seen branch above already
+	// returned, and inside explored ground the painted footprint is something a sighted player
+	// simply sees. The oracle is X2AccessHelper's, shared with the object scanner's ring so the
+	// two surfaces cannot disagree about where the zone is.
+	AppendPart(Result, class'X2AccessHelper'.static.DescribeEvacZone(Tile));
 	AppendPart(Result, DescribeCoverEdges(TilePos, bVerbose));
+	// Straight after the cover it qualifies: who would see a soldier here, and whether that
+	// cover holds against them. Impassable tiles skip it for the reason they skip reachability.
+	if (!bImpassable)
+		AppendPart(Result, DescribeSight(Tile, TilePos));
 
 	// The red detection overlay, per tile (docs/concealment-recon.md §3). No FOW gate of our own:
 	// the game paints red over explored fog too, and a never-seen tile already returned above.
@@ -401,9 +456,238 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 	if (bVerbose)
 		AppendPart(Result, "Tile" @ string(Tile.X) $ "," @ string(Tile.Y) $ "," @ string(Tile.Z));
 
+	// The game's own Gameplay option "Show Target Preview" keeps the strip up on every hover
+	// instead of only while Alt is held; on, the strip rides every step here too. LAST, because
+	// it is the long clause and everything before it is what a step is for.
+	if (!bImpassable && TargetPreviewAlwaysOn())
+		AppendPart(Result, DescribeTargetPreview(Tile, false));
+
 	if (Result == "")
 		Result = "Clear";
 	return Result;
+}
+
+// The profile flag behind the Gameplay option "Show Target Preview" (UIOptionsPCScreen ->
+// m_bTargetPreviewAlwaysOn), the same one UITacticalHUD_EnemyPreview.CheckForHide reads.
+private function bool TargetPreviewAlwaysOn()
+{
+	local XComOnlineProfileSettings Profile;
+
+	Profile = `XPROFILESETTINGS;
+	return Profile != none && Profile.Data.m_bTargetPreviewAlwaysOn;
+}
+
+// Who would see a soldier standing on Tile, and whether the tile's cover holds against them —
+// the spoken form of two things the game draws the instant the path destination changes
+// (XComPathingPawn.UpdatePathTileData): the EYE every visible enemy's flag gets when that enemy
+// has line of sight to the destination (UIUnitFlagManager.RealizePreviewEndOfMoveLOS; the
+// ShowLOSPreview config ships true, no key held), and the FlankedColor the destination's cover
+// shield takes when a visible enemy would flank it (XComActionIconManager). Both are on screen
+// for every hover, so both ride every step.
+//
+// The enemy set is the game's: GetAllEnemiesForLocation is what FillPathTileDataAndVisibleObjects
+// runs per path tile, kept — as the game keeps it — to bVisibleBasic (clear LOS AND inside the
+// enemy's sight radius: the eye means "they would see you", not "there is a line") and to
+// enemies the squad can see. The game's filter for the latter is ObjectsVisibleToPlayer;
+// CanXComSquadSeeTarget is the gate the detection readout and the scanner's enemy ring already
+// use, so three surfaces agree about who counts. IsEnemyUnit is the hostility test rather than
+// a team compare, because the location query returns everyone NOT on the soldier's team —
+// civilians included — while the Lost, on their own team, must count.
+//
+// The flank test is XGUnitNativeBase.DoesFlankCover over the tile's own cover point — the
+// function the AI runs when it weighs a spot (XGAIBehavior.uc:5060), handed the FLANKER's
+// position. The shield's colouring is native and unreadable, so this is the nearest documented
+// oracle rather than a copy of it; a first live pass should shape-count "flanked" against
+// covered tiles, since a clause that fires on every covered tile or on none is this argument
+// order being wrong.
+//
+// Silent at zero: the game draws no eye, and "Seen by 0" on every step of a quiet map is the
+// noise the DescribeVisibleEnemies rule already forbids. "flanked" can only follow a count.
+private function string DescribeSight(TTile Tile, vector TilePos)
+{
+	local XComWorldData WorldData;
+	local XComGameStateHistory History;
+	local XComGameState_Unit UnitState, Enemy;
+	local X2CharacterTemplate Template;
+	local array<GameRulesCache_VisibilityInfo> Viewers;
+	local XComCoverPoint CP;
+	local bool bHasCover, bFlanked;
+	local int i, Count;
+	local string Result;
+
+	UnitState = ActiveUnitState();
+	if (UnitState == none)
+		return "";
+
+	WorldData = `XWORLD;
+	History = `XCOMHISTORY;
+	bHasCover = WorldData.GetCoverPointAtFloor(TilePos, CP);
+
+	class'X2TacticalVisibilityHelpers'.static.GetAllEnemiesForLocation(TilePos,
+		UnitState.ControllingPlayer.ObjectID, Viewers);
+	for (i = 0; i < Viewers.Length; i++)
+	{
+		if (!Viewers[i].bVisibleBasic)
+			continue;
+		Enemy = XComGameState_Unit(History.GetGameStateForObjectID(Viewers[i].SourceID));
+		if (Enemy == none || !Enemy.IsAlive() || !UnitState.IsEnemyUnit(Enemy))
+			continue;
+		Template = Enemy.GetMyTemplate();
+		if (Template != none && Template.bIsCosmetic)
+			continue;
+		if (!class'X2TacticalVisibilityHelpers'.static.CanXComSquadSeeTarget(Enemy.ObjectID))
+			continue;
+		Count++;
+		if (bHasCover && !bFlanked
+			&& class'XGUnitNativeBase'.static.DoesFlankCover(
+				WorldData.GetPositionFromTileCoordinates(Enemy.TileLocation), CP))
+			bFlanked = true;
+	}
+
+	if (Count == 0)
+		return "";
+	Result = "Seen by" @ string(Count);
+	if (bFlanked)
+		AppendComma(Result, "flanked");
+	return Result;
+}
+
+// The game's target preview — the strip UITacticalHUD_EnemyPreview fills for the path
+// destination (UpdatePreviewTargets, reproduced clause for clause): which enemies could be shot
+// from Tile, which only through squadsight, and which would be FLANKED from there. A sighted
+// player sees it while Left Alt is held, or on every hover with the Gameplay option "Show Target
+// Preview" on; it is spoken on exactly those two terms — Alt (CursorTargetPreview) and, with the
+// option on, at the end of every step's readout.
+//
+// Read off the screen wherever the screen has it: the strip's own current target list is the
+// starting set (the game starts from it too), the preview panel's StandardAbilityTarget and its
+// LivingHostileGameplayVisibleFilter are the very objects the game validates with, and the
+// heading is the panel's localized Label. Per target, the facts come from the same
+// GetVisibilityInfoFromRemoteLocation query the panel runs. TargetCover is what it tests for the
+// flanked marker — CT_None on a unit that can take cover, a unit in the open included, which is
+// also what the to-hit calc calls flanked — and the other two values are spoken through the shot
+// readout's own CoverWords, so the clause matches what the shot HUD will say the moment that
+// target is selected from there.
+//
+// Greyed icons — enemies on the strip now that could NOT be shot from Tile — are "not
+// targetable", because a sighted player sees them dim rather than gone. bSpeakEmpty: a pressed
+// key owes an answer; the per-step line stays silent at zero, as the rest of it does.
+private function string DescribeTargetPreview(TTile Tile, bool bSpeakEmpty)
+{
+	local XComPresentationLayer Pres;
+	local UITacticalHUD HUD;
+	local UITacticalHUD_EnemyPreview Preview;
+	local X2GameRulesetVisibilityManager VisibilityMgr;
+	local XComGameStateHistory History;
+	local XComGameState_Unit UnitState, EnemyUnit;
+	local XComGameState_BaseObject Target;
+	local X2CharacterTemplate Template;
+	local GameRulesCache_VisibilityInfo Info, EmptyInfo;
+	local array<StateObjectReference> Targets, VisibleToPlayer;
+	local array<int> AffIDs, AffSquadsight, AffCover;
+	local string Result, Entry, Heading;
+	local int i, j;
+
+	UnitState = ActiveUnitState();
+	if (UnitState == none)
+		return bSpeakEmpty ? "No unit selected" : "";
+
+	Pres = `PRES;
+	if (Pres == none)
+		return "";
+	HUD = Pres.GetTacticalHUD();
+	if (HUD == none || HUD.m_kEnemyTargets == none)
+		return "";
+	Preview = UITacticalHUD_EnemyPreview(HUD.m_kEnemyPreview);
+	if (Preview == none || Preview.StandardAbilityTarget == none)
+		return "";
+
+	History = `XCOMHISTORY;
+	VisibilityMgr = `TACTICALRULES.VisibilityMgr;
+	if (VisibilityMgr == none)
+		return "";
+
+	// Start with what the real strip shows from where the soldier stands now.
+	Targets = HUD.m_kEnemyTargets.m_arrTargets;
+
+	class'X2TacticalVisibilityHelpers'.static.GetAllVisibleObjectsForPlayer(
+		UnitState.ControllingPlayer.ObjectID, VisibleToPlayer, , , true);
+	for (i = 0; i < VisibleToPlayer.Length; i++)
+	{
+		Info = EmptyInfo;
+		Info.SourceID = UnitState.ObjectID;
+		Info.TargetID = VisibleToPlayer[i].ObjectID;
+		if (!VisibilityMgr.GetVisibilityInfoFromRemoteLocation(UnitState.ObjectID, Tile,
+			VisibleToPlayer[i].ObjectID, Info))
+			continue;
+		if (!Info.bClearLOS)
+			continue;
+		if (!VisibilityMgr.EvaluateConditions(Info, -1,
+			class'UITacticalHUD_EnemyPreview'.default.LivingHostileGameplayVisibleFilter))
+			continue;
+
+		Target = History.GetGameStateForObjectID(VisibleToPlayer[i].ObjectID);
+		if (Target == none)
+			continue;
+		EnemyUnit = XComGameState_Unit(Target);
+		if (EnemyUnit != none)
+		{
+			Template = EnemyUnit.GetMyTemplate();
+			if (Template != none && Template.bIsCosmetic)
+				continue;
+		}
+		if (!Preview.StandardAbilityTarget.ValidatePrimaryTargetOptionFromRemoteLocation(
+			UnitState, Tile, Target))
+			continue;
+
+		AffIDs.AddItem(Target.ObjectID);
+		AffSquadsight.AddItem(Info.bVisibleBasic ? 0 : 1);
+		AffCover.AddItem((EnemyUnit != none && EnemyUnit.CanTakeCover()) ? int(Info.TargetCover) : -1);
+		if (Targets.Find('ObjectID', Target.ObjectID) == INDEX_NONE)
+			Targets.AddItem(Target.GetReference());
+	}
+
+	Result = "";
+	for (i = 0; i < Targets.Length; i++)
+	{
+		Target = History.GetGameStateForObjectID(Targets[i].ObjectID);
+		if (Target == none)
+			continue;
+		EnemyUnit = XComGameState_Unit(Target);
+		if (EnemyUnit != none)
+			Entry = EnemyUnit.GetName(eNameType_Full);
+		else
+			Entry = class'X2AccessTacticalReader'.static.DescribeNonUnitTarget(Targets[i]);
+
+		j = AffIDs.Find(Targets[i].ObjectID);
+		if (j == INDEX_NONE)
+			AppendComma(Entry, "not targetable");
+		else
+		{
+			if (AffSquadsight[j] != 0)
+				AppendComma(Entry, "via squadsight");
+			if (AffCover[j] == CT_None)
+				AppendComma(Entry, "flanked");
+			else if (AffCover[j] >= 0)
+				AppendComma(Entry, class'X2AccessTacticalReader'.static.CoverWords(ECoverType(AffCover[j])));
+		}
+		AppendPart(Result, Entry);
+	}
+
+	if (Result == "")
+	{
+		if (!bSpeakEmpty)
+			return "";
+		Result = "No targets";
+	}
+
+	// The panel's own heading ("TARGET PREVIEW:"), localized by the game. Verified populated: the
+	// class that declares it is the section XComGame.<loc> ships it under.
+	Heading = class'UITacticalHUD_EnemyPreview'.default.Label;
+	if (Heading == "")
+		Heading = "Targets:";
+	AppendPart(Heading, Result);
+	return Heading;
 }
 
 // Per-edge cover in compass words, named directly by the engine's own cover-flag order

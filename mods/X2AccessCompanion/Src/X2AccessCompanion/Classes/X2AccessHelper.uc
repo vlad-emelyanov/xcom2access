@@ -349,6 +349,52 @@ static function string DescribeHazards(XComWorldData WorldData, TTile Tile)
 	return Result;
 }
 
+// Is this tile inside the XCom evac zone, and would standing here count? "" when there is no
+// zone or the tile is outside it.
+//
+// The zone is a painted 3-by-3 footprint on the ground a sighted player cannot miss, and the
+// tile cursor is the surface a blind player sweeps the ground with — so the zone belongs in the
+// per-tile line, not only in the object scanner's ring. The scanner answers "where is it"; this
+// answers "am I in it", which is the question you ask on the last turn while walking the squad in.
+//
+// ⛔ ONE BOX, asked of the game: GetEvacMinMax is the same extent XComGameState_EvacZone's own
+// IsUnitInEvacZone tests, so this line and the scanner's "N of M inside" count can never drift
+// into disagreeing about where the zone is (the two-surfaces-must-agree rule). Note the box is
+// NOT the 2D one: GetEvacMinMax widens Z by one level in each direction, which is why a soldier
+// on the step below the painted square still evacs.
+//
+// ValidateEvacTile is the second half of the game's own test — floor and vertical clearance —
+// and it is a QUALIFIER here rather than a gate. The paint covers invalid tiles too, so a tile
+// inside the footprint that said nothing would read as "the zone ends here", which is the
+// truncation failure mode: indistinguishable from the truth and therefore never reported. The
+// bMissionPlaced flag rides along because that is what IsUnitInEvacZone passes for
+// IgnoreVerticalClearance — a mission-placed zone is exempt from the clearance rule.
+static function string DescribeEvacZone(TTile Tile)
+{
+	local XComGameState_EvacZone Evac;
+	local TTile MinT, MaxT;
+	local int IsOnFloor;
+
+	Evac = class'XComGameState_EvacZone'.static.GetEvacZone(eTeam_XCom);
+	if (Evac == none)
+		return "";
+
+	class'XComGameState_EvacZone'.static.GetEvacMinMax(Evac.CenterLocation, MinT, MaxT);
+
+	if (Tile.X < MinT.X || Tile.X > MaxT.X)
+		return "";
+	if (Tile.Y < MinT.Y || Tile.Y > MaxT.Y)
+		return "";
+	if (Tile.Z < MinT.Z || Tile.Z > MaxT.Z)
+		return "";
+
+	if (!class'X2TargetingMethod_EvacZone'.static.ValidateEvacTile(Tile, IsOnFloor,
+		Evac.bMissionPlaced))
+		return "Evac zone, no clearance";
+
+	return "Evac zone";
+}
+
 // ---------------------------------------------------------------------------
 // The two conditions the unit effect summary CANNOT report
 // ---------------------------------------------------------------------------

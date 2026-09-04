@@ -59,6 +59,15 @@ struct Claim {
     std::function<void(const KeyEvent&)> onKey;
 
     const char* description = "";
+
+    /// The game receives the key AS WELL: the handler runs from the game tick like any other,
+    /// but nothing is swallowed. For a VANILLA key whose meaning we keep and merely add words
+    /// to — Left Alt raises the game's target-preview strip, and the tile cursor speaks it.
+    /// Presses only, no repeats and no release: the arbiter never latches a key it did not take
+    /// (the game saw the down, so the game owns the up). ⛔ Reach for this, never a swallow,
+    /// on a modifier the game's own `bIgnoreAlt`-style suppressors depend on — hiding Alt from
+    /// the engine would make Alt+F4 fire the bare F4 binding and skip ALT_F4_QUIT.
+    bool passThrough = false;
 };
 
 void RegisterClaim(Claim claim);

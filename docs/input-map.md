@@ -85,6 +85,16 @@ rule for rule. `Ctrl` remains the safe modifier for anything that does NOT want 
 key: `Key_Left_Control` merely toggles the pathing pawn's waypoint mode on press and untoggles it on
 release.
 
+**`LeftAlt` is claimed PASS-THROUGH in world mode** — `Claim::passThrough`, a third kind beside
+swallow and observe: the handler runs from the tick like any claim's, and the game receives the key
+as well. The tile cursor speaks the game's target preview on it (`surfaces/tactical.md`), and the
+game still gets to raise its own strip (`Left_Alt_Key_Press`, bound at `DefaultInput.ini:396`, is
+how `UITacticalHUD_EnemyPreview` hears the key). A swallow would have cost more than the strip:
+`F4` is bound with `bIgnoreAlt=True` (`:380`) precisely so that Alt+F4 reaches `ALT_F4_QUIT` (`:390`)
+instead of `F4_Key_Press`, and an engine that never saw Alt go down would fire the bare binding and
+skip the quit. Presses only — a pass-through is never latched, so the release and the repeats are the
+game's. Displaces nothing. `RightAlt` is left alone: the game's strip listens for the left key only.
+
 ⛔ **Tab stays the game's, in both of its meanings.** `eTBC_NextUnit` in world mode
 (`UIUtilities_Input.uc:451`) and `NextTarget` while the shot HUD is raised (`UITacticalHUD.uc:459`)
 are the player's own bindings and the layer does not take them: switching soldiers is narrated by

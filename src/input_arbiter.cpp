@@ -184,6 +184,17 @@ LRESULT CALLBACK ArbiterProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     sDownClaim[side] = -1;
                 break;
             }
+            if (sClaims[modClaim].passThrough) {
+                // Never latched: the game sees this down AND its up, and the repeats (which
+                // look the latch up and find nothing) go straight past too. The handler hears
+                // the press and nothing else. repeatMod is necessarily false here.
+                sDownClaim[side] = -1;
+                LOG_DEBUG("InputArbiter: passed modifier vk 0x%02X through -> claim \"%s\"",
+                          side, sClaims[modClaim].description);
+                if (sClaims[modClaim].onKey)
+                    Enqueue(KeyEvent{side, bare, /*down*/ true, false}, modClaim);
+                break;
+            }
             sDownClaim[side] = modClaim;
             sSwallowed++;
             if (!repeatMod)
@@ -214,6 +225,16 @@ LRESULT CALLBACK ArbiterProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             // reaction against. Presses only — repeats would flood it while a key is held.
             if (!repeat)
                 LOG_DEBUG("InputArbiter: passed vk 0x%02X mods 0x%X to the game", vk, mods);
+            break;
+        }
+
+        if (sClaims[claim].passThrough) {
+            // Same rule as the modifier branch: no latch, so the game gets the up and the
+            // repeats; the handler gets the press. WM_CHAR stays the game's too.
+            sDownClaim[vk] = -1;
+            LOG_DEBUG("InputArbiter: passed vk 0x%02X mods 0x%X through -> claim \"%s\"",
+                      vk, mods, sClaims[claim].description);
+            Enqueue(KeyEvent{vk, mods, /*down*/ true, false}, claim);
             break;
         }
 
@@ -321,8 +342,9 @@ void TryInstall()
 
 void RegisterClaim(Claim claim)
 {
-    LOG_INFO("InputArbiter: claim registered — vk 0x%02X mods 0x%X (%s)",
-             claim.vk, claim.mods, claim.description ? claim.description : "");
+    LOG_INFO("InputArbiter: claim registered — vk 0x%02X mods 0x%X (%s)%s",
+             claim.vk, claim.mods, claim.description ? claim.description : "",
+             claim.passThrough ? " [pass-through]" : "");
     sClaims.push_back(std::move(claim));
 }
 

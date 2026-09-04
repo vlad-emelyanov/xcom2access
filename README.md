@@ -218,7 +218,13 @@ stand down the moment the shot HUD goes up, and so on.
 | C               | Recenter the cursor on the selected soldier                        |
 | Delete          | Re-announce the current tile                                       |
 | Backspace ×2    | Move the selected soldier to the cursor tile                       |
+| Alt             | Targets from the cursor tile — the game's target preview, spoken (the game keeps the key too) |
 | ;               | Read the selected soldier in full                                  |
+
+Every step also says who would see a soldier on that tile ("Seen by 2") and whether its cover
+holds against them ("flanked"), the way the game draws the eye markers and the red cover shield
+on every hover. With the game's own "Show Target Preview" option on, the Alt readout rides every
+step as well.
 
 **Tactical — the HUD layer** — Ctrl+Tab moves the arrows from the map onto the HUD's panels
 

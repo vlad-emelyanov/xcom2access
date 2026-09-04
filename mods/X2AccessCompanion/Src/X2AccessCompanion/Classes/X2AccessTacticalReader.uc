@@ -482,7 +482,16 @@ static function string DescribeTargetCover(XComGameState_Unit TargetUnit,
 	if (TargetUnit.IsFlanked(ShooterRef))
 		return "flanked";
 
-	switch (TargetUnit.GetCoverTypeFromLocation())
+	return CoverWords(TargetUnit.GetCoverTypeFromLocation());
+}
+
+// The cover words themselves, one table for every surface that speaks a target's cover — the
+// shot readout above, the scanner's enemy ring through it, and the tile cursor's target preview,
+// which reads the cover a target WOULD have from a tile the soldier is not on yet. Split out so a
+// fourth caller cannot spell "half cover" a new way.
+static function string CoverWords(ECoverType Cover)
+{
+	switch (Cover)
 	{
 	case CT_Standing: return "in full cover";
 	case CT_MidLevel: return "in half cover";

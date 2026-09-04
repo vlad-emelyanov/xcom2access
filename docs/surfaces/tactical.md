@@ -95,6 +95,50 @@ focus.
   of OUR tile. Preferred over `UIMovie.DeactivateMouse()`, which also stops the
   re-push but changes which HUD the game builds and stops
   `UITacticalHUD_Ability.UpdateData` refreshing `m_strAntennaText`.
+- ⛔ **The evac zone is a TILE fact as well as a scanner entry, and the two must be
+  asked of the same box.** `X2AccessHelper.DescribeEvacZone` is that one oracle
+  (added 2026-09-04 on report: the scanner's ring could say where the zone was and
+  no key could say whether you were standing in it). Both halves are the game's:
+  `XComGameState_EvacZone.GetEvacMinMax` is the extent, and it is the one
+  `IsUnitInEvacZone` tests — which is what makes the tile line and the scanner's
+  "N of M inside" count incapable of disagreeing. ⚠ **The box is not the painted
+  square**: `GetEvacMinMax2D` gives the footprint, and `GetEvacMinMax` then widens Z
+  by one level in EACH direction, so the tile a level below the paint is inside the
+  zone and must say so. `ValidateEvacTile` (floor + vertical clearance, with
+  `bMissionPlaced` as its `IgnoreVerticalClearance` — the same argument
+  `IsUnitInEvacZone` passes) is a QUALIFIER, not a gate: the paint covers invalid
+  tiles too, so a silent tile inside a zone the player knows is there would read as
+  *the zone ends here*, which is the truncation failure mode — indistinguishable
+  from the truth and therefore never reported.
+- **Sight and flank ride every step; the target preview rides Alt (or the game's option).**
+  The game draws three things the instant the path destination changes
+  (`XComPathingPawn.UpdatePathTileData`, `:1028-1038`): the EYE on every visible enemy's flag
+  that has line of sight to the destination (`UIUnitFlagManager.RealizePreviewEndOfMoveLOS`;
+  `ShowLOSPreview` ships true, no key held), the destination's cover shield in `FlankedColor`
+  when a visible enemy flanks it (`XComActionIconManager`, native), and — only while Left Alt
+  is held or with the Gameplay option "Show Target Preview" (`m_bTargetPreviewAlwaysOn`) on —
+  the `UITacticalHUD_EnemyPreview` strip: which enemies could be shot from there, which only
+  via squadsight, which would be flanked. The readout mirrors all three on the same terms:
+  "Seen by N, flanked" is a clause of every step and of the move preview (`DescribeSight`),
+  and the strip (`DescribeTargetPreview`) speaks on Alt (`CursorTargetPreview`) or, with the
+  option on, at the end of every step. Oracles: the enemy set is `GetAllEnemiesForLocation`
+  kept to `bVisibleBasic`, to `IsEnemyUnit` (the location query returns everyone off the
+  soldier's team, civilians included) and to `CanXComSquadSeeTarget` (the gate the detection
+  readout and the scanner's ring already use); the flank test is
+  `XGUnitNativeBase.DoesFlankCover` over the tile's cover point, handed the FLANKER's position
+  (what the AI runs, `XGAIBehavior.uc:5060`; the shield's colouring is native and unreadable);
+  the strip is `UpdatePreviewTargets` reproduced clause for clause, using the panel's OWN
+  `StandardAbilityTarget`, filter and localized `Label`, and `TargetCover == CT_None` is
+  "flanked" there because that is the game's marker (a unit in the open included, as in the
+  to-hit calc). ⚠ Both answer about the CURSOR tile, where the game answers about the pathing
+  pawn's clamped destination: the two agree wherever the tile is reachable, and on an
+  out-of-range tile ours describes the tile the player just heard rather than one they did
+  not. Before the cursor is planted, Alt answers about the pawn's destination — literally the
+  strip — and plants nothing. ⛔ **Alt is a PASS-THROUGH claim, never a swallow**
+  (`input-map.md`): `LeftAlt` is bound in the tactical section, `Left_Alt_Key_Press` is how the
+  strip rises, and `F4`'s `bIgnoreAlt` is what keeps Alt+F4 off the game action — hiding the
+  modifier from the engine would break all three. Never run live (2026-09-04); the checks are
+  in `next-steps.md`.
 - ⚠ `XComPathingPawn.Tick` hides everything while `UIReplay` is on the stack — and
   in some sessions it is, permanently.
 

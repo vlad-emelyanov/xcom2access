@@ -51,6 +51,12 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   - ⛔ An observer runs INSIDE the window procedure and may do nothing but
     RECORD: no engine memory, no speech, no outbound calls — the same rule a
     claim's `activeWhen` follows. Act on the game tick.
+  - A claim may be **`passThrough`**: the handler runs AND the game receives the key,
+    presses only, nothing latched. That is the form for a VANILLA key we add words to
+    (Left Alt's target preview). ⛔ **Never swallow a modifier the game's own `bIgnore*`
+    suppressors depend on** — `F4` is bound `bIgnoreAlt` so Alt+F4 reaches `ALT_F4_QUIT`,
+    and an engine that never saw Alt go down fires the bare F4 binding instead
+    (`docs/input-map.md`).
   - ⛔ **A GLOBAL claim — no `activeWhen`, live on every screen in every layer —
     has to earn the WHOLE keyboard, not just the screens it was tested on.**
     `src/input.cpp` holds exactly one (`?`, navigation help). The retired

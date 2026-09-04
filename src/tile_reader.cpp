@@ -85,7 +85,10 @@ bool ComputeActive(char* why, size_t whyLen, bool* hudOnStack)
 // queued behind it. Speaking straight to the backend cut the current utterance but left the
 // queue standing, so the stale burst resumed on top of the answer on the very next flush.
 // It is also what puts these lines in the scrollback ring, which a review key will need.
-void Call(const char* funcName, void* params, Narrator::Channel channel)
+//
+// `arm` is false for the one key that is the GAME's (Left Alt, passed through): a vanilla key
+// must not take the mouse over — lazy plant means lazy takeover, and that press planted nothing.
+void Call(const char* funcName, void* params, Narrator::Channel channel, bool arm = true)
 {
     void* cdo = GameUI::FindCompanionCDO(kReaderClass);
     if (!cdo) {
@@ -98,8 +101,10 @@ void Call(const char* funcName, void* params, Narrator::Channel channel)
     }
     // Arm and engage the mouse gate right here (game thread, claim already implies world
     // mode) so even this press's push survives the frame instead of waiting out the tick.
-    gUsedThisTactical = true;
-    MouseGate::SetSwallow(true);
+    if (arm) {
+        gUsedThisTactical = true;
+        MouseGate::SetSwallow(true);
+    }
     std::string result
         = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "NativeResult");
     if (!result.empty())
@@ -134,11 +139,11 @@ void FloorCall(int32_t delta)
     Call("CursorFloor", &params, Narrator::Channel::Focus);
 }
 
-void SimpleCall(const char* funcName, Narrator::Channel channel)
+void SimpleCall(const char* funcName, Narrator::Channel channel, bool arm = true)
 {
     // No-parameter functions still get a zeroed buffer — ProcessEvent copies ParmsSize bytes.
     int64_t zeros[2] = {};
-    Call(funcName, zeros, channel);
+    Call(funcName, zeros, channel, arm);
 }
 
 // Everything fires once per press — auto-repeat is DISABLED for now, including on the arrows:
@@ -193,6 +198,21 @@ void Init()
     RegisterClaim({VK_BACK, ModNone, active,
         OnPress([] { SimpleCall("CursorMoveTo", Narrator::Channel::Aid); }),
         "tile cursor: move to (press twice)"});
+
+    // Left Alt: the game's own target preview, spoken — which enemies could be shot from the
+    // cursor tile, which only via squadsight, which would be flanked from there. The game
+    // raises that strip while Left Alt is held (UITacticalHUD_EnemyPreview.OnUnrealCommand) or
+    // on every hover with the Gameplay option "Show Target Preview" on; the companion mirrors
+    // both terms, the option half at the end of every step's readout. PASS-THROUGH, not a
+    // swallow: the key keeps its vanilla meaning — the sighted strip still rises, and Alt+F4
+    // still quits, which a swallow would break (the engine would never count Alt as held, so
+    // F4's bIgnoreAlt would stop suppressing the bare binding). Not armed: before the cursor
+    // is planted this answers about the pathing pawn's own destination, literally what the
+    // strip shows, and a vanilla key must not take the mouse over.
+    RegisterClaim({VK_LMENU, ModNone, active,
+        OnPress([] { SimpleCall("CursorTargetPreview", Narrator::Channel::Aid, /*arm*/ false); }),
+        "tile cursor: targets from the cursor tile (the game's target preview)",
+        /*passThrough*/ true});
 
     LOG_INFO("TileReader: claims registered");
 }
