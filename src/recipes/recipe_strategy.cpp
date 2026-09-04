@@ -4154,7 +4154,9 @@ std::unique_ptr<GraphRender> BuildBondScreen()
 
     for (const GameUI::BondRow& row : view.rows) {
         const WireRecord* rec = FindIndexed(words, "row", row.index);
-        std::string name = rec ? RecField(*rec, "name") : std::string();
+        // Name then nickname, joined here so an absent nickname takes its separator with it —
+        // the row's own two Flash fields. The rank is cells[0] and never part of this.
+        std::string name = rec ? JoinParts(*rec, {"name", "nick"}) : std::string();
         if (name.empty())
             name = Vocab::SoldierFallback;
         std::vector<std::string> cells

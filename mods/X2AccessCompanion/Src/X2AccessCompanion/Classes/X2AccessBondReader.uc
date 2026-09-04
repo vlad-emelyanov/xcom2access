@@ -254,7 +254,18 @@ private function AppendRows(UISoldierBondScreen Screen, XComGameState_Unit Scree
 		SoldierClass = Unit.GetSoldierClassTemplate();
 
 		Rec = "kind=row" $ FLD_SEP $ "index=" $ string(i);
-		class'X2AccessWire'.static.AddField(Rec, "name", Unit.GetName(eNameType_FullNick));
+		// ⛔ eNameType_Full plus a separate nickname, NOT eNameType_FullNick — that one prefixes
+		// the rank abbreviation, which is the very next cell. UISoldierBondListItem.uc:110 hands
+		// Flash GetName(eNameType_Full) and GetName(eNameType_Nick) as two fields for exactly
+		// that reason. Two wire fields rather than one string because an absent nickname is " ",
+		// which only survives as nothing if native cleans before it joins (see
+		// X2AccessPersonnelReader.SoldierCells for the full note).
+		//
+		// The HEADER above is the deliberate opposite: RefreshHeader's own SetPlayerInfo passes
+		// GET_RANK_STR beside eNameType_FullNick, so the rank really is said twice up there — by
+		// the game — and AppendSoldier mirrors it rather than correcting it.
+		class'X2AccessWire'.static.AddField(Rec, "name", Unit.GetName(eNameType_Full));
+		class'X2AccessWire'.static.AddField(Rec, "nick", Unit.GetName(eNameType_Nick));
 		class'X2AccessWire'.static.AddPositionalField(Rec, "cell", RankAbbrev(Unit));
 		class'X2AccessWire'.static.AddPositionalField(Rec, "cell", SoldierClass != none ? SoldierClass.DisplayName : "");
 		class'X2AccessWire'.static.AddPositionalField(Rec, "cell",

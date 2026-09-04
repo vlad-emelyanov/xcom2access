@@ -541,6 +541,15 @@ and `SwitchTab` announces the change only into Flash); the SORT header; and the 
 - ⛔ **No `Caps()`**: every row caps the name before handing it to Flash, and that is a visual
   style, not information — a reader that spells out all-caps words turns every soldier into an
   acronym.
+- ⛔ **The NAME cell is `eNameType_Full` plus a separate nickname — never `eNameType_FullNick`**,
+  which prefixes `GET_RANK_ABBRV` and so said the rank twice against the RANK column beside it
+  (reported live 2026-09-04; the general engine fact is in `../engine-notes.md`). The row itself
+  settles it: `AS_UpdateDataSoldier` is handed the full name, the nickname and the rank abbreviation
+  as three fields, so the rank's place is its own column. ⚠ The MEMORIAL row is the deliberate
+  opposite — the game hands IT `FullNick` and draws no rank column, so `DeceasedCells` keeps it.
+  The nickname travels as its own wire field rather than pre-joined, because `eNameType_Nick`
+  answers a lone SPACE when there is none and only native's clean-then-join order makes that vanish
+  without leaving its separator behind.
 - ⛔ **It is a TABLE, and it is emitted as one** (`GraphSheet`). Column 0 is the NAME and carries
   every other cell as extra announcement parts, so walking DOWN reads the whole row exactly as a
   flat list would; stepping RIGHT lands on one fact at a time under the heading the game draws

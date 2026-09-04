@@ -1113,7 +1113,11 @@ std::unique_ptr<GraphRender> BuildPersonnel()
             }
         }
 
-        std::string name = rec ? RecField(*rec, "name") : std::string();
+        // Name then nickname — the two fields the row hands Flash, joined here rather than in
+        // the companion so a soldier with no nickname (which arrives as a lone space) loses the
+        // separator with it. The RANK is a column, never part of this: see
+        // X2AccessPersonnelReader.SoldierCells.
+        std::string name = rec ? JoinParts(*rec, {"name", "nick"}) : std::string();
         if (name.empty())
             name = Vocab::SoldierFallback;
         std::vector<std::string> cells

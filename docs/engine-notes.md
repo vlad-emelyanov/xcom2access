@@ -234,6 +234,24 @@ and note that a rule with no measurement under it any more is a rule to delete, 
   which are many-to-one with the objects a player perceives. Enumerate objects and ask each, or
   enumerate components and collapse by owner; the object scanner does the latter, keyed on the
   owner's ObjectID.
+- ⛔ **Three of `XComGameState_Unit.GetName`'s six name types SILENTLY PREFIX THE RANK, and one of
+  them is the one that sounds like it means "name".** `eNameType_RankFull` and `eNameType_RankLast`
+  say so; **`eNameType_FullNick` does not, and does it anyway** — every branch of it returns
+  `` `GET_RANK_ABBRV(m_SoldierRank, …) `` before the first name, in the campaign path
+  (`XComGameState_Unit.uc:4646`), in the MP path (`:4754`) and with or without a nickname. Only the
+  `GhostSourceUnit` branch omits it. The rank-free forms are `eNameType_Full`, `eNameType_First`,
+  `eNameType_Last` and `eNameType_Nick`. **What this costs is a duplicate against a RANK COLUMN**,
+  which is how it was found: the personnel roster and the bond screen both draw a rank column and
+  both read `FullNick`, so every row said the rank twice (reported live 2026-09-04). The rows
+  themselves are the oracle for what belongs where — `UIPersonnel_SoldierListItem.uc:110` and
+  `UISoldierBondListItem.uc:110` each hand Flash `eNameType_Full`, `eNameType_Nick` and
+  `GET_RANK_ABBRV` as THREE separate fields, so name, nickname and rank are three things on screen
+  and no one field carries another. ⚠ Two places where the doubling is the GAME's and must be
+  mirrored, not corrected: `UIPersonnel_DeceasedListItem.uc:20` passes `FullNick` on a tab with no
+  rank column, and `UISoldierBondScreen.RefreshHeader:132` passes `GET_RANK_STR` beside `FullNick`
+  in one call. ⚠ And `eNameType_Nick` answers `" "` — a lone space, not `""` — when there is no
+  nickname, so a script-side join leaves a separator behind; send it as its own wire field and let
+  native clean before it joins.
 - Best public documentation of Firaxis' UE3 internals: robojumper's "Too Real" series
   (https://robojumper.github.io/too-real/). Highlander event reference:
   https://x2communitycore.github.io/X2WOTCCommunityHighlander/

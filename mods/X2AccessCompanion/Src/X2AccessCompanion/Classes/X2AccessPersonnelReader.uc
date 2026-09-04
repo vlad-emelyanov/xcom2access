@@ -342,7 +342,21 @@ private function string SoldierCells(XComGameState_Unit Unit)
 	// inconsistency rather than a promise; both are guarded here, because an Accessed None from
 	// OUR class in the game's log is noise in the one place a bug gets diagnosed. A rank name
 	// resolves without the class anyway — GetShortRankName falls back to the generic ladder.
-	Out = FLD_SEP $ "name=" $ Unit.GetName(eNameType_FullNick);
+	// ⛔ eNameType_Full AND a separate nickname — never eNameType_FullNick, which PREFIXES the
+	// rank abbreviation (XComGameState_Unit.uc:4646, every branch) and so said the rank twice
+	// against the RANK column right beside it. The row itself is the proof of what belongs here:
+	// AS_UpdateDataSoldier is handed GetName(eNameType_Full), GetName(eNameType_Nick) and
+	// GET_RANK_ABBRV as THREE fields, so name, nickname and rank are three things on screen and
+	// the rank's place is its own column. The memorial row is the deliberate opposite — the game
+	// hands IT eNameType_FullNick and draws no rank column, so DeceasedCells keeps it.
+	//
+	// Two fields rather than one joined string, because GetName(eNameType_Nick) answers " " (a
+	// lone space) when there is no nickname: native's CleanText trims it to empty and JoinParts
+	// then drops it WITHOUT its separator. Joining here would leave the separator standing —
+	// CLAUDE.md's "join after cleaning, never before", the rule squad select's ", Sokolova,,"
+	// earned.
+	Out = FLD_SEP $ "name=" $ Unit.GetName(eNameType_Full);
+	Out $= FLD_SEP $ "nick=" $ Unit.GetName(eNameType_Nick);
 	Out $= FLD_SEP $ "cell=" $ class'X2ExperienceConfig'.static.GetShortRankName(
 		Unit.GetRank(), SoldierClass != none ? SoldierClass.DataName : '');
 	Out $= FLD_SEP $ "cell=" $ (SoldierClass != none ? SoldierClass.DisplayName : "");
@@ -354,6 +368,10 @@ private function string SoldierCells(XComGameState_Unit Unit)
 
 // UIPersonnel_DeceasedListItem.UpdateData. Four bare columns on screen under headings a blind
 // player never reaches — which is exactly what the table's column headers restore.
+//
+// ⚠ eNameType_FullNick here is CORRECT and is not the bug SoldierCells had: the memorial row is
+// handed exactly this by the game (UIPersonnel_DeceasedListItem.uc:20) and the memorial's columns
+// are kills / missions / operation / date — there is no rank column for the prefix to duplicate.
 private function string DeceasedCells(XComGameState_Unit Unit)
 {
 	local string Out;
