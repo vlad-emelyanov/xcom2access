@@ -123,6 +123,15 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
   `GameDefines.cpp` is compiled. Native functions need no special handling —
   `X2FiraxisLiveClient.IsLoggedIn` is `FUNC_Native` and has always worked through
   plain ProcessEvent.
+  - ⛔ **Hand-rolling means EVERY parameter, `optional` ones included.** An optional
+    argument still occupies its slot AHEAD of `ReturnValue`, so a block that omits it hands
+    the engine a zero there and takes the return's copy-back past the struct's end. The
+    Commands stop's Chosen gate did exactly that: `GetActivatedChosen(optional HistoryIndex
+    = -1)` was asked with a pointer-only block, read history frame 0 — the OLDEST — and
+    read a Chosen as active ten minutes before the game showed its button. The truthiness
+    survived by accident (the pointer's low dword landed in the block's high half), which is
+    why it passed its first runs. Pin each block against the generated `_Params` struct in
+    `sdk_layout_checks.cpp`, as the Scaleform blocks are.
 
 ## Surfaces
 

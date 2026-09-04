@@ -497,9 +497,12 @@ the icons. Soldier and objectives stay vertical, as their panels do.
   set keeps its last-written label FOREVER — an unused command slot, a Chosen button after the
   Chosen left. Membership therefore comes from the same three inputs `UpdateControls` used:
   buttons 0-4 always, slot 5 iff `CommandAbilities.Length > 0`, slot 6 iff
-  `GetActivatedChosen() != none` (the game's own gate, asked fresh per rebuild) — and the stop
-  is built only while the shot HUD is DOWN, because raised, slot 0's retained label is
-  legitimately "cancel shot" and the layer is yielding focus anyway.
+  `GetActivatedChosen() != none` (the game's own gate, asked fresh per rebuild — and asked
+  with its optional `HistoryIndex` of -1 in the block, because a pointer-only block asked
+  about history frame 0 and read "Button 7" ten minutes before the Assassin revealed; the
+  rulebook's outbound-call rule) — and the stop is built only while the shot HUD is DOWN,
+  because raised, slot 0's retained label is legitimately "cancel shot" and the layer is
+  yielding focus anyway.
 - **The `TButtonItems` element stride is the live engine's, not the compiled SDK's.** The
   ScriptStruct's runtime `PropertiesSize` is 0x21 and whether `UStructProperty` rounds that to 4
   when striding is the engine's business, so `ReadMouseControls` asks the live `UArrayProperty`

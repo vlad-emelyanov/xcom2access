@@ -273,11 +273,19 @@ int32_t ButtonItemStride(void* controls)
 
 // Is a Chosen activated on this map — the exact gate UpdateControls runs before it shows the
 // Chosen Info button, asked of the same static.
+//
+// ⛔ The static takes an OPTIONAL `HistoryIndex` ahead of its return slot (0x0 int32, 0x4
+// pointer under this TU's pack(4)), and a block holding only the pointer handed the engine
+// HistoryIndex 0 — the OLDEST frame, not the latest — while its copy-back wrote the returned
+// pointer four bytes past the struct. The answer came out truthy by accident and read a Chosen
+// as active ten minutes before the game showed the button ("Button 7", 2026-09-04). -1 is the
+// game's own default and what UpdateControls asks with.
 bool ChosenActivatedRawCall()
 {
     struct {
+        int32_t HistoryIndex;
         void* ReturnValue;
-    } params{nullptr};
+    } params{-1, nullptr};
     if (!CallStaticNative("XComGameState_Unit", "GetActivatedChosen", &params))
         return false;
     return params.ReturnValue != nullptr;

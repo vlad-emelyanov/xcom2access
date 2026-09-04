@@ -248,6 +248,14 @@ static_assert(offsetof(UGFxMoviePlayer_execActionScriptFloat_Params, ReturnValue
 static_assert(sizeof(UGFxMoviePlayer_execGetVariableBool_Params) == 0x14,
     "GetVariableBool return dword follows the path FString");
 
+// ---- the one static native we call WITH an argument (game_ui_tactical.cpp's Chosen gate) ----
+// An optional parameter still occupies its slot ahead of the return, so a block holding only
+// the pointer handed the engine HistoryIndex 0 and took its copy-back four bytes past the struct.
+static_assert(offsetof(UXComGameState_Unit_execGetActivatedChosen_Params, HistoryIndex) == 0x00,
+    "GetActivatedChosen history index precedes the return");
+static_assert(offsetof(UXComGameState_Unit_execGetActivatedChosen_Params, ReturnValue) == 0x04,
+    "GetActivatedChosen return follows a packed int32");
+
 // ---- text input dialog (m_kData is a struct; its fields are offsets INTO it) ----
 static_assert(offsetof(AUIInputDialogue, m_kData) == 0x410, "input dialog data");
 static_assert(offsetof(FTInputDialogData, strTitle) == 0x00, "input dialog prompt");
