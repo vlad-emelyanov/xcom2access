@@ -580,8 +580,178 @@ static function string DescribeVisibleEnemies(XComGameState_Unit UnitState,
 	return string(Count) @ "enemies visible";
 }
 
-// Targets that are not units: destructible cover, a hackable terminal, a door.
-private function string DescribeNonUnitTarget(StateObjectReference TargetRef)
+// The HUD graph's Targets stop: one wire record per head on the enemy strip
+// (UITacticalHUD_Enemies, the row of heads at the top right), in the strip's OWN order — it sorts
+// by hit chance, best shot leftmost, destructibles last (SortEnemies), and that order is what a
+// sighted player reads the best shot off. Called by native once per graph rebuild.
+//
+// SIGHTED PARITY, per head, each fact from the exact place the strip draws it:
+//   name          the head's glyph is the character template's own icon, i.e. the unit TYPE —
+//                 GetName(eNameType_Full) is the same template name; objects through
+//                 DescribeNonUnitTarget, as the shot HUD names them
+//   team          the background colour (GetMyHUDIconColor): yellow = civilian, blue = an ally
+//                 (a medkit's targets ride this strip too); red is the default and unspoken
+//   hit           the number SetFocusedEnemy shows on the targeted head and on the head under the
+//                 mouse — the strip's own GetHitChanceForObjectRef, which picks the selected
+//                 ability, else the unit's default attack, and answers -1 when the breakdown is
+//                 hidden. Captioned with the shot HUD's own localized label, as DescribeTarget is.
+//   cover/health  the flanked marker (SetFlanked: IsFlanked by the ACTIVE soldier) and the unit
+//                 flag's cover shield and bars, through the shot readout's own composers
+//   sight         the squadsight badge (m_arrSSEnemies)
+//   blocked       the greyed icon (SetDisabled: not in m_arrCurrentlyAffectable — visible, but
+//                 the selected ability, or with none selected no icon-bearing ability, can reach it)
+//   bonus/penalty the two badges (SetBonusAndPenalty), spoken as the effect NAMES the flag's icons
+//                 and the Enemy Info screen show, through X2AccessUnitReader's own composer
+//   targeted      the highlighted head (CurrentTargetIndex)
+//   dist/bearing  the one AID the plan grants this stop — the scanner's own distance and compass
+//                 words, so the two surfaces cannot disagree about where a target is
+//
+// Read off the SCREEN: the strip's arrays are the panel's retained state, and every fact above is
+// asked of the same object the panel asked. The empty strip is an empty payload, and the graph
+// builds no stop — the strip hides at zero heads too.
+function BuildEnemyRecords()
+{
+	local UITacticalHUD HUD;
+	local UITacticalHUD_Enemies Strip;
+	local XComGameStateHistory History;
+	local XComGameState_Unit ActiveUnit, TargetUnit;
+	local XComGameState_BaseObject Target;
+	local StateObjectReference ShooterRef;
+	local string Recs, Rec, Names;
+	local int i, Hit, Dist;
+
+	NativeResult = "";
+
+	HUD = GetTacticalHUD();
+	if (HUD == none || HUD.m_kEnemyTargets == none)
+		return;
+	Strip = HUD.m_kEnemyTargets;
+	ActiveUnit = class'X2AccessTileReader'.static.ActiveUnitState();
+	if (ActiveUnit == none)
+		return;
+	ShooterRef = ActiveUnit.GetReference();
+	History = `XCOMHISTORY;
+
+	for (i = 0; i < Strip.m_arrTargets.Length; i++)
+	{
+		Target = History.GetGameStateForObjectID(Strip.m_arrTargets[i].ObjectID);
+		if (Target == none)
+			continue;
+		TargetUnit = XComGameState_Unit(Target);
+
+		Rec = "kind=head";
+		class'X2AccessWire'.static.AddField(Rec, "oid", string(Target.ObjectID));
+		class'X2AccessWire'.static.AddField(Rec, "index", string(i));
+
+		if (TargetUnit != none)
+		{
+			class'X2AccessWire'.static.AddField(Rec, "name", TargetUnit.GetName(eNameType_Full));
+			if (TargetUnit.IsCivilian())
+				class'X2AccessWire'.static.AddField(Rec, "team", "civilian");
+			else if (TargetUnit.IsFriendlyToLocalPlayer())
+				class'X2AccessWire'.static.AddField(Rec, "team", "ally");
+		}
+		else
+		{
+			class'X2AccessWire'.static.AddField(Rec, "name",
+				DescribeNonUnitTarget(Strip.m_arrTargets[i]));
+		}
+
+		Hit = Strip.GetHitChanceForObjectRef(Strip.m_arrTargets[i]);
+		if (Hit >= 0)
+		{
+			class'X2AccessWire'.static.AddField(Rec, "hit",
+				class'UITacticalHUD_ShotHUD'.default.m_sShotChanceLabel @ string(Hit) $ " percent");
+		}
+
+		class'X2AccessWire'.static.AddField(Rec, "cover", DescribeTargetCover(TargetUnit, ShooterRef));
+		class'X2AccessWire'.static.AddField(Rec, "health", DescribeTargetHealth(TargetUnit));
+
+		if (Strip.m_arrSSEnemies.Find('ObjectID', Target.ObjectID) != INDEX_NONE)
+			class'X2AccessWire'.static.AddField(Rec, "sight", "via squadsight");
+		if (Strip.m_arrCurrentlyAffectable.Find('ObjectID', Target.ObjectID) == INDEX_NONE)
+			class'X2AccessWire'.static.AddField(Rec, "blocked", "not targetable");
+
+		if (TargetUnit != none)
+		{
+			Names = class'X2AccessUnitReader'.static.EffectNames(TargetUnit, ePerkBuff_Bonus);
+			if (Names != "")
+				class'X2AccessWire'.static.AddField(Rec, "bonus", "Bonuses:" @ Names);
+			Names = class'X2AccessUnitReader'.static.EffectNames(TargetUnit, ePerkBuff_Penalty);
+			if (Names != "")
+				class'X2AccessWire'.static.AddField(Rec, "penalty", "Penalties:" @ Names);
+		}
+
+		if (i == Strip.CurrentTargetIndex)
+			class'X2AccessWire'.static.AddField(Rec, "targeted", "targeted");
+
+		if (TargetUnit != none)
+		{
+			Dist = TileDistance(ActiveUnit.TileLocation, TargetUnit.TileLocation);
+			class'X2AccessWire'.static.AddField(Rec, "dist",
+				string(Dist) @ ((Dist == 1) ? "tile" : "tiles"));
+			class'X2AccessWire'.static.AddField(Rec, "bearing",
+				class'X2AccessTileReader'.static.OffsetWords(ActiveUnit.TileLocation,
+					TargetUnit.TileLocation));
+		}
+
+		class'X2AccessWire'.static.AddRecord(Recs, Rec);
+	}
+
+	NativeResult = Recs;
+}
+
+// Enter on a head: the strip's own click. FXS_L_MOUSE_UP on an icon is SelectEnemyByIndex —
+// DirectTargetObject (the selected ability if one is up, else the unit's default attack, raising
+// the shot HUD on that target), the flag extension for the targeted unit, and the select sound —
+// behind the one guard OnMouseEvent puts in front of it: no strip selection in the tutorial while
+// soldier chatter is off, because the tutorial has its own idea of what gets shot next.
+//
+// Keyed on the OBJECT, not the icon index: the strip re-sorts on every refresh, so an index the
+// graph held a moment ago may name a different head now. A target that has left the strip is a
+// spoken refusal. DirectTargetObject's own false (a visualizer blocking activation, no ability
+// able to reach the target) is silent in the game, so it is answered here by asking the HUD
+// whether targeting actually raised — the poll speaks the ability and target when it did.
+function SelectEnemyHead(int ObjectID)
+{
+	local UITacticalHUD HUD;
+	local UITacticalHUD_Enemies Strip;
+	local XGBattle Battle;
+	local int Index;
+
+	NativeResult = "";
+
+	HUD = GetTacticalHUD();
+	if (HUD == none || HUD.m_kEnemyTargets == none)
+	{
+		NativeResult = "Unavailable";
+		return;
+	}
+	Strip = HUD.m_kEnemyTargets;
+
+	Battle = `BATTLE;
+	if (Battle != none && Battle.m_kDesc != none
+		&& Battle.m_kDesc.m_bIsTutorial && Battle.m_kDesc.m_bDisableSoldierChatter)
+	{
+		NativeResult = "Unavailable";
+		return;
+	}
+
+	Index = Strip.m_arrTargets.Find('ObjectID', ObjectID);
+	if (Index == INDEX_NONE)
+	{
+		NativeResult = "No longer visible";
+		return;
+	}
+
+	Strip.SelectEnemyByIndex(Index);
+	if (!HUD.m_isMenuRaised)
+		NativeResult = "Unavailable";
+}
+
+// Targets that are not units: destructible cover, a hackable terminal, a door. Static and public
+// so the tile cursor's target preview names them exactly as the shot HUD does.
+static function string DescribeNonUnitTarget(StateObjectReference TargetRef)
 {
 	local XComGameState_InteractiveObject IObj;
 	local XComGameState_Destructible Destructible;

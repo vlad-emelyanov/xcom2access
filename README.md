@@ -220,6 +220,20 @@ stand down the moment the shot HUD goes up, and so on.
 | Backspace ×2    | Move the selected soldier to the cursor tile                       |
 | ;               | Read the selected soldier in full                                  |
 
+**Tactical — the HUD layer** — Ctrl+Tab moves the arrows from the map onto the HUD's panels
+
+| Key             | Action                                                                                   |
+|-----------------|------------------------------------------------------------------------------------------|
+| Ctrl+Tab        | Enter / leave the HUD layer                                                              |
+| Tab / Shift+Tab | Next / previous panel: Soldier, Abilities, Commands, Targets, Objectives                 |
+| Arrow keys      | Walk a panel (Left/Right along the ability bar, the command strip and the target strip)  |
+| Enter           | Use the ability, press the command, or aim at the target                                 |
+| Escape          | Back to the map                                                                          |
+
+The Targets panel is the row of enemy heads: best shot first, each with its hit chance, cover or
+flanked, health, squadsight, whether the selected ability can reach it, its buffs and debuffs,
+and how far away it is.
+
 **Tactical — the object scanner**
 
 | Key                       | Action                                        |

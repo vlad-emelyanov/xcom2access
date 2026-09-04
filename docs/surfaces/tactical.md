@@ -478,12 +478,14 @@ the targeting poll's own narration is the next thing heard, and an exit line wou
 Stops, in on-screen order: **Soldier** (companion-backed — one label node per fact off
 `X2AccessUnitReader.BuildSoldierRecords`, fetched once per rebuild), **Abilities** (pure widget
 read), **Commands** (the `UITacticalHUD_MouseControls` strip, native — the one other tactical
-panel that RETAINS its words), and **Objectives** (via `ObjectiveReader::DescribeLine` — one
-composer with `Ctrl+X`, so the two surfaces cannot disagree about a row). The enemies stop is
-still queued. The abilities and commands stops are HORIZONTAL, mirroring the strips the game
-draws — Left/Right walks them, and past 15 abilities the bar wraps to a second shared-key row
-(Up/Down, column-preserving) exactly where the game's own `MAX_NUM_ABILITIES_PER_ROW_BAR` wraps
-the icons. Soldier and objectives stay vertical, as their panels do.
+panel that RETAINS its words), **Targets** (the enemy strip, companion-backed off the strip's
+own arrays — `X2AccessTacticalReader.BuildEnemyRecords`), and **Objectives** (via
+`ObjectiveReader::DescribeLine` — one composer with `Ctrl+X`, so the two surfaces cannot
+disagree about a row). The abilities, commands and targets stops are HORIZONTAL, mirroring the
+strips the game draws — Left/Right walks them, and past 15 abilities the bar wraps to a second
+shared-key row (Up/Down, column-preserving) exactly where the game's own
+`MAX_NUM_ABILITIES_PER_ROW_BAR` wraps the icons. Soldier and objectives stay vertical, as their
+panels do.
 
 - ⛔ **The probe must refuse while a `UIDialogueBox` is showing, by its own hand.** While a
   recipe is attached the navigator re-probes only THAT recipe — a higher entry in `kRecipes`
@@ -549,6 +551,30 @@ the icons. Soldier and objectives stay vertical, as their panels do.
   spoken "unavailable"; the key string each button retains is the player's ACTUAL binding, so
   the stop doubles as where the vanilla hotkeys get taught — except the localized "no key
   bound" line, which is a sentence of its own and is spoken without the "key" prefix.
+- **Targets stop** (2026-09-04, never run live): one head per entry of
+  `UITacticalHUD_Enemies.m_arrTargets` in the strip's OWN order — `SortEnemies` puts the best
+  shot leftmost and destructibles last, and that order is the fact a sighted player reads off the
+  strip. Every mark a head carries is spoken from the exact place the strip draws it: the glyph
+  is the character template's icon, so the NAME is the template name (`GetName(eNameType_Full)`;
+  objects through `DescribeNonUnitTarget`); the background colour is `GetMyHUDIconColor`, so
+  "civilian" and "ally" are spoken and the default red is not; the hit number is the strip's own
+  `GetHitChanceForObjectRef` (the selected ability, else the default attack; hidden when the
+  breakdown says so), captioned with the shot HUD's label like the reticle line; the flanked
+  marker and the flag's shield and bars go through `DescribeTargetCover` / `DescribeTargetHealth`;
+  the squadsight badge is `m_arrSSEnemies`; the greyed icon is "not targetable" — visible, but
+  outside `m_arrCurrentlyAffectable` for the selected ability (or, with none selected, for every
+  icon-bearing one); the buff/debuff badges are spoken as the effect NAMES their icons and the
+  Enemy Info screen show (`X2AccessUnitReader.EffectNames`, now static); the targeted head
+  carries the kernel's `Selected` part, which also lands the stop on it. Distance and bearing
+  ride last as the one AID the plan grants, in the scanner's own words (`TileDistance`,
+  `OffsetWords`), so the ring and the stop agree about where a thing is. ⛔ **Enter is the
+  strip's click keyed on the OBJECT, never the icon index**: the strip re-sorts on every refresh,
+  so an index held for a tick may name a different head. `SelectEnemyHead(ObjectID)` re-finds
+  the head, replicates `OnMouseEvent`'s one guard (no strip selection in the tutorial while
+  soldier chatter is off), runs `SelectEnemyByIndex` — `DirectTargetObject`, the flag
+  extension, the select sound — and answers the game's silent false by asking whether
+  `m_isMenuRaised` actually rose. ⚠ Uncached like the Soldier stop: the hit chances and the
+  flanked marks change under a held pointer set, so nothing about the strip is a safe cache key.
 - While unfocused the navigator runs NO rebuilds and no differ — the graph is dormant, and every
   pointer in its stale render is refreshed by the `Rerender()` that focus entry starts with. A
   mid-mission cinematic detaches and silently re-attaches the recipe; stop positions reset there

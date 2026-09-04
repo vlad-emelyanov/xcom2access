@@ -15,8 +15,9 @@
 // bottom-left panel plus the weapon/ammo readout — companion-backed, because those panels are
 // write-only pipes into Flash and the facts live only in XCOMHISTORY), ABILITIES (pure widget
 // read), COMMANDS (the mouse-controls strip, the one other tactical panel that RETAINS its
-// words — label, bound key and state per button), OBJECTIVES (retained widget data through the
-// Ctrl+X composers). The enemy stop is still queued work.
+// words — label, bound key and state per button), TARGETS (the enemy strip — companion-backed
+// off the strip's own arrays, every mark a head carries plus the flag's cover and health beside
+// it), OBJECTIVES (retained widget data through the Ctrl+X composers).
 //
 // ⛔ Probe subtlety that is easy to lose: while ATTACHED, the navigator re-probes only THIS
 // recipe — a higher recipe gets its chance only after a detach. Every menu that can appear over
@@ -33,6 +34,7 @@
 #include "vocab.h"
 #include "log.h"
 
+#include <cstdint>
 #include <cstdlib>
 #include <memory>
 #include <string>
@@ -248,6 +250,96 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
             b.EndRow();
             b.PopContext();
         }
+    }
+
+    // ---- Targets: the enemy strip (UITacticalHUD_Enemies), one node per head ----
+    //
+    // Companion-backed, read off the strip's OWN arrays — m_arrTargets in the strip's order
+    // (sorted by hit chance, best shot leftmost), m_arrCurrentlyAffectable, m_arrSSEnemies,
+    // CurrentTargetIndex — so a head here is exactly a head on screen, greyed where the game
+    // greys it. Per head: the glyph's name, the colour's word (civilian / ally), the hover hit
+    // chance, the flanked marker and the flag's cover and health, the squadsight badge, the two
+    // buff/debuff badges as the effect names their icons carry, the targeted highlight, and the
+    // one AID the plan grants this stop, distance and bearing in the scanner's words. The
+    // composers are X2AccessTacticalReader's (BuildEnemyRecords), the same ones the reticle and
+    // the scanner's ring read through, so no two of the three can disagree about a target.
+    //
+    // HORIZONTAL like the strip. The targeted head carries the Selected part, which is also what
+    // lands the stop on it; a strip with no current target lands on the best shot, the head the
+    // game's own first click would pick. Built whether or not the shot HUD is raised — raised,
+    // the layer is yielding focus anyway, and the strip is still the strip.
+    //
+    // Enter is the strip's own click (SelectEnemyByIndex → DirectTargetObject), keyed on the
+    // OBJECT because the strip re-sorts on every refresh. Offered on a greyed head too, as the
+    // mouse is: the game answers with silence there, so the companion answers for it.
+    std::vector<WireRecord> heads
+        = FetchCompanionRecords("X2AccessTacticalReader", "BuildEnemyRecords");
+    if (!heads.empty()) {
+        anyNode = true;
+        b.BeginStop("targets");
+        b.PushContext(Vocab::StopTargets);
+        b.StartRow("targets");
+        for (const WireRecord& rec : heads) {
+            const std::string oid = RecField(rec, "oid");
+            std::string name = RecField(rec, "name");
+            if (name.empty())
+                name = Vocab::TargetFallback;
+
+            NodeVtable vt;
+            vt.Type = &ButtonType();
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(name));
+            vt.Announcements.back().Kind = AnnouncementKinds::Label;
+
+            // The strip's marks and the flag's facts, in the order a sighted eye takes them:
+            // what it is, the number on it, how exposed it is, how hurt, then the badges, then
+            // the aid last, labelled by its own words ("7 tiles, 3 north, 2 east").
+            const std::string value = JoinParts(rec,
+                {"team", "hit", "cover", "health", "sight", "bonus", "penalty", "dist", "bearing"});
+            if (!value.empty()) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(value));
+                vt.Announcements.back().Kind = AnnouncementKinds::Value;
+            }
+
+            // The greyed icon, in the companion's own state word rather than the generic one:
+            // "not targetable" says why the head is dim — the selected ability cannot reach it.
+            const std::string blocked = RecField(rec, "blocked");
+            if (!blocked.empty()) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(blocked));
+                vt.Announcements.back().Kind = AnnouncementKinds::Enabled;
+            }
+
+            // ⚠ Selected is also the LANDING part (GraphTypes.hpp) — deliberately so here: the
+            // stop genuinely has a current item, the head the reticle is on.
+            const std::string targeted = RecField(rec, "targeted");
+            if (!targeted.empty()) {
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(targeted));
+                vt.Announcements.back().Kind = AnnouncementKinds::Selected;
+            }
+
+            const int objectId = atoi(oid.c_str());
+            vt.OnActivate = [objectId]() {
+                // The companion speaks only refusals ("No longer visible", "Unavailable");
+                // success is silent here because targeting raising is what speaks next, through
+                // the targeting poll, and the navigator yields focus on its next tick.
+                struct {
+                    int32_t ObjectID;
+                } params{objectId};
+                std::string answer;
+                if (!GameUI::CallCompanion("X2AccessTacticalReader", "SelectEnemyHead", &params,
+                        &answer)) {
+                    TTS::SpeakInterrupt(Vocab::Disabled);
+                    return;
+                }
+                if (!answer.empty())
+                    TTS::SpeakInterrupt(GameUI::CleanText(answer));
+            };
+
+            // The ObjectID is the identity: a new enemy is a new node wherever the sort puts it,
+            // and a changed hit chance on the same one is a value change under a held identity.
+            b.AddItem(ControlId::Structural("thud/tgt/" + oid), std::move(vt));
+        }
+        b.EndRow();
+        b.PopContext();
     }
 
     // ---- Objectives: the panel that retains its words, through the Ctrl+X composers ----

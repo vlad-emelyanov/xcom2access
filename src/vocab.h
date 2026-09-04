@@ -648,6 +648,12 @@ inline constexpr const char* TacticalWorldMode = "Map";
 inline constexpr const char* StopSoldier = "Soldier";
 inline constexpr const char* StopAbilities = "Abilities";
 inline constexpr const char* StopCommands = "Commands";
+// The enemy strip (UITacticalHUD_Enemies). "Targets" rather than "Enemies" because the same strip
+// carries a medkit's soldiers and a hack's terminals — it is the game's own name for the panel.
+inline constexpr const char* StopTargets = "Targets";
+// A head whose name the companion could not give. Never expected: DescribeNonUnitTarget already
+// falls back to a word, so this is the wire-format's "field missing" answer, not the game's.
+inline constexpr const char* TargetFallback = "Target";
 inline constexpr const char* StopObjectives = "Objectives";
 
 // ---- the Avenger HUD graph (the ant farm's ambient recipe, Tab / Ctrl+Tab) ----
