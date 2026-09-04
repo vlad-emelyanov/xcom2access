@@ -414,8 +414,16 @@ private function string DescribeConcealment(XComGameState_Unit UnitState)
 // GetUISummary_UnitEffectsByCategory filters on the persistent effect's bDisplayInUI and
 // IsEffectCurrentlyRelevant, which is what keeps a dormant or spent effect out of the line.
 //
-// This is also where panic, disorientation, burning and stun get spoken without a hand-written
-// English word for any of them — Name is the effect's own localized FriendlyName.
+// This is also where disorientation, burning, poison, bind and the rest get spoken without a
+// hand-written English word for any of them — Name is the effect's own localized FriendlyName.
+//
+// ⛔ PANIC AND STUN ARE NOT AMONG THEM, and an earlier version of this comment said they were —
+// which is how this readout went a whole campaign never once saying a soldier was stunned. The
+// pair, the reason and the game's own words for them are X2AccessHelper.UnlistedPenaltyWords, led
+// into the PENALTY category below; the fix went there rather than here because the object
+// scanner's squad ring needs the same pair and the two must never answer differently about one
+// soldier.
+//
 // The two categories stay APART rather than merging into one list, because the panel keeps them
 // apart: a bonus draws a green arrow and a penalty a red one, so which of the two an effect is
 // counts as something on screen. The two lead-in words are ours and English — the game ships no
@@ -436,11 +444,25 @@ private function string DescribeEffects(XComGameState_Unit UnitState)
 	return Result;
 }
 
-private function string EffectNames(XComGameState_Unit UnitState, EPerkBuffCategory Category)
+// Static and public: the HUD graph's Targets stop names an enemy's buffs and debuffs through this
+// same composer, so a soldier's effect list and an enemy's read alike — and, since the unlisted
+// pair leads the penalty category HERE rather than at either call site, a stunned ADVENT trooper
+// on the Targets stop reads it too, which is the fact that decides whether to spend the shot.
+//
+// The pair goes FIRST because it outranks the arrows: "can this unit act at all" is answered
+// before "what is it carrying".
+static function string EffectNames(XComGameState_Unit UnitState, EPerkBuffCategory Category)
 {
 	local array<UISummary_UnitEffect> Effects;
 	local string Result;
 	local int i;
+
+	if (UnitState == none)
+		return "";
+
+	if (Category == ePerkBuff_Penalty)
+		class'X2AccessHelper'.static.AppendComma(Result,
+			class'X2AccessHelper'.static.UnlistedPenaltyWords(UnitState));
 
 	Effects = UnitState.GetUISummary_UnitEffectsByCategory(Category);
 	for (i = 0; i < Effects.Length; i++)

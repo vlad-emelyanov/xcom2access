@@ -424,6 +424,7 @@ private function AddEnemies(TTile Origin, out array<AccessMarker> Entries)
 {
 	local XComGameStateHistory History;
 	local XComGameState_Unit UnitState, ActiveUnit;
+	local X2CharacterTemplate Template;
 	local StateObjectReference ShooterRef;
 	local array<StateObjectReference> MineToSee, ViaSquadsight;
 	local AccessMarker M;
@@ -448,6 +449,12 @@ private function AddEnemies(TTile Origin, out array<AccessMarker> Entries)
 	foreach History.IterateByClassType(class'XComGameState_Unit', UnitState)
 	{
 		if (UnitState.GetTeam() != eTeam_Alien || UnitState.IsDead())
+			continue;
+		// The squad ring's phantom in its mirror image: a GREMLIN takes its owner's team, so a
+		// mind-controlled or hacked Specialist would put a nameless drone in the ENEMY ring the
+		// same way. The tile reader already refuses cosmetics here (X2AccessTileReader.uc:536).
+		Template = UnitState.GetMyTemplate();
+		if (Template != none && Template.bIsCosmetic)
 			continue;
 		if (!class'X2TacticalVisibilityHelpers'.static.CanXComSquadSeeTarget(UnitState.ObjectID))
 			continue;
@@ -502,6 +509,7 @@ private function AddSquad(TTile Origin, out array<AccessMarker> Entries)
 {
 	local XComGameStateHistory History;
 	local XComGameState_Unit UnitState, ActiveUnit;
+	local X2CharacterTemplate Template;
 	local StateObjectReference NoShooter;
 	local AccessMarker M;
 	local int ActiveID;
@@ -515,6 +523,22 @@ private function AddSquad(TTile Origin, out array<AccessMarker> Entries)
 		// bRemovedFromPlay is what evacuating sets, so a soldier already on the Skyranger stops
 		// being somewhere on the map.
 		if (UnitState.GetTeam() != eTeam_XCom || UnitState.IsDead() || UnitState.bRemovedFromPlay)
+			continue;
+
+		// A Specialist's GREMLIN is a live eTeam_XCom unit parked on its owner's own tile, and
+		// without this it entered the ring as a NAMELESS "1 of 1 health, 0 tiles" entry — a
+		// seventh squad member on a six-soldier squad, with no counterpart a sighted player can
+		// see. The parity source is the flag manager's own list of who gets a flag
+		// (UIUnitFlagManager.CheckForMissingFlags: HP > 0, not cosmetic, not civilian, not
+		// removed from play), which this loop otherwise already matches clause for clause; the
+		// GREMLIN templates set bIsCosmetic AND bDisplayUIUnitFlag=false, so no flag is drawn
+		// over it and nothing about it is on screen to read.
+		//
+		// Same guard the tile reader and the shot readout have carried all along
+		// (X2AccessTileReader.uc:536, X2AccessTacticalReader.uc:580) — the squad ring was the one
+		// place it was missing.
+		Template = UnitState.GetMyTemplate();
+		if (Template != none && Template.bIsCosmetic)
 			continue;
 
 		M.Key = UnitState.ObjectID;
@@ -538,19 +562,59 @@ private function AddSquad(TTile Origin, out array<AccessMarker> Entries)
 	}
 }
 
-// One word for the condition that changes what you do with this soldier, most urgent first. Not a
-// full effect dump: the flag carries a row of icons, but a ring entry has to stay one breath long.
+// What is WRONG with this soldier — the question this key is pressed to answer, and the one it
+// used to leave unanswered: a stunned, disoriented, burning or bound soldier read exactly like a
+// healthy one, because the old version returned a single hand-written English word from a list of
+// four and stopped at the first match. A turn that ends with half the squad dazed is a turn where
+// the ring said nothing about any of it.
+//
+// Everything the FLAG shows as a status icon, now, in the game's OWN localized words. Two sources,
+// because neither covers the set alone:
+//
+//   - the penalty half of the unit's own UI summary — disoriented, burning, poisoned, acid,
+//     bound, mind controlled, marked, ruptured, unconscious, bleeding out, and any mod-added
+//     effect that called SetDisplayInfo, each under its own FriendlyName. Same list, same filter
+//     (bDisplayInUI && IsEffectCurrentlyRelevant) the soldier panel draws its red arrows from,
+//     and the same composer X2AccessUnitReader uses for the `;` readout, so an effect is named
+//     identically wherever we name it.
+//   - stun and panic, which that list CANNOT carry — X2AccessHelper.UnlistedPenaltyWords holds
+//     the why and the words, and holds them for the `;` sheet and the Targets stop too, so the
+//     three can never disagree about the same soldier.
+//
+// Order is by what changes your next decision: dying first, then whether the soldier can act at
+// all, then everything else. Bleeding out and unconscious are ALSO in the penalty list (both get
+// SetDisplayInfo), so whichever leads is remembered and skipped there rather than said twice.
+// Concealment is not a problem and comes last, after whatever is.
 private function string StatusWords(XComGameState_Unit UnitState)
 {
+	local array<UISummary_UnitEffect> Penalties;
+	local string Result, Lead;
+	local int i;
+
 	if (UnitState.IsBleedingOut())
-		return "bleeding out";
-	if (UnitState.IsUnconscious())
-		return "unconscious";
-	if (UnitState.IsPanicked())
-		return "panicking";
+		Lead = class'X2StatusEffects'.default.BleedingOutFriendlyName;
+	else if (UnitState.IsUnconscious())
+		Lead = class'X2StatusEffects'.default.UnconsciousFriendlyName;
+
+	class'X2AccessHelper'.static.AppendComma(Result, Lead);
+	class'X2AccessHelper'.static.AppendComma(Result,
+		class'X2AccessHelper'.static.UnlistedPenaltyWords(UnitState));
+
+	Penalties = UnitState.GetUISummary_UnitEffectsByCategory(ePerkBuff_Penalty);
+	for (i = 0; i < Penalties.Length; i++)
+	{
+		// An effect with no FriendlyName is one that set bDisplayInUI without setting a word —
+		// skipped rather than emitted, because a bare separator reads as a missing fact.
+		if (Penalties[i].Name == "" || Penalties[i].Name == Lead)
+			continue;
+		class'X2AccessHelper'.static.AppendComma(Result, Penalties[i].Name);
+	}
+
 	if (UnitState.IsConcealed())
-		return "concealed";
-	return "";
+		class'X2AccessHelper'.static.AppendComma(Result,
+			class'X2StatusEffects'.default.ConcealedFriendlyName);
+
+	return Result;
 }
 
 // Timed loot drops.

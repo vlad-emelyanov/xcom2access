@@ -197,6 +197,37 @@ swallow would otherwise cost.
   `ObjectiveInfo` component to keep the flag visible). Bearings come from
   `X2AccessTileReader.OffsetWords`, static and shared, so there is exactly ONE calibration
   of `NORTH_DX`/`EAST_DX`.
+- ⛔ **Every ring that walks `IterateByClassType(XComGameState_Unit)` must refuse
+  `bIsCosmetic`.** The squad ring did not, and a Specialist's GREMLIN — a live `eTeam_XCom`
+  unit standing on its owner's own tile — entered it as a NAMELESS entry: *"1 of 1 health,
+  0 tiles, 2 of 7"*, a seventh squad member on a six-soldier squad, right behind its owner
+  at `1 of 7`. The tell is the shape, not the words: an entry with an empty `Label`, zero
+  distance from the previous one, and a maximum health of 1. The parity source is the flag
+  manager's own list of who gets a flag (`UIUnitFlagManager.CheckForMissingFlags`: HP > 0,
+  **not cosmetic**, not civilian, not `bRemovedFromPlay`) — the three GREMLIN templates set
+  `bIsCosmetic` *and* `bDisplayUIUnitFlag=false`, so nothing about the drone is on screen to
+  read. The tile reader and the shot readout had carried this guard from the start
+  (`X2AccessTileReader.uc:536`, `X2AccessTacticalReader.uc:580`); the enemy ring needs it too,
+  because a GREMLIN takes its OWNER's team and a mind-controlled or hacked Specialist puts the
+  same phantom on the other key.
+- ⛔ **PANIC AND STUN ARE NOT IN `GetUISummary_UnitEffectsByCategory`, and nothing may source
+  them from it.** Neither `X2StatusEffects.CreateStunnedStatusEffect` nor any of the four
+  `X2Effect_Panicked` constructors (`Panicked`, `Berserk`, `Obsessed`, `Shattered`) calls
+  `SetDisplayInfo`, so both carry `bDisplayInUI` false and an **empty `FriendlyName`** and can
+  never reach either category. The game does not read them from there either: the flag draws its
+  stun icon straight off `StunnedActionPoints` (`GetUISummary_UnitStatusIcons`). Their words do
+  exist and are localized — `X2StatusEffects.StunnedPerActionFriendlyName`
+  (`"Stunned: <Ability:STUNNEDACTIONPOINTS>"`, expanded against the unit exactly as
+  `GetStunnedFlyoverText` does, with `RoboticStunnedPerActionFriendlyName` — "Shutdown" — for a
+  SPARK or a hacked MEC) and `UIEventNoticesTactical.PanickedTitle`.
+  **`X2AccessHelper.UnlistedPenaltyWords` is the one implementation**, and it is one because the
+  gap was fixed in the squad ring first and immediately put two of our surfaces at odds about the
+  same soldier — the `,` ring saying "Оглушение: 2" while the `;` sheet said nothing. It is now
+  led into the PENALTY category inside `X2AccessUnitReader.EffectNames`, so the soldier sheet and
+  the Targets stop inherit it and a stunned ADVENT trooper reads as stunned before you spend the
+  shot. ⚠ Bleeding out and unconscious ARE in the penalty list (both get `SetDisplayInfo`), so a
+  readout that also names them by hand for ordering — the squad ring does — must skip the
+  duplicate rather than say it twice.
 
 ## Targeting / shot HUD
 

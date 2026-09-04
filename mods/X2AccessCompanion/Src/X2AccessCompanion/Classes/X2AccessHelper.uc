@@ -350,6 +350,63 @@ static function string DescribeHazards(XComWorldData WorldData, TTile Tile)
 }
 
 // ---------------------------------------------------------------------------
+// The two conditions the unit effect summary CANNOT report
+// ---------------------------------------------------------------------------
+//
+// ⛔ **`GetUISummary_UnitEffectsByCategory` does not carry stun or panic, and never has.** Neither
+// `X2StatusEffects.CreateStunnedStatusEffect` nor any of the four `X2Effect_Panicked` constructors
+// (Panicked, Berserk, Obsessed, Shattered) calls `SetDisplayInfo`, so both effects keep
+// `bDisplayInUI` false and an EMPTY `FriendlyName` and can never land in either buff category. The
+// game does not read them from there either: the unit flag draws its stun icon straight off
+// `StunnedActionPoints` (`XComGameState_Unit.GetUISummary_UnitStatusIcons`). Everything else a
+// flag shows IS in that summary, which is why this pair — and only this pair — is carried by hand.
+//
+// It lives HERE rather than in either caller because the two surfaces that answer "what is wrong
+// with this unit" already disagreed once: the `,` squad ring said "Оглушение: 2" while the `;`
+// soldier sheet, sourcing purely from the summary, said nothing about the same stunned soldier.
+// Same family as the cover disagreement that made this class a shared oracle in the first place.
+static function string UnlistedPenaltyWords(XComGameState_Unit UnitState)
+{
+	local string Result;
+
+	if (UnitState == none)
+		return "";
+
+	AppendComma(Result, StunWords(UnitState));
+	if (UnitState.IsPanicked())
+		AppendComma(Result, class'UIEventNoticesTactical'.default.PanickedTitle);
+
+	return Result;
+}
+
+// "Stunned: 2" — the word AND how many actions the stun still owes, which is the half that decides
+// whether this unit is worth walking to or shooting at.
+//
+// Copied clause for clause from `X2StatusEffects.GetStunnedFlyoverText`, robotic branch included:
+// `<Ability:STUNNEDACTIONPOINTS>` expands against the unit (`X2AbilityTag.uc:347`, which sums
+// `StunnedActionPoints` and `StunnedThisTurn`), and a SPARK or a hacked MEC reads "Shutdown"
+// instead — the same word its own flyover used. Gated on `StunnedActionPoints > 0`, which is the
+// flag's gate, so the tag's own zero-case fallback (a `GetPreviousGameStateForObject` deref) is
+// never reached.
+static function string StunWords(XComGameState_Unit UnitState)
+{
+	local X2AbilityTag AbilityTag;
+	local string Result;
+
+	if (UnitState == none || UnitState.StunnedActionPoints <= 0)
+		return "";
+
+	AbilityTag = X2AbilityTag(`XEXPANDCONTEXT.FindTag("Ability"));
+	AbilityTag.ParseObj = UnitState;
+	Result = `XEXPAND.ExpandString(UnitState.IsRobotic()
+		? class'X2StatusEffects'.default.RoboticStunnedPerActionFriendlyName
+		: class'X2StatusEffects'.default.StunnedPerActionFriendlyName);
+	AbilityTag.ParseObj = none;
+
+	return Result;
+}
+
+// ---------------------------------------------------------------------------
 // Concealment detection — the red tile overlay, recomputed (docs/concealment-recon.md)
 // ---------------------------------------------------------------------------
 

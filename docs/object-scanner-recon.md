@@ -935,7 +935,7 @@ size and how many of the squad are inside.
 
 | Category | Source | Gate — the game's OWN rule for drawing the mark | Detail |
 |---|---|---|---|
-| `units.squad` | `XComGameState_Unit`, `eTeam_XCom`, not dead, not `bRemovedFromPlay` | none (they are yours) | "selected", one status word, cover, health/shield/armour |
+| `units.squad` | `XComGameState_Unit`, `eTeam_XCom`, not dead, not `bRemovedFromPlay`, **not `bIsCosmetic`** | none (they are yours) | "selected", every condition the flag shows, cover, health/shield/armour |
 | `ground.loot` | `XComGameState_LootDrop` | `LootExpirationTurnsRemaining > 0 && HasAvailableLoot()` — verbatim from `BuildVisualizationForLootTicked` (`.uc:333`) | "psi loot" (its own marker mesh on screen), "expires in N turns" |
 | `ground.reinforcements` | `XComGameState_AIReinforcementSpawner` | `Countdown > 0` (what `UITacticalHUD_Countdown.RefreshCounter` hides on) **and** a visualization type that actually builds the flare | "in N turns" |
 
