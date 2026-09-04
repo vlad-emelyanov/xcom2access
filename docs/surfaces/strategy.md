@@ -209,10 +209,26 @@ speech is serial.
 
 The OTHER subtitle system, and nothing else in this project touches it: the text the engine draws
 over a full-screen `.bk2` — the WOTC pre-intro, the Chosen strongholds, the XP autopsies, the final
-movie. The base game's tentpole cinematics are NOT this; they are in-engine matinees over which
-`UINarrativeMgr` deliberately keeps the commlink alive (`HideUIForCinematics` spares
-`UINarrativeCommLink` and `UIStrategyTutorialBox`), so the transient reader above has them. The two
-can never both be showing, which is why their lines cannot collide.
+movie. The base game's tentpole cinematics are NOT this; they are in-engine matinees. The two can
+never both be showing, which is why their lines cannot collide.
+
+✅ **First live pass 2026-09-04, and it works.** The vtable pin held
+(`MovieSubtitles: movie player at 0x… validated`) and `CIN_XP_PreIntro` read all 35 of its cues in
+Russian, timed to the film, with not one `no localized text for cue` — which is what says the loc
+lookup found the right package in a language nobody wrote the lookup for.
+
+- ⛔ **A NAME on the movie player is not a Bink movie, and the discriminator is whether a `.bk2`
+  exists.** `XComGame/Movies/` ships a `.txt` cue track for the in-engine matinees TOO
+  (`CIN_TP_OldGods_pt1`, `CIN_TP_ShadowChamberReveal`, `CIN_TP_BuildOutpost` — cue tracks, no video),
+  and the game pushes their names onto the full-screen movie player anyway: our `movie '…' opened`
+  line fires and `IsAnyMoviePlaying` gates the navigator, but no cue table is ever loaded, so this
+  surface stays silent. **That silence is correct here and must not be "fixed" from this side** — the
+  cues are drawn by `RenderExtraSubtitles` timed against the matinee, not against a `BINKHANDLE`, so
+  reading them needs a different owner. ⚠ **Nothing in the mod is that owner yet**: this doc used to
+  claim `UINarrativeCommLink` had these because `HideUIForCinematics` spares it, and the 2026-09-04
+  log refutes that — `CIN_TP_OldGods_pt1` ran 2m13s in total silence with 21 cues on disk. Filed
+  under Known defects in `../next-steps.md`; do not re-derive the claim from `HideUIForCinematics`
+  alone, it is exactly the reasoning that was wrong.
 
 - **The pipeline**: `XComGame/Movies/<name>.txt` is a cue track (`startMs endMs CueKey`) that the
   Bink player loads beside the video; each cue resolves through `Localize("Subtitles", <CueKey>,

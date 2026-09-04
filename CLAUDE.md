@@ -278,7 +278,10 @@ path-API survey, the field maps — is **`docs/engine-notes.md`**. What it oblig
   object, and the rule it established is the one to copy if a second ever needs to: hard-code ONE
   address (the global) and validate it by its VTABLE before dereferencing anything through it,
   because no offset on a non-UObject can be `static_assert`ed and that check is therefore the entire
-  pin.
+  pin. The pin held on first contact with a running game (2026-09-04, `CIN_XP_PreIntro` read cue for
+  cue), so the pattern is proven and not merely argued. ⚠ **But a movie NAME on that player is not a
+  Bink movie**: the in-engine matinees are announced through it too and carry a cue track with no
+  `.bk2` behind it, so this surface reads nothing for them — correctly. `docs/surfaces/strategy.md`.
 - ⛔ **No gameplay event fires in the TUTORIAL — it replays history, it never submits it.**
   `ContextBuildGameState` never runs and `X2EventManager.TriggerEvent` is never reached, for our
   listeners or the game's own. Two consequences: **anything built on the event bus must be tested on
