@@ -153,7 +153,25 @@ speech is serial.
   landing node. Neither string has a dot or a scheme, so the asset filter is the wrong tool; the
   op is structural by construction, so `IsStructuralBatch` names it. The child-addressed ops
   (`ChildSetString` and kin) carry their names in the capture's `child` field, not in the
-  operands, and need no such rule.
+  operands, and need no such rule. **The same afternoon the second of `UIPanel`'s three
+  string-carrying ops leaked the same way**: `addTweenBetween` (`UIPanel.AnimateIn`) pushes
+  `"_alpha"`, `"time"`, `"delay"` as strings, and `eAlert_FacilityComplete` opened on
+  "_alpha, 1 of 8". The tween was recorded on the alert's index BEFORE its own `UpdateData`, and
+  the alert's four panels have `bAnimateOnInit = false` — so it was a STALE batch from the index's
+  previous owner, whose `CLEANUP_OP` the capture never saw: the one measured exception to
+  `flash_shadow.cpp`'s "a recycled index is safe" argument. All three ops are now named; the
+  reader logs every structural batch it skips (`skipped structural batch(es) … on cache index N`)
+  and warns on any contributing batch that is not an `Update*`/`Set*` push, which is the shape
+  every leak so far has had.
+- ⛔ **A bare digit pushed as a string is a POSITION or a BADGE, and only the batch's push order
+  says which operand it is.** `UpdateCovertSlot` leads with `string(Index)` — the Flash slot a
+  soldier goes into, which nothing draws — and the covert-action confirmation read "0", "1", "2"
+  between its soldiers' names (2026-09-04 12:16). `UpdateRetributionChosenPanel` pushes the
+  Chosen's level second, the badge inside its icon, and the Retribution alert read "2" ahead of
+  the Chosen's class and name. Both survive the type filter (strings) and the asset filter (no
+  dot). `IsPositionalOperand` names the batch AND the position; the level badge is dropped
+  rather than labelled because the report's Chosen page already drops the same badge
+  (`X2AccessChosenReader.DescribeChosenEvents`), and two surfaces reading one fact must agree.
 - ⛔ **A popup with NO Escape branch must send its own single button record.** The recipe's
   fallback pair (Continue / Dismiss on Enter / Escape) exists for a popup that answered nothing,
   and it assumes both keys do something. `UIChosenEncountered` and `UISoldierCaptured`

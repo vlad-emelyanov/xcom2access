@@ -414,20 +414,63 @@ bool IsListFeederBatch(const FlashShadow::Call& call)
     return call.name == "UpdateFacilityList";
 }
 
-// A batch that builds the panel's STRUCTURE and carries no words for anyone: UIPanel.LoadChild's
-// `spawnChildPanel`, whose two string operands are the child's MCName and its library id.
+// A batch that builds or animates the panel's STRUCTURE and carries no words for anyone — the
+// three string-carrying function ops UIPanel itself pushes:
+//   · `spawnChildPanel` (UIPanel.LoadChild): the child's MCName and its library id;
+//   · `addTween` / `addTweenBetween` (UIPanel.AddTween*, i.e. AnimateIn/Out, AnimateY…): the
+//     property name ("_alpha", "_y") and the literal keys "time", "delay", "ease" with the
+//     ease name after them.
 //
-// ⛔ Heard live 2026-09-04, on every popup of the session: the alert's button strip is spawned as
-// a child named `ButtonGroup` with the default library item `EmptyControl`, and once the reader
-// took every batch on the panel (the multi-batch fix) those two names led every alert as
-// "ButtonGroup, 1 of N", "EmptyControl, 2 of N" — ahead of the title, and as the landing node.
-// Neither has a dot or a scheme, so the asset filter passes them, and neither is a button label.
-// Matched by NAME because the op's operands are names BY CONSTRUCTION; the ops that carry a
-// child name alongside text (ChildSetString and kin) arrive with the name in `child`, not in the
-// operands, so they need no such rule.
+// ⛔ Heard live 2026-09-04, twice. First on every popup of the session: the alert's button strip is
+// spawned as a child named `ButtonGroup` with the default library item `EmptyControl`, and once
+// the reader took every batch on the panel (the multi-batch fix) those two names led every alert
+// as "ButtonGroup, 1 of N", "EmptyControl, 2 of N" — ahead of the title, and as the landing node.
+// Then on `eAlert_FacilityComplete` at 13:32: "_alpha, 1 of 8", "time, 2 of 8", "delay, 3 of 8"
+// ahead of ОТСЕК ПОСТРОЕН, again as the landing node. None of these strings has a dot or a
+// scheme, so the asset filter passes them, and none is a button label. Matched by NAME because
+// the ops' operands are names BY CONSTRUCTION; the ops that carry a child name alongside text
+// (ChildSetString and kin) arrive with the name in `child`, not in the operands, and need no rule.
+//
+// ⚠ The tween was recorded on the alert's cache index BEFORE the alert's own UpdateData, and the
+// alert's panels never tween (BindLibraryItem sets bAnimateOnInit false on all four). So it was a
+// STALE batch from a previous owner of that index whose CLEANUP_OP the capture never saw — the
+// one measured exception to "a recycled index is safe" (flash_shadow.cpp). Skipping by name
+// covers the tween; the read below LOGS every structural batch it skipped, so the next stale
+// batch is a line in the log rather than a word in the player's ear.
 bool IsStructuralBatch(const FlashShadow::Call& call)
 {
-    return call.name == "spawnChildPanel";
+    return call.name == "spawnChildPanel" || call.name == "addTween"
+        || call.name == "addTweenBetween";
+}
+
+// An operand that is a POSITION or a BADGE rather than a word — pushed as a string, so the type
+// filter keeps it, and a bare digit, so the asset filter keeps it too. Named per batch and per
+// position, because the batch's own push order is the only thing that says which operand it is:
+//   · `UpdateCovertSlot` (UIAlert.uc:5294) leads with `string(Index)`, the Flash slot the soldier
+//     goes into — a positional argument nothing draws. Heard 2026-09-04 12:16 on the covert-action
+//     confirmation as "0, 7 of 12", "1, 9 of 12", "2, 11 of 12" between the soldiers' names.
+//   · `UpdateRetributionChosenPanel` (UIAlert.uc:5385) pushes `String(ChosenState.Level + 1)`
+//     second — the level badge, drawn as art inside the Chosen's icon. Heard 13:36 as "2, 8 of 11"
+//     ahead of the Chosen's class, name and nickname. The report's Chosen page drops the same
+//     badge for the same reason (X2AccessChosenReader.DescribeChosenEvents: "a bare digit with no
+//     label anywhere on the page"), and two surfaces reading one fact must agree.
+bool IsPositionalOperand(const FlashShadow::Call& call, size_t position)
+{
+    if (call.name == "UpdateCovertSlot")
+        return position == 0;
+    if (call.name == "UpdateRetributionChosenPanel")
+        return position == 1;
+    return false;
+}
+
+// Every batch that has ever carried an alert's words is an `Update*` push or one of the two
+// `Set*` helpers (UIAlert's own BeginFunctionOp census, 2026-09-04: 20 Update* names,
+// SetFactionIcon, SetChosenName). A contributing batch outside that shape is not refused —
+// a mod's alert may name its pushes anything, and a dropped line reads as "nothing more" — but
+// it is the leak candidate the last two leaks would have been flagged by, so it is logged.
+bool IsExpectedTextBatch(const FlashShadow::Call& call)
+{
+    return call.name.compare(0, 6, "Update") == 0 || call.name.compare(0, 3, "Set") == 0;
 }
 
 // The words UIAlert actually handed Scaleform, in the order it handed them over.
@@ -476,14 +519,22 @@ std::vector<std::string> ReadAlertCaptured(
         return lines;
 
     // Which batches actually contributed, for the log — so a live run can tell "this alert paints
-    // with one call" from "we only found one of its calls".
+    // with one call" from "we only found one of its calls" — and which were skipped as structure,
+    // so a stale batch on a recycled index shows up as a line rather than as a spoken word.
     std::string batches;
+    std::string skipped;
 
     auto take = [&](const FlashShadow::Call& call) {
         const size_t before = lines.size();
-        for (const FlashShadow::Value& arg : call.args) {
+        for (size_t position = 0; position < call.args.size(); position++) {
+            const FlashShadow::Value& arg = call.args[position];
             if (arg.type != FlashShadow::ValueType::String || arg.s.empty())
                 continue;
+            if (IsPositionalOperand(call, position)) {
+                LOG_INFO("Popup: dropped positional operand '%s' (operand %zu of %s.%s)",
+                    arg.s.c_str(), position, alertName.c_str(), call.name.c_str());
+                continue;
+            }
             std::string text = CleanText(arg.s);
             if (text.empty())
                 continue;
@@ -502,13 +553,22 @@ std::vector<std::string> ReadAlertCaptured(
             if (!batches.empty())
                 batches += '+';
             batches += call.name;
+            if (!IsExpectedTextBatch(call)) {
+                LOG_WARN("Popup: %s took words from '%s', which is not an Update*/Set* push — "
+                         "the shape both leaks of 2026-09-04 had; check the spoken lines",
+                    alertName.c_str(), call.name.c_str());
+            }
         }
     };
 
     const std::vector<FlashShadow::Call> calls = FlashShadow::GetCalls(index);
     for (const FlashShadow::Call& call : calls) {
-        if (IsStructuralBatch(call))
+        if (IsStructuralBatch(call)) {
+            if (!skipped.empty())
+                skipped += '+';
+            skipped += call.name;
             continue;
+        }
         if (!IsListFeederBatch(call))
             take(call);
     }
@@ -520,6 +580,12 @@ std::vector<std::string> ReadAlertCaptured(
     if (!lines.empty()) {
         LOG_INFO("Popup: %s read %zu line(s) from the Flash capture (%s, cache index %d)",
             alertName.c_str(), lines.size(), batches.c_str(), index);
+    }
+    if (!skipped.empty()) {
+        // A tween here means a batch recorded on this index BEFORE this alert painted (the alert's
+        // own panels never animate): the index was recycled without a CLEANUP_OP being seen.
+        LOG_INFO("Popup: %s skipped structural batch(es) %s on cache index %d", alertName.c_str(),
+            skipped.c_str(), index);
     }
     return lines;
 }
