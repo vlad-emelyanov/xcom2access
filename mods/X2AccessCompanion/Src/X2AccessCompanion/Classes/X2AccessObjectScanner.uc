@@ -4,7 +4,7 @@
 // thread, from the tick drain) and reads NativeResult back through reflection right after the call
 // returns. Nothing here runs on its own — no listeners, no timers, no polling.
 //
-// Eleven categories. Three carry a dedicated cycle key on the native side; the rest are reached
+// Eleven categories. Four carry a dedicated cycle key on the native side; the rest are reached
 // through the ring. Each keeps its own remembered position:
 //   markers               — the world-space things the game points the player AT. Three
 //                           contributors in one ring: the tutorial's required-action marker
@@ -40,6 +40,11 @@
 //   world.connectors      — the ramps and ladders between Z levels. The only category that is
 //                           SWEPT rather than enumerated (no global ramp list exists), and so the
 //                           only one whose empty text names a scope rather than the map.
+//   ground.cover          — the tiles you could STAND ON to be behind something, named by the
+//                           side(s) they cover, in or out of this turn's reach. Ported from
+//                           WH40KRTAccess's J cycle (src/RTAccess/Exploration/CoverModel.cs),
+//                           where the same verb answers the same question. Like the connectors it
+//                           is local rather than map-wide, and its empty text names that scope.
 //
 // The last two exist because they are where the gap is WIDEST: the game gives a sighted player a
 // countdown (a number on the HUD counter, a number on the loot waypoint) and a persistent glowing
@@ -80,15 +85,22 @@ const KEY_HAZARD = -200;    // minus the hazard type index — see HazardWord
 // remembered selection survives a rebuild. Far below the others: the index can run to the
 // hundreds of thousands on a big grid.
 const KEY_CONNECTOR = -300000000;
+// The same scheme for cover spots, minus the LOWEST linear tile index in the cluster — which is
+// origin-independent, so the selection survives the scan window sliding with the cursor where a
+// key built from the nearest member would not. The 100-million gap below KEY_CONNECTOR is the
+// collision budget: the two ranges cannot meet until a map has 100 million tiles.
+const KEY_COVER = -400000000;
 
 // Categories. Each has its own remembered position, so checking an enemy and then checking a
 // marker does not lose your place in either.
 //
-// ⛔ THE FIRST THREE INDICES ARE MIRRORED IN NATIVE. object_scanner.cpp hardcodes kCatMarkers 0,
-// kCatEnemies 1 and kCatSquad 2 for its three cycle keys; every other category is reached only
-// through StepCategory, which is relative and index-agnostic. So renumbering at index 3 or above
-// is free — as removing CAT_EVAC was — and renumbering 0..2 is a two-file change or a silent
-// wrong-ring bug. Change both halves or neither.
+// ⛔ FOUR INDICES ARE MIRRORED IN NATIVE — 0, 1, 2 AND 10. object_scanner.cpp hardcodes
+// kCatMarkers 0, kCatEnemies 1, kCatSquad 2 and kCatCover 10 for its four cycle keys; every other
+// category is reached only through StepCategory, which is relative and index-agnostic. So
+// renumbering at 3..9 is free — as removing CAT_EVAC was — and renumbering any of the mirrored
+// four is a two-file change or a silent wrong-ring bug. Change both halves or neither.
+// ⚠ CAT_COVER sits at the END rather than beside the other keyed rings precisely to keep that
+// free range contiguous: a new category appended after it would take 11 and shift nothing.
 const CAT_MARKERS = 0;
 const CAT_ENEMIES = 1;
 const CAT_SQUAD = 2;
@@ -99,7 +111,8 @@ const CAT_HAZARDS = 6;
 const CAT_INTERACT = 7;
 const CAT_TOWERS = 8;
 const CAT_CONNECTORS = 9;
-const CAT_COUNT = 10;       // how many are REAL — what the category ring wraps around
+const CAT_COVER = 10;
+const CAT_COUNT = 11;       // how many are REAL — what the category ring wraps around
 const NUM_CATEGORIES = 16;  // headroom for the rest; a static array, so the slack costs nothing
 
 // Hazard types, in the order HazardWord/HazardClass/TileHasHazard agree on.
@@ -364,6 +377,9 @@ private function BuildCategory(int Category, TTile Origin, out array<AccessMarke
 	case CAT_CONNECTORS:
 		AddConnectors(Origin, Entries);
 		break;
+	case CAT_COVER:
+		AddCover(Origin, Entries);
+		break;
 	}
 }
 
@@ -390,6 +406,9 @@ private function string EmptyText(int Category)
 	// Names the SCOPE, not the map: the sweep is deliberately local, so "none" here means none
 	// nearby rather than none at all, and saying so keeps the reading honest.
 	case CAT_CONNECTORS: return "No ramps or ladders nearby";
+	// Same rule, and it carries the FLOOR too: the sweep is one Z band around the origin, so a
+	// player standing in an open yard below a walled roof must not hear "this map has no cover".
+	case CAT_COVER: return "No cover nearby on this floor";
 	}
 	return "Nothing here";
 }
@@ -409,6 +428,7 @@ private function string CategoryName(int Category)
 	case CAT_INTERACT: return "Objects";
 	case CAT_TOWERS: return "Towers";
 	case CAT_CONNECTORS: return "Level connectors";
+	case CAT_COVER: return "Cover";
 	}
 	return "Category" @ string(Category);
 }
@@ -1362,6 +1382,222 @@ private function AddConnectorCandidate(XComWorldData WorldData, TTile Origin, TT
 	M.Detail = "";
 	M.bIsDestination = true;
 	InsertByDistance(Origin, M, Raw);
+}
+
+
+// ---------------------------------------------------------------------------
+// Cover positions (the J cycle)
+// ---------------------------------------------------------------------------
+//
+// The WH40KRTAccess CoverModel port. A cover POSITION is a tile you could stand on to be behind
+// something — not the thing itself — named by the side(s) it covers ("Full cover north"), so `/`
+// plants the cursor on the very tile you would occupy and Backspace walks there. That is the whole
+// reason the answer is a tile and not an object: cover is directional level geometry, and "the
+// crate is 4 tiles north-east" does not tell a blind player which side of it to stand on.
+//
+// ⚠ OUT-OF-RANGE COVER IS INCLUDED, deliberately. bIsDestination is true, so FormatMarker appends
+// ReachWords and an unreachable spot reads "out of range" — a NOTE, not a filter. Planning a
+// position you cannot reach this turn is the point of the feature, and it is the half RT's own
+// docs/feedback triage asked for by name.
+//
+// Two things this does NOT do, both on purpose:
+//   * It does not re-ask whether cover is knowable. RT gates the whole surface on the game's own
+//     cover overlay being TOGGLED UP; XCOM's is always on, so there is no mode to mirror — but the
+//     overlay is real (XComActionIconManager draws UI_3D.Cover.CoverFull / CoverHalf per covered
+//     edge, which is where our two words come from), and the tile cursor already names any explored
+//     tile's cover unconditionally. So the FOG LATCH is the entire parity gate, and it is the same
+//     latch (`TileSeen(bLatch=true)`) the cursor applies to the same fact. A ring over cover
+//     therefore leaks nothing the arrow keys could not already reach one tile at a time; it is
+//     drawn 2 tiles out (CoverIconTileRange) and swept 12 here, which is a RANGE difference and
+//     not a parity breach — a sighted player mouse-sweeps the same map in a second.
+//   * It does not rank by anything but distance, and MUST NOT LEARN TO. RT's J changes gear to
+//     FiringPositions when an enemy is selected ("where can I stand and still shoot THAT"); that is
+//     REFUSED here, not deferred. No XCOM surface shows a player which tiles can shoot a given
+//     enemy — per-tile shot info exists only for the tile the cursor is ON — and the only thing in
+//     the game that sweeps and scores candidate tiles for a shot is XGAIBehavior, the enemy's
+//     planner. See surfaces/tactical.md; the general test is under Sighted parity in CLAUDE.md.
+//
+// ⛔ The sweep is ONE Z BAND (±1, the connectors' own bound) and the empty text says so. XCOM
+// ground is not flat — kerbs, slopes and ramps move Z under a plain cardinal step, which is why
+// the cursor has ResolveFloor at all — so an exact-Z filter would drop most of the cover beside
+// any slope. Widening it further is what the floor keys are for.
+const COVER_RADIUS = 12;   // tiles, in X and Y, swept around the scan origin
+const COVER_MAX = 16;      // entries; a ring longer than this is a list, not a cue
+
+private function AddCover(TTile Origin, out array<AccessMarker> Entries)
+{
+	local XComWorldData WorldData;
+	local XComGameState_Unit ActiveUnit;
+	local array<XComCoverPoint> Points;
+	local array<int> Sig, CellZ, Stack, Members;
+	local array<AccessMarker> Raw;
+	local AccessMarker M;
+	local TTile T, Best;
+	local int Side, i, Idx, DX, DY, S, Start, Mine, Cell, Lowest, Linear, BestDist, Dist;
+
+	WorldData = `XWORLD;
+	if (WorldData == none)
+		return;
+	ActiveUnit = class'X2AccessTileReader'.static.ActiveUnitState();
+
+	Side = COVER_RADIUS * 2 + 1;
+	Sig.Length = Side * Side;      // growing a dynamic array zero-fills; 0 means "no cover cell"
+	CellZ.Length = Side * Side;
+
+	// The engine already keeps the cover points and will hand back the ones near a location, with
+	// each one's TILE COORDINATES and cover flags — so unlike RT, which had to classify every cell
+	// in a window by hand, there is no sweep to write. Radius is XY in world units and Height is Z
+	// (XComTacticalCheatManager.TestCoverPoints passes 5 * 96 and 5 * 64 for five tiles of each),
+	// so one WORLD_FloorHeight is the ±1 Z band, filtered exactly below.
+	//
+	// ⚠ bSortedByDist is asked for but NOTHING here depends on it: the grid is filled by tile
+	// offset, each cluster picks its own nearest member, and the ring's order comes from
+	// InsertByDistance. It buys exactly one thing — determinism in the column tie-break below,
+	// where two cells of one column sit the same distance above and below the origin's floor.
+	//
+	// ⛔ BOTH EXTENTS ARE ASKED FOR WIDE AND NARROWED BY HAND, because the query's shape is not
+	// this ring's shape and neither is measured. The radius is ROUND and the window is SQUARE, so
+	// a bare 12-tile radius would answer for a cell 12 north and not for one 12 north-east — while
+	// TileDistance, being Chebyshev, calls both "12 tiles". A ring that has data for some bearings
+	// and not others at the same spoken distance is the truncation failure mode wearing a compass:
+	// sqrt(2) is what puts the whole square inside the sphere. The height is doubled for the
+	// cousin of that reason — whether the native reads it as a half-extent or a full one has never
+	// been measured here, and asking for two floors costs nothing when the ±1 Z test below is the
+	// authority either way. Both over-ask deliberately; the filters immediately after are the rule.
+	WorldData.GetCoverPoints(WorldData.GetPositionFromTileCoordinates(Origin),
+		COVER_RADIUS * class'XComWorldData'.const.WORLD_StepSize * 1.4143,
+		2.0 * class'XComWorldData'.const.WORLD_FloorHeight,
+		Points, true);
+
+	// Pass 1: lay the surviving cover cells into a flat (2R+1)^2 grid keyed by their offset from
+	// the origin, so pass 2 can flood-fill in O(cells) instead of rescanning the point list.
+	for (i = 0; i < Points.Length; i++)
+	{
+		T.X = Points[i].X;
+		T.Y = Points[i].Y;
+		T.Z = Points[i].Z;
+
+		DX = T.X - Origin.X;
+		DY = T.Y - Origin.Y;
+		if (DX < -COVER_RADIUS || DX > COVER_RADIUS || DY < -COVER_RADIUS || DY > COVER_RADIUS)
+			continue;   // the radius is a sphere and the grid is a square; the corners fall out here
+		if (Abs(T.Z - Origin.Z) > 1)
+			continue;
+
+		S = class'X2AccessTileReader'.static.CoverSignature(Points[i].Flags);
+		if (S == 0)
+			continue;
+
+		Idx = (DY + COVER_RADIUS) * Side + (DX + COVER_RADIUS);
+		// One cell per COLUMN. When both Z levels of a column carry cover, keep the one level
+		// with the origin: a kerb one Z up must not hide the tile the player is standing on.
+		if (Sig[Idx] != 0 && Abs(CellZ[Idx] - Origin.Z) <= Abs(T.Z - Origin.Z))
+			continue;
+
+		// Static layout, so the LATCHING fog rule — a wall stays known once seen, exactly as the
+		// tile cursor treats the same tile's cover.
+		if (!TileSeen(WorldData, T, true))
+			continue;
+		// The game's own "could a unit stand here" pair, from XGAIBehavior:3439.
+		if (!WorldData.IsFloorTileAndValidDestination(T, ActiveUnit))
+			continue;
+		// Somebody is standing there — with the one exception every cover reader makes: you can
+		// already BE in the best cover on the map, so the active soldier's own tile stays listable
+		// (RT spells the same carve-out as `occupant != observer`).
+		if (!WorldData.CanUnitsEnterTile(T)
+			&& (ActiveUnit == none
+				|| !class'X2AccessTileReader'.static.SameTile(T, ActiveUnit.TileLocation)))
+			continue;
+
+		Sig[Idx] = S;
+		CellZ[Idx] = T.Z;
+	}
+
+	// Pass 2: flood-fill TOUCHING cells with an IDENTICAL signature into one spot. A ten-tile
+	// sandbag line becomes one entry ("Full cover north, 10 tiles wide") while the four faces of
+	// a car stay four — four faces are four different places to stand, and that is the choice the
+	// player is actually making. Identical is the right join, not "compatible": the cell where a
+	// run turns half into full, or a corner covered on two sides, is a genuinely different
+	// position and earns its own entry.
+	//
+	// Sig doubles as the visited mask — a claimed cell is zeroed, and 0 never matches a live
+	// signature. CellZ is left intact, so a member's Z is still readable after its cell is claimed.
+	for (Start = 0; Start < Sig.Length; Start++)
+	{
+		Mine = Sig[Start];
+		if (Mine == 0)
+			continue;
+
+		Members.Length = 0;
+		Stack.Length = 0;
+		Sig[Start] = 0;
+		Stack.AddItem(Start);
+		while (Stack.Length > 0)
+		{
+			Cell = Stack[Stack.Length - 1];
+			Stack.Remove(Stack.Length - 1, 1);
+			Members.AddItem(Cell);
+			ClaimCoverCell(Sig, Side, (Cell % Side) + 1, Cell / Side, Mine, Stack);
+			ClaimCoverCell(Sig, Side, (Cell % Side) - 1, Cell / Side, Mine, Stack);
+			ClaimCoverCell(Sig, Side, Cell % Side, (Cell / Side) + 1, Mine, Stack);
+			ClaimCoverCell(Sig, Side, Cell % Side, (Cell / Side) - 1, Mine, Stack);
+		}
+
+		// Two different tiles come out of one cluster and they answer different questions. The
+		// KEY is the lowest linear tile index in it: canonical, origin-independent, and unique
+		// because clusters are disjoint — so the remembered selection survives the window sliding
+		// with the cursor. The spoken TILE is the member nearest the origin: the one you would
+		// actually walk to, and the one `/` plants on.
+		Lowest = MaxInt;
+		BestDist = MaxInt;
+		for (i = 0; i < Members.Length; i++)
+		{
+			Idx = Members[i];
+			T.X = Origin.X + (Idx % Side) - COVER_RADIUS;
+			T.Y = Origin.Y + (Idx / Side) - COVER_RADIUS;
+			T.Z = CellZ[Idx];
+
+			Linear = (T.Z * WorldData.NumY + T.Y) * WorldData.NumX + T.X;
+			if (Linear < Lowest)
+				Lowest = Linear;
+			Dist = TileDistance(Origin, T);
+			if (Dist < BestDist)
+			{
+				BestDist = Dist;
+				Best = T;
+			}
+		}
+
+		M.Key = KEY_COVER - Lowest;
+		M.Tile = Best;
+		M.Label = class'X2AccessTileReader'.static.CoverEdgeWords(Mine);
+		// How far the SAME cover runs — how far you can shuffle along it without changing what
+		// you are behind. Silent at one cell, where "1 tile wide" is a word for nothing.
+		M.Detail = (Members.Length > 1) ? (string(Members.Length) @ "tiles wide") : "";
+		M.bIsDestination = true;
+		InsertByDistance(Origin, M, Raw);
+	}
+
+	// Cap LAST, over the already-distance-sorted list, so the entries that survive are the nearest
+	// ones rather than whichever the grid scan reached first — the same order-then-trim the
+	// connector clustering uses, and for the same reason.
+	for (i = 0; i < Raw.Length && i < COVER_MAX; i++)
+		Entries.AddItem(Raw[i]);
+}
+
+// Claim a neighbouring cell into the current cluster when its signature matches EXACTLY.
+private function ClaimCoverCell(out array<int> Sig, int Side, int X, int Y, int Mine,
+	out array<int> Stack)
+{
+	local int Idx;
+
+	if (X < 0 || Y < 0 || X >= Side || Y >= Side)
+		return;
+	Idx = Y * Side + X;
+	if (Sig[Idx] != Mine)
+		return;
+	Sig[Idx] = 0;
+	Stack.AddItem(Idx);
 }
 
 

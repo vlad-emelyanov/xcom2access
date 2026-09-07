@@ -51,9 +51,10 @@ void Call(const char* funcName, void* params)
 constexpr int32_t kCatMarkers = 0;
 constexpr int32_t kCatEnemies = 1;
 constexpr int32_t kCatSquad = 2;
-// Everything from loot (3) to level connectors (10) has no dedicated key — those are reached
+// Everything from loot (3) to level connectors (9) has no dedicated key — those are reached
 // through the category ring below, so nothing here names them. Listed for the record, since this
 // comment block is the only place the two halves' numbering is written down side by side.
+constexpr int32_t kCatCover = 10;
 
 // Delta 0 re-announces the current selection without moving it — the reason a one-entry ring is
 // answerable at all without cycling through it.
@@ -138,12 +139,34 @@ void Init()
     RegisterClaim({VK_OEM_COMMA, ModShift, active, OnPress([] { ScanCall(kCatSquad, -1); }),
         "scanner: previous squad member"});
 
-    // Everything else is reached through the RING rather than through a key of its own. Three
-    // dedicated keys is what the recon doc budgets — markers, enemies, squad, the ones pressed
-    // every turn — and the ring is what keeps loot, reinforcements and each category after them
-    // from costing a key the tactical layer does not have. It also left ; and ' free — ; has
-    // since gone to the selected-unit readout (unit_info.cpp) and ' is still earmarked for the
-    // vantage read.
+    // J / Shift+J — the COVER POSITIONS nearest the scan origin: the tiles you could stand on to
+    // be behind something, named by the side(s) they cover, in or out of this turn's movement
+    // range so a position can be planned before it can be reached. The WH40KRTAccess key of the
+    // same name and the same verb (its `scan.cover_next` / `scan.cover_prev`).
+    //
+    // A fourth dedicated key against the recon doc's budget of three, and it earns the slot the
+    // way the other three did — it answers a question asked every single turn, and the ring is
+    // the wrong place for it because reaching cover through Ctrl+PageDown means stepping past
+    // every other category while a pod is looking at you. Like every cycle key here it only
+    // SELECTS: `/` then plants the tile cursor on the tile, and Backspace walks there.
+    //
+    // ⚠ Bare J carries a vanilla `J_Key_Press` forwarder in BOTH [Engine.PlayerInput] (:183) and
+    // [XComGame.XComTacticalInput] (:306) — one of the generic ability-hotkey forwarders that
+    // look empty and are not. It costs the player nothing for exactly the reason B and O above
+    // cost nothing: UE3 matches modifiers leniently, so swallowing the BARE key leaves the
+    // vanilla action reachable at Ctrl+J, and the claim stands down entirely outside world mode.
+    // No config snippet, no rebind.
+    RegisterClaim({'J', ModNone, active, OnPress([] { ScanCall(kCatCover, 1); }),
+        "scanner: next cover position"});
+    RegisterClaim({'J', ModShift, active, OnPress([] { ScanCall(kCatCover, -1); }),
+        "scanner: previous cover position"});
+
+    // Everything else is reached through the RING rather than through a key of its own. The
+    // recon doc budgets THREE dedicated keys — markers, enemies, squad — and cover is the one
+    // addition to that list, on the same test the three passed: a question asked every turn.
+    // The ring is what keeps loot, reinforcements and each category after them from costing a
+    // key the tactical layer does not have. It also left ; and ' free — ; has since gone to the
+    // selected-unit readout (unit_info.cpp) and ' is still earmarked for the vantage read.
     //
     // PageUp/PageDown are genuinely unbound in tactical (docs/object-scanner-recon.md §4.4) — no
     // Bindings= entry in any input section — so both the bare pair and the Ctrl pair are free, and

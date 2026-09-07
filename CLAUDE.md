@@ -460,6 +460,17 @@ path-API survey, the field maps — is **`docs/engine-notes.md`**. What it oblig
   genuinely compensate for lost vision (the tile cursor; distance and bearing on the enemy strip; a
   speech scrollback, because speech is serial where flyovers are simultaneous and persist ~5 s) stay
   — labelled as aids, not sold as parity.
+  - ⛔ **The test for an aid is the FACT, never the RANGE or the effort.** An aid may deliver a fact
+    far more conveniently than the game does — a sighted player sweeps a mouse over a whole map in a
+    second, so gathering at range what the game draws locally is restoring parity, not exceeding it.
+    It may never deliver a fact the game draws NOWHERE, for anyone, at any range. The cover ring
+    passes on both counts (the game draws a `CoverFull`/`CoverHalf` mesh per covered edge, just
+    `CoverIconTileRange=2` tiles out, where we sweep twelve); RT's firing-position gear is REFUSED on
+    the second (`docs/surfaces/tactical.md`) — no XCOM surface ranks tiles by shot quality, and the
+    only thing in the game that computes it is `XGAIBehavior`, the enemy's planner. **When the only
+    existing implementation of a readout is the AI's, that is the tell**, and "but it is only
+    aggregating things the player could check one at a time" is not a defence: checking a tile at a
+    time is what costs the sighted player the same effort it costs us.
 - **A recipe is the RULE; game-native narrate-only is the EXCEPTION, and the test is
   destruction.** Recipes buy focus tracking, a stable reading order, and stops on panels the game
   makes unfocusable. *Narrate-only is justified only when taking the arrows would destroy

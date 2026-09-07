@@ -14,6 +14,47 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**The cover ring — `J` / `Shift+J`** (2026-09-07, `X2AccessObjectScanner.AddCover` /
+`ClaimCoverCell` + `CAT_COVER`, `X2AccessTileReader.CoverEdgeWords` / `CoverSignature`, the two
+`'J'` claims in `object_scanner.cpp`; rules in `surfaces/tactical.md` under the object scanner) —
+both halves compile clean and **NOTHING HAS EVER BEEN HEARD**. Every fact in it is inferred from
+the SDK headers and from RT's `CoverModel.cs`; not one has been read off a running map. What to
+listen for, in the order a single Gatecrasher run settles them:
+
+1. **Does `GetCoverPoints` answer at all, and with what?** The whole surface rests on one native
+   call this project has never made. `Radius` XY / `Height` Z in world units is read off
+   `XComTacticalCheatManager.TestCoverPoints` (`5 * 96`, `5 * 64`), not measured. If `J` says "No
+   cover nearby on this floor" while the cursor's own `Delete` readout names cover on the very tile
+   under it, the call or its units are the suspect — and those two surfaces disagreeing is itself
+   the diagnosis, exactly as the tile cursor and the shot HUD disagreeing was.
+2. ⛔ **Shape-count the ring, do not listen to it.** This is the readout the distribution rule was
+   written for: the 260-"High cover"/zero-"Low cover" bug lived for two months in well-formed
+   lines. `grep -oP 'TTS!?: "\K[^"]*' X2Access.log | sed 's/[0-9]\+/N/g' | sort | uniq -c | sort -rn`
+   must show **both** "Full cover" and "Half cover" leading entries, and a spread of `N tiles wide`
+   values rather than every entry at one width. All-one-value means the signature or the flood fill
+   collapsed, whatever the lines sound like.
+3. **Does the clustering match the map?** A sandbag line or a long wall must read as ONE entry with
+   a plausible width; a car or a crate must give up to four, one per face, at four different
+   bearings. Every entry at "1 tile wide" means the flood fill never joined anything (suspect
+   `CoverSignature` — PEEK bits leaking in would do exactly this); one entry spanning half the map
+   means it joined too much.
+4. **Does the selection survive stepping the cursor?** Press `J` twice, arrow the cursor two tiles,
+   press `J` again: it must continue from where it was, not restart at 1 of N. That is the whole
+   job of keying on the cluster's lowest linear tile index instead of its nearest member, and it is
+   unverifiable any other way.
+5. **Does `/` plant on a tile you could actually stand on**, and does `Backspace` then accept it?
+   The tile the ring speaks is the nearest cluster member; if the plant lands somewhere the pathing
+   pawn refuses, `IsFloorTileAndValidDestination` is being asked with the wrong unit or the ±1 Z
+   band is picking a cell off a ledge.
+6. **`J` must not double-fire.** It displaces a live vanilla ability-hotkey forwarder bound in TWO
+   input sections; the log should show the claim swallowing it, and no ability should trigger.
+   `Ctrl+J` must still reach the vanilla action. Check `Shift+J` walks BACKWARD and does not cycle
+   the soldier (the `LeftShift` swallow covers it, but this is a new chord on that swallow).
+
+⚠ Two design calls this run should raise rather than settle: whether `COVER_MAX = 16` entries is a
+ring or a list on a dense urban map, and whether the label wants the sentence join it inherits from
+the tile cursor ("Half cover north. Full cover east") mid-way through a comma-joined line.
+
 **Unit conditions on the squad ring, the soldier sheet and the Targets stop** (2026-09-04,
 `X2AccessHelper.UnlistedPenaltyWords` / `StunWords`, `X2AccessObjectScanner.StatusWords` and its
 `bIsCosmetic` gate, `X2AccessUnitReader.EffectNames`; rules in `surfaces/tactical.md` under the

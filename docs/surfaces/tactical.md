@@ -146,21 +146,26 @@ focus.
 
 The RT `Scanner.cs` port, a PULL surface next to the tile cursor's push. ELEVEN
 categories: `markers` (tutorial required-action marker + objective-carrying objects
-— one group, because a waypoint and an objective glint are the same thing to a
-player working out where to go), `units.enemies`, `units.squad`, `ground.loot`,
-`ground.reinforcements`, `ground.evac`, `units.civilians`, `hazards`,
-`objects.interact`, `objects.towers`, `world.connectors`. Each keeps
-its OWN remembered position; the `CAT_*` ids are the one thing the two halves share
-as a NUMBER rather than a name. The ring is what makes a further category cost one
-`case` label instead of a key.
++ the evac zone — one group, because a waypoint, an objective glint and a
+destination are the same thing to a player working out where to go),
+`units.enemies`, `units.squad`, `ground.loot`, `ground.reinforcements`,
+`units.civilians`, `hazards`, `objects.interact`, `objects.towers`,
+`world.connectors`, `ground.cover`. Each keeps its OWN remembered position; the
+`CAT_*` ids are the one thing the two halves share as a NUMBER rather than a name.
+The ring is what makes a further category cost one `case` label instead of a key.
 
 Keys, all gated on `TileReader::IsActive()` (shared, not recomputed — both surfaces
 must stand down at the same instants): `B` next marker, `.` next enemy, `,` next
-squad member, **`Shift`+those three for the PREVIOUS one**, `PageDown`/`PageUp`
-within the category, `Ctrl+PageDown`/`Ctrl+PageUp` next/previous NON-EMPTY category
-(announcing its name), `O` re-announce, `/` plant the tile cursor on it. `Shift+Tab`
-is claimed here too — not a scanner verb, but the vanilla prev-soldier the Shift
-swallow would otherwise cost.
+squad member, `J` next cover position, **`Shift`+those four for the PREVIOUS one**,
+`PageDown`/`PageUp` within the category, `Ctrl+PageDown`/`Ctrl+PageUp` next/previous
+NON-EMPTY category (announcing its name), `O` re-announce, `/` plant the tile cursor
+on it. `Shift+Tab` is claimed here too — not a scanner verb, but the vanilla
+prev-soldier the Shift swallow would otherwise cost.
+
+⛔ **Four `CAT_*` ids are mirrored in native, not three** — 0, 1, 2 and **10**
+(`kCatCover`). `CAT_COVER` sits at the END of the enum rather than beside its keyed
+siblings precisely so the free-to-renumber range stays contiguous at 3..9; a new
+category appended after it takes 11 and shifts nothing.
 
 - **NO REGISTRY.** RT needs a ticked `WorldModel` because Unity entities are mutable
   references; XCOM's `ObjectID` is a stable int over a versioned history, so the list
@@ -213,6 +218,85 @@ swallow would otherwise cost.
   already-distance-sorted candidates, so the survivor is the nearest end of the
   staircase. It exists because every other readout ends in "2 up" on a multi-storey map,
   and a blind player cannot act on that without knowing where the stairs are.
+- **`ground.cover` answers where to STAND, not what is there** — the RT `CoverModel.cs`
+  port, and the second swept category. A cover position is a walkable tile whose edges
+  give cover, named by the side(s) it covers ("Full cover north"), so `/` plants the
+  cursor on the tile you would occupy and Backspace walks there: *"the crate is 4 tiles
+  north-east"* never told a blind player which side of it to stand on. Unlike RT there
+  is no sweep to write — `XComWorldData.GetCoverPoints(InPoint, Radius, Height, out,
+  bSortedByDist)` is native and hands back each point's TILE COORDINATES and cover flags
+  already sorted (`Radius` is XY world units, `Height` is Z;
+  `XComTacticalCheatManager.TestCoverPoints` passes `5 * 96` and `5 * 64` for five tiles
+  of each). ±12 tiles, ±1 Z.
+- ⛔ **Cluster on an IDENTICAL signature, and cluster only what TOUCHES.** A ten-tile
+  sandbag line is one entry ("Full cover north, 10 tiles wide") and the four faces of a
+  car are four, because four faces are four different places to stand — that is the
+  choice the player is making. Identical, not "compatible": the cell where a run turns
+  half into full, or a corner covered on two sides, is a genuinely different position.
+  This is a flood fill over a `(2R+1)²` grid, **not** the connectors' greedy
+  distance-cluster, and the difference is load-bearing — two separate crates three tiles
+  apart with the same signature would merge under a distance rule, and a merged-away
+  crate reads as *there is no cover there*, the truncation failure mode again.
+- ⛔ **The cluster's KEY is its lowest linear tile index; its spoken TILE is the member
+  nearest the origin.** They must be different reads. The key has to be
+  origin-independent or the remembered selection dies every time the scan window slides
+  with the cursor; the tile has to be the nearest member or `/` plants somewhere you
+  would not have walked. Lowest-index is unique per cluster because clusters are
+  disjoint.
+- **`CoverSignature` is normalised, and the normalisation is the point.** A low bit with
+  no presence bit under it is meaningless (the presence-first rule) and would split a run
+  that reads identically; PEEK bits (`0x0100`-`0x8000`) are per-tile firing geometry that
+  differs between two tiles of one crate face and would shatter every run into single
+  cells. ⚠ `COVER_Diagonal` rides the signature but NOT the words — it means the four
+  edges are rotated 45° (local N = world NE), so a diagonal tile must never merge with a
+  square one, but **no script in all of `XComGame` reads that flag** (the game's own
+  `GetCoverTypeForTile` takes N/S/E/W at face value), so speaking eight compass points
+  here would put this ring at odds with the tile cursor and the shot readout, which speak
+  four. Unverified gap, deliberately not fixed on one surface.
+- **The fog latch is the WHOLE parity gate here — and the ring MIRRORS a shipped overlay.**
+  RT gates its cover cycle on the game's own cover overlay being TOGGLED UP; XCOM's is
+  always on, so there is no mode to mirror, but the overlay itself is real:
+  `XComActionIconManager` pools in-world cover icons around the path destination
+  (`UpdateCoverIcons`), drawing `UI_3D.Cover.CoverFull` or `CoverHalf` per covered edge.
+  ✅ **Our two-state vocabulary is therefore the game's own** — "Full cover" / "Half cover"
+  are those two meshes, not a scheme we invented. ⚠ Its scope is
+  `CoverIconTileRange=2` (`XComGameCore.ini:1221`), i.e. two tiles around the cursor,
+  against our twelve — which is a RANGE difference, not a parity breach, and the rule for
+  telling those apart is under **Sighted parity** in `CLAUDE.md`: a sighted player sweeps
+  the mouse and reads the whole map's cover in a second, and sees the sandbags themselves
+  with no overlay at all. So `TileSeen(bLatch=true)`, the same latch the cursor applies to
+  the same fact, is the entire rule, and a ring over cover leaks nothing the arrows could
+  not reach one tile at a time. Standability is the game's
+  own pair from `XGAIBehavior:3439` (`IsFloorTileAndValidDestination` +
+  `CanUnitsEnterTile`), with the one carve-out every cover reader makes: **the active
+  soldier's own tile stays listable**, because you can already be in the best cover on the
+  map. Out-of-range spots stay in with a `ReachWords` note ("out of range") rather than
+  being filtered — planning a position you cannot reach yet is the point of the feature.
+  The sweep is one Z band, so the empty text names the FLOOR as well as the scope ("No
+  cover nearby on this floor").
+- ⛔ **NO CYCLE KEY MOVES THE CURSOR — that is `/`'s job alone**, and cover is where the
+  temptation to break it is strongest, since a cover spot is somewhere you STAND. It must
+  not: `ScanOrigin()` returns the planted cursor tile when there is one, so a key that
+  planted implicitly would re-measure the next press from the tile it just landed on. The
+  ring would re-rank around its own last answer, the nearest entry would always be the
+  cell you are already on, and repeated presses would wander outward with no way back
+  instead of walking a stable list. RT refuses the same thing for the same reason
+  (`CycleCover`'s own comment: moving the cursor "would silently flip `ScanFrom` for every
+  later scanner action"). Any future key that DOES plant needs a frozen anchor first, not
+  an exception to this rule.
+- ⛔ **RT's FIRING gear is REFUSED here, not queued.** In RT, `J` changes gear when an enemy
+  is the review selection: the question becomes *where can I stand and still shoot THAT*,
+  ranked by hit chance (`FiringPositions.cs`). XCOM must not grow it, and the reason is
+  parity, not effort. **Nothing in this game shows a player which tiles can shoot a given
+  enemy.** Per-tile shot information exists only for the tile the cursor is ON — the shot
+  HUD's chance, and Left Alt's target preview — and both are things we already read. The
+  one thing in the game that DOES sweep candidate tiles and score them for a shot is
+  `XGAIBehavior` (`:1708`, `:10231`, over this same `GetCoverPoints`), i.e. the ENEMY's
+  planner. Shipping it as an aid would hand a blind player the AI's view of the board and
+  call it accessibility. The distinction against the cover ring above is exact and is the
+  test to apply next time: cover on a tile is a fact the game DRAWS (`CoverFull` mesh, two
+  tiles out) and we deliver at twelve; a ranked firing solution is a fact the game draws
+  NOWHERE, at any range, for anyone.
 - **Both countdown categories gate on the game's OWN rule for drawing the mark**: loot
   uses `LootExpirationTurnsRemaining > 0 && HasAvailableLoot()`, verbatim from
   `XComGameState_LootDrop.BuildVisualizationForLootTicked`'s `SetVisible`, so an entry

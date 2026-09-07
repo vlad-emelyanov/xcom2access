@@ -690,6 +690,28 @@ private function string DescribeTargetPreview(TTile Tile, bool bSpeakEmpty)
 	return Heading;
 }
 
+// The cursor tile's own cover, from the cover point the game keeps for it. The WORDS are
+// CoverEdgeWords' — shared with the object scanner's cover ring, which names the same edges of
+// the same tiles from the same flags, so the two surfaces cannot drift apart.
+private function string DescribeCoverEdges(vector TilePos, bool bVerbose)
+{
+	local XComWorldData WorldData;
+	local XComCoverPoint CP;
+	local string Result;
+
+	WorldData = `XWORLD;
+	if (!WorldData.GetCoverPointAtFloor(TilePos, CP))
+	{
+		if (bVerbose)
+			return "No cover";
+		return "";
+	}
+	Result = CoverEdgeWords(CP.Flags);
+	if (Result == "" && bVerbose)
+		Result = "No cover";
+	return Result;
+}
+
 // Per-edge cover in compass words, named directly by the engine's own cover-flag order
 // (COVER_North bit 0 → "north", the matching height bit four bits up).
 //
@@ -701,38 +723,70 @@ private function string DescribeTargetPreview(TTile Tile, bool bSpeakEmpty)
 // and sandbags. The game's own reading is X2AbilityToHitCalc_StandardAim.GetCoverTypeForTile
 // (:934), comment included: "if the cover flags in the specified direction don't have the low
 // cover flag, then it is high cover". Presence first, height second — never one or the other.
-private function string DescribeCoverEdges(vector TilePos, bool bVerbose)
+//
+// Static and public because the cover ring (X2AccessObjectScanner.AddCover) names the cover of
+// tiles the cursor is NOT standing on, off the flags GetCoverPoints hands back rather than off a
+// cover point looked up here — same fact, same words, one implementation. Same reasoning as
+// InteractiveLabel over in the scanner: a shared read with no instance state costs nothing to
+// share, and two vocabularies for one wall is how a player stops trusting the mod.
+static function string CoverEdgeWords(int Flags)
 {
-	local XComWorldData WorldData;
-	local XComCoverPoint CP;
 	local string Result;
 	local int Dir;
 
-	WorldData = `XWORLD;
-	if (!WorldData.GetCoverPointAtFloor(TilePos, CP))
-	{
-		if (bVerbose)
-			return "No cover";
-		return "";
-	}
 	Result = "";
 	for (Dir = 0; Dir < 4; Dir++)
 	{
-		if ((CP.Flags & (class'XComWorldData'.const.COVER_North << Dir)) == 0)
+		if ((Flags & (class'XComWorldData'.const.COVER_North << Dir)) == 0)
 			continue; // no cover at all on this edge
 
 		// FULL/HALF, not HIGH/LOW. The engine's flag is named "low" but the game's own UI, the
 		// shot readout's DescribeTargetCover and the player all say full/half cover — and this
 		// surface and that one describe the same wall. Two vocabularies for one fact is how you
 		// get a player who cannot tell whether the mod is contradicting itself.
-		if ((CP.Flags & (class'XComWorldData'.const.COVER_NLow << Dir)) != 0)
-			AppendPart(Result, "Half cover" @ CardinalWord(Dir));
+		if ((Flags & (class'XComWorldData'.const.COVER_NLow << Dir)) != 0)
+			class'X2AccessHelper'.static.AppendPart(Result, "Half cover" @ CardinalWord(Dir));
 		else
-			AppendPart(Result, "Full cover" @ CardinalWord(Dir));
+			class'X2AccessHelper'.static.AppendPart(Result, "Full cover" @ CardinalWord(Dir));
 	}
-	if (Result == "" && bVerbose)
-		Result = "No cover";
 	return Result;
+}
+
+// The canonical cover SIGNATURE of a tile: every covered edge's presence bit, that edge's low bit
+// only when the edge actually has cover, and COVER_Diagonal — and nothing else. Two tiles share a
+// signature exactly when they are the same KIND of place to stand, which is what the cover ring
+// clusters on: a ten-tile sandbag line collapses to one entry, while a corner covered on two
+// sides, or the point where a run turns half into full, stays its own.
+//
+// It is normalised rather than a raw `Flags & 0xFF` mask for two reasons. A low bit set on an
+// edge with no presence bit is meaningless (the presence-first rule again) and would split a run
+// that reads identically. And PEEK bits (0x0100-0x8000) are per-tile firing geometry, not cover:
+// two tiles either side of the same crate face differ in them constantly, so masking them in
+// would shatter every run into single cells.
+//
+// ⚠ COVER_Diagonal rides the signature but NOT the words. The flag means the tile's four cover
+// edges are rotated 45° clockwise (local N = world NE), so a diagonal tile and a square one that
+// both read `COVER_North` are facing different ways and must never merge into one spot. The WORDS
+// are left alone deliberately: no script in all of XComGame reads COVER_Diagonal — the game's own
+// GetCoverTypeForTile takes the N/S/E/W bits at face value — so speaking eight compass points
+// here would put this surface at odds with the tile cursor and the shot readout, which speak
+// four. Named in surfaces/tactical.md as an unverified gap rather than fixed on one surface.
+static function int CoverSignature(int Flags)
+{
+	local int Dir, Sig;
+
+	Sig = 0;
+	for (Dir = 0; Dir < 4; Dir++)
+	{
+		if ((Flags & (class'XComWorldData'.const.COVER_North << Dir)) == 0)
+			continue;
+		Sig = Sig | (class'XComWorldData'.const.COVER_North << Dir);
+		if ((Flags & (class'XComWorldData'.const.COVER_NLow << Dir)) != 0)
+			Sig = Sig | (class'XComWorldData'.const.COVER_NLow << Dir);
+	}
+	if (Sig != 0)
+		Sig = Sig | (Flags & class'XComWorldData'.const.COVER_Diagonal);
+	return Sig;
 }
 
 // Doors, hackable objectives, loot — the static map features a sighted player recognizes on

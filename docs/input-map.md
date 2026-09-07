@@ -60,6 +60,15 @@ vanilla actions), and all of those vacate onto Ctrl+letter for free. ⛔ Still d
 runtime edit shows up in the Controls screen and is baked into the player's profile permanently the
 moment they press Save and Exit there.
 
+**Three bare letters are taken on that argument**, all by the object scanner and all gated on
+`TileReader::IsActive()`, so they stand down the moment world mode does: `B` next marker, `O`
+re-announce the selection, `J` next cover position (`Shift`+each for the previous one). Each
+displaces a generic `X_Key_Press | onrelease X_Key_Release` forwarder — push-to-talk, the Chosen
+Info screen, and one of the ability hotkey slots — and each of those stays reachable at
+`Ctrl`+the same letter, which is the whole leniency bargain above. ⚠ `J` is bound in **both**
+`[Engine.PlayerInput]` (`:183`) and `[XComGame.XComTacticalInput]` (`:306`); a grep of one section
+would have reported it half-free, which is the `U` trap below in a different disguise.
+
 ⚠ **The one thing leniency does NOT hand us is a free `Shift` — so we take it.** `LeftShift` is bound
 in `[XComGame.XComTacticalInput]` and `Key_Left_Shift`'s RELEASE calls `PrevUnit()` UNCONDITIONALLY
 (`XComTacticalInput.uc:2147`, state `ActiveUnit_Moving`), so every `Shift+` chord cycled the soldier
