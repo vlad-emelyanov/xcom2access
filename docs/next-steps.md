@@ -67,12 +67,14 @@ running — a cheat fired under a popup waits until the player is back on the ma
 
 The fortress's generic addition was also heard the same evening, spoken while the tray was
 detached in flight: `Проект "Аватар", up 1, ПРОЕКТ "АВАТАР" 6 out of 12` — the title twice, since
-that message IS the title; folded since (rule in `surfaces/strategy.md`). Still owed:
+that message IS the title; folded since (rule in `surfaces/strategy.md`). A facility's addition
+was heard too, driven by `FastForwardFacilityDoomTimer` through `just dev-exec` (the lever for
+that edge — it ends the interval, and the next alien HQ update on the map adds the doom):
+`Станция пришельцев в регионе Западная Азия, up 1, ПРОЕКТ "АВАТАР" 7 out of 12`, followed by
+Central's commlink line from the transient reader. Still owed:
 
-1. **A facility's addition**: the message must be the game's "Alien Facility in <Region>" and the
-   delta must match the pips that blinked. Then leave the geoscape and come back with doom pending
-   from a mission — the entry-path animation must produce an ordinary edge, not silence and not a
-   double line.
+1. Leave the geoscape and come back with doom pending from a mission — the entry-path animation
+   must produce an ordinary edge, not silence and not a double line.
 2. ⚠ Unexercised by any cheap lever: the completion countdown (`bDoomCounterVisible`), both the
    edge line and the stop's live values. Needs a campaign driven to max doom.
 3. Two fixes compiled after the run and unheard: the change line now joins `title, N out of M`
