@@ -77,7 +77,9 @@ The countdown was reached too, with `GiveResource Doom 5` (five permanent pips; 
 enters Lose mode on the next update, pushes `eAlert_AlienVictoryImminent`, and the timer replaces
 the pips) — the Tab stop read `ПРОЕКТ "АВАТАР" ЗАВЕРШИТСЯ ЧЕРЕЗ: 21 ДН. 23 Ч. 57 МИН. 33 СЕК.`,
 but the watch said NOTHING for the jump or the flip: the stack went blank during the popup push
-and the watch reset (rule in `surfaces/strategy.md`). Fixed and compiled, unheard. Still owed:
+and the watch reset (rule in `surfaces/strategy.md`). The reversal (`GiveResource Doom -5`) WAS
+heard on that binary, as the predicted double: `Cheat Doom, down 5, ПРОЕКТ "АВАТАР" 7 out of 12`
+and then the meter again for the timer leaving. Both fixed and compiled, unheard. Still owed:
 
 1. **Replay the max-doom sequence on the new ASI** from the save taken at 7 pips: `GiveResource
    Doom 5`, dismiss the popup, expect ONE line on return — `Cheat Doom, up 5, ПРОЕКТ "АВАТАР"
