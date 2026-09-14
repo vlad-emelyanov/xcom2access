@@ -183,6 +183,48 @@ and note that a rule with no measurement under it any more is a rule to delete, 
     `bCinematicMode` 0x8); `UIScreen`'s own is at 0x3E0 with `bShowDuringCinematic` = 0x10 —
     a different dword from `UIPanel`'s at 0x284, and pinned by `UIScreen::Package` (0x3D8) and
     `IdleDistortionAnimationLength` (0x3E4) in `sdk_layout_checks.cpp`.
+- **Screen lifetime: a pointer outlives its screen, a GObjects index says nothing, and readiness is
+  two bits.** The measurements behind the caching, corpse and readiness rules in `CLAUDE.md`:
+  - GC moves on, and type-revalidation is not enough: after a world change the old screen is still a
+    well-formed instance of its class for as long as GC leaves it allocated, so "is it still a
+    `UIFinalShell`?" happily says yes about a dead one. Getting this wrong cost 63 seconds of dead
+    silence after exiting a campaign, and it looked like a hang rather than a stale pointer. A cache
+    may short-circuit a rescan only while the instance is still USABLE (focused, showing).
+  - UE3 reuses freed GObjects slots, so a freshly spawned screen routinely sits at a LOWER index than
+    corpses of its own class. Removal sets `bIsRemoved` (0x80) and clears nothing else, so a corpse
+    still reads inited/visible/focused. "Take the last instance" latched onto a dead pause menu that
+    passed every readiness test, read as empty, and left the layer silently detached with the menu
+    open. The durable fix is walking `UIScreenStack.Screens` (0x6C, index 0 = the top; Push inserts
+    at 0): a popped screen leaves the stack immediately, whereas as an OBJECT it lingers with every
+    state bit intact until GC. `FindStackScreenRaw` matches by class name over a few dozen entries.
+    GObjects scanning survives only as a fallback — for screens the stack does not manage
+    (`UIDialogueBox` is permanent and never pushed) and for the window while the stack itself is
+    being rebuilt — and the first fallback per class is logged, so "not stack-managed" is a fact in
+    the log rather than an assumption.
+  - Topmost is not reachable: starting a campaign pops the narrative screen and leaves
+    `UIShellDifficulty` underneath inited, focused and top of the stack for the ~12 s the loading
+    movie plays. The stack's own answer is its flag dword at 0x60 — `IsInputBlocked` (0x1) and
+    `ScreensVisible` (0x2, so hidden when CLEAR) take the whole UI away — plus
+    `XComEngine.IsAnyMoviePlaying`, which is not a UI flag at all.
+  - `bIsVisible` (UIPanel flag dword bit 0x20) is FALSE on screens the game is plainly showing: a
+    live, focused pause menu reads 0x259 and so does the exit-to-main-menu confirmation dialog over
+    it — `bIsNavigable|bIsFocused|bIsInited`, no visible bit. Testing it meant silence at a modal the
+    player then answered blind. `bIsFocused` is what the screen stack maintains for "top of the
+    stack"; `UIDialogueBox`'s real state is its queue, so it is `bIsInited` plus a non-empty
+    `m_arrData`. Child widgets differ: a BUTTON's `bIsVisible` is toggled deliberately and does mean
+    hidden, and the ant farm's grid is the one screen-level exception because the GAME gates on it.
+- ⛔ **`UE3Reflect::ReadStringProperty` is the single choke point every companion payload passes
+  through** — tile cursor, shot HUD, object scanner, hacking pad, every recipe's wire records, and
+  `X2AccessNarrator`'s 24-line drain — and it read all of them into a fixed `wchar_t[2048]`,
+  clipping anything longer and saying nothing. The XCOM archives' 39 entry titles came to **2051
+  characters** against the 2047 that fit, and those four characters took the LAST record with them —
+  the item card. The rows all read perfectly and Tab found no card stop, so the bug presented as
+  *the recipe never built that stop*: to a blind player a truncated tail reads as *the screen has
+  nothing more*, indistinguishable from the truth and therefore never reported. The length is now
+  read first (`FStringLengthRaw`), the buffer sized to it, and an implausible count refused with a
+  log line. The remaining `wchar_t[256]`/`[512]` buffers in the `game_ui*.cpp` family are
+  per-WIDGET fields bounded by what fits on screen; the payload paths are not, and must never go
+  back to a fixed buffer.
 - **The tactical HUD holds no text.** Unlike the shell screens, every panel of `UITacticalHUD` is a
   write-only pipe into Flash: `SetStats` resolves name, rank, class, aim and effects out of the game
   state and hands them straight to `MC.BeginFunctionOp` / `QueueString`, retaining nothing

@@ -30,3 +30,18 @@ The rule as `CLAUDE.md` states it, with the mechanism that makes it work:
     column NUMBER while being unlandable, which is what lets Up/Down match columns
     across ragged rows. **Reach for a sheet whenever a screen draws column
     headings.**
+
+## AppendPhrase
+
+The rule as `CLAUDE.md` states it — never join two spoken phrases with a bare `", "` — and why the
+function is shaped the way it is. The GAME ends plenty of its own strings with `.`, `!`, `?`, `:`
+or `;`, and blind joining voiced doubled full stops at the player. `X2Access::Graph::AppendPhrase`
+tests the tail of the ACCUMULATED line, never the incoming part: the separator goes BETWEEN them,
+so it is the left-hand side that decides whether one is wanted at all, and a reimplementation
+testing the part instead is a different function wearing this one's name. A line already ending in
+one of `kPhraseTerminators` (that five-character set, no more and no fewer) takes a plain space;
+everything else takes the separator — `", "` to build a phrase list, `". "` to build the sentence
+sequences the dropship briefing and the tutorial modal are made of. Both of `GraphAnnouncer`'s
+join sites route through it, so recipes inherit it. A surface that composes speech outside a
+recipe owes the same call — the ant farm is narrate-only and had to be given it by hand — and the
+companion mirrors the same set in `X2AccessHelper.AppendJoined`. Four kernel tests pin it.

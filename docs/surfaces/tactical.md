@@ -629,6 +629,15 @@ panels do.
   wrong. `ActiveAbilities` is written by the same `PopulateFlash` pass that feeds the icons, and
   the widgets `[0, ActiveAbilities)` map 1:1 onto `m_arrAbilities` (commander abilities sort to
   the tail and are compacted out — the same assumption the game's own `AbilityClicked` makes).
+- **The stop list is `UITacticalHUD_MouseControls`'s list, never a sketch of what a HUD "should"
+  have.** Both halves of the parity rule bit here: the WOTC initiative order looks like an obvious
+  stop and is CHEAT-GATED in retail (`UITurnOverlay.ShowOrHideInitiative` shows it only when
+  `CHEATMGR.bShowInitiative`), so narrating it would leak enemy turn order; and the standard HUD
+  carries no turn counter — the only counters are `UISpecialMissionHUD`'s pair, shown only while a
+  `UiTimer.ShouldShow`, so an untimed mission reads `Timers = 0`. On mouse/keyboard the
+  mouse-controls strip IS the command surface: `CharInfoButton` / `EndTurnButton` /
+  `SkyrangerButton` are spawned only in the CONTROLLER branch of `UITacticalHUD.OnInit` and read
+  null live.
 - **Activation is `AbilityClicked(index)`** — the mouse path, with the input gate
   (`PreProcessCheckGameLogic` refuses outside the player's moment), the tutorial's
   disabled-trigger check and the select sound. It returns false SILENTLY, so the recipe speaks
@@ -927,6 +936,28 @@ the listener set does not work if any one of them is undone.
     adopts. A skip is always logged, never silently swallowed. It resolves the GRI by hand rather
     than through `` `REPLAY `` / `` `XCOMVISUALIZATIONMGR ``, because those dereference a null GRI
     in the shell ten times a second.
+
+### The narrator bridge (`X2AccessNarrator.uc` + `src/narrator.cpp`)
+
+Bridge v2, the queued and channelled path the v1 `X2Access_Speak` sentinel cannot be. Producers
+call `Alert()` / `Combat()`, which append to an `ENTRY_SEP`-joined string on the CDO, and C++
+drains the whole burst in ONE `DrainNarration()` per 100 ms — the outbound call is the cost, not
+the payload. Four channels natively: `Focus` / `Aid` interrupt AND clear the queue (the player
+pressed a key; what they asked for outranks what happened), `Alert` queues in order but marks the
+BATCH as interrupting, `Combat` queues. ⛔ That `Alert` rule is the load-bearing one and is stated
+in `CLAUDE.md`: an alert that simply cleared the queue would eat the damage line explaining the
+kill it follows. Flush is on the frame pump, so the queue orders *within* a frame and adds no
+latency; past it the screen reader's own queue takes over, which is the honest limit — a burst can
+be cancelled wholesale by an interrupt, never trimmed, hence the 24-line cap, logged on overflow at
+both ends. A 128-line ring with channel, SOURCE and timestamp backs the future speech-scrollback
+key.
+
+- ⛔ **`default.X = ...` does not compile unless X is a `config` property** — the UnrealScript
+  compiler says *"Can't change default values of non-config properties"*, and a static producer has
+  no other route to per-class storage, so the queue vars are `config(Game)` with no ini section
+  shipped (nothing is ever written back; `SaveConfig` is never called). The payload is a delimited
+  STRING rather than a dynamic array because mutating one through `default.` is a pattern the
+  shipped SDK sources use nowhere.
 
 ### Tutorial blade recovery
 

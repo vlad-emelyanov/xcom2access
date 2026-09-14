@@ -42,6 +42,40 @@ a reader, not a rescue — deliberately the thinnest recipe in the file.
   decision rather than a parity one — a sighted player takes the row in at a glance, while speech
   is serial, and a list of autosaves differs in its description, not the minute it was written.
   The companion emits `time` and `desc` as separate fields for exactly this.
+- ⛔ `X2AccessSaveReader.uc` uses `Chr(10)` rather than `"\n"` for the separator the engine wrote
+  into `Header.Description`, for the same reason `X2AccessNarrator`'s separators are printable.
+
+## Difficulty and Second Wave
+
+`UIShellDifficulty` — the new-campaign flow's difficulty page and its Second Wave option rows,
+read by the shell recipe, with `UIScreenListener_Difficulty` fixing the rows up.
+
+- ⛔ **A widget's declared `Type` does not tell you what the widget IS; the visible child does.**
+  Every Second Wave row reads `UIMechaListItem.Type` = `Description` while showing a live, visible
+  `UICheckbox` — the same object whose `bChecked` the campaign start reads in
+  `GetSelectedSecondWaveOptionNames`. `ReadOptionRowRaw` only looked at the checkbox inside its
+  `Type == Checkbox` branch, so those rows reported "unchecked" forever. ⚠ That `Description` is
+  OUR OWN companion's write, not the engine's: the GAME types those rows `Checkbox`
+  (`UIShellDifficulty.uc:472` sets it, `UIMechaListItem.UpdateDataCheckbox:549` sets it again), and
+  `UIScreenListener_Difficulty.FixSecondWaveItems` retypes them so Enter stops being eaten by the
+  game's own `bReadOnly` checkbox (`UIShellDifficulty.uc:482`, `UIMechaListItem.uc:186-190`). The
+  rows that listener does not loop over — the screen's own bottom rows — still read `Type` =
+  Checkbox, and that asymmetry was the tell all along. The durable half is the game's and survives
+  the correction: `SetWidgetType` hides the widgets it switches away from but leaves their pointers
+  behind, so presence alone is not enough, and a screen can hold both kinds at once.
+- ⛔ **Prove which HALF is broken before fixing either.** The same bug cost a full cycle spent on
+  the write path — reading the game's source for `OnSecondWaveOptionClicked`, ruling out the param
+  layout, regenerating the whole SDK, adding a verify-and-fall-back — because the readback said
+  "unchecked" and the readback was the broken thing. The toggle had been landing correctly all
+  along; one screenshot settled it in seconds.
+
+## Pause menu
+
+`UIPauseMenu`, read by the shell recipe. Activation sends Enter to the LIST rather than calling
+`OnChildClicked` by name: mods interpose by wrapping a list's `OnItemClicked` /
+`OnItemDoubleClicked` delegates (Remove Missing Mods dispatches on the row's `Tag` there), so the
+named call activated every vanilla row and silently skipped every mod-added one. The game's path
+means the INPUT path, not the handler at its end.
 
 ## Character pool
 

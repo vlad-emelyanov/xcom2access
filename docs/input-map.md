@@ -127,6 +127,14 @@ only two lines in `DefaultInput.ini` mentioning `Semicolon` are `WidgetInputAlia
 for the editor's edit boxes, which bind no command). `;` is the selected-unit readout; `'` remains
 free, earmarked for the vantage read.
 
+⛔ **A GLOBAL claim — no `activeWhen`, live on every screen in every layer — has to earn the WHOLE
+keyboard, not just the screens it was tested on.** `src/input.cpp` holds exactly one (`?`,
+navigation help). The retired F1-F4 / Ctrl+Shift+S scaffolding was never free: **F2/F3/F4 are live
+game keys in the Avenger** (`UIFacilityStaffContainer.OnUnrealCommand` maps `FXS_KEY_F2..F4` to
+"activate staff slot 0..2" with no `` `ISCONTROLLERACTIVE `` gate), and F1-F8 are the shot HUD's
+target hotkeys (`UITacticalHUD.uc:432`). The dev harness answers what a key answered (`/health`,
+`/speech`, `/log`).
+
 ## The strategy layer
 
 A different and much richer budget, because `[XComGame.XComHeadquartersInput]` binds almost

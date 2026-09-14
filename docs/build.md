@@ -55,8 +55,25 @@ rules extracted from all this — the mandatory `-review` launch flag, the `/MT`
   MIT** (file-level copyleft: we vendor it unmodified and the README says where the source is). Its
   deps are bundled under its own `third_party/`, so the build is offline; it needs the Windows SDK's
   `midl.exe` to generate the NVDA RPC client stubs, which is why no `nvdaControllerClient.dll` ships
-  beside the game.
+  beside the game. Prism's error return from `speak` and its debounced availability poll both route
+  to `TTS::RebindBackend()`, so a reader that DIED under us (NVDA exited; its RPC endpoint is gone
+  and Prism never reconnects an existing instance) costs one line instead of the session.
+  ⛔ **`TTS::Shutdown` deliberately does NOT call `prism_shutdown()` or `prism_log_shutdown()`.**
+  `ShutdownAll()` runs from `DllMain(DLL_PROCESS_DETACH)` under the LOADER LOCK, and at process exit
+  the other threads are already dead, so a join never returns. The first call deletes the context,
+  which joins the `BackendEnumerator` jthread, then calls `CoUninitialize` and a run of
+  `__FUnloadDelayLoadedDLL2` (i.e. `FreeLibrary`); the second joins the logging drain. Both are
+  textbook loader-lock deadlocks. Shutdown does the safe subset instead: clear the log handler so
+  nothing can re-enter this module after `Log::Shutdown`, `prism_backend_stop` so a player quitting
+  does not hear the rest of the sentence, then LEAK the context on purpose. The dev server's bounded
+  `Stop()` (`dev-harness.md`) follows the same reasoning.
 - `deps/X2ModBuildCommon` (submodule) — UnrealScript build pipeline.
+- **No hooking library, on purpose.** The two interception points ship without one — the
+  ProcessEvent hook is a vtable pointer swap and input is a WNDPROC subclass. If an inline hook on a
+  non-virtual native is ever needed (`ProcessInternal` is the candidate, `engine-notes.md`), use
+  **MinHook** (small, CMake-friendly, the game-modding standard), not MS Detours, and do not vendor a
+  runtime assembler (AsmJit / Xbyak) — MinHook generates its own trampolines. The game ships
+  Firaxis' own `EasyHook64.dll` but nothing loads it; it is vestigial and not for us.
 - `deps/X2WOTCCommunityHighlander` (submodule, pinned to `v1.31.0-release`) — pure UnrealScript, no
   native code. Compile-time include for the companion and the source of narration event hooks;
   declared as a runtime requirement in the README, the mod's ReadMe.txt and the .XComMod description.
@@ -80,7 +97,31 @@ rules extracted from all this — the mandatory `-review` launch flag, the `/MT`
     caught exactly this one.
 - `deps/CodeRed-Generator` (submodule of the `alex19EP/CodeRed-Generator` fork, branch `xcom2`) — the
   SDK dumper, carrying the XCOM2 adaptation on top of upstream: `Engine/XCOM2/` config plus the
-  generator fixes above. The generic fixes are separable and are upstream-PR candidates. It produced
+  generator fixes below. The generic fixes are separable and are upstream-PR candidates.
+  - **Three settings in `Engine/XCOM2/Configuration.cpp` must stay FALSE**, each having cost real
+    debugging. `m_useConstants`: with it on, all 29388 wrappers resolved their `UFunction*` from the
+    owning CLASS's index — the same constant `StaticClass()` uses — so every one handed
+    `ProcessEvent` a `UClass`; off, they emit `UFunction::FindFunction("Function Pkg.Class.Name")`,
+    which also survives a game patch. `m_removeNativeFlags`: clearing `FUNC_Native` around the call
+    is actively wrong here, because a native's `Script` array is a 2-byte STUB, not a body
+    (`XComEngine.IsAnyMoviePlaying` has `Script.Count` 2 against 1663 for
+    `UIPauseMenu.OnChildClicked`), so clearing it runs the stub and returns a ZEROED param block
+    indistinguishable from a real answer. `m_removeNativeIndex`: same family. With those off there
+    is no `SdkConstants.hpp` any more — it existed only to feed the index-based wrappers — and the
+    GNames/GObjects offsets we use live in `GameDefines.hpp`.
+  - **The generator is patched to emit valid C++ rather than leaving it to a repair pass**: `.` `<`
+    `>` `~` and space added to `m_unsafeChars` (UnrealScript names really do carry dots —
+    `OverriddenTangentVector.X`); `UniquifyFunctionNames()` applied in all three emission passes
+    (one class can declare the same function once per STATE — `XComInputBase` declares `Key` ten
+    times — which collapsed into ten identical declarations and ten identical `_Params` structs);
+    and the `GameDefines.hpp` `#pragma pack(4)` region emitted automatically. That last one matters:
+    every `SDK_HEADERS/*.hpp` opens its own pack region and GameDefines did not, so its types
+    (FNameEntry, TArray, FName, FString) silently took the including TU's pack, and mixed packs
+    across TUs is an ODR violation that moved `FNameEntry::Name` from 0x14 to 0x18 and broke GNames
+    lookup entirely. `sdk_layout_checks.cpp` pins the result either way.
+  - `tools/fix_generated_sdk.py` repairs exactly one thing (undefined suffixed enum references) and
+    doubles as the regression check: any other line in its output means a generator fix broke.
+  It produced
   `generated_sdk/X2SDK/`, which IS a build input but is **not in git** (113 MB, `.gitignore`d): if
   that folder is lost the build dies and the only recovery is a regeneration run. `just sdk-build` /
   `sdk-gen` / `sdk-adopt` / `sdk-revert` drive it; the generator dumps from a LIVE process, so
