@@ -116,11 +116,11 @@ function PollTargeting()
 	{
 		// A new ability brings its own target list, so both halves are news.
 		Result = DescribeAbility(HUD, Action, AbilityState);
-		AppendPart(Result, DescribeTarget(Action, AbilityState, TargetRef, TargetIndex));
+		AppendPart(Result, DescribeTarget(HUD, Action, AbilityState, TargetRef, TargetIndex, false));
 	}
 	else if (TargetRef.ObjectID != LastTargetID)
 	{
-		Result = DescribeTarget(Action, AbilityState, TargetRef, TargetIndex);
+		Result = DescribeTarget(HUD, Action, AbilityState, TargetRef, TargetIndex, false);
 	}
 	else
 	{
@@ -171,7 +171,7 @@ function AnnounceShot()
 	}
 
 	Result = DescribeAbility(HUD, Action, AbilityState);
-	AppendPart(Result, DescribeTarget(Action, AbilityState, TargetRef, TargetIndex));
+	AppendPart(Result, DescribeTarget(HUD, Action, AbilityState, TargetRef, TargetIndex, true));
 	AppendPart(Result, AbilityState.GetMyHelpText());
 
 	// Keep the poll quiet about what was just spoken.
@@ -375,9 +375,11 @@ private function string DescribeAbility(UITacticalHUD HUD, AvailableAction Actio
 
 // "Sectoid, 1 of 3, hit 73 percent, crit 20 percent, damage 4 to 6, 5 of 8 health, armour 1".
 // Free aim has no unit to name and no breakdown to give, so it says so rather than reading
-// as a shot with a missing target.
-private function string DescribeTarget(AvailableAction Action,
-	XComGameState_Ability AbilityState, StateObjectReference TargetRef, int TargetIndex)
+// as a shot with a missing target. bVerbose adds what Delete is for: the blast area's size when
+// the target carries a blast at all.
+private function string DescribeTarget(UITacticalHUD HUD, AvailableAction Action,
+	XComGameState_Ability AbilityState, StateObjectReference TargetRef, int TargetIndex,
+	bool bVerbose)
 {
 	local XComGameState_Unit TargetUnit;
 	local ShotBreakdown Breakdown;
@@ -463,7 +465,186 @@ private function string DescribeTarget(AvailableAction Action,
 
 	AppendComma(Result, DescribeTargetCover(TargetUnit, AbilityState.OwnerStateObject));
 	AppendComma(Result, DescribeTargetHealth(TargetUnit));
+	AppendPart(Result, DescribeTargetBlast(HUD, AbilityState, TargetRef, bVerbose));
 	return Result;
+}
+
+// ---------------------------------------------------------------------------
+// The blast a TARGETED thing carries
+// ---------------------------------------------------------------------------
+//
+// Two target-list abilities put a blast on screen without being free-aimed, and the game draws
+// both the same way — the area's tiles on the ground and a red or green mark on every unit
+// standing in them — so a sighted player reads the blast off the reticle:
+//   - a standard shot whose target is an EXPLOSIVE OBJECT (a car, a gas tank). When the reticle
+//     lands on an XComDestructibleActor, X2TargetingMethod_OverTheShoulder.DirectSetTarget
+//     (:200) asks the actor for its own GetRadialDamageTiles — the box its RadialDamage
+//     destruction event will hurt — and marks and draws them when there is more than one;
+//   - the Reaper's Remote Start, whose X2TargetingMethod_RemoteStart.DirectSetTarget (:104)
+//     asks the ability's own target style (GetValidTilesForActor, the multiplied radius) for
+//     the tiles and marks and draws them likewise.
+// A unit carrying a Homing Mine is the third case in the same OverTheShoulder branch
+// (GetEffectAOETiles, the mine's X2Effect_HomingMine.GetAOETiles), and rides along.
+//
+// The tiles are re-asked of the SAME functions the method calls, rather than read off its
+// MarkedTargets cache: this class has never measured what the native MarkTargetedActors keeps
+// there, and the calls are public, cheap and answer synchronously. Who stands in them is
+// XComWorldData.GetUnitsOnTile per tile — the unit half of the native GetTargetedActorsInTiles
+// the method marks with. Objects in the area are NOT listed: the native marks with
+// bUnitsOnly=false, but which objects it chooses is unmeasured, and a list of "Object, Object"
+// over every wall fragment in the box would say less than nothing.
+//
+// The clause is silent, not "Blast: nothing", for any target that carries no blast at all —
+// that is nearly every shot, and the line is built to be short. Once there IS an area drawn,
+// an empty one is spoken, because "the area is clear" is the fact the marks answer.
+private function string DescribeTargetBlast(UITacticalHUD HUD, XComGameState_Ability AbilityState,
+	StateObjectReference TargetRef, bool bVerbose)
+{
+	local array<TTile> Tiles;
+	local array<StateObjectReference> Victims;
+	local XComGameState_Unit Shooter;
+	local string Result, Contents, Warning;
+
+	if (!TargetBlastTiles(HUD, AbilityState, TargetRef, Tiles))
+		return "";
+
+	Shooter = XComGameState_Unit(
+		`XCOMHISTORY.GetGameStateForObjectID(AbilityState.OwnerStateObject.ObjectID));
+	if (Shooter == none)
+		return "";
+
+	// The primary target is already the subject of this line; a unit wearing the mine would
+	// otherwise be named twice.
+	Victims = UnitsInTiles(Tiles, TargetRef.ObjectID);
+	Contents = DescribeVictims(Victims, Shooter, Warning);
+	if (Contents == "")
+		Result = "Blast: nothing";
+	else
+		Result = "Blast:" @ Contents;
+	AppendPart(Result, Warning);
+
+	if (bVerbose)
+		AppendPart(Result, "Blast area" @ BlastExtentWords(Tiles));
+
+	return Result;
+}
+
+// The tiles the targeting method drew for this target, from the functions it drew them with.
+// False when the method is not one that draws a blast for a listed target, or when it would
+// have drawn nothing (OverTheShoulder's own threshold is more than one tile).
+private function bool TargetBlastTiles(UITacticalHUD HUD, XComGameState_Ability AbilityState,
+	StateObjectReference TargetRef, out array<TTile> Tiles)
+{
+	local X2TargetingMethod Method;
+	local X2AbilityTemplate Template;
+	local X2AbilityTarget_RemoteStart RemoteStyle;
+	local Actor TargetActor;
+	local XComDestructibleActor Destructible;
+	local XComGameState_Unit TargetUnit, SourceUnit;
+	local XComGameState_Effect EffectState;
+	local StateObjectReference EffectRef;
+	local XComGameStateHistory History;
+
+	Tiles.Length = 0;
+	if (HUD == none || HUD.m_kAbilityHUD == none || TargetRef.ObjectID <= 0)
+		return false;
+	Method = HUD.m_kAbilityHUD.GetTargetingMethod();
+	if (Method == none)
+		return false;
+
+	History = `XCOMHISTORY;
+	TargetActor = History.GetVisualizer(TargetRef.ObjectID);
+	if (TargetActor == none)
+		return false;
+
+	if (Method.IsA('X2TargetingMethod_RemoteStart'))
+	{
+		Template = AbilityState.GetMyTemplate();
+		if (Template != none)
+			RemoteStyle = X2AbilityTarget_RemoteStart(Template.AbilityTargetStyle);
+		if (RemoteStyle == none)
+			return false;
+		RemoteStyle.GetValidTilesForActor(AbilityState, TargetActor, Tiles);
+		return Tiles.Length > 0;
+	}
+
+	if (!Method.IsA('X2TargetingMethod_OverTheShoulder'))
+		return false;
+
+	Destructible = XComDestructibleActor(TargetActor);
+	if (Destructible != none)
+	{
+		Destructible.GetRadialDamageTiles(Tiles);
+	}
+	else
+	{
+		TargetUnit = XComGameState_Unit(History.GetGameStateForObjectID(TargetRef.ObjectID));
+		if (TargetUnit != none)
+		{
+			foreach TargetUnit.AffectedByEffects(EffectRef)
+			{
+				EffectState = XComGameState_Effect(History.GetGameStateForObjectID(EffectRef.ObjectID));
+				if (EffectState == none)
+					continue;
+				SourceUnit = XComGameState_Unit(History.GetGameStateForObjectID(
+					EffectState.ApplyEffectParameters.SourceStateObjectRef.ObjectID));
+				if (SourceUnit != none)
+					EffectState.GetX2Effect().GetAOETiles(SourceUnit, TargetUnit, Tiles);
+			}
+		}
+	}
+	return Tiles.Length > 1;
+}
+
+// Every unit standing on any of the tiles, once each — a large unit covers several tiles and
+// GetUnitsOnTile answers per tile — minus the one whose ID is passed.
+private function array<StateObjectReference> UnitsInTiles(const out array<TTile> Tiles,
+	int ExcludeID)
+{
+	local XComWorldData WorldData;
+	local array<StateObjectReference> OnTile, Result;
+	local int i, j;
+
+	WorldData = `XWORLD;
+	if (WorldData == none)
+		return Result;
+
+	for (i = 0; i < Tiles.Length; i++)
+	{
+		OnTile = WorldData.GetUnitsOnTile(Tiles[i]);
+		for (j = 0; j < OnTile.Length; j++)
+		{
+			if (OnTile[j].ObjectID <= 0 || OnTile[j].ObjectID == ExcludeID)
+				continue;
+			if (Result.Find('ObjectID', OnTile[j].ObjectID) != INDEX_NONE)
+				continue;
+			Result.AddItem(OnTile[j]);
+		}
+	}
+	return Result;
+}
+
+// "5 by 5 tiles" — the drawn area's footprint, which is what a sighted player sees on the
+// ground. Extents rather than a radius because the tiles are the game's, and only the
+// destructible box is guaranteed to be a square.
+private function string BlastExtentWords(const out array<TTile> Tiles)
+{
+	local int i, MinX, MaxX, MinY, MaxY;
+
+	if (Tiles.Length == 0)
+		return "";
+	MinX = Tiles[0].X;
+	MaxX = Tiles[0].X;
+	MinY = Tiles[0].Y;
+	MaxY = Tiles[0].Y;
+	for (i = 1; i < Tiles.Length; i++)
+	{
+		MinX = Min(MinX, Tiles[i].X);
+		MaxX = Max(MaxX, Tiles[i].X);
+		MinY = Min(MinY, Tiles[i].Y);
+		MaxY = Max(MaxY, Tiles[i].Y);
+	}
+	return string(MaxX - MinX + 1) @ "by" @ string(MaxY - MinY + 1) @ "tiles";
 }
 
 // The cover state the reticle draws over the target: the shield icon, and whether this shooter
@@ -1343,24 +1524,33 @@ private function string BlastContents(XComGameState_Ability AbilityState,
 	XComGameState_Unit Shooter, TTile Tile, out string Warning)
 {
 	local AvailableTarget Blast;
+	local vector Loc;
+
+	Loc = `XWORLD.GetPositionFromTileCoordinates(Tile);
+	AbilityState.GatherAdditionalAbilityTargetsForLocation(Loc, Blast);
+	return DescribeVictims(Blast.AdditionalTargets, Shooter, Warning);
+}
+
+// The spoken form of a list of things in a blast, and the friendly-fire clause it earns. ONE
+// implementation for the free-aim blast and the targeted-object blast, so a squadmate reads the
+// same way inside a grenade's ring and beside a car about to be shot.
+private function string DescribeVictims(const out array<StateObjectReference> Victims,
+	XComGameState_Unit Shooter, out string Warning)
+{
 	local XComGameState_Unit Victim;
 	local XComGameStateHistory History;
-	local vector Loc;
 	local string Result, Friends, Civilians, VictimName;
 	local int i;
 
 	Warning = "";
 	History = `XCOMHISTORY;
-	Loc = `XWORLD.GetPositionFromTileCoordinates(Tile);
-	AbilityState.GatherAdditionalAbilityTargetsForLocation(Loc, Blast);
 
-	for (i = 0; i < Blast.AdditionalTargets.Length; i++)
+	for (i = 0; i < Victims.Length; i++)
 	{
-		Victim = XComGameState_Unit(
-			History.GetGameStateForObjectID(Blast.AdditionalTargets[i].ObjectID));
+		Victim = XComGameState_Unit(History.GetGameStateForObjectID(Victims[i].ObjectID));
 		if (Victim == none)
 		{
-			AppendComma(Result, DescribeNonUnitTarget(Blast.AdditionalTargets[i]));
+			AppendComma(Result, DescribeNonUnitTarget(Victims[i]));
 			continue;
 		}
 

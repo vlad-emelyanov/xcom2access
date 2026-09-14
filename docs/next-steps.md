@@ -33,6 +33,28 @@ reaches it, so the first pass is one flight. What to listen for:
 4. The screen deliberately outlives the launch click; the recipe must detach when the stack is
    torn down for the mission, not speak the prompt again over the briefing.
 
+**The blast on a listed target** (2026-09-14, `X2AccessTacticalReader.DescribeTargetBlast` /
+`TargetBlastTiles` / `UnitsInTiles`; rules in `surfaces/tactical.md` under "Targeting / shot
+HUD") — built from `SrcOrig`, compiled clean, **never heard**. Three situations exercise it, and
+Gatecrasher's street offers the first two on its first turn:
+
+1. A standard shot with the reticle on a CAR (Tab past the troopers; the enemy strip puts
+   destructibles last). The target line must gain `Blast: <units>` naming every unit standing in
+   the drawn box, or `Blast: nothing`, and `WARNING: friendly fire, <name> in blast` when a
+   squadmate is in it. `Delete` must add `Blast area N by N tiles`; the box is the
+   `DamageTileRadius` square, so a car should read `3 by 3` or `5 by 5`, never `1 by 1`.
+2. The same reticle on an ADVENT Trooper must NOT gain a blast clause at all — a unit target
+   draws no area unless it wears a Homing Mine.
+3. A Reaper's Remote Start (any campaign with a Reaper, or `GiveAbility RemoteStart` via
+   `just dev-exec`), whose targets are only explosives: the same clause, from the target style's
+   own tiles, with the multiplied radius — expect a wider footprint than the shot on the same car.
+
+The suspects if a run disagrees: an empty `Blast:` beside a visibly marked unit means
+`GetUnitsOnTile` wants a different Z than the box carries (the box spans a Z range and units are
+keyed by their floor tile — check whether the marked unit's `TileLocation.Z` is inside
+`GetBlastExtents`); a clause on every unit target means `GetAOETiles` answers for an effect that
+draws nothing.
+
 **The cover ring — `J` / `Shift+J`** (2026-09-07, `X2AccessObjectScanner.AddCover` /
 `ClaimCoverCell` + `CAT_COVER`, `X2AccessTileReader.CoverEdgeWords` / `CoverSignature`, the two
 `'J'` claims in `object_scanner.cpp`; rules in `surfaces/tactical.md` under the object scanner) —

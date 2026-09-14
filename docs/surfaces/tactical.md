@@ -380,6 +380,28 @@ a ring the player is walking with a key, not a survey of the map. The target rin
 reticle. Spoken at `1 of 1` too: "there is nothing else to Tab to" is the same answer a
 sighted player gets free from the reticles.
 
+**A listed target can carry a blast, and then the target line carries it too.** Two target-list
+abilities draw an area without being free-aimed, and the game draws both the same way — the
+tiles on the ground and a mark on every unit standing in them: a standard shot whose reticle is
+on an EXPLOSIVE OBJECT (`X2TargetingMethod_OverTheShoulder.DirectSetTarget:200` asks the actor
+for its own `GetRadialDamageTiles`, the box its RadialDamage destruction event hurts), and the
+Reaper's Remote Start (`X2TargetingMethod_RemoteStart.DirectSetTarget:104` asks the target
+style's `GetValidTilesForActor`, the multiplied radius). A unit wearing a Homing Mine is the
+third case in the same OverTheShoulder branch. `DescribeTargetBlast` re-asks the SAME functions
+the method drew from and lists the units on those tiles (`GetUnitsOnTile` per tile, once each,
+the primary target left out because the line already named it) through the free-aim clause's
+own `DescribeVictims` — so a squadmate reads identically inside a grenade's ring and beside a
+car about to be shot, friendly-fire warning included. Silent for any target that draws no area;
+`Blast: nothing` once one is drawn and empty. `Delete` adds the area's footprint (`5 by 5
+tiles`). ⚠ Two things it deliberately does not do: it does not read the method's `MarkedTargets`
+cache, because what the native `MarkTargetedActors` keeps there has never been measured; and it
+lists no OBJECTS in the area, because the native marks with `bUnitsOnly=false` and which objects
+it picks is unmeasured too — a list of "Object, Object" over every wall fragment in the box
+would say less than nothing. The damage number needs nothing new: `GetDamagePreview` already
+answers with the explosion's damage for a shot that would destroy the object
+(`XComGameState_Ability.uc:1244`) and with the multiplied damage for Remote Start
+(`RemoteStartDamagePreview`).
+
 ## Free aim / AoE preview
 
 The third tactical input mode. An ability whose target is a POINT (`bFreeAim` set,
