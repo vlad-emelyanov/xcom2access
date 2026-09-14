@@ -1001,7 +1001,14 @@ private function array<AccessGeoEntry> BuildMissions(bool bFacilities)
 		{
 			Entry.Label = Mission.GetUIButtonTooltipTitle();
 		}
-		Entry.Detail = Mission.GetMissionDifficultyLabel();
+		// The region the pin sits in: four facilities read word-for-word alike without it, and a
+		// sighted player has the globe under the pin. Then the difficulty WITHOUT its colour tag
+		// (bNoColor) — the coloured form voiced "<font color=…>" on the first hearing.
+		if (Mission.GetWorldRegion() != none)
+		{
+			Entry.Label = Join(Entry.Label, Mission.GetWorldRegion().GetDisplayName());
+		}
+		Entry.Detail = Mission.GetMissionDifficultyLabel(true);
 		// A facility's pin draws its doom as a level (UIStrategyMapItem_AlienNetworkComponent
 		// .UpdateFlyoverText → SetLevel(MissionState.Doom)), so the count is on screen; labelled
 		// with the meter's own title, the word the game ties those blocks to.

@@ -88,10 +88,12 @@ of 12`; the watch also held through a mission blade without re-baselining. Still
    must produce an ordinary edge, not silence and not a double line.
 2. Unheard: a title-as-message addition folded to `Проект "Аватар", up 1, 6 out of 12` (needs the
    fortress timer: `FastForwardFortressDoomTimer`).
-3. The ring's facility entry now carries the pin's doom level (`…, ПРОЕКТ "АВАТАР" 2, …`;
-   companion, rule under the geoscape tray). Ctrl+PageDown to the "Alien facilities" category and
-   PageDown through it: every facility with doom must say a count, and the counts plus the
-   fortress's own must add up to the meter.
+3. The ring's facility entry carries the pin's doom level — HEARD: four facilities at 1 and the
+   fortress at 2 summed to the meter's 6. That hearing found the difficulty label voicing its
+   `<font>` tag and four facilities reading alike; both fixed (region in the label, `bNoColor`,
+   and the scanner's native half cleaning every payload), compiled, unheard: expect `Устроить
+   диверсию на объекте пришельцев, Западная Азия, Сложно, ПРОЕКТ "АВАТАР" 1, 2450 miles west,
+   1 of 5`.
 
 **Unit conditions on the squad ring, the soldier sheet and the Targets stop** (2026-09-04,
 `X2AccessHelper.UnlistedPenaltyWords` / `StunWords`, `X2AccessObjectScanner.StatusWords` and its

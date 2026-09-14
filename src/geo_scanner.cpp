@@ -40,8 +40,10 @@ void Call(const char* funcName, void* params)
     std::string result;
     if (!GameUI::CallCompanion(kScannerClass, funcName, params, &result))
         return;
+    // A companion payload is a GAME string: the mission difficulty label arrives as
+    // `<font color='#fdce2b'>Сложно</font>`, and the first facilities-ring hearing voiced the tag.
     if (!result.empty())
-        Narrator::Say(Narrator::Channel::Aid, result);
+        Narrator::Say(Narrator::Channel::Aid, GameUI::CleanText(result));
 }
 
 void StepCall(const char* funcName, int32_t delta)

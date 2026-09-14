@@ -50,7 +50,11 @@ own hover tooltip.
   draws `MissionState.Doom` as the pin's level, so the ring's facility entry carries it, labelled
   with the meter's own title (`ПРОЕКТ "АВАТАР" 2`) — the word the game ties those blocks to, read
   off the HUD class default, which holds it. Not the tray: the tray's mission buttons draw no
-  level.
+  level. The first hearing added two rules: a mission entry names its REGION (four facilities read
+  word-for-word alike without it, and the globe is under the pin), and the difficulty comes from
+  `GetMissionDifficultyLabel(true)` — the coloured default voiced `<font color=…>` — while the
+  scanner's native half now runs every companion payload through `CleanText`, the rule
+  `script_call.h` already states for the other three bridge consumers.
 
 ## Region actions — make contact, install a radio relay
 
