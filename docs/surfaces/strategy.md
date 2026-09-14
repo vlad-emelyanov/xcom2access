@@ -133,6 +133,13 @@ message written over the meter, the new pips blinking.
   watch remembers the last one it spoke — the per-panel history keeps old pushes, and a stale
   "Alien Facility in X" read against a change from somewhere else would name the wrong place. An
   edge with no new message waits 400 ms, then speaks the numbers alone.
+- **A message that IS the title gets the count alone.** The fortress's own progress pushes the
+  meter's title as its message, in title case where the panel draws capitals (`Проект "Аватар"`
+  over `ПРОЕКТ "АВАТАР"` on the 2026-09-14 run), and the line came out as the title twice. The
+  compare is Windows' case fold (`CompareStringEx`, `NORM_IGNORECASE`), because a byte-wise or
+  ASCII fold would call the two Russian strings different.
+- The change line joins title and count the way the stop does (`title, N out of M`), so the two
+  readings of the meter cannot drift apart.
 - The count of blocks that blinked is the one thing the game states without words (`up 2`,
   `down 1`); the total is `Vocab::Fraction`, the same words the monthly report reads this meter
   with. Nothing about the alien's next timer, which the game draws nowhere.

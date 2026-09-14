@@ -65,14 +65,18 @@ every entry; no double space in the ring). One fact from that run: the game play
 change only from the alien HQ's update, i.e. while the map is up, not in flight, and time is
 running — a cheat fired under a popup waits until the player is back on the map. Still owed:
 
-1. **An addition needs the facility timer** (scan to fast-forward): the message must be the game's
-   "Alien Facility in <Region>" and the delta must match the pips that blinked. Then leave the
-   geoscape and come back with doom pending from a mission — the entry-path animation must produce
-   an ordinary edge, not silence and not a double line.
+The fortress's generic addition was also heard the same evening, spoken while the tray was
+detached in flight: `Проект "Аватар", up 1, ПРОЕКТ "АВАТАР" 6 out of 12` — the title twice, since
+that message IS the title; folded since (rule in `surfaces/strategy.md`). Still owed:
+
+1. **A facility's addition**: the message must be the game's "Alien Facility in <Region>" and the
+   delta must match the pips that blinked. Then leave the geoscape and come back with doom pending
+   from a mission — the entry-path animation must produce an ordinary edge, not silence and not a
+   double line.
 2. ⚠ Unexercised by any cheap lever: the completion countdown (`bDoomCounterVisible`), both the
    edge line and the stop's live values. Needs a campaign driven to max doom.
-3. The join fix (change line now reads `title, N out of M` like the stop) compiled after the run
-   and is unheard.
+3. Two fixes compiled after the run and unheard: the change line now joins `title, N out of M`
+   like the stop, and a title-as-message addition reads `Проект "Аватар", up 1, 6 out of 12`.
 
 **Unit conditions on the squad ring, the soldier sheet and the Targets stop** (2026-09-04,
 `X2AccessHelper.UnlistedPenaltyWords` / `StunWords`, `X2AccessObjectScanner.StatusWords` and its

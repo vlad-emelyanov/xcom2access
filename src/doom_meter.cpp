@@ -120,6 +120,25 @@ std::string Unit(const std::string& value, const std::string& word)
     return out;
 }
 
+// Case-insensitive equality over UTF-8, folded by Windows so Cyrillic folds too: the fortress's
+// generic addition writes the meter's own title as its message, in title case where the panel
+// draws it in capitals (`Проект "Аватар"` over `ПРОЕКТ "АВАТАР"`), and saying both is the title
+// twice.
+bool SameWords(const std::string& a, const std::string& b)
+{
+    if (a.empty() || b.empty())
+        return false;
+    std::wstring wa(a.size(), L'\0'), wb(b.size(), L'\0');
+    const int la = MultiByteToWideChar(CP_UTF8, 0, a.data(), static_cast<int>(a.size()),
+        wa.data(), static_cast<int>(wa.size()));
+    const int lb = MultiByteToWideChar(CP_UTF8, 0, b.data(), static_cast<int>(b.size()),
+        wb.data(), static_cast<int>(wb.size()));
+    if (la <= 0 || lb <= 0)
+        return false;
+    return CompareStringEx(LOCALE_NAME_INVARIANT, NORM_IGNORECASE | NORM_IGNOREWIDTH,
+               wa.data(), la, wb.data(), lb, nullptr, nullptr, 0) == CSTR_EQUAL;
+}
+
 void Speak(const std::string& line)
 {
     if (line.empty())
@@ -141,14 +160,22 @@ int FetchMax()
     return atoi(RecField(*rec, "max").c_str());
 }
 
+std::string MeterValue(const GameUI::DoomMeterView& view, int max)
+{
+    return max > 0 ? Vocab::Fraction(view.cachedDoom, max) : std::to_string(view.cachedDoom);
+}
+
+std::string MeterTitle(const GameUI::DoomMeterView& view)
+{
+    return view.title.empty() ? std::string(Vocab::DoomTitleFallback) : view.title;
+}
+
 std::string MeterLine(const GameUI::DoomMeterView& view, int max)
 {
-    std::string line = view.title.empty() ? std::string(Vocab::DoomTitleFallback) : view.title;
-    const std::string value = max > 0 ? Vocab::Fraction(view.cachedDoom, max)
-                                      : std::to_string(view.cachedDoom);
+    std::string line = MeterTitle(view);
     // Same join as the Tab stop's label/value, so the change line and the stop read alike:
     // the first live run had the stop say `title, N out of M` and the watch `title N out of M`.
-    X2Access::Graph::AppendPhrase(line, value);
+    X2Access::Graph::AppendPhrase(line, MeterValue(view, max));
     return line;
 }
 
@@ -232,9 +259,11 @@ void OnTick()
             // meter as it now reads — the order the eye takes them in. Through AppendPhrase:
             // the message is the game's own string and may end in its own punctuation.
             std::string line = GameUI::CleanText(message);
+            // A message that IS the title (the fortress's own progress) gets the count alone.
+            const bool titled = SameWords(line, MeterTitle(view));
             if (delta != 0)
                 X2Access::Graph::AppendPhrase(line, Vocab::DoomDelta(delta));
-            X2Access::Graph::AppendPhrase(line, MeterLine(view, gMax));
+            X2Access::Graph::AppendPhrase(line, titled ? MeterValue(view, gMax) : MeterLine(view, gMax));
             LOG_INFO("DoomMeter: %d -> %d, message seq %llu", gEdgeFrom, gDoom,
                 static_cast<unsigned long long>(seq));
             Speak(line);
