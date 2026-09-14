@@ -1134,6 +1134,19 @@ constexpr uint32_t kStratMapResNetForcedOn = 0x08;            // ::m_bResNetForc
 constexpr int32_t kHudChosenButtonOffset = 0x474;  // UIStrategyMap_HUD::m_kChosenInfoButton
 constexpr int32_t kHudResOrdersButtonOffset = 0x47C; // ::m_kResistanceInfoButton
 
+// The Avatar meter's retained fields on the same panel (docs/surfaces/strategy.md, "Avatar
+// project meter"). The six strings are CPF_Localized and the loc file populates them under the
+// panel's OWN section, so this is not the declared-here-populated-elsewhere trap.
+constexpr int32_t kHudDoomCounterLabelOffset = 0x3D8; // ::m_strDoomCounterLabel
+constexpr int32_t kHudDoomDaysOffset = 0x3E8;         // ::m_strDoomDays
+constexpr int32_t kHudDoomHoursOffset = 0x3F8;        // ::m_strDoomHours
+constexpr int32_t kHudDoomMinutesOffset = 0x408;      // ::m_strDoomMinutes
+constexpr int32_t kHudDoomSecondsOffset = 0x418;      // ::m_strDoomSeconds
+constexpr int32_t kHudDoomTitleOffset = 0x428;        // ::m_strDoomTitle
+constexpr int32_t kHudDoomFlagsOffset = 0x470;        // bHasSeenDoomMeter | bMuteDoom | bDoomCounterVisible
+constexpr uint32_t kHudDoomCounterVisible = 0x04;     // ::bDoomCounterVisible
+constexpr int32_t kHudCachedDoomOffset = 0x4C4;       // ::CachedDoom
+
 constexpr int kMaxTrayIcons = 20; // UIStrategyMap.MAX_NUM_STRATEGYICONS
 constexpr int kMaxNavControls = 32;
 
@@ -1379,6 +1392,26 @@ StrategyMapView ReadStrategyMap(void* screen)
         verb.on = (ReadU32Raw(screen, kStratMapFlagsOffset) & kStratMapResNetForcedOn) != 0;
         v.verbs.push_back(std::move(verb));
     }
+    return v;
+}
+
+DoomMeterView ReadDoomMeter(void* screen)
+{
+    DoomMeterView v;
+    if (!screen)
+        return v;
+    void* hud = ReadPtrRaw(screen, kStratMapHudOffset);
+    if (!hud)
+        return v;
+    v.hud = hud;
+    v.cachedDoom = ReadI32Raw(hud, kHudCachedDoomOffset);
+    v.countdown = (ReadU32Raw(hud, kHudDoomFlagsOffset) & kHudDoomCounterVisible) != 0;
+    v.title = ReadFStringField(hud, kHudDoomTitleOffset);
+    v.counterLabel = ReadFStringField(hud, kHudDoomCounterLabelOffset);
+    v.days = ReadFStringField(hud, kHudDoomDaysOffset);
+    v.hours = ReadFStringField(hud, kHudDoomHoursOffset);
+    v.minutes = ReadFStringField(hud, kHudDoomMinutesOffset);
+    v.seconds = ReadFStringField(hud, kHudDoomSecondsOffset);
     return v;
 }
 

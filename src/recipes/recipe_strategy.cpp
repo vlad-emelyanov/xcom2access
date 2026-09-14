@@ -6,6 +6,7 @@
 #include "recipes/recipe_context.h"
 #include "recipes/recipes.h"
 
+#include "doom_meter.h" // CountdownLine — the Avatar stop and the change watch share the words
 #include "game_ui.h"
 #include "log.h"
 #include "tts.h"
@@ -1999,6 +2000,86 @@ void BuildRegionActions(GraphBuilder& b, const GameUI::StrategyMapView& view)
         b.PopContext();
 }
 
+// ---- stop 3: the Avatar Project meter (docs/surfaces/strategy.md, "Avatar project meter") ----
+//
+// PARITY: the meter is drawn top centre of the geoscape from the moment doom first rises, and the
+// countdown that replaces it when the project completes is the loudest thing on the screen. It is
+// a read-only stop like the resource strip, not a control — UIStrategyMap_HUD spawns no widget
+// under the pips and nothing about the meter is clickable.
+//
+// The words: the panel's own title and countdown label, the pip count the panel retains
+// (CachedDoom), the maximum and the timer values from the companion (neither is retained — the
+// maximum is the loop bound of the Flash push, the timer goes out as nine strings). "N out of M" is
+// the same Vocab::Fraction the monthly report reads this meter with, so the two cannot drift.
+// Countdown values are read at ANNOUNCE time: the clock keeps running under this stop.
+//
+// ⛔ The change on this meter is NOT announced from here — a doom sequence runs in flight mode,
+// where this recipe stands down. doom_meter.cpp watches it from outside and shares the wording.
+WireCache gGeoDoom(kGeoScannerClass, "DescribeDoom");
+
+void BuildDoomStop(GraphBuilder& b, void* screen)
+{
+    GameUI::DoomMeterView meter = GameUI::ReadDoomMeter(screen);
+    if (!meter.hud)
+        return;
+
+    // Keyed on the HUD and the screen: the maximum is fixed for a campaign, and the shown flag
+    // can only turn on during a doom sequence — which runs in flight mode, which detaches this
+    // recipe, which invalidates every wire cache. CachedDoom and the countdown flag are read
+    // natively below, so a re-attach after the sequence sees the new state either way.
+    const std::vector<WireRecord>& recs = gGeoDoom.Get({meter.hud, screen});
+    const WireRecord* rec = FindRecord(recs, "doom");
+
+    // UpdateData's own three-way gate: the countdown, or the pips once doom has ever been above
+    // zero (bHasSeenDoomMeter — the companion's half), or nothing. The native half covers the
+    // frames before the companion answers.
+    const bool shown = meter.countdown || meter.cachedDoom > 0
+        || (rec && RecField(*rec, "shown") == "1");
+    if (!shown)
+        return;
+    const int max = rec ? atoi(RecField(*rec, "max").c_str()) : 0;
+
+    b.BeginStop("avatar");
+
+    NodeVtable vt;
+    vt.Type = &TextType();
+
+    // Title or countdown label, whichever the panel is drawing — decided live, because the
+    // countdown can appear while the player is parked on this stop.
+    vt.Announcements.emplace_back(
+        []() {
+            GameUI::DoomMeterView live = GameUI::ReadDoomMeter(gScreen);
+            if (live.countdown && !live.counterLabel.empty())
+                return live.counterLabel;
+            return live.title.empty() ? std::string(Vocab::DoomTitleFallback) : live.title;
+        },
+        /*live*/ false, AnnouncementKinds::Label);
+
+    vt.Announcements.emplace_back(
+        [max]() {
+            GameUI::DoomMeterView live = GameUI::ReadDoomMeter(gScreen);
+            if (live.countdown) {
+                // CountdownLine carries the label itself so the change watch can speak it as
+                // one line; here the label is the Label part above, so take the values only.
+                std::string line = DoomMeter::CountdownLine(live);
+                if (!line.empty() && !live.counterLabel.empty()
+                    && line.compare(0, live.counterLabel.size(), live.counterLabel) == 0) {
+                    line.erase(0, live.counterLabel.size());
+                    while (!line.empty() && line.front() == ' ')
+                        line.erase(0, 1);
+                }
+                return line;
+            }
+            return max > 0 ? Vocab::Fraction(live.cachedDoom, max)
+                           : std::to_string(live.cachedDoom);
+        },
+        /*live*/ false, AnnouncementKinds::Value);
+
+    // ⛔ No OnActivate and no focus write-back: there is nothing under the pips to press, and
+    // the screen's navigator never held the HUD.
+    b.AddItem(ControlId::Structural("geoscape/avatar"), std::move(vt));
+}
+
 std::unique_ptr<GraphRender> BuildGeoscape()
 {
     GameUI::StrategyMapView view = GameUI::ReadStrategyMap(gScreen);
@@ -2014,6 +2095,7 @@ std::unique_ptr<GraphRender> BuildGeoscape()
         b.AddLabel(ControlId::Structural("geoscape/empty"), []() {
             return std::string(Vocab::GeoscapeTrayEmpty) + ". " + Vocab::GeoscapeLeaveHint;
         });
+        BuildDoomStop(b, gScreen);
         AddResourceStop(b);
         return b.Build();
     }
@@ -2148,7 +2230,12 @@ std::unique_ptr<GraphRender> BuildGeoscape()
     // Tab cycle is a place to get stuck.
     BuildRegionActions(b, view);
 
-    // ---- stop 3: the HUD's four keyboard-unreachable verbs ----
+    // ---- stop 3: the Avatar Project meter ----
+    //
+    // Above the Dark Events button on screen, so before the HUD stop that holds it.
+    BuildDoomStop(b, gScreen);
+
+    // ---- stop 4: the HUD's four keyboard-unreachable verbs ----
     //
     // PARITY, which is what earns them a stop at all: Dark Events, Chosen Info and Resistance
     // Orders are drawn on screen and clickable with a mouse, and vanilla reaches none of them

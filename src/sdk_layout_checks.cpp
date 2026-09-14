@@ -767,6 +767,18 @@ static_assert(offsetof(AUIStrategyMap, LeftBumperIcon) == 0x79C,
 static_assert(offsetof(AUIStrategyMap_HUD, m_kChosenInfoButton) == 0x474, "chosen info button");
 static_assert(offsetof(AUIStrategyMap_HUD, m_kResistanceInfoButton) == 0x47C,
     "resistance orders button");
+// The Avatar meter (game_ui_strategy.cpp ReadDoomMeter). The flag dword at 0x470 carries
+// bDoomCounterVisible (0x4) and is bitfields; m_kDoomOverlay before and m_kChosenInfoButton
+// after pin it.
+static_assert(offsetof(AUIStrategyMap_HUD, m_strDoomCounterLabel) == 0x3D8, "doom counter label");
+static_assert(offsetof(AUIStrategyMap_HUD, m_strDoomDays) == 0x3E8, "doom days word");
+static_assert(offsetof(AUIStrategyMap_HUD, m_strDoomHours) == 0x3F8, "doom hours word");
+static_assert(offsetof(AUIStrategyMap_HUD, m_strDoomMinutes) == 0x408, "doom minutes word");
+static_assert(offsetof(AUIStrategyMap_HUD, m_strDoomSeconds) == 0x418, "doom seconds word");
+static_assert(offsetof(AUIStrategyMap_HUD, m_strDoomTitle) == 0x428, "doom meter title");
+static_assert(offsetof(AUIStrategyMap_HUD, m_kDoomOverlay) == 0x468,
+    "UIStrategyMap_HUD flag dword (bDoomCounterVisible) follows m_kDoomOverlay at 0x470");
+static_assert(offsetof(AUIStrategyMap_HUD, CachedDoom) == 0x4C4, "doom meter cached pip count");
 
 // ---- the mission blade family (UIMission — docs/mission-blade-recon.md) ----
 //

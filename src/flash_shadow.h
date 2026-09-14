@@ -83,6 +83,11 @@ struct Call {
     std::string name;        // function name, or field name when `isField`
     bool isField = false;    // FIELD_OP / CHILD_FIELD_OP rather than a function call
     std::vector<Value> args; // operands in queue order
+    /// Recording order across the WHOLE capture, strictly increasing, never reused. A consumer
+    /// that reacts to a push (the doom meter's message) remembers the last `seq` it acted on and
+    /// so can tell a new push from the previous one still sitting in the panel's history — which
+    /// a position or a count cannot, because the per-panel ring evicts from the front.
+    uint64_t seq = 0;
 
     // ⛔ Non-string operands are KEPT, as typed entries rather than dropped. A repeating field
     // emitted without its empties shifts every value after it — CLAUDE.md's wire-format rule —

@@ -573,6 +573,18 @@ inline constexpr const char* GeoscapeRegionActions = "Region actions";
 inline constexpr const char* GeoscapeCannotAfford = "cannot afford";
 inline constexpr const char* GeoscapeNoComms = "no comms capacity";
 
+// The Avatar Project meter (docs/surfaces/strategy.md, "Avatar project meter"). Its title, the
+// countdown's label and unit words, and the message the game writes over it when doom moves
+// ("Alien Facility in West Africa", "SABOTAGE") are all the game's own. What the game states
+// only as pips BLINKING is how many blocks just appeared or vanished, and that is the one
+// vocabulary here. The title fallback is for the frame before the panel's localized string reads.
+inline constexpr const char* DoomTitleFallback = "Avatar Project";
+/// The change a doom sequence just drew: blocks added blink in, blocks removed blink out.
+inline std::string DoomDelta(int delta)
+{
+    return (delta > 0 ? "up " : "down ") + std::to_string(delta > 0 ? delta : -delta);
+}
+
 // The text-entry dialog (naming a save). The field is a Flash TextField, so no screen reader
 // sees the keystrokes and this layer has to echo them itself — hence the boundary words and the
 // punctuation table below.

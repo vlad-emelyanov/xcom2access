@@ -39,6 +39,7 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Research available (post-mission deck) | `game_ui_avenger.cpp` (Flash capture) | — (no companion), `research unlocked` | — | `research-unlocked-recon.md` |
 | Geoscape tray | `geo_scanner.cpp` | `X2AccessGeoScanner.uc`, `geoscape tray` | strategy.md | `geoscape-recon.md` |
 | Region actions (contact, radio relay) | — | `X2AccessGeoScanner.uc`, `geoscape tray` stop 2 | strategy.md | `geoscape-recon.md` §16 |
+| Avatar project meter (the stop, and the change watch) | `game_ui_strategy.cpp` (`ReadDoomMeter`), `doom_meter.cpp` (the watch; words via Flash capture) | `X2AccessGeoScanner.DescribeDoom` / `DescribeDoomTimer`, `geoscape tray` stop 3 | strategy.md | `geoscape-recon.md` §4.5 |
 | Skyranger briefing | `dropship.cpp` | `X2AccessDropshipReader.uc` | strategy.md | `dropship-briefing-recon.md` |
 | Modals / alerts | `flash_shadow.cpp` (UIAlert words) | `X2AccessPopupReader.uc`, `popup` | strategy.md | `popup-inventory.md` |
 | Mission blade (`UIMission` + 16 subclasses) | `game_ui_popup.cpp` | `X2AccessMissionReader.uc`, `mission blade` | — | `mission-blade-recon.md` |

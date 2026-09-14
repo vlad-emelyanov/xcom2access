@@ -145,6 +145,9 @@ add_library(X2Access SHARED
     src/objective_reader.cpp
     src/avenger.cpp
     src/resource_strip.cpp
+    # The Avatar meter's change watch: polls the HUD's retained pip count and takes the words
+    # from the Flash capture, because the sequence runs in flight mode where no recipe attaches.
+    src/doom_meter.cpp
     src/dropship.cpp
     src/text_input.cpp
     src/hacking_screen.cpp

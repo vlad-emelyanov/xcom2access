@@ -105,6 +105,39 @@ The ring's region readout gained the matching clause (`radio relay available`, a
 gained `regions contacted N of M, radio relays N of M` — `SetContinentLevel`'s own four numbers,
 which are the only place the globe says how far a continent is from its bonus.
 
+## Avatar project meter
+
+The geoscape's third Tab stop (`BuildDoomStop`) and a change watch beside it (`doom_meter.cpp`).
+Parity both: the meter is drawn top centre from the first doom onward, and a doom change is a
+ten-second sequence nobody sighted can miss — screen tear, a camera pan to the site, the game's own
+message written over the meter, the new pips blinking.
+
+- **The panel retains one number.** `UIStrategyMap_HUD.CachedDoom` is what the pips were last
+  drawn from, rewritten by every `UpdateData` after the push, so it is the count on screen — pending
+  doom mid-animation excluded, exactly as the pips exclude it. The maximum is the loop bound of that
+  push and is retained nowhere; the companion answers it (`GetMaxDoom`, which Second Wave scales).
+  The countdown that replaces the pips at completion goes out as nine strings and is retained as
+  one flag (`bDoomCounterVisible`); its label and four unit words are the panel's own localized
+  strings, populated under `[UIStrategyMap_HUD]`, and the values come off `GetTimerDisplayValues`
+  at announce time because the clock runs under the stop.
+- ⛔ **The change is watched from OUTSIDE the recipe, by polling the pips.** The whole sequence
+  runs in `eSMS_Flight`, where the tray recipe refuses to attach — correctly, nothing is navigable
+  there — so an announcement on the node would never fire. And it polls `CachedDoom` rather than
+  listening for `OnFacilityAddsDoom`: `ClearPendingDoom` fires the pending entry's event name only
+  when it has one, and the covert action's sabotage, a destroyed facility's removal and the first
+  facility's second pass queue their pending doom with none. The pips move for all of them.
+- **The words are the game's push.** `SetDoomMessage` / `SetDoomMessageRemove` is an
+  `MC.FunctionString` on the HUD, so the Flash capture holds it against the HUD's cache index one
+  frame before the pips change: "Alien Facility in West Africa", "Avatar Project" for the hidden
+  fortress, "Minor Breakthrough", "SABOTAGE". ⛔ Each recorded call carries a sequence stamp and the
+  watch remembers the last one it spoke — the per-panel history keeps old pushes, and a stale
+  "Alien Facility in X" read against a change from somewhere else would name the wrong place. An
+  edge with no new message waits 400 ms, then speaks the numbers alone.
+- The count of blocks that blinked is the one thing the game states without words (`up 2`,
+  `down 1`); the total is `Vocab::Fraction`, the same words the monthly report reads this meter
+  with. Nothing about the alien's next timer, which the game draws nowhere.
+- The once-per-campaign `eAlert_Doom` popup ("Project Progress in <Region>") is the popup recipe's.
+
 ## Skyranger briefing
 
 Not a movie and not a progress dialog but a real `UIScreen` on the transition map, where the

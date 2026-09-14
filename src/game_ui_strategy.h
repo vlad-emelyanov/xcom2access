@@ -625,6 +625,31 @@ void* FindStrategyMapScreen();
 
 StrategyMapView ReadStrategyMap(void* screen);
 
+/// The Avatar Project meter, top centre of the geoscape — what `UIStrategyMap_HUD` RETAINS of it.
+///
+/// The pips themselves go to Flash as a `QueueNumber` sequence and are gone, but the panel keeps
+/// the one number they were drawn from: `CachedDoom`, rewritten by every `UpdateData` from
+/// `GetCurrentDoom()` AFTER the pips are pushed, so it is exactly the count on screen (pending
+/// doom still mid-animation is excluded, as it is from the pips). The MAXIMUM is not retained at
+/// all — it is the loop bound of that push — so the companion answers it. The countdown that
+/// replaces the pips once the project completes (`bDoomCounterVisible`) is likewise pushed as
+/// nine strings and retained as nothing but the flag; its four unit words and its label are the
+/// panel's own localized strings, populated under `[UIStrategyMap_HUD]`.
+struct DoomMeterView {
+    void* hud = nullptr;      // UIStrategyMap_HUD, or null when the screen has no HUD yet
+    int cachedDoom = 0;       // ::CachedDoom — the pip count as last drawn
+    bool countdown = false;   // ::bDoomCounterVisible — the AVATAR PROJECT COMPLETE IN timer is up
+    std::string title;        // ::m_strDoomTitle ("AVATAR PROJECT")
+    std::string counterLabel; // ::m_strDoomCounterLabel ("AVATAR PROJECT COMPLETE IN:")
+    std::string days;         // ::m_strDoomDays .. the four unit words the countdown is drawn with
+    std::string hours;
+    std::string minutes;
+    std::string seconds;
+};
+
+/// Game thread only. `hud` is null when the screen has no HUD panel (mid-construction).
+DoomMeterView ReadDoomMeter(void* screen);
+
 /// P11 write-back: move the game's own tray navigator onto `icon`, AND put SelectedMapItem on its
 /// pin. Refuses an icon with navIndex < 0 — that is a placeholder, and the caller must leave the
 /// game's navigator where it was. Game thread only.

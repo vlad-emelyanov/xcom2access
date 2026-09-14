@@ -7,6 +7,7 @@
 #include "tile_reader.h"
 #include "avenger.h"
 #include "resource_strip.h"
+#include "doom_meter.h"
 #include "dropship.h"
 #include "text_input.h"
 #include "tactical_hud.h"
@@ -135,6 +136,10 @@ static void RegisterEventHandlers() {
             // screen's only route to the strip, and because both are cheap outside the strategy
             // layer — this is one stack walk and a pointer read whenever no HUD is up.
             ResourceStrip::OnTick();
+            // The Avatar meter's change watch. Outside the recipe because a doom sequence runs
+            // in flight mode, where the tray recipe stands down; off the geoscape it is one
+            // stack walk.
+            DoomMeter::OnTick();
             // The Skyranger load screen. Deliberately AFTER TransientReader: the dropship's own
             // narrative moment starts within a beat of the briefing appearing, and the arrival
             // block queues behind Central rather than over him. Off the transition map this is

@@ -278,6 +278,7 @@ void Remember(int32_t index, Call&& call)
 {
     PanelEntry& entry = gPanels[index];
     entry.stamp = ++gStamp;
+    call.seq = entry.stamp;
     if (entry.calls.size() >= kMaxCallsPerPanel)
         entry.calls.erase(entry.calls.begin());
     entry.calls.push_back(std::move(call));

@@ -495,6 +495,75 @@ private function Emit(string Rec)
 }
 
 // ---------------------------------------------------------------------------
+// The Avatar meter — what UIStrategyMap_HUD does not retain (parity, a read-only stop)
+// ---------------------------------------------------------------------------
+
+// kind=doom  shown=0|1  lose=0|1  current=N  max=M
+//
+// The HUD panel keeps the pip count it last drew (CachedDoom, read natively) and nothing else. The
+// MAXIMUM is the loop bound of the Flash push and lives only in GetMaxDoom() — which Second Wave's
+// Extended Avatar Project scales — and whether the meter is drawn at all is UpdateData's own
+// three-way test, mirrored here branch for branch: the countdown when the AI is in Lose mode at
+// max doom, the pips once doom has ever been above zero (bHasSeenDoomMeter latches on the first
+// such frame), nothing before that. `current` is GetCurrentDoom() as the screen itself calls it,
+// emitted so native can log this and the pips answering differently — two of our own surfaces on
+// one fact must agree.
+function DescribeDoom()
+{
+	local XComGameState_HeadquartersAlien AlienHQ;
+	local string Rec;
+	local bool bLose, bShown;
+
+	NativeResult = "";
+
+	AlienHQ = class'UIUtilities_Strategy'.static.GetAlienHQ(true);
+	if (AlienHQ == none)
+	{
+		return;
+	}
+
+	bLose = (AlienHQ.AIMode == "Lose" && AlienHQ.AtMaxDoom());
+	bShown = bLose || AlienHQ.GetCurrentDoom(true) > 0 || AlienHQ.bHasSeenDoomMeter;
+
+	Rec = "kind=doom";
+	class'X2AccessWire'.static.AddField(Rec, "shown", bShown ? "1" : "0");
+	class'X2AccessWire'.static.AddField(Rec, "lose", bLose ? "1" : "0");
+	class'X2AccessWire'.static.AddField(Rec, "current", string(AlienHQ.GetCurrentDoom()));
+	class'X2AccessWire'.static.AddField(Rec, "max", string(AlienHQ.GetMaxDoom()));
+	Emit(Rec);
+}
+
+// kind=timer  days=D  hours=H  minutes=M  seconds=S
+//
+// UpdateLoseTimer's own four values, off the same GetTimerDisplayValues call it makes, for the
+// countdown that replaces the pips once the project completes. The unit WORDS are the panel's own
+// localized strings and native reads them off the panel; only the numbers cross here. Read at
+// announce time — the clock runs under the stop.
+function DescribeDoomTimer()
+{
+	local XComGameState_HeadquartersAlien AlienHQ;
+	local int Days, Hours, Minutes, Seconds;
+	local string Rec;
+
+	NativeResult = "";
+
+	AlienHQ = class'UIUtilities_Strategy'.static.GetAlienHQ(true);
+	if (AlienHQ == none)
+	{
+		return;
+	}
+
+	AlienHQ.GetTimerDisplayValues(Days, Hours, Minutes, Seconds);
+
+	Rec = "kind=timer";
+	class'X2AccessWire'.static.AddField(Rec, "days", string(Days));
+	class'X2AccessWire'.static.AddField(Rec, "hours", string(Hours));
+	class'X2AccessWire'.static.AddField(Rec, "minutes", string(Minutes));
+	class'X2AccessWire'.static.AddField(Rec, "seconds", string(Seconds));
+	Emit(Rec);
+}
+
+// ---------------------------------------------------------------------------
 // The ring
 // ---------------------------------------------------------------------------
 
