@@ -1215,6 +1215,7 @@ GeoscapeGate ReadGeoscapeGate()
     GeoscapeGate gate;
     void* screens[kMaxStackScreens] = {};
     int count = WalkStackRaw(screens, kMaxStackScreens);
+    gate.stackRead = count > 0;
 
     // GetCurrentScreen is the FIRST non-none entry and applies no state-bit filter of its own,
     // so neither do we — the same rule ReadAvengerGate follows, and for the same reason: a gate

@@ -140,6 +140,16 @@ message written over the meter, the new pips blinking.
   ASCII fold would call the two Russian strings different.
 - The change line joins title and count the way the stop does (`title, N out of M`), so the two
   readings of the meter cannot drift apart.
+- ⛔ **A blank stack is not "the map left" — hold, and compare on return.** The stack finder
+  answers nothing for a poll or two while a popup is pushed over the map (the navigator logs it as
+  `stack valid 0`), and the watch took that for leaving the geoscape, reset, and re-baselined on
+  the popup's close — swallowing every edge that landed under it. The max-doom run is the case:
+  `GiveResource Doom 5` submitted, the alien AI entered Lose mode on the same update and pushed
+  its popup, and the first `UpdateData` after the popup drew the five pips AND the countdown at
+  once; the watch said nothing and only the Tab stop read the timer. `GeoscapeGate.stackRead` is
+  the distinction; a reset needs a stack that was READ and holds no map. And when the countdown
+  flips in the same redraw as a doom edge, the edge's line carries the timer rather than the meter
+  being read twice.
 - The count of blocks that blinked is the one thing the game states without words (`up 2`,
   `down 1`); the total is `Vocab::Fraction`, the same words the monthly report reads this meter
   with. Nothing about the alien's next timer, which the game draws nowhere.

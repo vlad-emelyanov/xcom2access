@@ -533,6 +533,11 @@ bool ActivatePromotionCell(const PromotionView& view, int row, int branch);
 /// GetCurrentScreen's own definition — no state-bit filter). Anything above it has already
 /// taken the arrows before the map gets a say.
 struct GeoscapeGate {
+    /// The stack was readable and had entries. ⛔ When this is false, `mapOnStack` is NOT an
+    /// answer: the stack finder goes blank for a poll or two while a popup is pushed over the map,
+    /// and a watcher that took that blank for "the map left" reset itself and swallowed the doom
+    /// edges under the popup (`docs/surfaces/strategy.md`, the Avatar project meter).
+    bool stackRead = false;
     bool mapOnStack = false; // UIStrategyMap is somewhere on the stack
     bool current = false;    // ...and it is the first entry
     char blocker[64] = {};   // what sits on top instead, when it is not; for the log

@@ -205,6 +205,8 @@ void OnTick()
     sLastMs = now;
 
     const GameUI::GeoscapeGate gate = GameUI::ReadGeoscapeGate();
+    if (!gate.stackRead)
+        return; // the stack goes blank for a poll while a popup is pushed: hold, decide nothing
     if (!gate.mapOnStack) {
         // Left the geoscape. The next map spawns a fresh HUD whose CachedDoom starts from the
         // current total, so nothing carries over — and doom that moved during a mission is
@@ -216,6 +218,10 @@ void OnTick()
     }
     if (!gate.map)
         return; // a screen over the map: UpdateData early-returns there, so nothing can move
+    // ...but the STATE can, and the first UpdateData after the popup closes redraws it all at
+    // once — which is why the values are held across the popup and compared on return, never
+    // re-baselined. The max-doom sequence is the case: the cheat's five pips, the Lose-mode
+    // popup and the countdown all landed under one popup on the 2026-09-14 run.
 
     const GameUI::DoomMeterView view = GameUI::ReadDoomMeter(gate.map);
     if (!view.hud)
@@ -246,6 +252,15 @@ void OnTick()
         gDoom = view.cachedDoom;
     }
 
+    // The project completing is the red overlay and the timer replacing the pips; the timer
+    // leaving (a facility destroyed in time) is the pips coming back. When the flip arrives with
+    // a doom edge — the last pips and the countdown land in one redraw, and so do the cheat's
+    // reversal and the pips' return — the edge's line carries it, so the meter is not read twice.
+    const bool countdownFlipped = view.countdown != gCountdown;
+    gCountdown = view.countdown;
+    if (countdownFlipped && !gEdgePending)
+        Speak(gCountdown ? CountdownLine(view) : MeterLine(view, gMax));
+
     if (gEdgePending) {
         std::string message;
         const uint64_t seq = NewestMessage(cacheIndex, gMessageSeq, message);
@@ -263,18 +278,16 @@ void OnTick()
             const bool titled = SameWords(line, MeterTitle(view));
             if (delta != 0)
                 X2Access::Graph::AppendPhrase(line, Vocab::DoomDelta(delta));
-            X2Access::Graph::AppendPhrase(line, titled ? MeterValue(view, gMax) : MeterLine(view, gMax));
-            LOG_INFO("DoomMeter: %d -> %d, message seq %llu", gEdgeFrom, gDoom,
-                static_cast<unsigned long long>(seq));
+            std::string meter;
+            if (gCountdown)
+                meter = CountdownLine(view);
+            if (meter.empty())
+                meter = titled ? MeterValue(view, gMax) : MeterLine(view, gMax);
+            X2Access::Graph::AppendPhrase(line, meter);
+            LOG_INFO("DoomMeter: %d -> %d, message seq %llu, countdown %d", gEdgeFrom, gDoom,
+                static_cast<unsigned long long>(seq), gCountdown ? 1 : 0);
             Speak(line);
         }
-    }
-
-    if (view.countdown != gCountdown) {
-        gCountdown = view.countdown;
-        // The project completing is the red overlay and the timer replacing the pips; the timer
-        // leaving (a facility destroyed in time) is the pips coming back.
-        Speak(gCountdown ? CountdownLine(view) : MeterLine(view, gMax));
     }
 }
 

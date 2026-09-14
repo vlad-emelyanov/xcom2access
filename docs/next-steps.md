@@ -73,12 +73,20 @@ that edge — it ends the interval, and the next alien HQ update on the map adds
 `Станция пришельцев в регионе Западная Азия, up 1, ПРОЕКТ "АВАТАР" 7 out of 12`, followed by
 Central's commlink line from the transient reader. Still owed:
 
-1. Leave the geoscape and come back with doom pending from a mission — the entry-path animation
+The countdown was reached too, with `GiveResource Doom 5` (five permanent pips; the alien AI
+enters Lose mode on the next update, pushes `eAlert_AlienVictoryImminent`, and the timer replaces
+the pips) — the Tab stop read `ПРОЕКТ "АВАТАР" ЗАВЕРШИТСЯ ЧЕРЕЗ: 21 ДН. 23 Ч. 57 МИН. 33 СЕК.`,
+but the watch said NOTHING for the jump or the flip: the stack went blank during the popup push
+and the watch reset (rule in `surfaces/strategy.md`). Fixed and compiled, unheard. Still owed:
+
+1. **Replay the max-doom sequence on the new ASI** from the save taken at 7 pips: `GiveResource
+   Doom 5`, dismiss the popup, expect ONE line on return — `Cheat Doom, up 5, ПРОЕКТ "АВАТАР"
+   ЗАВЕРШИТСЯ ЧЕРЕЗ: N ДН. …` — then `GiveResource Doom -5`, expecting `Cheat Doom, down 5,
+   ПРОЕКТ "АВАТАР", 7 out of 12` once, not the meter twice.
+2. Leave the geoscape and come back with doom pending from a mission — the entry-path animation
    must produce an ordinary edge, not silence and not a double line.
-2. ⚠ Unexercised by any cheap lever: the completion countdown (`bDoomCounterVisible`), both the
-   edge line and the stop's live values. Needs a campaign driven to max doom.
-3. Two fixes compiled after the run and unheard: the change line now joins `title, N out of M`
-   like the stop, and a title-as-message addition reads `Проект "Аватар", up 1, 6 out of 12`.
+3. Also compiled and unheard: the change line joins `title, N out of M` like the stop, and a
+   title-as-message addition reads `Проект "Аватар", up 1, 6 out of 12`.
 
 **Unit conditions on the squad ring, the soldier sheet and the Targets stop** (2026-09-04,
 `X2AccessHelper.UnlistedPenaltyWords` / `StunWords`, `X2AccessObjectScanner.StatusWords` and its
