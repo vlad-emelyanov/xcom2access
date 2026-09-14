@@ -146,7 +146,9 @@ std::string MeterLine(const GameUI::DoomMeterView& view, int max)
     std::string line = view.title.empty() ? std::string(Vocab::DoomTitleFallback) : view.title;
     const std::string value = max > 0 ? Vocab::Fraction(view.cachedDoom, max)
                                       : std::to_string(view.cachedDoom);
-    X2Access::Graph::AppendPhrase(line, value, " ");
+    // Same join as the Tab stop's label/value, so the change line and the stop read alike:
+    // the first live run had the stop say `title, N out of M` and the watch `title N out of M`.
+    X2Access::Graph::AppendPhrase(line, value);
     return line;
 }
 

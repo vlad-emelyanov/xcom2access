@@ -58,27 +58,21 @@ the tile cursor ("Half cover north. Full cover east") mid-way through a comma-jo
 **The Avatar project meter — its Tab stop and its change watch** (2026-09-14, `BuildDoomStop` in
 `recipes/recipe_strategy.cpp`, `doom_meter.cpp`, `GameUI::ReadDoomMeter`,
 `X2AccessGeoScanner.DescribeDoom` / `DescribeDoomTimer`; rules in `surfaces/strategy.md` under
-"Avatar project meter") — compiles clean, NEVER HEARD. What to listen for, cheapest first:
+"Avatar project meter") — the stop and the removal edge were HEARD on 2026-09-14 (Russian game:
+`ПРОЕКТ "АВАТАР", 6 out of 12` on Tab; `Cheat Removal, down 1, ПРОЕКТ "АВАТАР" 5 out of 12` after
+`RemoveFortressDoom 1`; all six `m_strDoom*` strings populated; `watching HUD, doom 6 of 12` on
+every entry; no double space in the ring). One fact from that run: the game plays a queued doom
+change only from the alien HQ's update, i.e. while the map is up, not in flight, and time is
+running — a cheat fired under a popup waits until the player is back on the map. Still owed:
 
-1. **Tab on the geoscape reaches an "AVATAR PROJECT, N out of 12" stop** between the region actions
-   and the HUD verbs, on a campaign where doom has ever been above zero — and NO such stop on a
-   campaign before the first facility (the gate is `UpdateData`'s own). `just dev-props
-   "screen=UIStrategyMap"` settles whether the six `m_strDoom*` strings on the HUD read populated;
-   an empty title is the localized-var trap and the stop would fall back to "Avatar Project".
-2. **The cheap lever is a removal**: `RemoveFortressDoom 1` through `just dev-exec` queues a real
-   pending-doom sequence (the cheat passes the literal "Cheat Removal" as its message). Expect the
-   pan, then ONE line: `Cheat Removal, down 1, AVATAR PROJECT 4 out of 12`. If the numbers come with
-   no message, `just dev-flashqueue` on the HUD's cache index answers whether `SetDoomMessageRemove`
-   was captured at all; if the message names the wrong place, the sequence-stamp guard has failed.
-3. **An addition needs the facility timer** (scan to fast-forward): the message must be the game's
+1. **An addition needs the facility timer** (scan to fast-forward): the message must be the game's
    "Alien Facility in <Region>" and the delta must match the pips that blinked. Then leave the
    geoscape and come back with doom pending from a mission — the entry-path animation must produce
    an ordinary edge, not silence and not a double line.
-4. `DoomMeter: watching HUD, doom N of M` in the log on every geoscape entry, with M = 12 (or 24
-   under Extended Avatar Project). `M = 0` means the companion did not answer and the stop is
-   reading a bare count.
-5. ⚠ Unexercised by any cheap lever: the completion countdown (`bDoomCounterVisible`), both the
+2. ⚠ Unexercised by any cheap lever: the completion countdown (`bDoomCounterVisible`), both the
    edge line and the stop's live values. Needs a campaign driven to max doom.
+3. The join fix (change line now reads `title, N out of M` like the stop) compiled after the run
+   and is unheard.
 
 **Unit conditions on the squad ring, the soldier sheet and the Targets stop** (2026-09-04,
 `X2AccessHelper.UnlistedPenaltyWords` / `StunWords`, `X2AccessObjectScanner.StatusWords` and its
