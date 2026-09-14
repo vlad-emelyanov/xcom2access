@@ -41,6 +41,7 @@ extern const Recipe kArmoryLoadoutRecipe;
 extern const Recipe kGeoscapeRecipe;
 extern const Recipe kPopupRecipe;
 extern const Recipe kMissionBladeRecipe;
+extern const Recipe kSkyrangerArrivesRecipe; // the Skyranger-arrived prompt (UISkyrangerArrives)
 extern const Recipe kPromotionRecipe;
 extern const Recipe kCovertActionsRecipe;
 extern const Recipe kStrategyPolicyRecipe;
@@ -78,7 +79,7 @@ extern const Recipe kLootRecipe;     // the mid-mission loot receipt (UIInventor
 extern const Recipe kCharInfoRecipe; // the soldier sheet (UITacticalCharInfoScreen)
 
 // How many of the above kRecipes must list. Pinned by a static_assert next to the array.
-constexpr std::size_t kRecipeCount = 48;
+constexpr std::size_t kRecipeCount = 49;
 
 } // namespace Recipes
 } // namespace MenuNavigator

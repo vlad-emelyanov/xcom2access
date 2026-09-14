@@ -14,6 +14,25 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**The Skyranger-arrived prompt** (2026-09-14, `skyranger arrives` recipe in
+`recipes/recipe_strategy.cpp`, `GameUI::FindSkyrangerArrivesScreen`,
+`X2AccessSkyrangerReader.DescribeSkyrangerArrives`; rules in `surfaces/strategy.md` under
+"Skyranger-arrived prompt") — built from `SrcOrig` after a live screenshot of the silent screen,
+compiled clean on both halves, **never heard**. The mission blade's sequel: any squad launch
+reaches it, so the first pass is one flight. What to listen for:
+
+1. Attach names the screen from the left blade — Russian game: `"РЕЙНДЖЕР", Начало процедуры
+   посадки` — then lands on the mission stop: the operation name (`Операция "Паучий огонь"`) and
+   the body line; Tab reaches the two buttons.
+2. Enter on the first button must start the load (the Skyranger briefing follows); Escape or the
+   second button must recall the Skyranger with the `Avenger_Skyranger_Recalled` narrative. Both
+   go through the screen's own `OnUnrealCommand`, so a silent Enter means the recipe did not own
+   input, not that the call is wrong.
+3. On the tutorial's first mission (and any `bCannotBackOutSquadSelect` source) the buttons stop
+   must hold ONE button — the return button is gated on `Button2.bIsVisible`.
+4. The screen deliberately outlives the launch click; the recipe must detach when the stack is
+   torn down for the mission, not speak the prompt again over the briefing.
+
 **The cover ring — `J` / `Shift+J`** (2026-09-07, `X2AccessObjectScanner.AddCover` /
 `ClaimCoverCell` + `CAT_COVER`, `X2AccessTileReader.CoverEdgeWords` / `CoverSignature`, the two
 `'J'` claims in `object_scanner.cpp`; rules in `surfaces/tactical.md` under the object scanner) —

@@ -845,6 +845,17 @@ bool SetBondSelection(const BondScreenView& view, int index);
 /// The focused UISoldierBondConfirmScreen, or null. Game thread only.
 void* FindBondConfirmScreen();
 
+// ---- the Skyranger-arrived prompt (UISkyrangerArrives) — docs/surfaces/strategy.md ----
+//
+// Pushed by XComGameState_MissionSite.DestinationReached over the geoscape: the operation name,
+// "arrived, awaiting orders", begin the mission or return to the Avenger. Every word is
+// companion-side (the class holds them as localized defaults, and the blade pushes bypass
+// SetText); activation is the screen's own OnUnrealCommand — Enter launches, Escape recalls,
+// and neither reads a selected button. No offsets.
+
+/// The focused UISkyrangerArrives, or null. Game thread only.
+void* FindSkyrangerArrivesScreen();
+
 // ---- the monthly report (UIResistanceReport) and its Chosen page
 //      (UIResistanceReport_ChosenEvents) — docs/resistance-report-recon.md ----
 //

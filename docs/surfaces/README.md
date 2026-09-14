@@ -43,6 +43,7 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Skyranger briefing | `dropship.cpp` | `X2AccessDropshipReader.uc` | strategy.md | `dropship-briefing-recon.md` |
 | Modals / alerts | `flash_shadow.cpp` (UIAlert words) | `X2AccessPopupReader.uc`, `popup` | strategy.md | `popup-inventory.md` |
 | Mission blade (`UIMission` + 16 subclasses) | `game_ui_popup.cpp` | `X2AccessMissionReader.uc`, `mission blade` | — | `mission-blade-recon.md` |
+| Skyranger-arrived prompt (`UISkyrangerArrives`) | `game_ui_strategy.cpp` (finder only) | `X2AccessSkyrangerReader.uc`, `skyranger arrives` | strategy.md | — (built from `SrcOrig` alone; recon owed with the first live pass) |
 | Commlink / toasts | `transient_reader.cpp` | `X2AccessTransientReader.uc` | strategy.md | `popup-inventory.md` |
 | Movie subtitles (`.bk2`) | `movie_subtitles.cpp` | — (no script surface exists) | strategy.md | — |
 | Squad select | — | `X2AccessSquadReader.uc`, `squad select` | strategy.md | `squad-select-recon.md` |

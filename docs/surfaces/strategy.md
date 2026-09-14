@@ -175,6 +175,36 @@ times finer than the game does.
 ⛔ `gAnnounced` is a POINTER, not a bool: mission-start and mission-end briefings are different
 objects, so a changed pointer is exactly "a new briefing to read".
 
+## Skyranger-arrived prompt
+
+`UISkyrangerArrives`, pushed by `XComGameState_MissionSite.DestinationReached` the moment the
+flight ends: a left blade (the Skyranger, "landing procedure initiated"), a right blade with the
+operation name and "arrived, awaiting orders", and two buttons — begin the mission, return to the
+Avenger. The `skyranger arrives` recipe (`recipes/recipe_strategy.cpp`) lays out two stops, the
+mission text and the buttons; `X2AccessSkyrangerReader` supplies every word. Built from
+`SrcOrig` on 2026-09-14, unexercised live.
+
+- **Nothing on it retains text.** Both blades are `LibraryPanel.MC` function ops
+  (`UpdateSkyrangerInfoBlade`, `UpdateSkyrangerButtonBlade`) and both buttons are `InitButton`'d
+  with an empty caption, so the companion reads the class's localized defaults and calls the
+  screen's own `GetOpName()` — the same field or function each Flash push was built from.
+- ⛔ **The return button is emitted only while `Button2.bIsVisible`.** `BuildScreen` hides it on
+  the tutorial's first mission and for every `bCannotBackOutSquadSelect` source, and
+  `OnCancelClicked` repeats the same guard — so a recomputed test would either invent a button
+  the game hid or hide one it shows. A child button's `bIsVisible` is the documented exception to
+  the never-gate-on-`bIsVisible` rule.
+- **Enter and Escape are the screen's own `OnUnrealCommand`.** It reads no selected button —
+  `FXS_KEY_ENTER` is `OnLaunchClicked` outright, `FXS_KEY_ESCAPE` is `OnCancelClicked` — so the
+  recipe sends the key through `SendScreenCommand`, never a `Click()`. After launch the screen
+  deliberately stays up (a comment in the source: closing it would flash the facility grid before
+  the load), so the recipe holds until the stack is torn down for the mission.
+- ⛔ **A slash-star inside a companion LINE comment silently disables every backtick macro after
+  it.** The macro preprocessor runs before the lexer and tracks block comments on its own, so
+  `*Title/*Subtitle` in this reader's header opened a block it never saw closed, and the
+  `SCREENSTACK` line below failed with *"Bad or missing expression"* naming a token nowhere near
+  the cause. A backtick in a comment is a macro invocation for the same reason. Two compiles were
+  lost to it before the header was reread; the rule is now in `CLAUDE.md`.
+
 ## Modals, alerts, and the transient family
 
 One recipe for every modal notification in the game — `UIAlert`'s 118 variants, the bespoke

@@ -1623,6 +1623,13 @@ void* FindBondConfirmScreen()
     return FindFocusedStackScreen("UISoldierBondConfirmScreen", sFinder, sReported);
 }
 
+void* FindSkyrangerArrivesScreen()
+{
+    static ScreenFinder sFinder{"UISkyrangerArrives"};
+    static bool sReported = false;
+    return FindFocusedStackScreen("UISkyrangerArrives", sFinder, sReported);
+}
+
 // ---- the monthly report and its Chosen page (docs/resistance-report-recon.md) ----
 
 namespace {

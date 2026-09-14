@@ -154,6 +154,12 @@ rules** below instead — that is the test for which file a new rule goes in.
 - **Legacy screen listeners**: `UIScreenListener_*.uc` polling listeners with the
   `AccessibilityData` bridge. Working system; migrate to native UI reading incrementally, do not
   expand this pattern to new screens without reason.
+- ⛔ **No `/*` and no backtick inside a `.uc` comment, line comments included.** The macro
+  preprocessor runs before the lexer and tracks block comments on its own, so a `/*` in a `//`
+  comment opens a block it never sees closed and every `` `MACRO `` after it stays unexpanded —
+  the compile then fails on a `` `SCREENSTACK `` line with *"Bad or missing expression"*, naming
+  nothing near the cause. A backtick in a comment is a macro invocation for the same reason
+  (`docs/surfaces/strategy.md`, the Skyranger-arrived prompt).
 
 ## The bridge (script ↔ native)
 

@@ -332,6 +332,9 @@ inline constexpr const char* SortDescending = "descending";
 inline constexpr const char* ScreenChosenInfoFallback = "Chosen database";
 inline constexpr const char* ScreenBondsFallback = "Soldier bonds";
 inline constexpr const char* ScreenBondConfirmFallback = "Confirm bond";
+/// The Skyranger-arrived prompt before the companion answers; its real name is the screen's own
+/// two localized blade strings.
+inline constexpr const char* ScreenSkyrangerArrivesFallback = "Skyranger arrived";
 /// The bond roster with nobody else on it (a squad of one). The game draws an empty list and no
 /// line, and an empty stop is indistinguishable from a broken one.
 inline constexpr const char* BondsEmpty = "No other soldiers";

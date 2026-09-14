@@ -2588,6 +2588,90 @@ std::string MissionBladeName()
     return name.empty() ? std::string(Vocab::ScreenMissionBlade) : name;
 }
 
+// ---- the Skyranger-arrived prompt (UISkyrangerArrives) — docs/surfaces/strategy.md ----
+//
+// The last stop before a mission loads: the Skyranger has reached the pin, and the game asks
+// once more — begin, or turn back. Two stops: the right blade's heading and paragraph, then the
+// buttons. Every word is X2AccessSkyrangerReader's (the class's own localized defaults and its
+// GetOpName getter); the recipe lays them out and sends the screen's own keys.
+
+constexpr const char* kSkyrangerReaderClass = "X2AccessSkyrangerReader";
+WireCache gSkyrangerArrivesWords(kSkyrangerReaderClass, "DescribeSkyrangerArrives");
+
+const std::vector<WireRecord>& FetchSkyrangerArrivesWords()
+{
+    return gSkyrangerArrivesWords.Get({gScreen});
+}
+
+std::unique_ptr<GraphRender> BuildSkyrangerArrives()
+{
+    const std::vector<WireRecord>& words = FetchSkyrangerArrivesWords();
+
+    GraphBuilder b;
+    b.BeginStop("mission");
+    b.PushContext("", "", /*positions*/ false);
+    int added = 0;
+    if (const WireRecord* mission = FindRecord(words, "mission")) {
+        const std::string op = RecField(*mission, "op");
+        if (!op.empty()) {
+            b.AddLabel(ControlId::Structural("skyranger/op"), [op]() { return op; });
+            added++;
+        }
+        const std::string body = RecField(*mission, "body");
+        if (!body.empty()) {
+            b.AddLabel(ControlId::Structural("skyranger/body"), [body]() { return body; });
+            added++;
+        }
+    }
+    if (added == 0) {
+        b.AddLabel(ControlId::Structural("skyranger/none"),
+            []() { return Vocab::SurfaceUnavailable("Skyranger reader"); });
+    }
+    b.PopContext();
+
+    // The buttons: begin the mission on Enter, return to the Avenger on Escape — both through
+    // the screen's own OnUnrealCommand. The companion emits the cancel button only while the
+    // game shows it (the tutorial's first mission and no-back-out sources hide it). Labels are
+    // the companion's; the generic pair stands in when it answered nothing, because a prompt a
+    // blind player cannot answer is worse than one that reads badly — and Escape on a hidden
+    // cancel is harmless, OnCancelClicked re-runs the same guard.
+    struct Choice {
+        std::string label;
+        int cmd;
+    };
+    std::vector<Choice> choices;
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "button")
+            continue;
+        const std::string label = RecField(rec, "label");
+        if (!label.empty())
+            choices.push_back({label, atoi(RecField(rec, "cmd").c_str())});
+    }
+    if (choices.empty()) {
+        choices.push_back({std::string(Vocab::PopupContinue), GameUI::kCmdEnter});
+        choices.push_back({std::string(Vocab::PopupDismiss), GameUI::kCmdEscape});
+    }
+    b.BeginStop("buttons");
+    b.StartRow("skyranger/buttons");
+    for (size_t i = 0; i < choices.size(); i++) {
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(choices[i].label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.OnActivate = [cmd = choices[i].cmd]() { GameUI::SendScreenCommand(gScreen, cmd); };
+        b.AddItem(ControlId::Structural("skyranger/button/" + std::to_string(i)), std::move(vt));
+    }
+    b.EndRow();
+    return b.Build();
+}
+
+// The left blade — "Skyranger, landing procedure initiated" in the player's language — is the
+// screen's name; the right blade's operation name is the first stop, so it is spoken once.
+std::string SkyrangerArrivesName()
+{
+    return NameFromHeader(FetchSkyrangerArrivesWords(), Vocab::ScreenSkyrangerArrivesFallback);
+}
+
 // ---- covert actions (UICovertActions) — docs/covert-actions-recon.md ----
 //
 // The WOTC core strategy loop, and the screen where the mod earns the most per node. Vanilla
@@ -3450,6 +3534,13 @@ const Recipe kPopupRecipe{"popup", ProbePopup, BuildPopup, PopupName};
 const Recipe kMissionBladeRecipe{
     "mission blade", ProbeFocused<GameUI::FindMissionBladeScreen>, BuildMissionBlade,
     MissionBladeName};
+
+// The blade's sequel: pushed over the geoscape when the Skyranger's flight ends, and under only
+// the modals — its probe insists on being the focused stack screen, so it stands down under a
+// dialog and under the recall narrative's own screens.
+const Recipe kSkyrangerArrivesRecipe{"skyranger arrives",
+    ProbeFocused<GameUI::FindSkyrangerArrivesScreen>, BuildSkyrangerArrives,
+    SkyrangerArrivesName};
 
 // Above the Resistance Ring it is pushed over (the room recipe) and above the personnel roster's
 // family only in the sense that it can never be topmost at the same time — UIPersonnel_CovertAction

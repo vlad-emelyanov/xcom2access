@@ -570,6 +570,10 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     // The mission blade: below every modal that pushes over it (dialogs, alerts, the sitrep
     // detail popup — all listed above), above the geoscape tray it covers.
     &kMissionBladeRecipe,
+    // The Skyranger-arrived prompt: the blade's sequel, pushed over the geoscape when the flight
+    // ends and never on the stack with the blade (the blade closed when the squad launched). It
+    // raises nothing but the recall narrative, so only the modals listed first can cover it.
+    &kSkyrangerArrivesRecipe,
     // The Chosen dossier: pushed over the geoscape (its HUD button and the map's own handler)
     // and over an alert's Chosen panel — the popup recipe's topmost-only probe stands down for
     // it there — and it raises nothing above itself.

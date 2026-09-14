@@ -174,7 +174,7 @@ gamepad button; the picker picks only for a controller), re-provided.
 | `UIChosenInfo` | Chosen dossier | ◐ built — `chosen dossier` recipe + `X2AccessChosenReader` (2026-09-03, unexercised live; `chosen-bond-recon.md`). ⛔ Vanilla switches Chosen on the D-pad only; the tab nodes re-provide it |
 | `UIChosenEncountered` | first-encounter overlay | ◐ built — popup recipe branch (2026-09-03, unexercised live). Enter-only in vanilla, so one button |
 | `UINotificationMenu` | notification list (opened from `UIToDoWidget`) | ⬜ P2, with the to-do widget work |
-| `UISkyrangerArrives` | squad-return overlay | ⬜ P3 |
+| `UISkyrangerArrives` | the "Skyranger arrived, awaiting orders" prompt at the mission pin (pushed by `XComGameState_MissionSite.DestinationReached`) | ◐ built — `skyranger arrives` recipe + `X2AccessSkyrangerReader` (2026-09-14, unexercised live; `surfaces/strategy.md`). Every word a localized class default or `GetOpName()`; Enter launches, Escape recalls, and the recall button is emitted only while the game shows it |
 | `UIStrategyMap_BlackMarket`/`_BuyIntel`/`_Outpost`/`_PoiChoice`/`_VisitCommander` | EU/EW leftovers, zero references | 🚫 dead |
 
 ## 10. Mission launch — `UIMission` family, ✅ built and run, 17 classes
