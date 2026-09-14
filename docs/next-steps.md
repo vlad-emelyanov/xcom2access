@@ -79,17 +79,16 @@ the pips) — the Tab stop read `ПРОЕКТ "АВАТАР" ЗАВЕРШИТС�
 but the watch said NOTHING for the jump or the flip: the stack went blank during the popup push
 and the watch reset (rule in `surfaces/strategy.md`). The reversal (`GiveResource Doom -5`) WAS
 heard on that binary, as the predicted double: `Cheat Doom, down 5, ПРОЕКТ "АВАТАР" 7 out of 12`
-and then the meter again for the timer leaving. Both fixed and compiled, unheard. Still owed:
+and then the meter again for the timer leaving. Both fixed, and the replay on the new build was
+heard: one line on the popup's close — `Cheat Doom, up 6, ПРОЕКТ "АВАТАР" ЗАВЕРШИТСЯ ЧЕРЕЗ: 24
+ДН. 0 Ч. 0 МИН. 0 СЕК.` — and one on the reversal — `Cheat Doom, down 6, ПРОЕКТ "АВАТАР", 6 out
+of 12`; the watch also held through a mission blade without re-baselining. Still owed:
 
-1. **Replay the max-doom sequence on the new ASI** from the save taken at 7 pips: `GiveResource
-   Doom 5`, dismiss the popup, expect ONE line on return — `Cheat Doom, up 5, ПРОЕКТ "АВАТАР"
-   ЗАВЕРШИТСЯ ЧЕРЕЗ: N ДН. …` — then `GiveResource Doom -5`, expecting `Cheat Doom, down 5,
-   ПРОЕКТ "АВАТАР", 7 out of 12` once, not the meter twice.
-2. Leave the geoscape and come back with doom pending from a mission — the entry-path animation
+1. Leave the geoscape and come back with doom pending from a mission — the entry-path animation
    must produce an ordinary edge, not silence and not a double line.
-3. Also compiled and unheard: the change line joins `title, N out of M` like the stop, and a
-   title-as-message addition reads `Проект "Аватар", up 1, 6 out of 12`.
-4. The ring's facility entry now carries the pin's doom level (`…, ПРОЕКТ "АВАТАР" 2, …`;
+2. Unheard: a title-as-message addition folded to `Проект "Аватар", up 1, 6 out of 12` (needs the
+   fortress timer: `FastForwardFortressDoomTimer`).
+3. The ring's facility entry now carries the pin's doom level (`…, ПРОЕКТ "АВАТАР" 2, …`;
    companion, rule under the geoscape tray). Ctrl+PageDown to the "Alien facilities" category and
    PageDown through it: every facility with doom must say a count, and the counts plus the
    fortress's own must add up to the meter.
