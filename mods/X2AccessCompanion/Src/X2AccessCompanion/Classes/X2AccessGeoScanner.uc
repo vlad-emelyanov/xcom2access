@@ -1002,6 +1002,14 @@ private function array<AccessGeoEntry> BuildMissions(bool bFacilities)
 			Entry.Label = Mission.GetUIButtonTooltipTitle();
 		}
 		Entry.Detail = Mission.GetMissionDifficultyLabel();
+		// A facility's pin draws its doom as a level (UIStrategyMapItem_AlienNetworkComponent
+		// .UpdateFlyoverText → SetLevel(MissionState.Doom)), so the count is on screen; labelled
+		// with the meter's own title, the word the game ties those blocks to.
+		if (bFacilities && Mission.Doom > 0)
+		{
+			Entry.Detail = Join(Entry.Detail,
+				class'UIStrategyMap_HUD'.default.m_strDoomTitle @ string(Mission.Doom));
+		}
 		Entry.Loc = Mission.Get2DLocation();
 		Entries.AddItem(Entry);
 	}

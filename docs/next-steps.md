@@ -89,6 +89,10 @@ and then the meter again for the timer leaving. Both fixed and compiled, unheard
    must produce an ordinary edge, not silence and not a double line.
 3. Also compiled and unheard: the change line joins `title, N out of M` like the stop, and a
    title-as-message addition reads `Проект "Аватар", up 1, 6 out of 12`.
+4. The ring's facility entry now carries the pin's doom level (`…, ПРОЕКТ "АВАТАР" 2, …`;
+   companion, rule under the geoscape tray). Ctrl+PageDown to the "Alien facilities" category and
+   PageDown through it: every facility with doom must say a count, and the counts plus the
+   fortress's own must add up to the meter.
 
 **Unit conditions on the squad ring, the soldier sheet and the Targets stop** (2026-09-04,
 `X2AccessHelper.UnlistedPenaltyWords` / `StunWords`, `X2AccessObjectScanner.StatusWords` and its

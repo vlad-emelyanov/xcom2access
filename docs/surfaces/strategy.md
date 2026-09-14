@@ -46,6 +46,11 @@ own hover tooltip.
   reader would otherwise describe class defaults.
 - Beside it a ring on its own keys — PageUp/Dn, Ctrl+them for the category, `O`, `Home`, `C`, `/`
   — an AID rather than parity, because it reads the fourteen regions the tray never holds.
+- **A facility's doom count is on screen, on its pin**: `UIStrategyMapItem_AlienNetworkComponent`
+  draws `MissionState.Doom` as the pin's level, so the ring's facility entry carries it, labelled
+  with the meter's own title (`ПРОЕКТ "АВАТАР" 2`) — the word the game ties those blocks to, read
+  off the HUD class default, which holds it. Not the tray: the tray's mission buttons draw no
+  level.
 
 ## Region actions — make contact, install a radio relay
 
