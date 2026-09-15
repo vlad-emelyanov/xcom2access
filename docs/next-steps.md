@@ -14,6 +14,24 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**Inside / outside on the tile cursor** (2026-09-16, `X2AccessTileReader.DescribeIndoor`; rule
+in `surfaces/tactical.md` under the tile cursor) — built from `SrcOrig`, compiled clean,
+**never heard**. Gatecrasher's street has two-storey shops beside the start; walk the cursor
+through a doorway, up a floor, onto the roof and back out. What to listen for:
+
+1. Crossing the wall speaks `Inside building, floor 1 of N` ONCE, the next steps inside speak
+   nothing extra, and stepping out speaks `Outside` once. A line on every step means the
+   change detector is comparing something that moves (check `Found.Location`).
+2. Whether the roof band is a floor of the building: if standing on the roof says
+   `Building floor 3 of 3` for a two-storey shop, `Floors.Length` counts the roof and the
+   words should say so ("roof") — the game's own `IsOnRoof` is top floor of a multi-floor
+   building.
+3. Whether `EncompassesPoint` at the tile CENTER lands inside the floor volume of a ground
+   floor: a silent doorway means the test point is below the volume's bottom and needs to
+   move up, not that the walk is wrong.
+4. `just dev-props "cdo=X2AccessTileReader"` shows `LastIndoorState` — 2 while the cursor is
+   in a building, 1 outside — for a read that costs no keypress.
+
 **The Skyranger-arrived prompt** (2026-09-14, `skyranger arrives` recipe in
 `recipes/recipe_strategy.cpp`, `GameUI::FindSkyrangerArrivesScreen`,
 `X2AccessSkyrangerReader.DescribeSkyrangerArrives`; rules in `surfaces/strategy.md` under

@@ -67,6 +67,18 @@ focus.
   not caught and must not be: buildings sit on the ground grid, so a tile inside a
   wall still HAS a floor. A ledge is open air, not merely something you cannot
   walk into.
+- **Inside / outside is the game's floor-volume rule, asked synchronously
+  (`X2AccessTileReader.DescribeIndoor`).** `XComPawnIndoorOutdoorInfo` defines inside as
+  "in an `XComFloorVolume`" — a building volume alone is outside, a nested
+  `m_bIsInternalBuilding` wins over the outer one, the floor is the HIGHEST `FloorNumber`
+  touched, and a volume with `IsInside` off (a tunnel plot's whole-level volume) is not a
+  building. ⛔ Do not read the cursor pawn's own `IndoorInfo` for this: it is fed by Touch
+  events that land the frame AFTER `CursorSetLocation`, so it answers about the previous
+  tile. The reader walks `XComBuildingVolume` → `Floors[].FloorVolumes` with
+  `EncompassesPoint` at the tile just adopted instead. Spoken on the crossing only
+  ("Inside building, floor 2 of 3" / "Building floor 3 of 3" / "Outside"), forced on the
+  verbose re-read; the count is the building's own `Floors.Length`, a different number from
+  the plot-wide band count `FloorWord` speaks, hence the different phrasing.
 - ⛔ **Per-edge cover: `COVER_<dir>` is PRESENCE, `COVER_<dir>Low` is a HEIGHT
   MODIFIER on it — never an alternative.** A low-cover edge carries BOTH bits, so
   `if (dir) … else if (dirLow)` reports every covered edge as high. The engine's

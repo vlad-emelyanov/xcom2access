@@ -63,6 +63,15 @@ var TTile PendingMoveTile;
 // on a soldier switch — announce exactly once. Every SetCursorTile adopts it silently.
 var int LastSpokenFloor;
 
+// What the player last heard about buildings — DescribeIndoor's change detector, so "Inside
+// building" and "Outside" are spoken on the crossing and never on every step. 0 = nothing heard
+// yet (reset with every plant), 1 = outside, 2 = inside. The building is remembered by its
+// LOCATION, a value: the CDO rule forbids holding the volume itself.
+var int LastIndoorState;
+var int LastIndoorFloor;
+var int LastIndoorFloorCount;
+var vector LastIndoorBuildingPos;
+
 // ---------------------------------------------------------------------------
 // Entry points (called from native)
 // ---------------------------------------------------------------------------
@@ -105,7 +114,8 @@ function CursorStep(int Cardinal)
 	ResolveFloor(WorldData, Target);
 
 	SetCursorTile(Cursor, WorldData, Target);
-	NativeResult = DescribeTile(Target, false);
+	NativeResult = DescribeIndoor(WorldData, Target, false);
+	AppendPart(NativeResult, DescribeTile(Target, false));
 }
 
 // Step one floor level up (+1) or down (-1) by driving the game's OWN floor verbs — the same
@@ -150,7 +160,9 @@ function CursorFloor(int Delta)
 
 	Target = FloorBandTile(Cursor, WorldData, Cursor.m_iRequestedFloor);
 	SetCursorTile(Cursor, WorldData, Target);
-	NativeResult = FloorWord(Cursor) $ "." @ DescribeTile(Target, false);
+	NativeResult = FloorWord(Cursor) $ ".";
+	AppendPart(NativeResult, DescribeIndoor(WorldData, Target, false));
+	AppendPart(NativeResult, DescribeTile(Target, false));
 }
 
 // Passive poll — native calls this on its tick while the tile cursor owns world mode. When the
@@ -181,7 +193,9 @@ function CursorFloorPoll()
 	bMovePending = false;
 	Target = FloorBandTile(Cursor, WorldData, Cursor.m_iRequestedFloor);
 	SetCursorTile(Cursor, WorldData, Target);
-	NativeResult = FloorWord(Cursor) $ "." @ DescribeTile(Target, false);
+	NativeResult = FloorWord(Cursor) $ ".";
+	AppendPart(NativeResult, DescribeIndoor(WorldData, Target, false));
+	AppendPart(NativeResult, DescribeTile(Target, false));
 }
 
 // Recenter the cursor on the active unit and read its tile.
@@ -211,7 +225,8 @@ function CursorRecenter()
 	// No name prefix: DescribeTile's own DescribeUnitsOnTile leads with "Ally: <name>" for the
 	// unit standing here, which on a recenter is always this one. Prefixing it said the name
 	// three times in one line ("Shreya Bose. Ally: Shreya Bose. ... At Shreya Bose").
-	NativeResult = DescribeTile(UnitState.TileLocation, false);
+	NativeResult = DescribeIndoor(WorldData, UnitState.TileLocation, false);
+	AppendPart(NativeResult, DescribeTile(UnitState.TileLocation, false));
 }
 
 // Re-read the cursor tile, verbose (adds coordinates, explicit "no cover").
@@ -229,7 +244,9 @@ function CursorAnnounce()
 		return;
 
 	Tile = CurTile();
-	NativeResult = DescribeTile(Tile, true);
+	// Forced: the re-read states where the cursor stands, "Outside" included.
+	NativeResult = DescribeIndoor(WorldData, Tile, true);
+	AppendPart(NativeResult, DescribeTile(Tile, true));
 }
 
 // Two-press guarded move order. First press: path preview (tiles, action cost, destination
@@ -1034,9 +1051,12 @@ private function bool EnsurePlanted(XComTacticalController TC, XCom3DCursor Curs
 	bPlanted = true;
 	PlantedMissionID = MissionID;
 	bMovePending = false;
+	LastIndoorState = 0;
 
 	SetCursorTile(Cursor, WorldData, UnitState.TileLocation);
-	NativeResult = "Cursor on." @ DescribeTile(UnitState.TileLocation, false);
+	NativeResult = "Cursor on.";
+	AppendPart(NativeResult, DescribeIndoor(WorldData, UnitState.TileLocation, false));
+	AppendPart(NativeResult, DescribeTile(UnitState.TileLocation, false));
 	return true;
 }
 
@@ -1073,8 +1093,11 @@ function CursorGoToMarker()
 	bPlanted = true;
 	PlantedMissionID = CurrentMissionID();
 	bMovePending = false;
+	LastIndoorState = 0;
 	SetCursorTile(Cursor, WorldData, Target);
-	NativeResult = "Cursor." @ DescribeTile(Target, false);
+	NativeResult = "Cursor.";
+	AppendPart(NativeResult, DescribeIndoor(WorldData, Target, false));
+	AppendPart(NativeResult, DescribeTile(Target, false));
 }
 
 private static function int CurrentMissionID()
@@ -1180,6 +1203,105 @@ private function TTile FloorBandTile(XCom3DCursor Cursor, XComWorldData WorldDat
 private function string FloorWord(XCom3DCursor Cursor)
 {
 	return "Floor" @ string(Cursor.m_iRequestedFloor) @ "of" @ string(Cursor.GetMaxFloor());
+}
+
+// Where the cursor stands relative to buildings — "Inside building, floor 2 of 3" on entering,
+// "Building floor 3 of 3" on changing floor within it, "Outside" on leaving — spoken on the
+// crossing and otherwise "", the way the game's own cutaway redraws only when the cursor passes
+// a wall. bForce says the current state unconditionally (the verbose re-read). The first
+// observation after a plant speaks only when inside: outside is what a player assumes.
+//
+// The oracle is the game's own, XComPawnIndoorOutdoorInfo: inside means "in a FLOOR volume" (a
+// building volume alone is outside — its comment says so), a building nested inside another wins
+// over the outer one, and the floor is the HIGHEST floor number among the floor volumes touched.
+// That object is maintained by the cursor pawn's Touch events, which land on the frame AFTER a
+// push, so reading it here would trail one step behind. The same rule is asked of the same
+// volumes with EncompassesPoint at the tile just adopted — synchronous, and state-first like the
+// rest of this class. The walk goes building volume first: each encloses its own floor volumes,
+// so the map's actor list prunes to the buildings around the point. A volume whose author turned
+// IsInside off (the whole-level volume of a tunnel plot) is not a building, as the native
+// IsInside() also holds. The floor count is the building's own Floors array, NOT the plot-wide
+// band count FloorWord speaks — the two number different things, hence the different phrasing.
+private function string DescribeIndoor(XComWorldData WorldData, TTile Tile, bool bForce)
+{
+	local WorldInfo WI;
+	local XComBuildingVolume BV, Found;
+	local XComFloorVolume FV;
+	local vector Pos;
+	local int i, j, Highest, FloorNum, Count, Here;
+	local bool bChanged, bNewBuilding;
+	local string Result;
+
+	Pos = WorldData.GetPositionFromTileCoordinates(Tile);
+	WI = class'WorldInfo'.static.GetWorldInfo();
+	foreach WI.AllActors(class'XComBuildingVolume', BV)
+	{
+		if (!BV.IsInside || !BV.EncompassesPoint(Pos))
+			continue;
+		// An outer building loses to the one nested inside it, as the game resolves it.
+		if (Found != none && Found.m_bIsInternalBuilding && !BV.m_bIsInternalBuilding)
+			continue;
+		Highest = 0;
+		for (i = 0; i < BV.Floors.Length; i++)
+		{
+			for (j = 0; j < BV.Floors[i].FloorVolumes.Length; j++)
+			{
+				FV = BV.Floors[i].FloorVolumes[j];
+				if (FV != none && FV.EncompassesPoint(Pos) && FV.FloorNumber > Highest)
+					Highest = FV.FloorNumber;
+			}
+		}
+		if (Highest == 0)
+			continue; // within the building's bounds but on none of its floors: outside
+		if (Found == none || (BV.m_bIsInternalBuilding && !Found.m_bIsInternalBuilding))
+		{
+			Found = BV;
+			FloorNum = Highest;
+		}
+	}
+
+	if (Found == none)
+	{
+		Here = 1;
+		Count = 0;
+		FloorNum = 0;
+	}
+	else
+	{
+		Here = 2;
+		Count = Found.Floors.Length;
+	}
+
+	bNewBuilding = Here == 2 && (LastIndoorState != 2 || Found.Location != LastIndoorBuildingPos);
+	bChanged = Here != LastIndoorState || bNewBuilding
+		|| (Here == 2 && (FloorNum != LastIndoorFloor || Count != LastIndoorFloorCount));
+	if (LastIndoorState == 0 && Here == 1 && !bForce)
+		bChanged = false;
+
+	if (bForce || bChanged)
+	{
+		if (Here == 1)
+			Result = "Outside";
+		else if (bForce || bNewBuilding)
+		{
+			if (Found.IsUfo)
+				Result = "Inside UFO";
+			else if (Found.IsDropShip)
+				Result = "Inside dropship";
+			else
+				Result = "Inside building";
+			Result $= ", floor" @ string(FloorNum) @ "of" @ string(Count);
+		}
+		else
+			Result = "Building floor" @ string(FloorNum) @ "of" @ string(Count);
+	}
+
+	LastIndoorState = Here;
+	LastIndoorFloor = FloorNum;
+	LastIndoorFloorCount = Count;
+	if (Found != none)
+		LastIndoorBuildingPos = Found.Location;
+	return Result;
 }
 
 // How far the ground is below a tile that has no floor of its own — 0 when this is not a ledge.
