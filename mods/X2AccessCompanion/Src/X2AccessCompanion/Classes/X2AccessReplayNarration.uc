@@ -132,6 +132,8 @@ private function NarrateFrame(XComGameStateHistory History, int Frame)
 		return;
 
 	NarrateTurnChange(History, Context, Frame);
+	NarrateReinforcements(GameState, Context);
+	NarrateReveal(Context, Frame);
 	NarrateAbility(History, Context, Frame);
 
 	// Order matters: the shot, then what it did, then who it killed. A frame carries all three at
@@ -157,6 +159,9 @@ private function NarrateTurnChange(XComGameStateHistory History, XComGameStateCo
 	if (PlayerState == none)
 		return;
 
+	// The spawn memo lives one turn on this path too (see X2AccessTacticalEvents.ResetSpawnNarration).
+	class'X2AccessTacticalEvents'.static.ResetSpawnNarration();
+
 	// XCom and the aliens only — the same rule the live listener applies, and the same reason:
 	// the game gives the Lost, civilians and the Resistance no turn banner either.
 	switch (PlayerState.GetTeam())
@@ -168,6 +173,38 @@ private function NarrateTurnChange(XComGameStateHistory History, XComGameStateCo
 		class'X2AccessNarrator'.static.Alert("Enemy turn.");
 		break;
 	}
+}
+
+// The reinforcement drop: a change container whose ChangeInfo is the spawner's own literal for the
+// state it spawns the units in (XComGameState_AIReinforcementSpawner.SpawnReinforcements, :247),
+// the same test X2Action_RevealAIBegin.ShouldPlayRevealMatinee uses to recognise the spawn. The
+// frame's game state IS the spawn state, so the shared builder reads it exactly as the live
+// listener reads the event's.
+private function NarrateReinforcements(XComGameState GameState, XComGameStateContext Context)
+{
+	local XComGameStateContext_ChangeContainer Container;
+	local string Line;
+
+	Container = XComGameStateContext_ChangeContainer(Context);
+	if (Container == none)
+		return;
+	if (Container.ChangeInfo != class'XComGameState_AIReinforcementSpawner'.default.SpawnReinforcementsChangeDesc)
+		return;
+
+	Line = class'X2AccessTacticalEvents'.static.BuildReinforcementLine(GameState);
+	if (Line != "")
+		class'X2AccessNarrator'.static.Combat(Line);
+}
+
+// The pod reveal: the frame whose context is the reveal context itself. The builder rejects the
+// End context on its own, so every reveal frame is handed over.
+private function NarrateReveal(XComGameStateContext Context, int Frame)
+{
+	local string Line;
+
+	Line = class'X2AccessTacticalEvents'.static.BuildRevealLine(XComGameStateContext_RevealAI(Context), Frame);
+	if (Line != "")
+		class'X2AccessNarrator'.static.Combat(Line);
 }
 
 private function NarrateAbility(XComGameStateHistory History, XComGameStateContext Context, int Frame)

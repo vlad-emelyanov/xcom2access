@@ -14,6 +14,32 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**The pod reveal and the reinforcement drop** (2026-09-16, `X2AccessTacticalEvents.OnScamperBegin` /
+`OnSpawnReinforcementsComplete`, builders `BuildRevealLine` / `BuildReinforcementLine`, the replay
+branches `NarrateReveal` / `NarrateReinforcements`; rules in `surfaces/tactical.md` under "Tactical
+combat narration") — built from `SrcOrig`, compiled clean, **never heard**. Gatecrasher's first pod
+exercises the reveal; any mission with a reinforcement flare (a retaliation, or `just dev-exec` with
+the cheat manager's reinforcement call) exercises the drop. What to listen for:
+
+1. As the camera pans to the first pod: `Enemy sighted: 2 ADVENT Trooper, ADVENT Officer.` ONCE,
+   during the pan, not before it — a line that arrives before the camera moves means the window is
+   wrong, and a line naming a unit twice means the same-name collapse is comparing the wrong string.
+   On a fresh campaign the first Sectoid reveal adds `New enemy type: Sectoid.` and Central's
+   commlink line follows from the transient reader; hearing the type name three times is the
+   expected shape there, not a bug.
+2. A transport drop: `Reinforcements by troop transport: ...` as the ATT flies in, and then NO
+   `Enemy sighted` line for the same units when they scamper a few seconds later. Hearing both
+   means the spawn memo is not being claimed (check `just dev-props "cdo=X2AccessTacticalEvents"`
+   for `NarratedSpawnUnits`); hearing neither means the spawn state's units carried a previous
+   version and `GetPreviousGameStateForObject` filtered them all out.
+3. A Lost swarm (any Lost mission): NOTHING at the spawn, `Enemy sighted: 8 Lost.` at the reveal
+   that frames them — the swarm's spawn shows the player nothing, so its words belong to the reveal.
+4. The tutorial's first reveal must produce the same line through the replay branch, since no
+   event fires there; a silent tutorial reveal with a working Gatecrasher one means the frame's
+   context is not the reveal context (check `RevealAIEvent`).
+5. After the run, shape-count the ring: the `Enemy sighted` shapes must show a SPREAD of counts
+   and names, and no `Enemy sighted:.` (an empty roster must return "" and never reach speech).
+
 **Inside / outside on the tile cursor** (2026-09-16, `X2AccessTileReader.DescribeIndoor`; rule
 in `surfaces/tactical.md` under the tile cursor) — built from `SrcOrig`, compiled clean,
 **never heard**. Gatecrasher's street has two-storey shops beside the start; walk the cursor
@@ -669,10 +695,14 @@ a repeating announcement.
    unmigrated for so long: it rested on `TacticalHUD::OnTick` dropping the queue, which fires only
    on the tactical layer's FALLING EDGE — nothing dropped it under the tile cursor or the object
    scanner, and the geoscape is not tactical at all.
-2. Events NOT yet narrated, in rough value order: reinforcement drops, the Chosen arriving, objective
-   completion, will/panic thresholds, loot. Each is one more `AddCHEvent` line; the cost is judgement
-   about spam, not code. `UnitMoveFinished` was deliberately dropped — the shipped sources trigger it
-   only from `DLC_2`'s Alien Ruler code, so it is not a base-game event.
+2. Events NOT yet narrated, in rough value order: the reinforcement WARNING (`ReinforcementSpawnerCreated`
+   — the "REINFORCEMENTS INCOMING" flare with its countdown, which the object scanner lists but nothing
+   announces when it appears), the "surprised" clause on a reveal (`SurprisedScamperUnitIDs` plus
+   `X2Action_RevealAIBegin.SurprisedText`, whose CDO must be checked to hold the word first), the
+   Chosen arriving, objective completion, will/panic thresholds, loot. Each is one more `AddCHEvent`
+   line; the cost is judgement about spam, not code. `UnitMoveFinished` was deliberately dropped —
+   the shipped sources trigger it only from `DLC_2`'s Alien Ruler code, so it is not a base-game event.
+   The drop and the reveal themselves came off this list on 2026-09-16 (live-run debt above).
 3. Dev harness: `/tile` (the tile reader's state as structured data) and `/tactical` (mode, gate
    reasons, last narration lines) are the remaining endpoints. `just dev-speech` covers most of the
    latter already, since it marks interrupting lines with `!`.

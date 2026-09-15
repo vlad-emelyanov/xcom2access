@@ -951,10 +951,40 @@ the listener set does not work if any one of them is undone.
     `AbilityActivated` re-triggers per interrupt step. Fog parity via `CanXComSquadSeeTarget` with
     ONE documented exception — a unit stops being visible the moment it dies, so a kill the squad
     CAUSED is always announced.
+  - **The pod reveal and the reinforcement drop** (`ScamperBegin`, `SpawnReinforcementsComplete`,
+    both `ELD_OnVisualizationBlockStarted`; builders `BuildRevealLine` / `BuildReinforcementLine`,
+    shared with the replay narrator). Neither cutscene draws a word — the reveal is a camera pan
+    and a matinee, the drop is the transport matinee with the units in its slots — so the source is
+    the state that DRIVES the picture: `XComGameStateContext_RevealAI.RevealedUnitObjectIDs` (what
+    `X2Action_RevealAIBegin` pans to and force-shows) and the units created in the spawn state
+    (what `X2Action_ATT.AddUnitsToMatinee` slots). Block START, because the words belong during
+    the pan; the game's own enemy strip takes the same event on Completed, which is why the heads
+    appear only after. Same units collapse by spoken name with a count only above one — the game
+    has no plural strings. `FirstEncounterCharacterTemplate` on the context adds the "new enemy
+    type" clause; Central's line for it is the commlink subtitle the transient reader already
+    speaks.
+    - ⛔ **A drop is BOTH events**: `OnSpawnReinforcementsComplete` ends in `AlertAndScamperUnits`,
+      which reaches `OnScamperBegin` and a reveal context for the units that just landed. The guard
+      is the spawn memo (`NarratedSpawnUnits`, cleared on every turn handover by both paths): the
+      drop line CLAIMS each unit it names by ObjectID, the reveal skips claimed units. Identity, not
+      text — a second ADVENT pod revealed the same turn still speaks. Cleared per TURN rather than
+      never, because a stale memo would silence a Chosen's real reveal turns after its arrival, and
+      a memo cleared too early costs only an audible duplicate.
+    - ⛔ **The drop speaks only the spawn kinds the player WATCHES** (`SpawnLabel`, mirroring
+      `BuildVisualizationForUnitSpawning`): `ATT`, `PsiGate`, `Dropdown` and the two Chosen kinds
+      get a camera plus `ShowSpawnedUnit`; `TheLostSwarm` gets neither (the swarm is first seen at
+      its REVEAL, which is where it is spoken, and the memo therefore holds nothing for it); the
+      blank kind gets a camera but no `ShowSpawnedUnit`, so its units stay under the fog rule and
+      wait for their reveal. `bForceScamper` defaults to false, so a pod that lands out of sight
+      never fires `ScamperBegin` at all — which is why the composition is read at the DROP and not
+      deferred to the reveal.
+    - Both are `Combat`, not `Alert`: the reveal often lands seconds after the concealment-broken
+      alert for the same move, the drop after "Enemy turn.", and an alert would cut those short.
 - **Replay narration** (`X2AccessReplayNarration.uc`): the tutorial's stand-in for the dead event
   bus. Polled from `Narrator::OnTick` (100 ms, next to the drain), it walks history frames and emits
-  ability / damage / death / concealment / turn lines through `X2AccessTacticalEvents`'s shared
-  builders — `BuildAbilityLine`, `BuildDamageLine`, `NarrateDeath` — so a shot reads identically
+  ability / damage / death / concealment / turn / reveal / reinforcement lines through
+  `X2AccessTacticalEvents`'s shared builders — `BuildAbilityLine`, `BuildDamageLine`,
+  `NarrateDeath`, `BuildRevealLine`, `BuildReinforcementLine` — so a shot reads identically
   whether an event or a frame produced it. Its gate is `bInReplay`, i.e. exactly when the listeners
   cannot fire, so the two paths can never both narrate one action.
   - ⛔ **Never read past what the player was SHOWN**: the whole tutorial script is in the history at

@@ -54,6 +54,13 @@ class X2AccessTacticalEvents extends X2EventListener config(Game);
 var config int NarratedDamageFrame;
 var config string NarratedDamageUnits;
 
+// The spawn memo: ObjectIDs (pipe-wrapped like the damage set) of units the REINFORCEMENT line has
+// already named, so the reveal that follows the drop does not name them a second time. Cleared on
+// every turn handover — the drop and its reveal are one event chain inside one turn, and a memo
+// that outlived the turn would silence a Chosen's real reveal turns later. Read only through
+// ClaimSpawnNarration / WasSpawnNarrated, where the reasoning lives.
+var config string NarratedSpawnUnits;
+
 static function array<X2DataTemplate> CreateTemplates()
 {
 	local array<X2DataTemplate> Templates;
@@ -95,6 +102,18 @@ static function CHEventListenerTemplate CreateTacticalNarrationListener()
 	Template.AddCHEvent('UnitTakeEffectDamage', OnUnitTakeEffectDamage, ELD_OnVisualizationBlockCompleted, 55);
 	Template.AddCHEvent('UnitDied', OnUnitDied, ELD_OnVisualizationBlockCompleted, 50);
 
+	// Sightings. Both cutscenes are visualization actions on a state that carries exactly what the
+	// camera shows, and both are watched at block START so the line lands as the camera pans, not at
+	// submission seconds earlier. 'ScamperBegin' is fired by XComGameStateContext_RevealAI
+	// .ContextBuildGameState (:121) with the reveal state, whose block is X2Action_RevealAIBegin —
+	// the pod reveal. 'SpawnReinforcementsComplete' is fired by XComGameState_AIReinforcementSpawner
+	// .SpawnReinforcements (:268) with the spawn state, whose block is the transport / psi gate /
+	// drop-in matinee (BuildVisualizationForUnitSpawning). The game's own enemy strip takes
+	// 'ScamperBegin' on Completed (UITacticalHUD_Enemies:67), which is why the heads appear only
+	// after the cutscene; the words belong during it.
+	Template.AddCHEvent('ScamperBegin', OnScamperBegin, ELD_OnVisualizationBlockStarted, 60);
+	Template.AddCHEvent('SpawnReinforcementsComplete', OnSpawnReinforcementsComplete, ELD_OnVisualizationBlockStarted, 60);
+
 	// Structural.
 	Template.AddCHEvent('PlayerTurnBegun', OnPlayerTurnBegun, ELD_OnStateSubmitted, 50);
 	Template.AddCHEvent('SquadConcealmentBroken', OnSquadConcealmentBroken, ELD_OnStateSubmitted, 50);
@@ -122,6 +141,9 @@ static function EventListenerReturn OnPlayerTurnBegun(Object EventData, Object E
 	PlayerState = XComGameState_Player(EventData);
 	if (PlayerState == none)
 		return ELR_NoInterrupt;
+
+	// Every handover, every team — the memo's lifetime is "this turn", not "this banner".
+	ResetSpawnNarration();
 
 	// XCom and the aliens only. WOTC also runs turns for the Lost, civilians and the Resistance,
 	// and the game gives those no turn banner either — announcing them would turn a Lost-heavy
@@ -479,6 +501,248 @@ static function EventListenerReturn OnUnitEvacuated(Object EventData, Object Eve
 	class'X2AccessNarrator'.static.Combat(UnitName(Unit) @ "evacuated.");
 
 	return ELR_NoInterrupt;
+}
+
+// ---------------------------------------------------------------------------
+// Sightings: the pod reveal and the reinforcement drop
+// ---------------------------------------------------------------------------
+//
+// Neither cutscene draws a word. The reveal is a camera pan, a matinee on one unit and voice; the
+// drop is the transport matinee with the units in its slots. What the player SEES is the pod's
+// count and composition, and the state driving the picture holds exactly that list —
+// XComGameStateContext_RevealAI.RevealedUnitObjectIDs for the reveal (the units
+// X2Action_RevealAIBegin pans to and force-shows), the units created in the spawn state for the
+// drop (the loop X2Action_ATT.AddUnitsToMatinee runs to fill its slots). Reading those lists is
+// the read-the-screen rule applied to a screen with no widgets. The two texts NEAR the cutscene
+// are covered elsewhere: the first-sighting Central line is the commlink subtitle the transient
+// reader speaks, and the "surprised" flyover is a world message the tutorial reader polls.
+//
+// ⛔ A drop is BOTH events. OnSpawnReinforcementsComplete ends in AlertAndScamperUnits, which
+// reaches OnScamperBegin and a reveal context for the units that just landed, so without a guard
+// the same three troopers are named twice a few seconds apart. The guard is the spawn memo: the
+// drop line claims each unit it names, and the reveal line skips claimed units. Claiming by
+// IDENTITY and never by text is what makes a second, different ADVENT pod revealed the same turn
+// still speak. It is a memo and not a chain-index test because the chain is the wrong question —
+// what matters is whether the SPAWN was shown: a Lost swarm is a reinforcement spawner too
+// ('TheLostSwarm', SeqAct_CallLostReinforcements) but its spawn builds no camera and no
+// ShowSpawnedUnit, so the player first sees a swarm at its reveal, and that is where it must be
+// spoken. SpawnLabel is the table of which spawn kinds the player watches.
+//
+// Same units are collapsed ("2 ADVENT Trooper, ADVENT Officer") by their spoken name — the name a
+// sighted player tells them apart by — with the count only when it is more than one, because the
+// game has no plural strings and inventing them would break the moment the player is not English.
+//
+// Both lines are Combat, not Alert. The reveal often lands seconds after 'SquadConcealmentBroken'
+// (an Alert at submission) for the same move, and the drop lands after "Enemy turn."; an Alert
+// here would cut those short. The cutscene runs for seconds, so a queued line has the time.
+
+static function EventListenerReturn OnScamperBegin(Object EventData, Object EventSource, XComGameState GameState, Name Event, Object CallbackData)
+{
+	local string Line;
+
+	if (GameState == none)
+		return ELR_NoInterrupt;
+
+	Line = BuildRevealLine(XComGameStateContext_RevealAI(GameState.GetContext()), GameState.HistoryIndex);
+	if (Line != "")
+		class'X2AccessNarrator'.static.Combat(Line);
+
+	return ELR_NoInterrupt;
+}
+
+static function EventListenerReturn OnSpawnReinforcementsComplete(Object EventData, Object EventSource, XComGameState GameState, Name Event, Object CallbackData)
+{
+	local string Line;
+
+	if (GameState == none)
+		return ELR_NoInterrupt;
+
+	Line = BuildReinforcementLine(GameState);
+	if (Line != "")
+		class'X2AccessNarrator'.static.Combat(Line);
+
+	return ELR_NoInterrupt;
+}
+
+// The spoken form of one pod reveal, or "" when every revealed unit was already named by the drop
+// it followed. HistoryIndex is the reveal state's frame, so the replay narrator can hand it the
+// frame it is describing and read the same unit versions the live path does. Shared with the
+// replay narrator.
+static function string BuildRevealLine(XComGameStateContext_RevealAI RevealContext, int HistoryIndex)
+{
+	local XComGameStateHistory History;
+	local XComGameState_Unit Unit;
+	local X2CharacterTemplate FirstSeen;
+	local array<string> Names;
+	local array<int> Counts;
+	local string Line, Roster;
+	local int i;
+
+	if (RevealContext == none || RevealContext.RevealAIEvent != eRevealAIEvent_Begin)
+		return "";
+
+	History = `XCOMHISTORY;
+
+	for (i = 0; i < RevealContext.RevealedUnitObjectIDs.Length; i++)
+	{
+		Unit = XComGameState_Unit(History.GetGameStateForObjectID(RevealContext.RevealedUnitObjectIDs[i], , HistoryIndex));
+		if (Unit == none || !Unit.IsAlive())
+			continue;
+		if (WasSpawnNarrated(Unit.ObjectID))
+			continue;
+
+		CountName(UnitName(Unit), Names, Counts);
+	}
+
+	Roster = JoinRoster(Names, Counts);
+	if (Roster == "")
+		return "";
+
+	Line = "Enemy sighted:" @ Roster $ ".";
+
+	// The game marks the reveal that is this campaign's first look at a type and plays the matinee
+	// on that unit; Central's line follows through the commlink. The template is what the context
+	// stores, so read it there rather than re-asking the HQ, which has already been updated.
+	FirstSeen = RevealContext.FirstEncounterCharacterTemplate;
+	if (FirstSeen != none && FirstSeen.strCharacterName != "")
+		class'X2AccessHelper'.static.AppendPart(Line, "New enemy type:" @ FirstSeen.strCharacterName);
+
+	return Line;
+}
+
+// The spoken form of one reinforcement drop — the units CREATED in the spawn state, under the
+// label of how they arrived — or "" when this kind of spawn shows the player nothing. Claims every
+// unit it names in the spawn memo. Shared with the replay narrator, which passes the frame's own
+// game state; the live path passes the event's, which is the same state.
+static function string BuildReinforcementLine(XComGameState SpawnState)
+{
+	local XComGameStateHistory History;
+	local XComGameState_AIReinforcementSpawner Spawner;
+	local XComGameState_Unit Unit;
+	local array<string> Names;
+	local array<int> Counts;
+	local string Label, Roster;
+
+	if (SpawnState == none)
+		return "";
+
+	// SpawnReinforcements modifies the spawner into the same state it spawns the units in (:250),
+	// so the state carries its own kind; the event's EventData is the same object, and using the
+	// state's copy is what lets a history frame answer identically.
+	foreach SpawnState.IterateByClassType(class'XComGameState_AIReinforcementSpawner', Spawner)
+		break;
+	if (Spawner == none)
+		return "";
+
+	Label = SpawnLabel(Spawner.SpawnVisualizationType);
+	if (Label == "")
+		return "";
+
+	History = `XCOMHISTORY;
+
+	foreach SpawnState.IterateByClassType(class'XComGameState_Unit', Unit)
+	{
+		if (Unit.IsFriendlyToLocalPlayer() || !Unit.IsAlive())
+			continue;
+		// A unit with a version before this state was not dropped by it. The spawn state should
+		// hold nothing else, but the matinee slots are the only thing that assumes so.
+		if (History.GetPreviousGameStateForObject(Unit) != none)
+			continue;
+
+		ClaimSpawnNarration(Unit.ObjectID);
+		CountName(UnitName(Unit), Names, Counts);
+	}
+
+	Roster = JoinRoster(Names, Counts);
+	if (Roster == "")
+		return "";
+
+	return Label @ Roster $ ".";
+}
+
+// How the player watched this spawn arrive, or "" for a spawn kind the player is not shown.
+// Mirrors XComGameState_AIReinforcementSpawner.BuildVisualizationForUnitSpawning: every kind but
+// 'TheLostSwarm' gets a look-at camera (:446), the ATT its transport matinee (:456), Dropdown its
+// warning effect plus ShowSpawnedUnit (:530-545), PsiGate and the Chosen kinds ShowSpawnedUnit
+// with their effect (:501-570). The blank kind gets the camera but NO ShowSpawnedUnit (:501), so
+// its units stay under the fog rule, and a swarm gets nothing — both are left to the reveal.
+static function string SpawnLabel(name SpawnVisualizationType)
+{
+	switch (SpawnVisualizationType)
+	{
+	case 'ATT':
+		return "Reinforcements by troop transport:";
+	case 'PsiGate':
+		return "Reinforcements by psi gate:";
+	case 'Dropdown':
+		return "Reinforcements dropping in:";
+	case 'ChosenSpecialNoReveal':
+	case 'ChosenSpecialTopDownReveal':
+		return "Chosen arrives:";
+	}
+
+	return "";
+}
+
+// Tally one spoken name. Parallel arrays because UnrealScript has no map; a pod is a handful.
+static function CountName(string UnitLabel, out array<string> Names, out array<int> Counts)
+{
+	local int Index;
+
+	if (UnitLabel == "")
+		return;
+
+	Index = Names.Find(UnitLabel);
+	if (Index == INDEX_NONE)
+	{
+		Names.AddItem(UnitLabel);
+		Counts.AddItem(1);
+	}
+	else
+	{
+		Counts[Index] = Counts[Index] + 1;
+	}
+}
+
+// "2 ADVENT Trooper, ADVENT Officer" — the count only where it says something.
+static function string JoinRoster(array<string> Names, array<int> Counts)
+{
+	local string Roster, Part;
+	local int i;
+
+	for (i = 0; i < Names.Length; i++)
+	{
+		Part = Names[i];
+		if (Counts[i] > 1)
+			Part = string(Counts[i]) @ Part;
+
+		class'X2AccessHelper'.static.AppendComma(Roster, Part);
+	}
+
+	return Roster;
+}
+
+// The spawn memo. Pipes on both sides of every id, for the reason ClaimDamageNarration gives.
+static function ClaimSpawnNarration(int UnitID)
+{
+	local string Key;
+
+	Key = "|" $ string(UnitID) $ "|";
+	if (InStr(default.NarratedSpawnUnits, Key) == INDEX_NONE)
+		default.NarratedSpawnUnits = default.NarratedSpawnUnits $ Key;
+}
+
+static function bool WasSpawnNarrated(int UnitID)
+{
+	return InStr(default.NarratedSpawnUnits, "|" $ string(UnitID) $ "|") != INDEX_NONE;
+}
+
+// Called on every turn handover by both narration paths. The failure mode of clearing too EARLY
+// is a duplicate line, which is audible; the failure mode of clearing too late is a reveal that
+// never speaks, which is not — so this errs on the side of the memo being short-lived.
+static function ResetSpawnNarration()
+{
+	default.NarratedSpawnUnits = "";
 }
 
 // ---------------------------------------------------------------------------
