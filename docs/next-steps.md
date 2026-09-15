@@ -693,3 +693,16 @@ a repeating announcement.
    read are owed together — and the sitrep panel's mouse-only info button (it opens
    `UISitRepInformation`, which the popup recipe already reads) has no node. The second is low
    value: the reader already speaks each sitrep's name AND description inline.
+10. Distribution, after the rolling `dev` release (2026-09-16, `docs/build.md` Release). Three
+   things stand between it and a Steam Workshop listing for the companion, in order:
+   - **A version handshake.** The native side resolves every companion function and property by
+     name, so a companion that gets ahead of an installed ASI fails SILENTLY — a renamed property
+     reads as empty, a renamed function is never found. Workshop auto-updates the script half on
+     its own, which makes skew certain. A version constant on the companion CDO, read at init, and
+     a spoken mismatch line, before anything auto-updates.
+   - **Bundle the ASI loader in the archive.** MIT-licensed, and "extract one archive" is the whole
+     point for a blind player; today the notes send them to a second download. Pick the host DLL
+     name once and say which.
+   - **Then a HIDDEN workshop item** to test the install path, public only after the archive has
+     had external installs. Workshop can only ever carry the companion; the ASI stays on the
+     release page, so the listing must say so in its first line.

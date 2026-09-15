@@ -389,6 +389,13 @@ game needed. Recipes, paths, the SDK generator verbs and what each dependency is
   and is not necessarily spelled in English — ask Windows via
   `SHGetKnownFolderPath(FOLDERID_Documents)`. Per-machine game and SDK paths live in an untracked
   `.env` beside the justfile (copy `env.example`); the justfile header documents the precedence.
+- ⛔ **A build that ships is a build with the dev harness compiled OUT, proven on the binary.**
+  `just release` cuts the rolling `dev` archive from a clean worktree parked at HEAD, configured
+  `X2ACCESS_DEVSERVER=OFF`, and refuses to package an ASI that still contains a dev-server
+  literal — the harness carries `/exec`, which runs any console command. Never hand a tester the
+  everyday `build/` tree's ASI. ⛔ The Forgejo token goes in `.env.rc`, never `.env`: the justfile
+  exports `.env` into every recipe's environment, the launched game's included (`docs/build.md`,
+  Release).
 - ⛔ **Never test for a particular Ultimate ASI Loader host DLL name** — which name it impersonates
   differs per machine, so a missing `version.dll` is not a broken install. Probe the whole candidate
   list and print which host was found.

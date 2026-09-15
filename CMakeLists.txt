@@ -58,8 +58,13 @@ endif()
 
 add_subdirectory(deps/prism EXCLUDE_FROM_ALL)
 
-# Generated SDK global definitions (GObjects/GNames externs)
-set(SDK_DIR "${CMAKE_SOURCE_DIR}/generated_sdk/X2SDK")
+# Generated SDK global definitions (GObjects/GNames externs). Overridable because the release
+# script (tools/release.ps1) builds from a clean worktree parked at the published commit, which
+# has no generated_sdk/ of its own — the SDK is not in git — and borrows the main tree's, the
+# one every hand-transcribed offset was static_asserted against.
+set(X2ACCESS_SDK_DIR "${CMAKE_SOURCE_DIR}/generated_sdk/X2SDK"
+    CACHE PATH "Generated SDK directory (holds GameDefines.cpp and SDK_HEADERS/)")
+set(SDK_DIR "${X2ACCESS_SDK_DIR}")
 
 # The generated SDK is a BUILD INPUT that is not in git (113 MB, .gitignore'd), so a fresh
 # clone — or a move to a new machine — starts without it and the only way to get it back is a
@@ -289,6 +294,19 @@ if(MSVC)
         src/sdk_layout_checks.cpp
         PROPERTIES COMPILE_FLAGS "/w /bigobj"
     )
+endif()
+
+# Symbols in EVERY config, Release included. The VS generator emits a PDB for Debug only, and
+# a Release .asi with no PDB is a crash dump nobody can read. The release archive
+# (tools/release.ps1) bundles the PDB beside the ASI and refuses to package without it, because
+# the rolling tag destroys the pairing otherwise — see the script.
+# ⛔ /DEBUG alone silently flips the linker to /OPT:NOREF and /OPT:NOICF, so the two are passed
+# back explicitly outside Debug: the shipped binary keeps dead-code elimination and COMDAT folding.
+if(MSVC)
+    target_compile_options(X2Access PRIVATE /Zi)
+    target_link_options(X2Access PRIVATE /DEBUG
+        $<$<NOT:$<CONFIG:Debug>>:/OPT:REF>
+        $<$<NOT:$<CONFIG:Debug>>:/OPT:ICF>)
 endif()
 
 # Output as .asi for Ultimate ASI Loader compatibility

@@ -1,0 +1,83 @@
+#!/bin/sh
+# Republish the rolling `dev` test release whenever main goes to origin.
+#
+# Installed by tools/install-hooks.ps1 into core.hooksPath, which is pinned to the MAIN repo's
+# .git/hooks by absolute path — so one install covers every worktree and therefore every
+# concurrent session, which is the point: the guards below are the ones nobody should skip.
+#
+# ⛔ This BLOCKS the push for as long as the release takes (~1 min when src/ is unchanged, several
+# minutes after real changes — the companion compile through the SDK's make commandlet is part
+# of it). That is the chosen behaviour: a push to main IS a publish to testers, so the build must
+# succeed before the commits land, not after.
+#
+# ⛔ It also REFUSES while the game is running (the companion deploy hangs on the open package).
+# `just kill` first, or push with --no-verify to land the commits without a release.
+#
+# Escape hatch, for when you want the commits without republishing:  git push --no-verify
+#
+# stdin, one line per ref being pushed:  <local ref> <local sha> <remote ref> <remote sha>
+
+remote="$1"
+
+# ⛔ Load-bearing. release.ps1 pushes main AND force-pushes the dev tag; each of those fires this
+# hook again, which would run release.ps1 again, forever. The script exports this before pushing.
+# (Its pushes also pass --no-verify — either alone would do, both because an infinite loop that
+# builds the whole project each time is not a pleasant thing to discover.)
+if [ -n "$X2ACCESS_RELEASING" ]; then
+    exit 0
+fi
+
+# Only the real remote. A push to a scratch remote or another fork is nobody's release.
+case "$remote" in
+    origin | *git.alex19ep.me* ) ;;
+    * ) exit 0 ;;
+esac
+
+zero=$(git hash-object --stdin </dev/null | tr '0-9a-f' '0')
+pushed=
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ "$remote_ref" = "refs/heads/main" ] || continue
+    [ "$local_sha" = "$zero" ] && continue      # branch deletion, nothing to build
+    pushed="$local_sha"
+done
+
+# Not a push of main (a tag, another branch, a delete) — not our business.
+[ -n "$pushed" ] || exit 0
+
+head=$(git rev-parse HEAD)
+if [ "$pushed" != "$head" ]; then
+    # release.ps1 builds and publishes HEAD. If the ref being pushed to main is some OTHER commit
+    # the release would describe a commit nobody pushed, so refuse rather than publish a lie.
+    echo "pre-push: refusing - you are pushing $(git rev-parse --short "$pushed") to main, but the" >&2
+    echo "          release builds HEAD ($(git rev-parse --short HEAD)). Check out what you mean to" >&2
+    echo "          publish, or push with --no-verify to skip the release." >&2
+    exit 1
+fi
+
+echo "pre-push: publishing the rolling dev release for $(git rev-parse --short HEAD) before pushing."
+echo "          This builds from a clean checkout and can take a few minutes."
+echo "          To push without republishing:  git push --no-verify"
+echo
+
+# ⛔ -SkipMainPush is load-bearing, and the reason is easy to lose. git worked out what to send
+# BEFORE calling this hook, including main's expected OLD value. If the release moved main behind
+# git's back, git's own push would then arrive quoting a stale old value and the server would
+# reject it — "incorrect old value provided" — so a perfectly successful release would end in what
+# reads as a failed push. So the release pushes only the dev TAG, which carries the same commit
+# objects, and git performs the main push itself as an ordinary fast-forward.
+pwsh -NoProfile -File tools/release.ps1 -SkipMainPush
+status=$?
+
+if [ $status -ne 0 ]; then
+    echo >&2
+    echo "pre-push: the release failed, so the push is blocked and main was NOT updated." >&2
+    echo "          The dev tag and the published release may already point at this commit if the" >&2
+    echo "          failure came later, at the release or upload step." >&2
+    echo "          Fix the cause and push again, or push with --no-verify to skip the release." >&2
+    exit $status
+fi
+
+echo
+echo "pre-push: release published; letting git push main."
+exit 0

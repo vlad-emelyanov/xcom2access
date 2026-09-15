@@ -37,6 +37,16 @@ The division of responsibility, engine facts, and development rules are
 documented in [CLAUDE.md](CLAUDE.md); per-screen reverse-engineering notes live
 in [`docs/`](docs/).
 
+**Pre-alpha.** Under active development and not ready for general use: coverage
+grows screen by screen, keys can change without notice, and screens that already
+work may break as neighbouring ones land. Expect rough edges, and back up your
+saves.
+
+Test builds are published as a **rolling `dev` release** — the tag always
+points at the newest build, so the same download link gives you the current
+one. Bug reports should name the commit the release notes quote, since the tag
+alone never will.
+
 ## What is covered
 
 X2Access is under active development and does not yet cover the whole game.
@@ -144,6 +154,24 @@ It is compiled out of release builds entirely and additionally needs a marker
 file to arm; see [`docs/dev-harness.md`](docs/dev-harness.md).
 
 ## Installation
+
+### From the test release
+
+Download the archive from the
+[`dev` release](https://git.alex19ep.me/alex19ep/xcom2access/releases) and
+extract it at the **War of the Chosen game folder** — `XCom2-WarOfTheChosen`,
+the one holding `Binaries/` and `XComGame/`. It contains:
+
+```
+README.md
+LICENSE
+Binaries/Win64/scripts/X2Access.asi
+Binaries/Win64/scripts/X2Access.pdb       (symbols, so a crash dump can be read)
+XComGame/Mods/X2AccessCompanion/          the companion mod
+```
+
+You still need the ASI loader (below) and the workshop Highlander, and both
+mods enabled in the launcher.
 
 ### Automated (deploy target)
 

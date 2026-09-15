@@ -12,3 +12,11 @@ build_output.txt
 __pycache__/
 # Per-machine game/SDK paths for the justfile. Template: env.example
 .env
+# Local secrets: the Forgejo PAT the release script reads (tools/release.ps1). ⛔ Separate from
+# .env on purpose — the justfile exports .env into every recipe's environment, the launched game's
+# included. This repo is PUBLIC — a token committed here is a token leaked to everyone, so the
+# ignore must land BEFORE the file ever does. Rotate at git.alex19ep.me/user/settings/applications
+# if that ever happens.
+/.env.rc
+# The release script's parked worktree, build tree, stage and archives.
+/release-stage/

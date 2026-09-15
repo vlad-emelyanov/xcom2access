@@ -48,6 +48,51 @@ rules extracted from all this — the mandatory `-review` launch flag, the `/MT`
   `X2Access.log` next to itself, rotating the previous three sessions to `X2Access.1/2/3.log` on
   every start. Timestamps carry milliseconds; screen-transition latency is unreadable without them.
 
+## Release
+
+The rolling `dev` test release on git.alex19ep.me, ported from CyberAccess's `tools/release.ps1`
+with the same design and the same guards. `just release` publishes, `just release-dry` does
+everything except touch the remote, `just hooks` installs the pre-push hook that runs the release
+on every push of main.
+
+- **Rolling, not versioned.** The `dev` tag is force-moved to HEAD every run and the release's
+  assets are replaced, so there is exactly one current test build. The notes carry the commit
+  SHA and every bug report has to quote it — the tag alone never identifies a build.
+- **One archive, both halves.** `X2Access-dev-<sha>.zip` extracts at the WOTC game folder:
+  `Binaries/Win64/scripts/X2Access.asi` + `.pdb`, `XComGame/Mods/X2AccessCompanion/` (the SDK's
+  compiled staging copy minus `.scripts/`), `README.md` and `LICENSE` at the root. The Ultimate ASI
+  Loader and the workshop Highlander are requirements the notes point at, not bundled.
+- **Built from a parked worktree, never the live tree.** Several sessions work this tree at once,
+  so the archive is built from `release-stage/src`, a detached worktree at the published commit
+  (submodules `deps/prism` and `deps/X2ModBuildCommon` only — the Highlander and the SDK generator
+  never reach the archive). `-FromWorkingTree` exists and refuses when any build input is dirty.
+- **The generated SDK is borrowed.** A clean checkout has no `generated_sdk/`, so the release tree
+  configures with `-DX2ACCESS_SDK_DIR=<main tree>/generated_sdk/X2SDK` — the same SDK the layout
+  asserts pass against.
+- ⛔ **Devserver OFF, and proven on the binary.** The release tree is configured
+  `-DX2ACCESS_DEVSERVER=OFF`; `Assert-NoDevServer` then scans the built ASI for three literals
+  that live only in `src/dev_server.cpp` (`X2Access.devserver`, `/flashqueue`, `pump-age-ms`) and
+  refuses to package on a hit. Move one of those strings out of that TU and the check goes blind —
+  update the list with it.
+- **The PDB ships inside the archive.** `CMakeLists.txt` emits it in every config (`/Zi`, `/DEBUG`,
+  with `/OPT:REF /OPT:ICF` restored outside Debug), and the script fails without it: a rolling tag
+  replaces assets, so a PDB published separately is gone the moment a tester still on last week's
+  build sends a dump.
+- ⛔ **Refuses while `XCom2.exe` runs** — the companion deploy is the `build_uscript` hang above,
+  and a release that looks like a slow compile is worse than one that says why it stopped.
+- **Kernel tests gate it.** `GraphTests` is built and `ctest` run in the release tree before
+  packaging.
+- **Credentials**: `FORGE_TOKEN` in `.env.rc` (untracked, separate from `.env` because the
+  justfile exports `.env` into every recipe's environment, the launched game's included). The token
+  needs the repository permission at Read and Write; the script checks `/repos/<owner>/<repo>`
+  for `permissions.push` rather than `/user`, which a repository-scoped token answers 403.
+- **The hook.** `tools/hooks/pre-push` runs the script with `-SkipMainPush` whenever main goes to
+  origin, and BLOCKS the push until the release succeeds. Re-entry is guarded twice
+  (`X2ACCESS_RELEASING` plus `--no-verify` on the script's own pushes). It pushes only the tag and
+  lets git push main itself, because git fixed main's expected old value before the hook ran and
+  would reject its own push otherwise. `git push --no-verify` lands commits without a release.
+- The last four archives are kept under `release-stage/` (gitignored) so a tester's exact bits and
+  matching PDB can still be produced after the tag has moved on.
 
 ## Dependencies
 

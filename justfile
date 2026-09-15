@@ -100,6 +100,26 @@ gamelog lines="50":
 status:
     @$items = @{ "ASI" = "{{ win64 }}/scripts/X2Access.asi"; "Companion mod" = "{{ game_path }}/XComGame/Mods/X2AccessCompanion"; "Generated SDK" = "{{ justfile_directory() }}/generated_sdk/X2SDK/GameDefines.cpp" }; foreach ($k in $items.Keys) { $p = $items[$k]; if (Test-Path $p) { Write-Output ("{0}: installed, {1}" -f $k, (Get-Item $p).LastWriteTime) } else { Write-Output ("{0}: MISSING ({1})" -f $k, $p) } }; $loaderHosts = @("version.dll","version-x64.dll","dinput8.dll","winmm.dll","dsound.dll","d3d9.dll","d3d11.dll","dxgi.dll","xinput1_3.dll","wininet.dll"); $found = @(); foreach ($h in $loaderHosts) { $p = Join-Path "{{ win64 }}" $h; if (Test-Path $p) { $found += ("{0} ({1})" -f $h, (Get-Item $p).LastWriteTime) } }; if ($found.Count -gt 0) { Write-Output ("ASI loader: found " + ($found -join ", ")) } else { Write-Output "ASI loader: MISSING (no known Ultimate ASI Loader host DLL in {{ win64 }})" }; if (Get-Process XCom2 -ErrorAction Ignore) { Write-Output "XCom2: running" } else { Write-Output "XCom2: not running" }
 
+# ---- release ----------------------------------------------------------------
+#
+# The rolling `dev` test release on git.alex19ep.me: one archive with BOTH halves, built from a
+# clean worktree parked at HEAD with the dev harness compiled OUT, and proven so on the binary
+# before anything is uploaded. The token lives in `.env.rc`, never in `.env` (see env.example).
+# `just hooks` installs the pre-push hook that runs this on every push of main — it BLOCKS the
+# push while it builds, and refuses while the game is running. Manual: docs/build.md, Release.
+
+# Build, package and publish the rolling dev release. Extra args go to tools/release.ps1.
+release *args:
+    @& "{{ justfile_directory() }}/tools/release.ps1" {{ args }}
+
+# Everything `release` does except touching the remote: build, stage, zip, assert.
+release-dry:
+    @& "{{ justfile_directory() }}/tools/release.ps1" -DryRun
+
+# Install the repo's git hooks (tools/hooks/) into the active hooks directory.
+hooks:
+    @& "{{ justfile_directory() }}/tools/install-hooks.ps1"
+
 # ---- dev harness (loopback HTTP, port 8774) ---------------------------------
 #
 # Two gates. The build gate is `devserver` above (compiled in by default here, out of a
