@@ -554,9 +554,10 @@ different ways at once, and each half of the mod owns one.
   to compare it throws away the squad you just assembled. The recipe mirrors vanilla rather than
   decoupling (the confirm handler reads the screen's own `ActionRef`, so a focus that disagreed
   would be the `UISaveGame.OnAccept` hazard at campaign scale). It cannot be ANNOUNCED after the
-  fact either: `WriteBackFocus` runs before `SpeakMove(..., interrupt=true)`, so anything said
-  there is cut off. `Vocab::CovertActionStaffed` therefore rides on the SELECTED row while it
-  still has something to lose.
+  fact either: `WriteBackFocus` runs before `SpeakMove`, so anything said there lands ahead of
+  the reading the player asked for and gets cut by a reader set to interrupt on new text.
+  `Vocab::CovertActionStaffed` therefore rides on the SELECTED row while it still has something
+  to lose.
 - ⛔ **A slot's gate is its own `IsDisabled`, not a re-derived condition.**
   `UICovertActionStaffSlot.HandleClick` only tests `!GetAction().bStarted`, so with ANOTHER action
   in progress it would happily open the personnel picker for an action that cannot be run —

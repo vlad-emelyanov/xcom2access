@@ -251,8 +251,8 @@ inline constexpr const char* ScreenCovertActions = "Covert actions";
 /// away the squad you just assembled. A sighted player watches the portraits vanish; speech gets
 /// nothing. Said on the SELECTED row only, and only while something is actually in a slot, so it
 /// costs nothing until there is something to lose — and it is PREVENTIVE rather than a report,
-/// because the write-back runs before the move's own readout and anything said there would be
-/// interrupted by it.
+/// because the write-back runs before the move's own readout and anything said there would land
+/// ahead of the reading the player actually asked for.
 inline constexpr const char* CovertActionStaffed
     = "staffed; moving to another action clears it";
 

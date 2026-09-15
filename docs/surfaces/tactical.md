@@ -1006,15 +1006,17 @@ the listener set does not work if any one of them is undone.
 Bridge v2, the queued and channelled path the v1 `X2Access_Speak` sentinel cannot be. Producers
 call `Alert()` / `Combat()`, which append to an `ENTRY_SEP`-joined string on the CDO, and C++
 drains the whole burst in ONE `DrainNarration()` per 100 ms — the outbound call is the cost, not
-the payload. Four channels natively: `Focus` / `Aid` interrupt AND clear the queue (the player
-pressed a key; what they asked for outranks what happened), `Alert` queues in order but marks the
-BATCH as interrupting, `Combat` queues. ⛔ That `Alert` rule is the load-bearing one and is stated
-in `CLAUDE.md`: an alert that simply cleared the queue would eat the damage line explaining the
-kill it follows. Flush is on the frame pump, so the queue orders *within* a frame and adds no
-latency; past it the screen reader's own queue takes over, which is the honest limit — a burst can
-be cancelled wholesale by an interrupt, never trimmed, hence the 24-line cap, logged on overflow at
-both ends. A 128-line ring with channel, SOURCE and timestamp backs the future speech-scrollback
-key.
+the payload. Four channels natively — `Focus`, `Aid`, `Alert`, `Combat` — and all four route
+identically: queued in arrival order, the channel being the label the scrollback ring and the log
+show. ⛔ **No channel clears the queue and no channel interrupts** (stated in `CLAUDE.md`): a line
+that cleared it would eat the damage line explaining the kill it follows, and `TTS::Speak` carries
+no interrupt flag — Prism is always handed `interrupt = false`, so whether a new line cuts off the
+one being read is the screen reader's decision under the player's own settings (2026-09-16, when
+the last `SpeakInterrupt` site and the Focus/Aid queue clear both went). Flush is on the frame pump,
+so the queue orders *within* a frame and adds no latency; past it the screen reader's own queue
+takes over, which is the honest limit — once handed off, a line is the reader's, hence the 24-line
+cap, logged on overflow at both ends. A 128-line ring with channel, SOURCE and timestamp backs the
+future speech-scrollback key.
 
 - ⛔ **`default.X = ...` does not compile unless X is a `config` property** — the UnrealScript
   compiler says *"Can't change default values of non-config properties"*, and a static producer has

@@ -159,9 +159,9 @@ struct NodeVtable
     /// requests a coarse step. When set, Left/Right do NOT navigate.
     std::function<void(int sign, bool large)> OnAdjust;
 
-    /// Optional. The control's state line, spoken IMMEDIATELY (interrupting) after an
-    /// activation/adjust that changes state — the synchronous feedback path for rapid key
-    /// repeats. Asynchronous/game-driven changes ride the Live announcement watch instead.
+    /// Optional. The control's state line, spoken IMMEDIATELY after an activation/adjust that
+    /// changes state — the synchronous feedback path for rapid key repeats.
+    /// Asynchronous/game-driven changes ride the Live announcement watch instead.
     std::function<std::string()> StateText;
 
     /// Optional. The text type-ahead matches against; empty = the first announcement part (the
@@ -175,7 +175,7 @@ struct NodeVtable
     // navigator casts at its chokepoints. Empty = the host's default for that slot.
 
     /// The game's themed hover sound for a focus MOVE onto this control. Played by the navigator
-    /// exactly on the interrupt (keypress-driven) move paths.
+    /// exactly on the keypress-driven move paths.
     std::any HoverSound;
 
     /// The game's themed click sound for activation. Takes precedence over ActivateSound.

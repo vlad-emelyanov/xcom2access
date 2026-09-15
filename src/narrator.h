@@ -1,26 +1,25 @@
 #pragma once
 
-// Narrator — bridge v2's native half: the one place that decides whether a line CUTS IN or WAITS
-// ITS TURN, and the scrollback of everything that was said.
+// Narrator — bridge v2's native half: the one place that decides the ORDER lines go out in, and
+// the scrollback of everything that was said.
 //
-// Until now every line in the project went out through TTS::SpeakInterrupt, which is right for
-// focus (the player pressed a key; they want this answer, not the last one) and wrong for combat:
-// a turn that produces six flyovers would speak six first syllables. Speech is serial where the
-// screen is parallel, so the queue is not a nicety — it is the only way a burst survives at all.
+// ⛔ Nothing here interrupts, and nothing here drops a line for another. TTS::Speak carries no
+// interrupt flag: every line is handed to the screen reader as queued text, in arrival order,
+// and the READER decides whether a new line cuts in, under the player's own settings. What the
+// Narrator owns is the order — speech is serial where the screen is parallel, so a turn that
+// produces six flyovers needs a queue to survive at all.
 //
-// Channels, and why each sits where it does:
-//   Focus  — a selection or screen changed under the player's own key. Cuts everything, including
-//            queued combat: what they just asked for outranks what already happened.
-//   Aid    — an on-demand read (re-announce, breakdown). Same reasoning, same treatment.
+// Channels are a LABEL on the line — what the scrollback ring and the log show it as — and all
+// four route identically:
+//   Focus  — a selection or screen changed under the player's own key.
+//   Aid    — an on-demand read (re-announce, breakdown).
 //   Alert  — the game changed what the player can DO: turn handover, concealment, a soldier down.
-//            Queued IN ORDER with combat so a burst stays coherent, but the burst as a whole cuts
-//            whatever was still being read.
-//   Combat — something happened: hits, damage, kills, status. Queued, spoken in order.
+//   Combat — something happened: hits, damage, kills, status.
 //
 // Everything in the queue is flushed on the next frame pump, so the queue is a within-frame
 // ordering device, not a delay. Beyond the flush the SCREEN READER's own queue takes over — which
-// is also the current limit: once handed off, a line can only be cancelled wholesale by an
-// interrupt, never trimmed. See kMaxPending for what that costs.
+// is also the current limit: once handed off, a line is the reader's. See kMaxPending for what
+// that costs. DropPending() is the one deliberate discard, for a hard context change.
 //
 // Thread rules: Say() and OnTick() are game-thread only (OnTick makes outbound ProcessEvent
 // calls). History() is safe from any thread, because the dev harness reads it off-thread.
@@ -64,8 +63,8 @@ struct Line {
 
 const char* ChannelName(Channel channel);
 
-/// Narrate one line. Routing is entirely a function of the channel — callers never decide whether
-/// to interrupt. Pass Source::Flyover when the words were read off the game's own display, so a
+/// Narrate one line, queued in arrival order whatever the channel — callers never decide how a
+/// line is ordered. Pass Source::Flyover when the words were read off the game's own display, so a
 /// state-derived restatement of the same thing can stand down.
 void Say(Channel channel, const std::string& text, Source source = Source::State);
 

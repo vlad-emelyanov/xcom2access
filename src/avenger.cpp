@@ -41,7 +41,7 @@ bool gGridCurrent = false;
 // selection has not moved.
 //
 // Focus channel, like the shot HUD's selection readout: this is the answer to a key the player
-// just pressed, and it outranks anything still queued behind it.
+// just pressed, and the scrollback ring should show it as a selection change.
 void Call(const char* funcName, Narrator::Channel channel)
 {
     // The shared helper logs both a missing companion and a failed call. Stay silent on the

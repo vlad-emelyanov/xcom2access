@@ -176,7 +176,7 @@ std::function<void()> PanelTooltipAction(void* handle)
     return [handle]() {
         std::string tip = GameUI::ReadPanelTooltip(handle);
         if (!tip.empty())
-            TTS::SpeakInterrupt(tip);
+            TTS::Speak(tip);
     };
 }
 
@@ -190,7 +190,7 @@ std::function<void()> ListItemTooltipAction(void* handle)
     return [handle]() {
         std::string tip = GameUI::ReadListItemTooltip(handle);
         if (!tip.empty())
-            TTS::SpeakInterrupt(tip);
+            TTS::Speak(tip);
     };
 }
 
@@ -298,21 +298,20 @@ void WatchLiveParts(const GraphNode* node)
         if (it->second != text) {
             it->second = text;
             if (!text.empty())
-                TTS::Speak(text, /*interrupt*/ false);
+                TTS::Speak(text);
         }
     }
 }
 
 // Speak a focus change and update the differ memory so the differ stays silent about it
 // (spec A4: announce exactly once, no matter what caused the change).
-void SpeakMove(const GraphNode* from, const GraphNode* to, const std::string& transition,
-    bool interrupt)
+void SpeakMove(const GraphNode* from, const GraphNode* to, const std::string& transition)
 {
     if (!to)
         return;
     std::string line = GraphAnnouncer::Compose(from, to, transition);
     if (!line.empty())
-        TTS::Speak(line, interrupt);
+        TTS::Speak(line);
     gLastSpoken = to->Id;
     RefreshLiveBaseline(to);
 }
@@ -349,17 +348,17 @@ void Detach()
     LOG_INFO("MenuNavigator: detached from %s", name);
 }
 
-// Screen name first (interrupting — the user just landed here), then the landing readout
-// queued behind it (§9 standardized first-focus). Shared by a menu recipe's attach and an
+// Screen name first (the user just landed here), then the landing readout queued behind it
+// (§9 standardized first-focus). Shared by a menu recipe's attach and an
 // ambient recipe's Ctrl+Tab focus entry, which are the same moment to the player.
 void AnnounceEntry()
 {
-    TTS::SpeakInterrupt(gActive->ScreenName());
+    TTS::Speak(gActive->ScreenName());
     GraphNode* landing = gGraph->CurrentNode();
     if (landing) {
         std::string line = GraphAnnouncer::ComposeFull(landing);
         if (!line.empty())
-            TTS::Speak(line, /*interrupt*/ false);
+            TTS::Speak(line);
         gLastSpoken = landing->Id;
         RefreshLiveBaseline(landing);
         WriteBackFocus(landing);
@@ -416,7 +415,7 @@ void EnterAmbientFocus()
     if (!gGraph || !gGraph->Rerender()) {
         // The screen emptied under the attach (should have detached already; the next tick
         // will). A pressed mode key must not be silent about refusing.
-        TTS::SpeakInterrupt(Vocab::SurfaceUnavailable(gActive->ScreenName().c_str()));
+        TTS::Speak(Vocab::SurfaceUnavailable(gActive->ScreenName().c_str()));
         return;
     }
     gFocused = true;
@@ -435,7 +434,7 @@ void ExitAmbientFocus(bool silent)
     // The recipe's own word for what the arrows drive again — two ambient layers exist now, and
     // "Map" said on the Avenger would name the wrong one.
     if (!silent)
-        TTS::SpeakInterrupt((gActive && gActive->ambientExitName) ? gActive->ambientExitName
+        TTS::Speak((gActive && gActive->ambientExitName) ? gActive->ambientExitName
                                                                   : Vocab::TacticalWorldMode);
     LOG_INFO("MenuNavigator: %s unfocused (%s)", gActive ? gActive->logName : "?",
         silent ? "yielded to the game" : "player exit");
@@ -451,7 +450,7 @@ void OnLayerToggle()
     if (!gAttached || !gActive->ambient) {
         // Nothing attached to name, so name the layer the player is standing in: the claim is
         // live in exactly two places, and which one is a flag read away.
-        TTS::SpeakInterrupt(Vocab::SurfaceUnavailable(
+        TTS::Speak(Vocab::SurfaceUnavailable(
             Avenger::IsGridActive() ? Vocab::ScreenAvengerHud : Vocab::ScreenTacticalHud));
         return;
     }
@@ -463,7 +462,7 @@ void OnLayerToggle()
     // test already says so) would announce a landing and then strip its keys 100 ms later.
     // Refuse up front instead, in the same words as any other unavailable surface.
     if (gActive->YieldFocus && gActive->YieldFocus()) {
-        TTS::SpeakInterrupt(Vocab::SurfaceUnavailable(gActive->ScreenName().c_str()));
+        TTS::Speak(Vocab::SurfaceUnavailable(gActive->ScreenName().c_str()));
         return;
     }
     EnterAmbientFocus();
@@ -487,14 +486,14 @@ void SpeakStateAfterChange()
         return;
     if (!(node->Id == gLastSpoken)) {
         GraphNode* from = gGraph->Current()->NodeAt(gLastSpoken);
-        SpeakMove(from, node, "", /*interrupt*/ false);
+        SpeakMove(from, node, "");
         WriteBackFocus(node);
         return;
     }
     if (node->Vtable.StateText) {
         std::string line = node->Vtable.StateText();
         if (!line.empty())
-            TTS::Speak(line, /*interrupt*/ true);
+            TTS::Speak(line);
     }
     RefreshLiveBaseline(node);
 }
@@ -627,7 +626,7 @@ void OnArrow(GraphDir dir)
         // The native scroll cue lives only in the game's own key handler — the path our
         // claims swallow — so successful moves plumb it explicitly (write-back is silent).
         GameUI::PlayNavSound();
-        SpeakMove(r.From, r.To, r.TransitionLabel, /*interrupt*/ true);
+        SpeakMove(r.From, r.To, r.TransitionLabel);
     }
     // Not moved (edge) — consumed silently; the layer's refusals are silent. The claim still
     // swallowed the chord, so the game's own navigation never runs in parallel (spec A1).
@@ -653,7 +652,7 @@ void OnEdgeJump(GraphDir dir)
     if (r.Moved) {
         WriteBackFocus(r.To);
         GameUI::PlayNavSound();
-        SpeakMove(r.From, r.To, "", /*interrupt*/ true);
+        SpeakMove(r.From, r.To, "");
     }
 }
 
@@ -665,7 +664,7 @@ void OnStop(int dir)
     if (r.Moved) {
         WriteBackFocus(r.To);
         GameUI::PlayNavSound();
-        SpeakMove(r.From, r.To, r.TransitionLabel, /*interrupt*/ true);
+        SpeakMove(r.From, r.To, r.TransitionLabel);
     }
 }
 
@@ -694,11 +693,11 @@ void OnTabPage(int dir)
         // The rebuild took the focused row with it: the full-path landing already reads the
         // new tab (the row's context parent), so one utterance covers both.
         WriteBackFocus(node);
-        SpeakMove(nullptr, node, "", /*interrupt*/ true);
+        SpeakMove(nullptr, node, "");
     } else {
         // Focus held (a tab node, or a row both tabs share) — name the new tab explicitly.
         std::string name = GameUI::GetOptionsTabName(gScreen, now);
-        TTS::SpeakInterrupt(name.empty() ? Vocab::TabFallback(now) : name);
+        TTS::Speak(name.empty() ? Vocab::TabFallback(now) : name);
         if (node)
             RefreshLiveBaseline(node); // new tab under the same id — don't let the watch re-announce
     }
@@ -972,7 +971,7 @@ void OnTick()
                 if (idle >= 1500 && (!gLoadSaidMs || now - gLoadSaidMs >= 10000)
                     && GameUI::LoadScreenShowing()) {
                     gLoadSaidMs = now;
-                    TTS::SpeakInterrupt(Vocab::Loading);
+                    TTS::Speak(Vocab::Loading);
                 }
                 return;
             }
@@ -1016,7 +1015,7 @@ void OnTick()
         GraphNode* node = gGraph->CurrentNode();
         if (node && !(node->Id == gLastSpoken)) {
             GraphNode* from = gGraph->Current()->NodeAt(gLastSpoken);
-            SpeakMove(from, node, "", /*interrupt*/ false); // differ landings queue (spec A7)
+            SpeakMove(from, node, ""); // differ landings (spec A7)
             WriteBackFocus(node);
         } else {
             WatchLiveParts(node);

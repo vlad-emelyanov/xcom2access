@@ -51,10 +51,10 @@ bool gPending = false; // a key is still settling
 uint64_t gPendingUntilMs = 0;
 uint64_t gLastReadMs = 0;
 
-// Everything this tick has to say, joined into ONE utterance and flushed at the end of it. Not
-// one Say per event, because the echo channel INTERRUPTS: two things noticed in the same read
-// would otherwise cut each other off. And it must interrupt — at typing speed a queued echo
-// falls further behind with every keystroke until it describes a word finished seconds ago.
+// Everything this tick has to say, joined into ONE utterance and flushed at the end of it, so
+// two things noticed in the same read arrive as one line rather than two. Whether the echo cuts
+// off the reader's current utterance is the screen reader's own call (TTS carries no interrupt
+// flag); a reader set to interrupt on new text keeps the echo at typing speed.
 std::string gSpoken;
 
 void Reset()
@@ -175,8 +175,7 @@ void AnnounceDialog(const GameUI::TextInputView& view, const GameUI::TextFieldSt
     if (line.empty())
         return;
     // Alert, not Focus: the player did not press a key to get HERE — a screen appeared over what
-    // they were doing — and the batch interrupts, so the prompt is not queued behind the menu
-    // line that preceded it.
+    // they were doing. The channel is the label the scrollback shows; routing is the same.
     Narrator::Say(Narrator::Channel::Alert, line);
 }
 

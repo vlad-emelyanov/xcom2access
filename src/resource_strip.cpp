@@ -77,7 +77,7 @@ void OnAnnounce(const InputArbiter::KeyEvent& e)
     // tail: indistinguishable from the truth, and therefore never reported as a bug.
     const std::string line = strip.entries.empty() ? Vocab::ResourcesNotRead : BuildLine(strip);
 
-    // Aid: the player asked, so this outranks and clears whatever is queued.
+    // Aid: an on-demand read the player asked for, labelled as such in the scrollback.
     Narrator::Say(Narrator::Channel::Aid, line);
 }
 

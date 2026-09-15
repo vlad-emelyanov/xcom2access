@@ -27,10 +27,9 @@ constexpr const char* kScannerClass = "X2AccessObjectScanner";
 // requires. An empty result is a deliberate "nothing to say", not an error.
 //
 // Aid, through the Narrator rather than TTS directly. Every line here is an on-demand read the
-// player pressed a key for, so it outranks — and CLEARS — whatever combat narration is still
-// queued: speaking straight to the backend cut only the current utterance and left the queue
-// standing, so the stale burst resumed on top of the answer on the very next flush. It is also
-// what puts these lines in the scrollback ring, which a review key will need.
+// player pressed a key for; it queues in order with the combat narration of the same frame
+// (speaking straight to the backend jumped it ahead of the burst it belonged after), and it
+// lands in the scrollback ring, which a review key will need.
 void Call(const char* funcName, void* params)
 {
     // The missing-companion case is checked FIRST so a pressed key is never silent — the shared

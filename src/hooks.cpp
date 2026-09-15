@@ -196,9 +196,9 @@ static void RegisterEventHandlers() {
         if (!text.empty()) {
             LOG_INFO("Hooks: X2Access_Speak -> \"%s\"", text.c_str());
             // Focus, through the Narrator rather than TTS directly: a legacy listener fires on a
-            // screen or selection change, so it outranks — and CLEARS — whatever is still queued.
-            // Speaking straight to the backend cut only the current utterance and left the queue
-            // to resume on top of the new screen. It also puts these lines in the scrollback ring.
+            // screen or selection change, and going through the queue keeps it in order with
+            // whatever else this frame produced (speaking straight to the backend jumped it
+            // ahead). It also puts these lines in the scrollback ring.
             Narrator::Say(Narrator::Channel::Focus, text);
         } else {
             LOG_WARN("Hooks: X2Access_Speak fired but AccessibilityData was empty");
@@ -241,7 +241,7 @@ void Init() {
     if (!sdkReady) {
         LOG_ERROR("Hooks: SDK initialization failed after %d attempts — game hooks disabled",
                   SDK_INIT_MAX_ATTEMPTS);
-        TTS::SpeakInterrupt("Warning: game hooks could not initialize. Accessibility features unavailable.");
+        TTS::Speak("Warning: game hooks could not initialize. Accessibility features unavailable.");
         return;
     }
 
@@ -252,10 +252,10 @@ void Init() {
     // Install the ProcessEvent vtable hook
     if (ProcessEventHook::Install()) {
         LOG_INFO("Hooks: ProcessEvent hook active — intercepting game events");
-        TTS::SpeakInterrupt("Game hooks active.");
+        TTS::Speak("Game hooks active.");
     } else {
         LOG_ERROR("Hooks: ProcessEvent hook installation failed");
-        TTS::SpeakInterrupt("Warning: game hook installation failed.");
+        TTS::Speak("Warning: game hook installation failed.");
     }
 }
 

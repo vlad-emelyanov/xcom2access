@@ -57,16 +57,6 @@ std::mutex sMutex;
 std::deque<Queued> sPending;
 std::deque<Line> sHistory;
 
-// Set when an Alert joins the queue: the batch cuts whatever was still being read, but only at
-// its FIRST line, so the alert does not truncate a combat line queued ahead of it in the same
-// burst. Getting this wrong loses the damage line that explains the kill.
-bool sBatchInterrupts = false;
-
-bool IsInterrupt(Channel channel)
-{
-    return channel == Channel::Focus || channel == Channel::Aid;
-}
-
 // Caller holds sMutex.
 void Record(Channel channel, Source source, const std::string& text)
 {
@@ -110,29 +100,24 @@ bool FlyoverAlreadySaid(const std::string& text, uint64_t now)
     return false;
 }
 
-// Hand the queue to the backend. Only the first line of a batch may interrupt; the rest ride the
-// screen reader's own queue, which is what keeps a burst in order.
+// Hand the queue to the backend, in order. Every line rides the screen reader's own queue, which
+// is what keeps a burst coherent.
 void Flush()
 {
     std::deque<Queued> batch;
-    bool interruptFirst = false;
     {
         std::lock_guard<std::mutex> lock(sMutex);
         if (sPending.empty())
             return;
         batch.swap(sPending);
-        interruptFirst = sBatchInterrupts;
-        sBatchInterrupts = false;
     }
 
-    bool first = true;
     for (const Queued& entry : batch) {
         {
             std::lock_guard<std::mutex> lock(sMutex);
             Record(entry.channel, entry.source, entry.text);
         }
-        TTS::Speak(entry.text, first && interruptFirst);
-        first = false;
+        TTS::Speak(entry.text);
     }
 }
 
@@ -188,24 +173,10 @@ void Say(Channel channel, const std::string& text, Source source)
     if (text.empty())
         return;
 
-    if (IsInterrupt(channel)) {
-        size_t dropped = 0;
-        {
-            std::lock_guard<std::mutex> lock(sMutex);
-            dropped = sPending.size();
-            sPending.clear();
-            sBatchInterrupts = false;
-            Record(channel, source, text);
-        }
-        // The player asked for this, so the queue behind it is stale by definition — but say so:
-        // silence where narration was expected must never look like nothing happened.
-        if (dropped)
-            LOG_INFO("Narrator: %zu queued line(s) dropped by a %s read", dropped,
-                ChannelName(channel));
-        TTS::SpeakInterrupt(text);
-        return;
-    }
-
+    // Every channel queues, in arrival order, and nothing a channel does drops or cuts another
+    // line: a Focus read lands behind the combat lines already pending this frame, and whether
+    // it then cuts off what the screen reader is reading is the reader's decision under the
+    // player's own settings. The channel is what the scrollback ring shows the line as.
     std::lock_guard<std::mutex> lock(sMutex);
 
     // ⛔ There is deliberately NO dedup on text alone, however adjacent and however identical.
@@ -241,8 +212,6 @@ void Say(Channel channel, const std::string& text, Source source)
     }
 
     sPending.push_back({channel, source, text});
-    if (channel == Channel::Alert)
-        sBatchInterrupts = true;
 }
 
 void OnTick()
@@ -264,7 +233,6 @@ void DropPending()
     {
         std::lock_guard<std::mutex> lock(sMutex);
         sPending.clear();
-        sBatchInterrupts = false;
     }
     (void)GameUI::CallCompanion(kNarratorClass, "ClearNarration", nullptr, nullptr);
 }

@@ -38,7 +38,7 @@ constexpr const char* kReaderClass = "X2AccessTransientReader";
 
 // Matches the companion's LINE_SEP. One burst can carry several lines — a conversation line
 // landing in the same frame as a toast — and each is spoken as its own utterance so the screen
-// reader can be interrupted between them.
+// reader can break between them.
 constexpr const char* kLineSep = "~|~";
 
 // 250 ms. Slower than the tactical HUD's 150 ms on purpose: nothing here is a response to a
@@ -93,8 +93,8 @@ void OnTick()
         if (line.empty())
             continue;
         // Combat, not Alert or Focus. These lines are things that HAPPENED, so they must queue in
-        // order behind whatever is already speaking rather than interrupt it: a story line that
-        // cut off the damage readout explaining a soldier's death would be a strictly worse
+        // order behind whatever is already pending rather than drop it: a story line that
+        // displaced the damage readout explaining a soldier's death would be a strictly worse
         // trade. CleanText because the strategy layer colours plenty of its own strings.
         Narrator::Say(Narrator::Channel::Combat, GameUI::CleanText(line), Narrator::Source::Flyover);
     }

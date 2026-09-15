@@ -46,14 +46,14 @@ void Pump();
 
 /// Any thread. Feeds the /speech ring from the TTS::Speak chokepoint, so what the harness
 /// reports is literally what was handed to the screen reader — not a re-derivation of it.
-void RecordSpeech(const std::string& text, bool interrupt);
+void RecordSpeech(const std::string& text);
 
 #else
 
 inline void Start(const std::string&) {}
 inline void Stop() {}
 inline void Pump() {}
-inline void RecordSpeech(const std::string&, bool) {}
+inline void RecordSpeech(const std::string&) {}
 
 #endif // X2ACCESS_DEVSERVER
 

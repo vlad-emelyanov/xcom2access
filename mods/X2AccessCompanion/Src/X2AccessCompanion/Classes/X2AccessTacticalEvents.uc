@@ -436,8 +436,8 @@ static function NarrateDeath(XComGameState_Unit Unit, XComGameStateContext Conte
 	if (!bAnnounce)
 		return;
 
-	// Losing one of your own changes what you can do next, so it cuts in; an enemy kill queues
-	// behind the damage line that explains it.
+	// Losing one of your own changes what you can do next, so it is an Alert; an enemy kill is
+	// Combat. Both queue in order behind the damage line that explains them.
 	if (Unit.IsFriendlyToLocalPlayer())
 		class'X2AccessNarrator'.static.Alert(UnitName(Unit) @ "is dead.");
 	else

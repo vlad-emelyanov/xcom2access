@@ -68,9 +68,9 @@ bool ComputeUsable(bool* menuRaised, bool* missionActive)
 // outbound ProcessEvent requires. An empty result is a deliberate "nothing to say": the poll
 // uses it on every tick where the selection has not moved.
 //
-// Everything here goes out on an INTERRUPTING channel: the selection under the player's own keys
-// outranks whatever combat narration is still queued behind it. That is the whole reason these
-// calls route through the Narrator rather than TTS directly.
+// Everything here goes out through the Narrator rather than TTS directly, so a selection read
+// stays in ORDER with the combat narration queued in the same frame and lands in the scrollback
+// ring under its own channel label.
 void Call(const char* funcName, Narrator::Channel channel)
 {
     // The shared helper logs both a missing companion and a failed call. Stay silent on the

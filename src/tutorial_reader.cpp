@@ -412,8 +412,8 @@ void AnnounceCurrent()
     // re-read key could not, so pressing it while "press RMB to go here" was up answered "no
     // tutorial message" about a message that was plainly on screen.
     //
-    // Composed into ONE utterance on purpose. Aid interrupts and clears the queue, so two calls
-    // would leave only the second.
+    // Composed into ONE utterance on purpose: one key, one answer, so a reader set to interrupt
+    // on new text does not cut the first blade off with the second.
     std::string text;
     if (void* mgr = GameUI::FindWorldMessageMgr()) {
         for (const GameUI::WorldMessage& msg : GameUI::ReadWorldMessages(mgr)) {
@@ -516,9 +516,9 @@ void ConsiderWorldMessage(const GameUI::WorldMessage& msg, bool inTutorial, Slot
             spoken = who + ": " + spoken;
     }
 
-    // A blade is an instruction: it changes what the player is supposed to do, so it cuts in.
-    // A world message is a status flyover and queues behind whatever is already being read, which
-    // is also how a sighted player takes them — at their own pace.
+    // A blade is an instruction: it changes what the player is supposed to do, so it is an
+    // Alert. A world message is a status flyover, so it is Combat. Both queue in order; the
+    // channel is the label the scrollback ring shows.
     //
     // Source::Flyover, and it matters: inside the tutorial the replay narrator is describing the
     // very same game states from the other side. An ability with no target ("Osei: Overwatch")

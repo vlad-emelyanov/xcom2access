@@ -3,10 +3,11 @@
 //
 // The v1 bridge (a UIScreenListener writes AccessibilityData, then fires the empty X2Access_Speak
 // sentinel on a timer) carries exactly one line and no priority. That is fine for a focus change
-// and useless for combat: a burst of events overwrites itself before native ever sees it, and
-// every line interrupts the one before. Tactical narration needs the opposite — damage, kills and
-// status land in a QUEUE and are spoken in order, while turn changes and squad-level alerts
-// INTERRUPT whatever is being read.
+// and useless for combat: a burst of events overwrites itself before native ever sees it.
+// Tactical narration needs a QUEUE — damage, kills and status are spoken in order, and turn
+// changes and squad-level alerts ride the same queue so a burst stays coherent. Nothing on this
+// path interrupts: native hands every line to the screen reader as queued text, and whether it
+// cuts in is the reader's own decision.
 //
 // Transport is one delimited string rather than a dynamic array, for two reasons: C++ drains a
 // whole burst in ONE outbound ProcessEvent (the call is the expensive part, not the payload), and
@@ -26,7 +27,7 @@
 class X2AccessNarrator extends Object config(Game);
 
 // Channel marker: the FIRST character of an entry, stripped by native before speaking.
-const CHANNEL_ALERT = "A";   // interrupts: turn change, concealment broken, your soldier down
+const CHANNEL_ALERT = "A";   // the game changed what you can DO: turn change, concealment broken, your soldier down
 const CHANNEL_COMBAT = "C";  // queued: hits, damage, kills, status
 
 // Entry separator. Three characters rather than one, none of which occur in localized game text

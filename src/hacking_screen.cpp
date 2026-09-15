@@ -145,8 +145,7 @@ void OnTick()
 
     // Speaks twice per hack and is silent in between: the opening burst when the pad appears,
     // and the outcome when the meter stops. Alert, not Focus: nothing the player pressed produced
-    // either line, but a modal that has taken over the screen outranks queued combat lines and
-    // should cut in — while still keeping the burst that explains it intact.
+    // either line — a modal took over the screen, which is a change in what the player can DO.
     if (!Call("PollHack", Narrator::Channel::Alert))
         return;
 

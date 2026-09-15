@@ -789,7 +789,7 @@ std::unique_ptr<GraphRender> BuildArmoryLoadout()
         // DelayedShowTooltip is called only under `ISCONTROLLERACTIVE.
         const std::string detail = RecField(rec, "detail");
         if (!detail.empty())
-            vt.OnTooltip = [detail]() { TTS::Speak(detail, /*interrupt*/ true); };
+            vt.OnTooltip = [detail]() { TTS::Speak(detail); };
         if (!row.disabled) {
             // Selection FIRST, then OnAccept — it reads ActiveList.SelectedIndex and ignores
             // everything else, so a one-frame disagreement equips the wrong item.
@@ -1601,7 +1601,7 @@ NodeVtable CustomizeRowVtable(const GameUI::OptionRow& row)
     vt.OnTooltip = [handle = row.handle]() {
         std::string tip = GameUI::ReadRowTooltip(handle);
         if (!tip.empty())
-            TTS::SpeakInterrupt(tip);
+            TTS::Speak(tip);
     };
     return vt;
 }
@@ -3249,7 +3249,7 @@ const WireRecord* FindPolicyColumn(const std::vector<WireRecord>& words, int ind
 // drop targets) is usually on other nodes.
 void PolicyCancelHold()
 {
-    TTS::SpeakInterrupt(Vocab::PolicyPutBack);
+    TTS::Speak(Vocab::PolicyPutBack);
     CallPolicyVerb("ClearPolicySelection", 0, 0);
 }
 
@@ -3291,7 +3291,7 @@ NodeVtable PolicyCardNode(const GameUI::PolicyCard& card, const WireRecord* rec,
         }
         const std::string quote = RecField(*rec, "quote");
         if (!quote.empty())
-            vt.OnTooltip = [quote]() { TTS::SpeakInterrupt(quote); };
+            vt.OnTooltip = [quote]() { TTS::Speak(quote); };
     }
 
     // ⛔ A plain Value part, NOT AnnouncementKinds::Selected — see the section header.
@@ -3330,7 +3330,7 @@ NodeVtable PolicyCardNode(const GameUI::PolicyCard& card, const WireRecord* rec,
     }
     vt.OnActivate = [column, slot, refusal]() {
         if (refusal)
-            TTS::SpeakInterrupt(refusal);
+            TTS::Speak(refusal);
         CallPolicyVerb("SelectPolicyCard", column, slot);
     };
 
@@ -3811,7 +3811,7 @@ std::unique_ptr<GraphRender> BuildPromotion()
             // every arrow press a paragraph, so it stays behind the tooltip key like every other
             // description in the layer.
             if (!desc.empty())
-                vt.OnTooltip = [desc]() { TTS::SpeakInterrupt(desc); };
+                vt.OnTooltip = [desc]() { TTS::Speak(desc); };
 
             const int branch = cell.branch;
             vt.OnActivate = [rank, branch]() {
@@ -3898,7 +3898,7 @@ std::unique_ptr<GraphRender> BuildPromotion()
         vt.Announcements.emplace_back(NodeAnnouncement::Static(name));
         vt.Announcements.back().Kind = AnnouncementKinds::Label;
         if (!desc.empty())
-            vt.OnTooltip = [desc]() { TTS::SpeakInterrupt(desc); };
+            vt.OnTooltip = [desc]() { TTS::Speak(desc); };
         // Indexed, not named: two abilities really can share a display name, and a duplicate
         // structural key would silently merge them into one node.
         b.AddItem(
@@ -3983,7 +3983,7 @@ std::function<void()> SpeakAgain(const std::string& text)
 {
     if (text.empty())
         return nullptr;
-    return [text]() { TTS::SpeakInterrupt(text); };
+    return [text]() { TTS::Speak(text); };
 }
 
 // The Continue node the dossier ends on: the SCREEN's own input path (OnUnrealCommand →

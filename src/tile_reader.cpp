@@ -80,11 +80,10 @@ bool ComputeActive(char* why, size_t whyLen, bool* hudOnStack)
 // Runs from the arbiter's tick drain — the game thread — which is what outbound ProcessEvent
 // requires. An empty result is a deliberate "nothing to say", not an error.
 //
-// Through the Narrator rather than TTS directly, and on an INTERRUPTING channel: the player
-// pressed a key, so their answer outranks — and CLEARS — whatever combat narration is still
-// queued behind it. Speaking straight to the backend cut the current utterance but left the
-// queue standing, so the stale burst resumed on top of the answer on the very next flush.
-// It is also what puts these lines in the scrollback ring, which a review key will need.
+// Through the Narrator rather than TTS directly: that keeps the answer in ORDER with whatever
+// combat narration is queued in the same frame (speaking straight to the backend jumped it
+// ahead of the burst it belonged after), and it puts these lines in the scrollback ring, which
+// a review key will need.
 //
 // `arm` is false for the one key that is the GAME's (Left Alt, passed through): a vanilla key
 // must not take the mouse over — lazy plant means lazy takeover, and that press planted nothing.
@@ -121,8 +120,8 @@ constexpr int32_t kDirEast = 2;
 constexpr int32_t kDirWest = 3;
 
 // Moving the cursor is Focus — a selection changed under the player's own key, the same reading
-// UnitInfo's Tab poll takes. The on-demand reads below are Aid. Both interrupt and clear the
-// queue identically; the channel is what the scrollback ring will show them as.
+// UnitInfo's Tab poll takes. The on-demand reads below are Aid. Both route identically; the
+// channel is what the scrollback ring will show them as.
 void StepCall(int32_t cardinal)
 {
     struct {

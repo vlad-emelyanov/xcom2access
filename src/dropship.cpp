@@ -115,8 +115,8 @@ void OnAnnounce(const InputArbiter::KeyEvent& e)
     GameUI::DropshipView v = GameUI::ReadDropship();
     if (!v.screen)
         return; // the gate went stale between the tick and the keypress
-    // Aid: the player asked, so this outranks and clears whatever is queued — including a tip
-    // they have already heard and the VO subtitle they are re-reading past.
+    // Aid: the player asked for a re-read. It queues in order like everything else; a reader set
+    // to interrupt on new text is what cuts the VO subtitle they are re-reading past.
     Narrator::Say(
         Narrator::Channel::Aid, BuildBlock(v, ReadBriefingWords(), /*includeTip=*/true));
 }
@@ -173,10 +173,10 @@ void OnTick()
         LOG_INFO("Dropship: %s briefing up at %p (ready %d, briefing %d)",
             v.missionStart ? "mission-start" : "mission-end", v.screen, v.ready ? 1 : 0,
             gBriefingSaid ? 1 : 0);
-        // Combat channel: this queues rather than interrupting, because the dropship's own
-        // narrative moment starts at roughly the same instant and TransientReader is already
-        // reading its subtitle. Cutting Central off mid-sentence would be worse than waiting our
-        // turn. The tip is left out here for the same reason — it is on Delete.
+        // Combat channel: this queues in order rather than dropping what is pending, because
+        // the dropship's own narrative moment starts at roughly the same instant and
+        // TransientReader is already reading its subtitle. Losing Central's line would be worse
+        // than waiting our turn. The tip is left out here for the same reason — it is on Delete.
         const std::string block = BuildBlock(v, briefing, /*includeTip=*/false);
         if (!block.empty())
             Narrator::Say(Narrator::Channel::Combat, block, Narrator::Source::Flyover);
@@ -197,9 +197,8 @@ void OnTick()
     }
 
     // The edge this whole module exists for: the map has finished loading and the game is now
-    // sitting there waiting for a keypress it will never announce. Alert, so it interrupts
-    // whatever is mid-sentence without clearing the queue behind it — a player waiting to launch
-    // must not have to sit out the rest of a tip first.
+    // sitting there waiting for a keypress it will never announce. Alert, so it queues in order
+    // without clearing what is pending behind it — the game changed what the player can DO.
     if (v.ready && !gWasReady) {
         gWasReady = true;
         LOG_INFO("Dropship: destination loaded — '%s'", v.prompt.c_str());

@@ -63,8 +63,8 @@ void Init()
     // the three screens it does cover would otherwise lose the help they have.
     RegisterClaim({VK_OEM_2, ModShift, nullptr, OnPress([] {
         std::string navHelp = Hooks::ReadListenerProperty("NavHelpData");
-        // Aid, through the Narrator: the player pressed a key for this, so it outranks and
-        // CLEARS whatever narration is queued rather than merely cutting the current sentence.
+        // Aid, through the Narrator: an on-demand read, queued in order and labelled as such in
+        // the scrollback ring.
         Narrator::Say(Narrator::Channel::Aid,
             !navHelp.empty() ? navHelp : "No navigation help available.");
     }), "?: navigation help"});

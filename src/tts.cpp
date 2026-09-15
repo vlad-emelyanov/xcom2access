@@ -88,7 +88,7 @@ bool RebindBackend() {
 // One utterance, straight to the backend. Caller must hold sMutex and have gated on
 // sAvailable/sEnabled; the /speech ring and the log line are the caller's job so that queued and
 // direct speech both record exactly once.
-void SpeakRaw(const std::string& text, bool interrupt) {
+void SpeakRaw(const std::string& text) {
     // A screen reader that came or went since the last line: take the best backend now, BEFORE
     // this utterance rather than after it.
     if (sRebindRequested.exchange(false, std::memory_order_relaxed))
@@ -96,7 +96,10 @@ void SpeakRaw(const std::string& text, bool interrupt) {
 
     if (!sBackend) return;
 
-    PrismError err = prism_backend_speak(sBackend, text.c_str(), interrupt);
+    // interrupt = false, always. Whether a new line cuts off the one being read is the screen
+    // reader's decision (its own queue and the player's settings), never the mod's.
+    constexpr bool kInterrupt = false;
+    PrismError err = prism_backend_speak(sBackend, text.c_str(), kInterrupt);
     if (err == PRISM_OK) return;
 
     // The failure SRAL could not report: the backend died under us (NVDA exited, its RPC endpoint
@@ -105,7 +108,7 @@ void SpeakRaw(const std::string& text, bool interrupt) {
     LOG_WARN("Speech failed on '%s': %s", prism_backend_name(sBackend), prism_error_string(err));
     if (!RebindBackend()) return;
 
-    err = prism_backend_speak(sBackend, text.c_str(), interrupt);
+    err = prism_backend_speak(sBackend, text.c_str(), kInterrupt);
     if (err != PRISM_OK)
         LOG_ERROR("Speech failed after re-bind: %s", prism_error_string(err));
 }
@@ -176,21 +179,17 @@ void Shutdown() {
     LOG_INFO("TTS shut down");
 }
 
-void Speak(const std::string& text, bool interrupt) {
+void Speak(const std::string& text) {
     std::lock_guard<std::mutex> lock(sMutex);
     if (!sAvailable || !sEnabled) return;
     // The speech log: every spoken line, so a session can be reconstructed from X2Access.log
     // ("what did it actually say when I pressed Left?").
-    LOG_INFO("TTS%s: \"%s\"", interrupt ? "!" : "", text.c_str());
+    LOG_INFO("TTS: \"%s\"", text.c_str());
     // Dev harness /speech ring. Deliberately AFTER the availability/enabled gate, next to the
     // log line: the ring answers "what did the player hear", not "what did the mod consider
     // saying" — otherwise a muted session would read as a talkative one.
-    DevServer::RecordSpeech(text, interrupt);
-    SpeakRaw(text, interrupt);
-}
-
-void SpeakInterrupt(const std::string& text) {
-    Speak(text, true);
+    DevServer::RecordSpeech(text);
+    SpeakRaw(text);
 }
 
 void Silence() {
@@ -211,8 +210,8 @@ void FlushQueue() {
         return;
     }
     for (const auto& text : sQueue) {
-        DevServer::RecordSpeech(text, false);
-        SpeakRaw(text, false);
+        DevServer::RecordSpeech(text);
+        SpeakRaw(text);
     }
     sQueue.clear();
 }

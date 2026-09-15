@@ -1185,13 +1185,13 @@ void Pump()
     }
 }
 
-void RecordSpeech(const std::string& text, bool interrupt)
+void RecordSpeech(const std::string& text)
 {
     if (text.empty())
         return;
 
     std::lock_guard<std::mutex> lock(gSpeechLock);
-    gSpeech.push_back(interrupt ? "! " + text : "  " + text);
+    gSpeech.push_back(text);
     while (gSpeech.size() > kSpeechCapacity) {
         gSpeech.pop_front();
         gSpeechBase++;

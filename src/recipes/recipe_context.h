@@ -53,7 +53,7 @@ struct Recipe {
     const char* logName;
     void* (*Probe)();                             // ready (focused) instance, or null
     std::unique_ptr<GraphRender> (*Build)();      // reads gScreen
-    std::string (*ScreenName)();                  // spoken (interrupting) on attach
+    std::string (*ScreenName)();                  // spoken first on attach
     // The screen's UIList row selector, for FocusTarget::listIndex write-back; null on screens
     // whose controls all hang off plain panels (the shell, the Ironman choice, dialogs).
     bool (*SetListIndex)(void* screen, int index) = nullptr;

@@ -684,11 +684,10 @@ a repeating announcement.
 
 1. `Narrator::Say` adoption: the menu navigator — `menu_navigator.cpp` plus the recipe TUs under
    `src/recipes/` — is the last surface still calling `TTS` directly,
-   and finishing it is a design step rather than a swap — its `TTS::Speak(line, false)` sites mean
-   "queued, non-interrupting, focus-owned", which no current channel expresses (`Focus`/`Aid`
-   interrupt AND clear, `Alert` marks the batch interrupting, `Combat` is named for a producer this
-   is not). Either a fifth neutral queued channel or a rename of `Combat`, then map `SpeakMove`'s
-   `interrupt` flag onto the pair. Four boot lines stay on `TTS` on purpose and say why in place
+   and since 2026-09-16 it is a plain swap: every channel queues in order with no clear and no
+   interrupt, so the keypress-driven moves map onto `Focus` and the differ landings and live-part
+   changes onto `Focus` too (they are the focused control changing) — the channel is only the
+   label the scrollback shows. Four boot lines stay on `TTS` on purpose and say why in place
    (`dllmain.cpp`, `Hooks::Init`): they run on the init thread, which `Narrator::Say` does not
    claim, and they report the mod's own state before any producer can have queued a line.
    ⚠ The old "harmless today" justification was wrong and is why the other surfaces went
@@ -705,7 +704,7 @@ a repeating announcement.
    The drop and the reveal themselves came off this list on 2026-09-16 (live-run debt above).
 3. Dev harness: `/tile` (the tile reader's state as structured data) and `/tactical` (mode, gate
    reasons, last narration lines) are the remaining endpoints. `just dev-speech` covers most of the
-   latter already, since it marks interrupting lines with `!`.
+   latter already.
 5. Hacking phase 4: a pre-commit odds read via
    `XComGameState_Ability.GetUISummary_HackingBreakdown`, the spoken form of the mouse-hover-only
    `UITacticalHUD_HackingTooltip`, so a player can judge a hack before spending the action point.

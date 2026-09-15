@@ -115,8 +115,8 @@ void OnTick()
         return;
     sLastMs = now;
 
-    // Focus, not Combat: the player pressed Tab, and what they asked for outranks whatever
-    // narration is still queued behind it — the channel interrupts and clears the queue.
+    // Focus, not Combat: the player pressed Tab, and the scrollback ring should show this as a
+    // selection change rather than an event. Routing is the same either way.
     std::string line;
     if (Call("PollSelection", &line) && !line.empty())
         Narrator::Say(Narrator::Channel::Focus, line);

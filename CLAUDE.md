@@ -170,10 +170,15 @@ rules** below instead — that is the test for which file a new rule goes in.
   support is compiled out of the exe).
 - Native→script: outbound ProcessEvent calls.
 - **Bridge v2** (`X2AccessNarrator.uc` + `src/narrator.cpp`) is the queued, channelled path:
-  `Focus`/`Aid` interrupt and clear, `Combat` queues, and ⛔ **`Alert` queues in order but marks the
-  BATCH as interrupting** — an alert that simply cleared the queue would eat the damage line
-  explaining the kill it follows. Design and limits: `docs/surfaces/tactical.md`, the narrator
-  bridge.
+  every channel queues in arrival order and the channel is a LABEL for the scrollback, not a
+  priority — ⛔ **no channel clears the queue**, because a line that cleared it would eat the
+  damage line explaining the kill it follows. Design and limits: `docs/surfaces/tactical.md`, the
+  narrator bridge.
+- ⛔ **The mod never interrupts speech and never drops a line for another. `TTS::Speak` has no
+  interrupt flag and Prism is always handed `interrupt = false`** — whether a new line cuts off
+  the one being read is the SCREEN READER's decision under the player's own settings, and a mod
+  that forced it overrode them on every keypress. The Narrator orders lines; it never cuts or
+  discards one (`DropPending` on a hard context change is the single deliberate exception).
 - ⛔ `Narrator::Source` is not a channel: it records whether a line was read off a surface the game
   itself displayed (`Flyover`) or derived from the game state (`State`), and a `State` line is
   dropped when an identical `Flyover` line was said in the last 5 s. **One way only, and never

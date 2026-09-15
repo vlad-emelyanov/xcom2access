@@ -322,7 +322,7 @@ private function AddEffectRecords(out string Recs, XComGameState_Unit UnitState)
 
 // What a switch is worth saying: who, in what shape, can they still act, and what can they see.
 // Deliberately shorter than the full block — the player is usually cycling, and the next press
-// interrupts this line anyway (native sends it on the Focus channel). The class, the conditions
+// supersedes this line anyway (native sends it on the Focus channel). The class, the conditions
 // and the effect names wait for the key.
 //
 // The enemy count earns its place on the SHORT line because it is the one value here that

@@ -388,8 +388,8 @@ void OnTick()
         return;
     }
 
-    // Combat, not Alert: subtitles are a SEQUENCE, and a line that interrupted its predecessor
-    // would cut off the half of the sentence the player had not heard yet. Flyover, because this
+    // Combat, not Alert: subtitles are a SEQUENCE and something that HAPPENED, not a change in
+    // what the player can do. Flyover, because this
     // is text the game itself put on screen — which also lets the narrator drop a State line
     // that duplicates it.
     Narrator::Say(Narrator::Channel::Combat, line, Narrator::Source::Flyover);

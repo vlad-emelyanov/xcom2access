@@ -127,7 +127,7 @@ NodeVtable StaffSlotVtable(const WireRecord& rec, std::function<void*()> liveWid
         // The hover tooltip of a slot that can be filled ("Assign an engineer to receive the
         // bonus") is instruction rather than state, so it goes where every other control's
         // game tooltip goes: Space.
-        vt.OnTooltip = [hint]() { TTS::SpeakInterrupt(hint); };
+        vt.OnTooltip = [hint]() { TTS::Speak(hint); };
     }
 
     vt.OnActivate = [liveWidget]() {
@@ -1469,9 +1469,9 @@ bool SetChooseUpgradeListIndex(void* screen, int index)
 // dropped: prose stacked vertically on screen should not be walked sideways.
 //
 // The cost that buys: one paragraph is one node, so a node runs to ~600 characters and a
-// description with no internal break could be one node of 2438. Pressing Down interrupts it
-// (Focus clears the queue), which is the escape hatch — a deal made deliberately rather than
-// discovered live.
+// description with no internal break could be one node of 2438. Pressing Down is the escape
+// hatch — the next line goes to the screen reader, which cuts the paragraph off under the
+// player's own reader settings — a deal made deliberately rather than discovered live.
 //
 // ⛔ ONE KEY CLOSES IT, AND WHICH ONE DEPENDS ON THE STACK. OnUnrealCommand (:199) answers Escape
 // only while an exact UIResearchArchives is in the stack and Enter only while it is not, marking
@@ -2554,13 +2554,13 @@ bool AddShortcutStop(GraphBuilder& b)
             // after this render. HotlinkToGeoscape refuses by itself when the bridge is
             // tutorial-locked, silently — so the refusal is owed here.
             if (!GameUI::HotlinkToGeoscape(GameUI::ReadShortcutBar()))
-                TTS::SpeakInterrupt(Vocab::Disabled);
+                TTS::Speak(Vocab::Disabled);
         };
         // Space: the hover text AddLeftHelp registered for this button — TooltipGeoscape with
         // the player's own binding resolved. Static, so the render's copy is the answer.
         if (!bar.geoscapeTooltip.empty()) {
             const std::string tip = bar.geoscapeTooltip;
-            vt.OnTooltip = [tip]() { TTS::SpeakInterrupt(tip); };
+            vt.OnTooltip = [tip]() { TTS::Speak(tip); };
         }
         b.AddItem(ControlId::Structural("ahud/sc/geoscape"), std::move(vt));
     }
@@ -2587,7 +2587,7 @@ bool AddShortcutStop(GraphBuilder& b)
         const int index = c.index;
         vt.OnActivate = [index]() {
             if (!GameUI::SelectShortcutCategory(GameUI::ReadShortcutBar(), index))
-                TTS::SpeakInterrupt(Vocab::Disabled);
+                TTS::Speak(Vocab::Disabled);
         };
         // Space: a CALLBACK tooltip (SetTooltipWIthCallback) — the words exist only once the
         // hover delegate has run, so it is read at keypress through ReadCallbackTooltip on a
@@ -2599,7 +2599,7 @@ bool AddShortcutStop(GraphBuilder& b)
                     continue;
                 const std::string tip = GameUI::ReadCallbackTooltip(lc.button);
                 if (!tip.empty())
-                    TTS::SpeakInterrupt(tip);
+                    TTS::Speak(tip);
                 return;
             }
         };
@@ -2646,7 +2646,7 @@ bool AddToDoStop(GraphBuilder& b)
             }
             if (!msg.description.empty()) {
                 const std::string desc = msg.description;
-                vt.OnTooltip = [desc]() { TTS::SpeakInterrupt(desc); };
+                vt.OnTooltip = [desc]() { TTS::Speak(desc); };
             }
             const int category = cat.index;
             const int index = static_cast<int>(m);
@@ -2655,7 +2655,7 @@ bool AddToDoStop(GraphBuilder& b)
                 // pushes a screen (a room, the research picker, the personnel list), and the
                 // grid going not-current detaches this layer for that screen's own recipe.
                 if (!GameUI::ActivateToDoMessage(GameUI::ReadToDoWidget(), category, index))
-                    TTS::SpeakInterrupt(Vocab::Disabled);
+                    TTS::Speak(Vocab::Disabled);
             };
             // Label in the identity: the strip is recomputed on every grid visit and a message
             // that changed (a different soldier due a promotion) must read as a new node.
@@ -2714,7 +2714,7 @@ bool AddEventStop(GraphBuilder& b)
         // rows register no tooltip and stay silent, as they are for a sighted player.
         if (!e.tooltip.empty()) {
             const std::string tip = e.tooltip;
-            vt.OnTooltip = [tip]() { TTS::SpeakInterrupt(tip); };
+            vt.OnTooltip = [tip]() { TTS::Speak(tip); };
         }
         // Title in the identity: the queue re-sorts as projects finish, and row i becoming a
         // different project is a new node, not a relabel.
@@ -2731,7 +2731,7 @@ bool AddEventStop(GraphBuilder& b)
             // ToggleExpanded respawns the rows through ShowEventQueue; the differ picks up the
             // new set on the next tick and the button's own label flips with bIsExpanded.
             if (!GameUI::ToggleEventQueue(GameUI::ReadEventQueue()))
-                TTS::SpeakInterrupt(Vocab::Disabled);
+                TTS::Speak(Vocab::Disabled);
         };
         // ⛔ ONE identity for both faces of the button, and the new face is the StateText. The
         // first live run had the label in the id, on the theory that the differ would land on

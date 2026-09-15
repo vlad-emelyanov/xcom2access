@@ -24,11 +24,9 @@ constexpr const char* kScannerClass = "X2AccessGeoScanner";
 // result is a deliberate "nothing to say", not an error.
 //
 // Aid, through the Narrator rather than TTS directly. Every line here is an on-demand read the
-// player pressed a key for, so it outranks — and CLEARS — whatever is still queued. That matters
-// on the geoscape specifically: TransientReader queues commlink and toast lines on the Combat
-// channel alongside this scanner, and nothing else drops them here (TacticalHUD::OnTick's
-// DropPending fires only on the tactical layer's falling edge). It is also what puts these lines
-// in the scrollback ring, which a review key will need.
+// player pressed a key for; it queues in order with the commlink and toast lines TransientReader
+// produces on the geoscape, so an answer never jumps ahead of the burst it arrived with, and it
+// lands in the scrollback ring, which a review key will need.
 void Call(const char* funcName, void* params)
 {
     // The missing-companion case is checked FIRST so a pressed key is never silent — the shared

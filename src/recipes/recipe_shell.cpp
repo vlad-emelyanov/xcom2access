@@ -247,7 +247,7 @@ std::unique_ptr<GraphRender> BuildOptions()
         vt.OnTooltip = [handle = row.handle]() {
             std::string tip = GameUI::ReadRowTooltip(handle);
             if (!tip.empty())
-                TTS::SpeakInterrupt(tip);
+                TTS::Speak(tip);
         };
         vt.Announcements.emplace_back(NodeAnnouncement(
             [sel = (row.index == view.selectedRow)]() {
@@ -387,7 +387,7 @@ std::function<void()> TextAction(std::string text)
 {
     if (text.empty())
         return nullptr; // no handler → the kernel refuses silently
-    return [text = std::move(text)]() { TTS::SpeakInterrupt(text); };
+    return [text = std::move(text)]() { TTS::Speak(text); };
 }
 
 // A row's own hover tooltip on Space (difficulty descriptions, why-disabled reasons).
@@ -396,7 +396,7 @@ std::function<void()> RowTooltipAction(void* handle)
     return [handle]() {
         std::string tip = GameUI::ReadRowTooltip(handle);
         if (!tip.empty())
-            TTS::SpeakInterrupt(tip);
+            TTS::Speak(tip);
     };
 }
 
@@ -1049,7 +1049,7 @@ std::unique_ptr<GraphRender> BuildCharacterPool()
         vt.OnTooltip = [handle = row.handle]() {
             std::string tip = GameUI::ReadRowTooltip(handle);
             if (!tip.empty())
-                TTS::SpeakInterrupt(tip);
+                TTS::Speak(tip);
         };
         b.AddItem(std::move(id), std::move(vt));
     }

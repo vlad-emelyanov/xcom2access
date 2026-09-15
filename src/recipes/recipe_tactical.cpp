@@ -175,7 +175,7 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
                     // target. A refusal comes back false and the game is silent about it, so
                     // the answer is owed here.
                     if (!GameUI::ActivateBarAbility(gScreen, index))
-                        TTS::SpeakInterrupt(Vocab::Disabled);
+                        TTS::Speak(Vocab::Disabled);
                 };
             }
 
@@ -237,7 +237,7 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
                         // owns the refusal sound. False means the call itself could not be
                         // made, and a pressed key must never be silent.
                         if (!GameUI::ActivateMouseControl(gScreen, index))
-                            TTS::SpeakInterrupt(Vocab::Disabled);
+                            TTS::Speak(Vocab::Disabled);
                     };
                 }
 
@@ -327,11 +327,11 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
                 std::string answer;
                 if (!GameUI::CallCompanion("X2AccessTacticalReader", "SelectEnemyHead", &params,
                         &answer)) {
-                    TTS::SpeakInterrupt(Vocab::Disabled);
+                    TTS::Speak(Vocab::Disabled);
                     return;
                 }
                 if (!answer.empty())
-                    TTS::SpeakInterrupt(GameUI::CleanText(answer));
+                    TTS::Speak(GameUI::CleanText(answer));
             };
 
             // The ObjectID is the identity: a new enemy is a new node wherever the sort puts it,
@@ -647,7 +647,7 @@ std::unique_ptr<GraphRender> BuildLoot()
         // The description is a mouse-following tooltip in vanilla; here it is the tooltip key.
         const std::string desc = rec ? RecField(*rec, "desc") : std::string();
         if (!desc.empty())
-            vt.OnTooltip = [desc]() { TTS::Speak(desc, /*interrupt*/ true); };
+            vt.OnTooltip = [desc]() { TTS::Speak(desc); };
         b.AddItem(ControlId::Referenced(row.handle, "loot/row/" + std::to_string(row.index)),
             std::move(vt));
         shown++;
