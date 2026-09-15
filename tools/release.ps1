@@ -408,8 +408,9 @@ every screen whose text the game keeps only in Flash — one without the other i
 quiet in places, not a mod that fails. Then, in the game's launcher (or the Alternative Mod
 Launcher), enable **X2AccessCompanion** and the **Community Highlander**.
 
-Add ``-review`` to the game's launch options. Without it the game boots the developer shell instead
-of the retail main menu, and every main-menu screen reads as dead.
+Launch through Steam or the mod launcher as usual. If you start ``XCom2.exe`` directly instead, add
+``-review`` to its arguments: the launchers pass it for you, and without it the game boots its
+developer shell instead of the retail main menu, where nothing reads.
 
 ### Expect rough edges
 

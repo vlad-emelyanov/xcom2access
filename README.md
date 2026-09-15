@@ -37,6 +37,8 @@ The division of responsibility, engine facts, and development rules are
 documented in [CLAUDE.md](CLAUDE.md); per-screen reverse-engineering notes live
 in [`docs/`](docs/).
 
+## Status
+
 **Pre-alpha.** Under active development and not ready for general use: coverage
 grows screen by screen, keys can change without notice, and screens that already
 work may break as neighbouring ones land. Expect rough edges, and back up your
@@ -88,131 +90,66 @@ Several of these turn on keyboard navigation the game already has and simply
 never enables for mouse-and-keyboard players; a few others provide keyboard
 access the game never had at all.
 
-## Building
+## Requirements
 
-### Prerequisites
+- XCOM 2: **War of the Chosen** on PC (Windows), the current Steam build. The
+  base game without the expansion is not supported: the companion is a WOTC
+  mod and the native side is measured against the WOTC executable.
+- [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases)
+  — the `version-x64.zip` build. This is what loads the mod into the game;
+  without it nothing speaks, and nothing in the game changes at all.
+- The [X2WOTC Community Highlander](https://steamcommunity.com/workshop/filedetails/?id=1134256495)
+  from the Steam Workshop, subscribed and enabled. The companion mod is
+  compiled against it and does not load without it. The native side runs
+  either way, so with the Highlander missing the menus still read but
+  **combat narration and every screen whose words come from the companion go
+  quiet** — it looks like a partial mod, not a broken one.
+- A screen reader (NVDA, JAWS, ZDSR, ZoomText, SenseReader, PC-Talker,
+  BoyPCReader), or SAPI / Windows OneCore as the fallback. Prism is linked
+  statically, so there is no speech DLL to place beside the game — including
+  for NVDA: Prism generates the NVDA RPC client stubs itself, so
+  `nvdaControllerClient.dll` is neither needed nor looked for.
 
-- CMake 3.25+
-- Visual Studio 2019+ with C++ desktop workload (MSVC x64)
-- XCOM 2 War of the Chosen SDK (install from Steam)
-- Git submodules initialized: `git submodule update --init --recursive`
-  (this includes
-  [X2WOTCCommunityHighlander](https://github.com/X2CommunityCore/X2WOTCCommunityHighlander)
-  at `deps/X2WOTCCommunityHighlander`, pinned to `v1.31.0-release` — the same
-  build as the workshop release the game loads; the companion mod compiles
-  against its source)
-
-### Build Steps
-
-```bash
-cmake -B build -A x64
-cmake --build build --config Release
-```
-
-Output: `build/bin/Release/X2Access.asi`
-
-### UnrealScript Companion Mod
-
-The companion mod (X2AccessCompanion) is compiled using [X2ModBuildCommon](https://github.com/X2CommunityCore/X2ModBuildCommon) integrated into the CMake build:
-
-```bash
-# Compile UnrealScript mod only
-cmake --build build --target build_uscript --config Release
-
-# Build everything and deploy to game directory
-cmake --build build --target deploy --config Release
-```
-
-Close the game before either of these. The running game holds the compiled
-package open, and the UnrealScript deploy step waits on that lock forever
-rather than failing — it looks like a slow compile and is not.
-
-The SDK and game paths default to the development machine's Steam library (`C:/Program Files (x86)/Steam/steamapps/common/`). Override at configure time if your library lives elsewhere:
-
-```bash
-cmake -B build -A x64 \
-  -DXCOM2_SDK_PATH="<SteamLibrary>/steamapps/common/XCOM 2 War of the Chosen SDK" \
-  -DXCOM2_GAME_PATH="<SteamLibrary>/steamapps/common/XCOM 2/XCom2-WarOfTheChosen"
-```
-
-### Tests
-
-The navigation kernel is STL-only by contract and compiles standalone, so its
-conformance suite needs neither the game nor the SDK:
-
-```bash
-ctest --test-dir build -C Release
-```
-
-### Development shortcuts
-
-A [`justfile`](justfile) wraps the common loops — `just build`, `just install`,
-`just deploy`, `just test`, `just run`, `just kill`, `just log`. Dev builds also
-carry a loopback HTTP harness for observing and driving a live session
-(`just arm`, then `just dev-status` / `dev-speech` / `dev-gui` / `dev-props`).
-It is compiled out of release builds entirely and additionally needs a marker
-file to arm; see [`docs/dev-harness.md`](docs/dev-harness.md).
-
-## Installation
-
-### From the test release
+## Installing
 
 Download the archive from the
 [`dev` release](https://git.alex19ep.me/alex19ep/xcom2access/releases) and
 extract it at the **War of the Chosen game folder** — `XCom2-WarOfTheChosen`,
-the one holding `Binaries/` and `XComGame/`. It contains:
+the one holding `Binaries/` and `XComGame/`, under `steamapps/common/XCOM 2`.
+It contains:
 
 ```
 README.md
 LICENSE
-Binaries/Win64/scripts/X2Access.asi
-Binaries/Win64/scripts/X2Access.pdb       (symbols, so a crash dump can be read)
-XComGame/Mods/X2AccessCompanion/          the companion mod
+Binaries/Win64/scripts/X2Access.asi        (the native plugin, Prism statically linked)
+Binaries/Win64/scripts/X2Access.pdb        (symbols, so a crash dump can be read)
+XComGame/Mods/X2AccessCompanion/           (the companion mod: .XComMod, Config, Localization, Script)
 ```
 
-You still need the ASI loader (below) and the workshop Highlander, and both
-mods enabled in the launcher.
+`Binaries/Win64/scripts/` is where the ASI loader looks for plugins, and
+`XComGame/Mods/` is where the game's launcher looks for local mods; neither
+is a choice. Both halves must land — the ASI reads screens, the companion
+supplies the words for combat and for every screen whose text the game keeps
+only in Flash, and one without the other is a mod that goes quiet in places,
+not a mod that fails.
 
-### Automated (deploy target)
+Then:
 
-```bash
-cmake --build build --target deploy --config Release
-```
-
-This copies `X2Access.asi` to the game's `Binaries/Win64/scripts/` directory and deploys the companion mod to `XComGame/Mods/`. You still need to manually install the ASI loader (see below).
-
-### Manual
-
-1. Download [Ultimate ASI Loader x64](https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases) — get `version-x64.zip`
-2. Extract `version.dll` to your XCOM 2 WOTC binary directory:
-   ```
-   <Steam>/steamapps/common/XCOM 2/XCom2-WarOfTheChosen/Binaries/Win64/
-   ```
-3. Create a `scripts/` folder inside `Win64/`
-4. Copy `X2Access.asi` into `scripts/`
-
-That is the whole install. Prism is linked statically, so there is no speech DLL to place
-beside the game — including for NVDA: Prism generates the NVDA RPC client stubs itself and
-talks to the reader over RPC, so `nvdaControllerClient.dll` is neither needed nor looked for.
-
-The [X2WOTC Community Highlander](https://steamcommunity.com/workshops/filedetails/?id=1134256495)
-is a **required** dependency of the companion mod, at compile time (the mod
-builds against its source, pinned as a submodule to the same release the
-workshop ships) and at runtime (subscribe to it on the Steam Workshop and
-enable it alongside X2AccessCompanion).
-
-### File Layout
-
-```
-XCom2-WarOfTheChosen/Binaries/Win64/
-  version.dll                  ← Ultimate ASI Loader
-  scripts/
-    X2Access.asi               ← This mod (Prism statically linked)
-```
+1. Put the ASI loader's `version.dll` in `Binaries/Win64/`, next to
+   `XCom2.exe`. The loader can impersonate several system DLL names;
+   `version.dll` is the one its x64 package ships as, and any of the others
+   works too.
+2. In the game's launcher — or the Alternative Mod Launcher — enable
+   **X2AccessCompanion** and the **Community Highlander**.
+3. Launch through Steam or the mod launcher as usual. If you start
+   `XCom2.exe` directly instead, add `-review` to its arguments: the launchers
+   pass it for you, and without it the game boots its developer shell instead
+   of the retail main menu, where nothing reads.
 
 ## Usage
 
-Launch XCOM 2 WOTC normally. You should hear "X2 Access loaded" via your active screen reader or Windows SAPI5.
+You should hear "X2 Access loaded" through your screen reader or SAPI as the
+game comes up.
 
 ### Hotkeys
 
@@ -345,15 +282,101 @@ Check `scripts/X2Access.log` for initialization details and diagnostics. The
 previous three sessions rotate to `X2Access.1/2/3.log`, so relaunching does not
 destroy the evidence for whatever you were chasing.
 
-## Third-party licenses
+## Building from source
+
+### Prerequisites
+
+- CMake 3.25+
+- Visual Studio 2019+ with C++ desktop workload (MSVC x64)
+- XCOM 2 War of the Chosen SDK (install from Steam)
+- Git submodules initialized: `git submodule update --init --recursive`
+  (this includes
+  [X2WOTCCommunityHighlander](https://github.com/X2CommunityCore/X2WOTCCommunityHighlander)
+  at `deps/X2WOTCCommunityHighlander`, pinned to `v1.31.0-release` — the same
+  build as the workshop release the game loads; the companion mod compiles
+  against the workshop copy's source)
+- The generated SDK under `generated_sdk/`, which is not in git: it is dumped
+  from the live game, and `docs/build.md` has the four-step recipe.
+
+### Build steps
+
+```bash
+cmake -B build -A x64
+cmake --build build --config Release
+```
+
+Output: `build/bin/Release/X2Access.asi`
+
+### UnrealScript companion mod
+
+The companion mod (X2AccessCompanion) is compiled using [X2ModBuildCommon](https://github.com/X2CommunityCore/X2ModBuildCommon) integrated into the CMake build:
+
+```bash
+# Compile UnrealScript mod only
+cmake --build build --target build_uscript --config Release
+
+# Build everything and deploy to game directory
+cmake --build build --target deploy --config Release
+```
+
+Close the game before either of these. The running game holds the compiled
+package open, and the UnrealScript deploy step waits on that lock forever
+rather than failing — it looks like a slow compile and is not.
+
+The `deploy` target copies `X2Access.asi` to the game's `Binaries/Win64/scripts/`
+and the companion to `XComGame/Mods/`; the ASI loader is still installed by
+hand, as above.
+
+The SDK and game paths default to the development machine's Steam library (`C:/Program Files (x86)/Steam/steamapps/common/`). Override at configure time if your library lives elsewhere:
+
+```bash
+cmake -B build -A x64 \
+  -DXCOM2_SDK_PATH="<SteamLibrary>/steamapps/common/XCOM 2 War of the Chosen SDK" \
+  -DXCOM2_GAME_PATH="<SteamLibrary>/steamapps/common/XCOM 2/XCom2-WarOfTheChosen"
+```
+
+### Tests
+
+The navigation kernel is STL-only by contract and compiles standalone, so its
+conformance suite needs neither the game nor the SDK:
+
+```bash
+ctest --test-dir build -C Release
+```
+
+### Development shortcuts
+
+A [`justfile`](justfile) wraps the common loops — `just build`, `just install`,
+`just deploy`, `just test`, `just run`, `just kill`, `just log`. Dev builds also
+carry a loopback HTTP harness for observing and driving a live session
+(`just arm`, then `just dev-status` / `dev-speech` / `dev-gui` / `dev-props`).
+It is compiled out of release builds entirely and additionally needs a marker
+file to arm; see [`docs/dev-harness.md`](docs/dev-harness.md).
+
+### Cutting a test release
+
+`just release` builds both halves from a clean checkout of HEAD with the dev
+harness compiled out, proves that on the binary, and publishes the rolling
+`dev` release; `just release-dry` stops before the upload. `just hooks`
+installs the pre-push hook that does this on every push of main. Details and
+the credentials it needs are in [`docs/build.md`](docs/build.md).
+
+## License
+
+MIT — see [LICENSE](LICENSE).
 
 [Prism](https://github.com/ethindp/prism) is **Mozilla Public License 2.0** and is statically
 linked into `X2Access.asi`. MPL-2.0 permits that combination and leaves this project's own
-sources untouched, but it is file-level copyleft: the source for Prism, including any change
+sources under MIT, but it is file-level copyleft: the source for Prism, including any change
 we make to its files, must stay available to anyone who receives the binary. We vendor it
 unmodified as the `deps/prism` submodule pinned to a published tag (`v0.17.3`), so the upstream
 repository is that source. Prism in turn bundles its own third-party code — see its `NOTICE`
 file.
+
+The companion mod is built with
+[X2ModBuildCommon](https://github.com/X2CommunityCore/X2ModBuildCommon) (MIT) against the
+[X2WOTC Community Highlander](https://github.com/X2CommunityCore/X2WOTCCommunityHighlander)
+(MIT); neither is bundled in the archive.
 
 XCOM 2 is a trademark of Take-Two Interactive. This is an unofficial fan project, not
 affiliated with or endorsed by Firaxis Games or 2K.
