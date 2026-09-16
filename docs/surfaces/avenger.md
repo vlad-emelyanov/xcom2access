@@ -505,6 +505,17 @@ database and post-mission loot. (`UIBlackMarket_Sell` is NOT in the family despi
   affordability channel (`RealizeBadState` sets `bIsBad` from `CanAffordItem`,
   `RealizeDisabledState` sets `bDisabled` from `MeetsItemReqs`/`IsItemPurchased`, both refreshed
   on every `PopulateData`).
+- ⛔ **The row's red says THAT it cannot be built; the card's red says WHICH cost item is short,
+  and nothing on the screen says it in words.** `GetStrategyCostString` wraps every item the HQ
+  cannot pay in `BAD_HTML_COLOR` and every other in `GOOD`, and `CleanText` strips the `<font>` on
+  the way to speech — so a Predator Armor short of six Trooper corpses read *"6 ADVENT Trooper
+  corpses, 150 Supplies, 20 Alien Alloys"* under a row saying *cannot afford*, which is the
+  sighted screen with the one fact that matters removed (screenshot, 2026-09-16). The companion
+  reads the red runs back off the string the game drew, by the game's own constant (the card's
+  `short` field), and the recipe speaks them as their own line after the full cost, trailed by
+  `Vocab::CommodityShortfall`. Same rule as the resources strip above: **read the colour before
+  cleaning** — and re-asking `CanAffordResourceCost` would have been a second opinion where the
+  card already holds the first.
 - ⛔ The list holds things that are NOT rows: `UIInventory_LootRecovered` interleaves
   `UIInventory_HeaderListItem` dividers, plain `UIPanel`s with no such bitfield — skipped by CLASS
   while keeping `i` as the index, so every remaining number equals the game's own.

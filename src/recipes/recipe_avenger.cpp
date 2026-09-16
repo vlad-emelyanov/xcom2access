@@ -711,11 +711,19 @@ void BuildCommodityTabs(GraphBuilder& b, const std::vector<WireRecord>& records)
 
 // One line of the card: the game's own caption joined to its value. AppendPhrase does the join,
 // so a caption the game already ends in a colon — "СТОИМОСТЬ:" is that shape — does not also
-// collect a comma.
-std::string ComposeCardLine(const WireRecord& card, const char* labelKey, const char* valueKey)
+// collect a comma. `word` is OUR caption for a line the game draws as colour alone, and it
+// TRAILS the value the way the row's state words trail its name.
+std::string ComposeCardLine(const WireRecord& card, const char* labelKey, const char* valueKey,
+    const char* word = nullptr)
 {
-    const std::string value = RecField(card, valueKey);
-    if (value.empty() || !labelKey)
+    std::string value = RecField(card, valueKey);
+    if (value.empty())
+        return value;
+    if (word) {
+        AppendPhrase(value, word);
+        return value;
+    }
+    if (!labelKey)
         return value;
     std::string line = RecField(card, labelKey);
     if (line.empty())
@@ -728,14 +736,20 @@ std::string ComposeCardLine(const WireRecord& card, const char* labelKey, const 
 void BuildCommodityCard(GraphBuilder& b, const WireRecord& card)
 {
     struct Line {
-        const char* label;
+        const char* label; // the game's own caption, a record field
         const char* value;
+        const char* word = nullptr; // our caption, for a line the game draws as COLOUR
     };
     // Order is the card's own: the title heads it, the cost block sits under the image, and the
     // description is last because it is the longest and the least decisive.
     const Line lines[] = {
         {nullptr, "title"},
         {"costLabel", "cost"},
+        // The cost items the game drew RED — the only place the card says which number is the
+        // one stopping the build, and a colour speech drops. Its own line right after the cost,
+        // so the whole cost is still heard as the game lists it and the reason follows; absent
+        // whenever nothing is red, which is exactly when the card has no reason to give.
+        {nullptr, "short", Vocab::CommodityShortfall},
         {"timeLabel", "time"},
         {nullptr, "req"},
         {nullptr, "desc"},
@@ -759,17 +773,17 @@ void BuildCommodityCard(GraphBuilder& b, const WireRecord& card)
         // old — so a Tab pressed hard on the heels of an arrow would otherwise describe the row
         // the player just left. The build-time text stays as the fallback, because a node that
         // has already earned a stop must never go silent.
-        std::string fallback = ComposeCardLine(card, line.label, line.value);
+        std::string fallback = ComposeCardLine(card, line.label, line.value, line.word);
         b.AddLabel(ControlId::Structural(std::string("commodity/card/") + line.value),
             [labelKey = std::string(line.label ? line.label : ""),
-                valueKey = std::string(line.value), fallback]() {
+                valueKey = std::string(line.value), word = line.word, fallback]() {
                 const std::vector<WireRecord>& fresh
                     = FetchCommodityWords(GameUI::ReadCommodity(gScreen));
                 const WireRecord* live = FindRecord(fresh, "card");
                 if (!live)
                     return fallback;
-                std::string text = ComposeCardLine(
-                    *live, labelKey.empty() ? nullptr : labelKey.c_str(), valueKey.c_str());
+                std::string text = ComposeCardLine(*live,
+                    labelKey.empty() ? nullptr : labelKey.c_str(), valueKey.c_str(), word);
                 return text.empty() ? fallback : text;
             });
     }

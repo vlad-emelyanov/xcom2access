@@ -197,6 +197,11 @@ inline constexpr const char* CommodityEmpty = "Nothing to choose here";
 inline constexpr const char* CommodityLeaveHint = "Escape to go back";
 inline constexpr const char* CommodityUnaffordable = "cannot afford";
 inline constexpr const char* CommodityOwned = "owned";
+/// The card's own answer to WHICH cost item is stopping the build: GetStrategyCostString draws
+/// the ones the HQ cannot pay in red and says nothing in words, so the companion reads them back
+/// off the colour (the `short` field) and this trails them as a line of their own, after the
+/// full cost. The row's bIsBad says the item is unaffordable; this says why.
+inline constexpr const char* CommodityShortfall = "not enough";
 /// The PCS picker's bIsBad (UIInventory_Implants.CanEquipImplant): the same red as the price
 /// tint elsewhere in the family, meaning a weaker implant of a stat already boosted, or a psi
 /// implant on a soldier who is not a psi operative. The game states neither in words.

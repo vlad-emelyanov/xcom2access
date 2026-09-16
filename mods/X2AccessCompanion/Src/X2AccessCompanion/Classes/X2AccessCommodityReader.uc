@@ -49,7 +49,8 @@ const FLD_SEP = "~:~";
 //   kind=header  title, subtitle
 //   kind=tab     index, label, selected, disabled     (UIInventory_BuildItems only)
 //   kind=row     index, name, qty, time, desc        (time and desc: class rows only)
-//   kind=card    title, costLabel, cost, timeLabel, time, req, desc
+//   kind=card    title, costLabel, cost, short, timeLabel, time, req, desc
+//                (short: the cost items the game drew red, i.e. the ones it cannot pay)
 //
 // The card describes the SELECTED row only, which is what the screen itself shows: the card is
 // repopulated by UIInventory.SelectedItemChanged on every selection move, so asking about
@@ -443,10 +444,39 @@ private function AddCostFields(UIInventory Screen, out string Rec,
 	{
 		AddField(Rec, "costLabel", Screen.ItemCard.m_strCostLabel);
 		AddField(Rec, "cost", FormatReq(Cost));
+		AddField(Rec, "short", FormatReq(Shortfall(Cost)));
 	}
 	AddField(Rec, "timeLabel", TimeLabel);
 	AddField(Rec, "time", Time);
 	AddField(Rec, "req", FormatReq(Requirements));
+}
+
+// The cost line's one channel speech drops. GetStrategyCostString wraps every item the HQ cannot
+// pay in BAD_HTML_COLOR and every other in GOOD, and that tint is the ONLY thing on the card
+// saying which of three numbers is the one stopping the build — there is no "missing" anywhere
+// in words, and native's CleanText strips the <font> on the way to speech, so the card read as
+// buildable on a row drawn red. Read back off the string the game drew, by the game's own
+// constant, never by re-asking the HQ: the card is the oracle here, this only translates it.
+private function string Shortfall(string Cost)
+{
+	local string Open, Close, Result;
+	local int OpenAt, CloseAt; // not Start/Stop: `Stop` is a state keyword and the compiler refuses it as a local
+
+	Open = "<font color='#" $ class'UIUtilities_Colors'.const.BAD_HTML_COLOR $ "'>";
+	Close = "</font>";
+
+	OpenAt = InStr(Cost, Open);
+	while (OpenAt != INDEX_NONE)
+	{
+		Cost = Mid(Cost, OpenAt + Len(Open));
+		CloseAt = InStr(Cost, Close);
+		if (CloseAt == INDEX_NONE)
+			break;
+		class'X2AccessHelper'.static.AppendComma(Result, Left(Cost, CloseAt));
+		Cost = Mid(Cost, CloseAt + Len(Close));
+		OpenAt = InStr(Cost, Open);
+	}
+	return Result;
 }
 
 // UIItemCard.FormatRequirements — the game's own comma-list tidying, applied to exactly the

@@ -521,6 +521,14 @@ confirmed in play):
   legal/attract screen, which stays readable with the option off; that is the branch that proves
   we mirror the flag rather than just the setting.
 
+- **The commodity card's shortfall line** (built 2026-09-16, `surfaces/avenger.md`, the
+  "row's red says THAT" bullet) — the `short` field and its "not enough" line have compiled and
+  never been heard. Walk it on Build Items with a row the game draws red: the card must read the
+  full cost, THEN a line naming only the red item(s) trailed by *not enough*, and a row drawn
+  green must produce no such line at all. The cheap distribution check is `grep -c "not enough"`
+  over `just dev-speech` against the number of red rows arrowed through — equal, or the parse is
+  matching the wrong colour constant.
+
 - ⛔ **The resource strip has NEVER RUN** (built 2026-09-03, `surfaces/avenger.md`). It is
   first-pass debt rather than a branch, and it is cheap to walk because the strip is on screen
   for most of the strategy layer. Four things to confirm, in order:
