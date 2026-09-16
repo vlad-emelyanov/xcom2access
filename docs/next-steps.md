@@ -62,22 +62,33 @@ the cheat manager's reinforcement call) exercises the drop. What to listen for:
    and names, and no `Enemy sighted:.` (an empty roster must return "" and never reach speech).
 
 **Inside / outside on the tile cursor** (2026-09-16, `X2AccessTileReader.DescribeIndoor`; rule
-in `surfaces/tactical.md` under the tile cursor) — built from `SrcOrig`, compiled clean,
-**never heard**. Gatecrasher's street has two-storey shops beside the start; walk the cursor
-through a doorway, up a floor, onto the roof and back out. What to listen for:
+in `surfaces/tactical.md` under the tile cursor) — heard once, on the Abandoned supply
+extraction plot, and measured against the cursor pawn's own `IndoorInfo` through the harness.
+What the run settled and what it left:
 
-1. Crossing the wall speaks `Inside building, floor 1 of N` ONCE, the next steps inside speak
-   nothing extra, and stepping out speaks `Outside` once. A line on every step means the
-   change detector is comparing something that moves (check `Found.Location`).
-2. Whether the roof band is a floor of the building: if standing on the roof says
-   `Building floor 3 of 3` for a two-storey shop, `Floors.Length` counts the roof and the
-   words should say so ("roof") — the game's own `IsOnRoof` is top floor of a multi-floor
-   building.
-3. Whether `EncompassesPoint` at the tile CENTER lands inside the floor volume of a ground
-   floor: a silent doorway means the test point is below the volume's bottom and needs to
-   move up, not that the walk is wrong.
-4. `just dev-props "cdo=X2AccessTileReader"` shows `LastIndoorState` — 2 while the cursor is
-   in a building, 1 outside — for a read that costs no keypress.
+1. ✅ Spoken once per crossing: `Down 8. Outside. …` on the step off the block, `Inside
+   building, floor 3 of 4` on the recenter, nothing extra on the steps inside. The reader's
+   floor agreed with `IndoorInfo.iCachedCurrentFloorNumber` (3) and its building with
+   `CurrentBuildingVolume`.
+2. ⛔ **The count is one too many on a modular block, and the fix is owed.** The soldier stood
+   in a walled third-storey room (screenshot) that the reader called `floor 3 of 4`. The
+   block is an `XComMegaBuildingVolume` (`pcp_16_AbandonedP_MegaBlock`), whose `Floors` are
+   three 256-unit storey bands (extent 128) plus a FOURTH band of extent 1096 spanning
+   784..2976 — the roof and the sky above it, `FloorNumber 4` on four `eFloor_Default`
+   volumes with no designer flag telling them from a storey (`m_bIsEmptyFloor`,
+   `m_bUseForBuildingReveal`, `m_FloorCursorUpperZFactor` all identical). A plain
+   `XComBuildingVolume` two-storey shop on the same plot has NO such band (two bands,
+   0..512), so it counts right. The engine's `IsOnRoof` is exactly "top band of a
+   multi-band building". What to build: treat a LAST band taller than two storeys
+   (`fExtent > CursorFloorHeight`, 256) as the roof — subtract it from the count and speak
+   `On roof` as its own state, so the cursor rising onto the block's roof says that instead
+   of `floor 4 of 4`, and stepping off it says `Outside`.
+3. Still unheard: whether `EncompassesPoint` at the tile CENTER lands inside a GROUND-floor
+   volume. The ground band starts 16 units up (`fCenterZ 144`, extent 128) and the tile
+   centre sits about 32 up, so it should; a silent doorway would say otherwise.
+4. ✅ `just dev-props "cdo=X2AccessTileReader"` shows `LastIndoorState` (2 inside, 1 outside)
+   for a read that costs no keypress; `just dev-props "instance=XCom3DCursor"` then
+   `ptr=` on its `IndoorInfo` is the game's answer to compare against.
 
 **The Skyranger-arrived prompt** (2026-09-14, `skyranger arrives` recipe in
 `recipes/recipe_strategy.cpp`, `GameUI::FindSkyrangerArrivesScreen`,
