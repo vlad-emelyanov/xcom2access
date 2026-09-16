@@ -17,24 +17,16 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 **Supply Extraction crates in the markers ring** (2026-09-16, `X2AccessObjectScanner.AddObjectiveMarkers`
 re-fetching each owner by ObjectID / `InteractiveMarkWords`; the `MissionIcon_` counter table in
 `objective_reader.cpp`; rules in `surfaces/tactical.md` under the object scanner and the objectives
-list). Third build. The first two were built on a theory about the crate's state and heard wrong
-twice (04:00 with three pickups, 11:02 with twelve: every crate still in the ring); the third is
-built on the harness measurement of the state itself — see the `FindComponentObject` rule — and is
-**unheard**. Any Supply Extraction mission exercises it. What to listen for:
+list). **Heard working 2026-09-16 11:36**: picked-up crates leave the ring, marked crates carry
+`marked`, and the counter reads `crates, 12 picked up, 0 available, 0 destroyed`. Still unheard,
+each needing a mission state this save never reached:
 
 1. `B` before anyone has marked anything: every crate reads `Objective: Advent Supply Crate` with
-   NO detail word. A `marked by ADVENT` on turn one means ADVENT's opening marks are real and the
-   material read works; a `marked` on an untouched crate means the material name test is matching
-   the crate's DEFAULT material and must be narrowed.
-2. Mark a crate: its entry gains `marked` on the next `B` press.
-3. After `Firebrand has picked up the crate`: the entry is GONE from the ring and the total drops by
-   one. On the 11:02 save (twelve picked up, objective complete) the ring must hold ONE entry — the
-   non-crate objective object 62771 that read `Objective: object, … 1 up` — not thirteen.
-4. `Ctrl+X`: the counter row reads `crates, 12 picked up, 0 available, 0 destroyed` with no
-   `CounterLabel` and no `MissionIcon` in it — heard exactly so at 11:13, this item is done. A crate
-   ADVENT's transport takes: watch which slot moves — if the lost slot's icon changes to
-   `MissionIcon_Advent`, that token needs a table entry (`taken by ADVENT`).
-5. A dead objective VIP (the unit branch had the same stale read): after the VIP dies, its entry
+   NO detail word. A `marked` on an untouched crate means the material name test is matching the
+   crate's DEFAULT material and must be narrowed; `marked by ADVENT` has never been heard at all.
+2. A crate ADVENT's transport takes: watch which counter slot moves — if the lost slot's icon
+   changes to `MissionIcon_Advent`, that token needs a table entry (`taken by ADVENT`).
+3. A dead objective VIP (the unit branch had the same stale read): after the VIP dies, its entry
    leaves the ring.
 
 **The pod reveal and the reinforcement drop** (2026-09-16, `X2AccessTacticalEvents.OnScamperBegin` /
