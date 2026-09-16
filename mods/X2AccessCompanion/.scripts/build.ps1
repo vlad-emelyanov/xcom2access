@@ -16,17 +16,52 @@ $builder = [BuildProject]::new("X2AccessCompanion", $srcDirectory, $sdkPath, $ga
 # (e.g. UIScreenStack.SubscribeToOnInputForScreen) at compile time.
 #
 # Per the Highlander README ("Building Against Highlander"), mods compile against
-# the WORKSHOP-published Highlander sources (workshop item 1134256495) — the
-# released version that matches the runtime HL the game actually loads. Do NOT
-# compile against the GitHub tree (deps/X2WOTCCommunityHighlander): its master is
-# an unreleased beta whose sources both diverge from the runtime and have broken
-# the SDK's mod-mode make commandlet (silent crash, diagnosed 2026-08-18).
+# the WORKSHOP-published Highlander sources — the released build that matches the
+# runtime HL the game actually loads. Do NOT compile against the GitHub tree
+# (deps/X2WOTCCommunityHighlander): its master is an unreleased beta whose sources
+# both diverge from the runtime and have broken the SDK's mod-mode make commandlet
+# (silent crash, diagnosed 2026-08-18). The WORKSHOP beta below is a different
+# thing — it is a published build with its own Src, and it is fine to build on.
+#
+# ⛔ PROBE THE CANDIDATE LIST, never one hardcoded id. Which Highlander a machine
+# has is a per-machine fact like the ASI loader's host DLL name, and the ids are not
+# interchangeable: the stable and the beta ship the same PACKAGE name
+# (X2WOTCCommunityHighlander) from different workshop folders, so a build that
+# insisted on one id simply stopped working the day the author switched
+# subscriptions (2026-09-16, mid-session: the stable's folder vanished between two
+# builds and the failure named a subscribe step that was already done). Set
+# XCOM2_HIGHLANDER_ID to pin one explicitly.
+#
+# ⚠ Both installed at once is REFUSED rather than guessed. They publish the same
+# package name, so the game itself cannot load both, and picking one here by order
+# would compile against sources that may not be the ones the runtime loads — the
+# silent-wrongness this whole file is arranged to avoid.
 $steamApps = Resolve-Path (Join-Path $gamePath "..\..\..")
-$hlSrc = Join-Path $steamApps "workshop\content\268500\1134256495\Src"
-if (-not (Test-Path (Join-Path $hlSrc "XComGame"))) {
-    ThrowFailure "Workshop Highlander sources not found at $hlSrc — subscribe to the Community Highlander (workshop id 1134256495)"
+$hlCandidates = [ordered]@{
+    "1134256495" = "Community Highlander (stable)"
+    "1796402257" = "Community Highlander (beta)"
 }
-$builder.IncludeSrc($hlSrc)
+if (-not [string]::IsNullOrEmpty($env:XCOM2_HIGHLANDER_ID)) {
+    $hlCandidates = [ordered]@{ $env:XCOM2_HIGHLANDER_ID = "Community Highlander (XCOM2_HIGHLANDER_ID)" }
+}
+$hlFound = @()
+foreach ($id in $hlCandidates.Keys) {
+    $dir = Join-Path $steamApps "workshop\content\268500\$id"
+    if (Test-Path (Join-Path $dir "Src\XComGame")) {
+        $hlFound += [pscustomobject]@{ Id = $id; Dir = $dir; Label = $hlCandidates[$id] }
+    }
+}
+if ($hlFound.Count -eq 0) {
+    ThrowFailure ("No workshop Highlander sources found under {0}\workshop\content\268500 (looked for {1}). Subscribe to the Community Highlander, or set XCOM2_HIGHLANDER_ID to the workshop id you use." `
+        -f $steamApps, ($hlCandidates.Keys -join ", "))
+}
+if ($hlFound.Count -gt 1) {
+    ThrowFailure ("More than one Community Highlander is installed ({0}). They publish the same package name, so which one the runtime loads is ambiguous — unsubscribe from one, or set XCOM2_HIGHLANDER_ID to the workshop id to build against." `
+        -f (($hlFound | ForEach-Object { "$($_.Id) $($_.Label)" }) -join "; "))
+}
+$hlDir = $hlFound[0].Dir
+Write-Host ("Building against {0}, workshop id {1}" -f $hlFound[0].Label, $hlFound[0].Id)
+$builder.IncludeSrc((Join-Path $hlDir "Src"))
 
 # Workaround: X2ModBuildCommon v1.2.1 _SetupUtils populates modScriptPackages
 # via Get-ChildItem -Directory, but the [string[]] typed field auto-stringifies
@@ -90,8 +125,10 @@ $builder.AddPreMakeHook({
 $modOptionsPath = Join-Path ([Environment]::GetFolderPath('MyDocuments')) `
     "My Games\XCOM2 War of the Chosen\XComGame\Config\XComModOptions.ini"
 $wantedMods = @("X2AccessCompanion")
-$hlWorkshop = Join-Path $steamApps "workshop\content\268500\1134256495\X2WOTCCommunityHighlander.XComMod"
-if (Test-Path $hlWorkshop) {
+# The same resolved folder the sources came from, so the ActiveMods entry can never name a
+# Highlander other than the one just compiled against. The package name is identical for both
+# workshop builds, which is exactly why the FOLDER is the thing that has to be resolved.
+if (Test-Path (Join-Path $hlDir "X2WOTCCommunityHighlander.XComMod")) {
     $wantedMods += "X2WOTCCommunityHighlander"
 }
 if (Test-Path $modOptionsPath) {

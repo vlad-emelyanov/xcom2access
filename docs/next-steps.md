@@ -961,3 +961,26 @@ a repeating announcement.
      answer one question differently — the shared-oracle rule.
    - The per-room "{pct}% unexplored" half of `rt-unexplored-frontier` waits for this; the frontier
      half shipped on its own as `world.unexplored` (live-run debt above).
+14. **Regenerate the SDK dump under the Highlander BETA.** The machine switched from the stable
+   Highlander to the beta on 2026-09-16 (`docs/build.md`, dependencies). The source-level check
+   there is reassuring — of the 139 classes `sdk_layout_checks.cpp` pins, the 47 the Highlander
+   patches have identical `var` blocks in both builds, and the beta's one real layout change
+   (`XComShell.bIsMusicPlaying`) is in a class we never read by offset — but it is not the
+   authoritative check and must not be mistaken for one.
+   ⛔ **The layout asserts cannot catch this today.** They pin hand-transcribed offsets against the
+   GENERATED SDK, and the generated SDK is still the STABLE Highlander's dump, so both sides of
+   every assert move together and a native rebuild passes no matter what the runtime does. The
+   asserts only become evidence once the dump is regenerated from a game running the beta — which
+   is exactly the rule in CLAUDE.md ("regenerate the SDK from a game running the same mod set the
+   players will run"), and the reason it exists.
+   Order: launch with the beta loaded, `just sdk-generate` / `sdk-adopt` (the recipe already refuses
+   a vanilla dump by testing `UIScreenStack.OnInputSubscribers`), then a native build. Any assert
+   that fires is a real transcription that moved.
+   ⚠ Distribution is a SEPARATE decision and is NOT answered by any of this: `ReadMe.txt`,
+   `tools/release.ps1:389` and the `.XComMod` description all still tell players to install workshop
+   **1134256495**, the stable. That stays correct only while the companion uses no beta-only API.
+   It uses none today — the four beta-patched classes it names (`UITacticalHUD_InfoPanel`,
+   `UITacticalHUD_ShotHUD`, `UITacticalHUD_ShotWings`, `X2CharacterTemplate`) are vanilla classes
+   whose var blocks the beta leaves alone — but building against the beta makes drifting into one
+   easy and silent. Re-check before the next release, or change what the notes ask players to
+   install.

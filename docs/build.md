@@ -119,15 +119,41 @@ on every push of main.
   **MinHook** (small, CMake-friendly, the game-modding standard), not MS Detours, and do not vendor a
   runtime assembler (AsmJit / Xbyak) — MinHook generates its own trampolines. The game ships
   Firaxis' own `EasyHook64.dll` but nothing loads it; it is vestigial and not for us.
-- `deps/X2WOTCCommunityHighlander` (submodule, pinned to `v1.31.0-release`) — pure UnrealScript, no
+- `deps/X2WOTCCommunityHighlander` (submodule, pinned to `v1.31.2-beta`) — pure UnrealScript, no
   native code. Compile-time include for the companion and the source of narration event hooks;
   declared as a runtime requirement in the README, the mod's ReadMe.txt and the .XComMod description.
-  The pin was chosen by DIFFING, not by trusting a tag: the workshop build installed here
-  (1134256495, what the game actually loads) ships its full `Src/`, and `v1.31.0-release` is the tag
-  whose tree matches it with ZERO differing files (the checkout had silently drifted 35 files ahead of
-  the runtime). When bumping the pin, re-run that check: workshop stable lags master by months, and
-  compiling against a newer CHL than the game loads means layouts and hooks that don't exist at
-  runtime.
+  The pin is chosen by DIFFING, not by trusting a tag: the workshop build installed here ships its
+  full `Src/`, and the pin is the tag whose tree matches it with ZERO differing files. When bumping
+  the pin, re-run that check — a workshop build can lag master by months, and compiling against a
+  newer CHL than the game loads means layouts and hooks that don't exist at runtime:
+  ```sh
+  git -C deps/X2WOTCCommunityHighlander archive <tag> X2WOTCCommunityHighlander/Src | tar -x -C <tmp>
+  diff -r --strip-trailing-cr <tmp>/X2WOTCCommunityHighlander/Src \
+      "<steamapps>/workshop/content/268500/<id>/Src"
+  ```
+  ⛔ `--strip-trailing-cr` is not optional: the workshop files are CRLF and git's blobs are LF, so a
+  plain `diff` reports every shared file as differing and the check silently proves nothing.
+  - ⛔ **WHICH workshop id is a per-machine fact — probe, never hardcode.** The stable (1134256495)
+    and the beta (1796402257) publish the SAME package name from different folders, so
+    `mods/X2AccessCompanion/.scripts/build.ps1` probes the candidate list, prints which it found,
+    and REFUSES if both are installed (the game cannot load both either). `XCOM2_HIGHLANDER_ID`
+    pins one. Hardcoding an id is what broke the build the day the author switched subscriptions
+    (2026-09-16, mid-session: the stable's folder vanished between two builds and the error named a
+    subscribe step that had already been done).
+  - **Switched stable → beta on 2026-09-16** (`v1.31.0-release` → `v1.31.2-beta`, workshop
+    1796402257; the beta tree matches that workshop item with zero differing files). The offset
+    surface was checked before the switch was accepted, since the Highlander's replacement packages
+    are what every class layout comes from: of the 139 classes `sdk_layout_checks.cpp` pins, **47
+    are Highlander-patched, and NOT ONE has a different `var` block between the two builds.**
+    `UIEventQueue` is newly patched by the beta but its var block is identical to vanilla's. Across
+    everything the beta adds, exactly one real layout change exists — `XComShell` gains
+    `bIsMusicPlaying` — and `XComShell` is not read by offset anywhere in `src/`. The two
+    photobooth cameras look changed and are not: the beta only drops their `private` keyword, same
+    types in the same order.
+    ⚠ That is a SOURCE-level comparison and it is not the authoritative one. The authority is a
+    regenerated dump under the beta plus a native rebuild, where the layout asserts turn any miss
+    into a build error — the asserts pin against the CURRENT generated SDK, which is still the
+    stable's dump, so rebuilding native today proves nothing about the beta (`docs/next-steps.md`).
   Note what "pure UnrealScript" means for us: the mod ships **replacement `XComGame.upk`, `Engine.upk`
   and `Core.upk`** (9.8 MB of recompiled script), so with it enabled every class layout comes from the
   Highlander's build. **Regenerate the SDK from a game running the same mod set the players will
