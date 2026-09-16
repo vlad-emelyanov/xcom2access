@@ -1763,7 +1763,7 @@ bool ClickButton(void* button)
     return CallNamedFunction(button, "Click", &params);
 }
 
-bool SendRowCommand(void* rowItem, int cmd)
+bool SendRowCommand(void* rowItem, int cmd, bool* handled)
 {
     // Direction commands act on the press phase, everything else on release (see the
     // kActionPress/kActionRelease comment).
@@ -1773,7 +1773,10 @@ bool SendRowCommand(void* rowItem, int cmd)
         int32_t Arg;
         uint32_t ReturnValue;
     } params{cmd, isDirection ? kActionPress : kActionRelease, 0};
-    return CallNamedFunction(rowItem, "OnUnrealCommand", &params);
+    const bool called = CallNamedFunction(rowItem, "OnUnrealCommand", &params);
+    if (handled)
+        *handled = called && (params.ReturnValue & 1) != 0;
+    return called;
 }
 
 bool SendScreenCommand(void* screen, int cmd)

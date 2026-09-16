@@ -48,7 +48,7 @@ const FLD_SEP = "~:~";
 // Records, in the order the recipe wants stops:
 //   kind=header  title, subtitle
 //   kind=tab     index, label, selected, disabled     (UIInventory_BuildItems only)
-//   kind=row     index, name, qty
+//   kind=row     index, name, qty, time, desc        (time and desc: class rows only)
 //   kind=card    title, costLabel, cost, timeLabel, time, req, desc
 //
 // The card describes the SELECTED row only, which is what the screen itself shows: the card is
@@ -169,6 +169,18 @@ private function AppendRows(UIInventory Screen)
 			&& !ClassIsChildOf(Screen.Class, class'UISimpleCommodityScreen'))
 		{
 			AddField(Rec, "qty", string(Row.Quantity));
+		}
+
+		// UIInventory_ClassListItem — the psi ability picker's and the class picker's row — is
+		// the one row of the family that draws MORE than a name: its PopulateData pushes the
+		// icon, the title, the training time and the whole description into Flash, and both
+		// screens hide the item card at init, so nothing else on screen carries those two facts.
+		// The strings are exactly the row's own — the same formatter, the same struct field.
+		if (UIInventory_ClassListItem(Row) != none)
+		{
+			AddField(Rec, "time",
+				class'UIUtilities_Text'.static.GetTimeRemainingString(Row.ItemComodity.OrderHours));
+			AddField(Rec, "desc", Row.ItemComodity.Desc);
 		}
 
 		Emit(Rec);

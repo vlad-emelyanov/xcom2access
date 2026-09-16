@@ -800,6 +800,15 @@ std::unique_ptr<GraphRender> BuildCommodity()
         if (!qty.empty())
             AppendPhrase(label, qty + " " + Vocab::CommodityOwned);
 
+        // The class row (psi ability picker, class picker) draws its training time in that same
+        // right-hand column — short, decisive, on the line. Its description is a paragraph the
+        // row draws underneath, and the card those screens hide would otherwise have carried
+        // it; that goes behind Space, where every other description on the Avenger lives.
+        const std::string time = RecField(rec, "time");
+        if (!time.empty())
+            AppendPhrase(label, time);
+        const std::string desc = RecField(rec, "desc");
+
         // Native's flags and the companion's words are matched on the GAME's list index, which
         // both halves stamp independently — so a row either half skipped cannot silently shift
         // every entry after it.
@@ -839,6 +848,9 @@ std::unique_ptr<GraphRender> BuildCommodity()
                 vt.Announcements.back().Kind = kKindAttention;
             }
         }
+
+        if (!desc.empty())
+            vt.OnTooltip = [desc]() { TTS::Speak(desc); };
 
         // Activation is offered even on a disabled row, unlike the room menu's. These screens
         // disagree about what disabled means — UIInventory_Implants greys an implant it will

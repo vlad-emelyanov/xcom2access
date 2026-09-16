@@ -158,8 +158,11 @@ inline constexpr int kCmdButtonA = 300;
 inline constexpr int kCmdButtonY = 303;
 
 /// Feed one input command to a row (UIMechaListItem.OnUnrealCommand with the release action —
-/// the phase the game's own handlers act on). Game thread only.
-bool SendRowCommand(void* rowItem, int cmd);
+/// the phase the game's own handlers act on). Game thread only. The return is whether the CALL
+/// went through; `handled`, when asked for, is the game's own answer — OnUnrealCommand's
+/// bHandled — which is the only way to tell a consumed Enter from one the game's routing
+/// dropped on the floor (the commodity family's two class-row screens do exactly that).
+bool SendRowCommand(void* rowItem, int cmd, bool* handled = nullptr);
 
 /// Hand a SCREEN one of its own input commands. Identical to SendRowCommand — a UIScreen's
 /// OnUnrealCommand has the same signature as a row's — but named separately because the intent

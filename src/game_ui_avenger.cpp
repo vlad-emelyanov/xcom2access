@@ -1196,7 +1196,26 @@ bool ActivateCommodityRow(const CommodityView& view, const CommodityRow& row)
     // disagree about what disabled MEANS (UIInventory_Implants greys an implant it will still
     // let you inspect), so the refusal stays theirs, where it can be right.
     SetListIndex(view.list, row.index);
-    return SendRowCommand(view.screen, kCmdEnter);
+    bool handled = false;
+    if (!SendRowCommand(view.screen, kCmdEnter, &handled))
+        return false;
+    if (handled)
+        return true;
+
+    // ⛔ The screen said it did NOT handle Enter — and on two screens of the family that is the
+    // game's own keyboard bug, not a refusal. UIChoosePsiAbility.InitScreen and
+    // UIChooseClass.InitScreen both call Navigator.SetSelected(List) on the SCREEN's navigator,
+    // whose navigables are the header and ListContainer, not the list; UINavigator.SetSelected
+    // answers an unknown control by setting SelectedIndex to -1, so from then on the screen's
+    // Enter reaches GetSelected() == none and falls through to nothing (live: the psi picker's
+    // navigator read -1 with the list selected and focused). Vanilla keyboard players cannot
+    // press Enter there either — the controller survives only through the FXS_BUTTON_A hatch in
+    // UISimpleCommodityScreen.OnUnrealCommand, which is `ISCONTROLLERACTIVE-gated. So we resume
+    // the game's own routing one hop below the break: the list, which answers Enter by handing
+    // it to the selected row, whose confirm click fires OnItemDoubleClicked → OnPurchaseClicked.
+    // Gated on the game's answer rather than on class, so a screen that handles its Enter
+    // (LootRecovered's close, every purchase that went through) never gets a second one.
+    return SendRowCommand(view.list, kCmdEnter);
 }
 
 bool SwitchCommodityTab(const CommodityView& view, int tab)

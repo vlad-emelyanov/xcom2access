@@ -483,6 +483,24 @@ database and post-mission loot. (`UIBlackMarket_Sell` is NOT in the family despi
   tech shows **no time**, so a researched tech must not keep advertising a duration; and `bTech`
   picks a DIFFERENT requirement formatter — `GetTechReqString` folds the cost's own science and
   engineering scores into the sentence and `GetStrategyReqString` never sees them.
+- ⛔ **Two screens have a row that draws more than a name, and hide the card.** `UIChoosePsiAbility`
+  and `UIChooseClass` spawn `UIInventory_ClassListItem`, whose `PopulateData` pushes icon, title,
+  training time AND the whole description into Flash, and both call `ItemCard.Hide()` at init —
+  so the card record is correctly absent and the row is the only place those facts exist. A
+  player picked a psi ability by name alone until the row record grew `time` (on the line, the
+  right-hand column) and `desc` (behind Space, where every other Avenger description lives).
+  The test that would have caught it: a row class the family's base never spawns.
+- ⛔ **The same two screens have a DEAD keyboard Enter in vanilla, and the fix is gated on the
+  game's answer, not on class.** Their `InitScreen` calls `Navigator.SetSelected(List)` on the
+  SCREEN's navigator, whose navigables are the header and `ListContainer` — `UINavigator.SetSelected`
+  answers an unknown control with `SelectedIndex = -1`, so the screen's Enter reaches
+  `GetSelected() == none` and falls through (live: `-1` with the list selected and focused). The
+  controller survives through the `ISCONTROLLERACTIVE`-gated `FXS_BUTTON_A` hatch in
+  `UISimpleCommodityScreen.OnUnrealCommand`; the keyboard has none. `ActivateCommodityRow` reads
+  `OnUnrealCommand`'s own `bHandled` and, only when the screen says no, resumes the routing one
+  hop below the break at the LIST — so LootRecovered's close and every purchase that went through
+  never see a second Enter. There is no separate stop for the row's green confirm button: it is
+  the selected row's own action, and Enter on the row is what presses it.
 - What native DOES read is the part it should — the row colour bits at 0x414, the whole
   affordability channel (`RealizeBadState` sets `bIsBad` from `CanAffordItem`,
   `RealizeDisabledState` sets `bDisabled` from `MeetsItemReqs`/`IsItemPurchased`, both refreshed
