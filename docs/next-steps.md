@@ -61,34 +61,48 @@ confirmed the cursor half by ear. Three things remain unheard:
 
 **The `world.exits` ring on `V`** (2026-09-16, `X2AccessObjectScanner.AddExits` / `AddThresholdEdge`
 / `CAT_EXITS`; the `V` and `Shift+V` claims in `object_scanner.cpp`; rules in `surfaces/tactical.md`
-under the object scanner, recon in `rooms-recon.md` §4/§9). Both halves compile clean; **never
-heard**. What to listen for, in order of what would be most embarrassing to ship:
+under the object scanner, recon in `rooms-recon.md` §4/§9). **Driven live 2026-09-16 through
+`/call`** on a prison map (VIP-capture, 8 soldiers) — the MODEL is exercised and correct; the `V`
+KEY itself is still unpressed. What the run settled and what it did not:
 
-1. ⚠ **Is the ring FULL OF DOORS?** The sweep is 12 tiles in every direction and a building
-   interior can hold a dozen. `EXIT_MAX` caps at 12 and the cap is distance-sorted, so the failure
-   is not a wrong answer but a USELESS one — "Door, 1 of 12" twelve times with no way to tell them
-   apart, because `InteractiveLabel` gives every plain door the same words. If that is what it
-   sounds like, the fix is a tighter radius or a same-room filter, and the same-room filter is the
-   partition — i.e. it would put §8.6 back on the critical path after all.
-2. **The dropped count.** `grep 'exits sweep dropped' Launch.log` after a run. This is the number
-   that decides whether unnameable destructible thresholds (windows, fences, cars — indistinguishable
-   from each other, see item 13) are worth a generic word or are correctly silent. A count near
-   zero means the question is moot; a count in the dozens means the ring is hiding most of what is
-   in the walls around you.
-3. **Do the ramps and ladders agree with `world.connectors`?** They come from `AddConnectors`
-   verbatim, so they must be the SAME tiles at the SAME bearings. Step `V` and then the ring to
-   `Level connectors` and compare — a disagreement means the shared-contributor claim is false and
-   something re-sweeps.
-4. **A door that `objects.interact` does NOT list** (already open, or with no live interaction) —
-   this is the ring's genuinely new content and the reason it is not just two old rings joined. If
-   every `V` entry also appears under `Objects`, the ring has earned nothing but a sort order.
-5. `/` on an exit must plant the cursor ON the near side of the door, not through it — the spoken
-   tile is the nearer end of the edge, and getting that backwards would send Backspace walking to
+- ✅ **The edge query works and gives the game's own words.** Planted beside a cell door:
+  `Дверь камеры, 3 tiles, 1 south, 3 west, out of range, 2 of 7`. That label came off the EDGE via
+  `GetPathObjectFromTraversalToNeighbor` → `XComInteractiveLevelActor` → the state object — no
+  proximity guess, which is the thing RT never had (`rooms-recon.md` §4).
+- ✅ **Not full of doors.** Seven entries inside a building: two doors, five ladders. The worry that
+  `EXIT_MAX` would fill with indistinguishable `Door` lines did not happen here. ⚠ The two doors
+  DID share a name (`Дверь камеры` twice), navigable at two by bearing and distance; a cell block
+  with eight would not be. Unsettled.
+- ✅ **Cost is a non-issue.** Medians over 5 calls each, through the harness: enemies 52 ms,
+  connectors 43 ms, **exits 45 ms**, frontier 49 ms. All four sit on the HTTP + game-thread-queue
+  floor, so the ~1250 `GetPathObjectFromTraversalToNeighbor` calls cost nothing detectable and the
+  radius is NOT cost-constrained. (Bounded above only — the round trip hides anything under ~20 ms.)
+- ✅ **Nothing is being silently dropped.** `Dropped` was 0 on every sweep, indoors included: the
+  query never returned a plain `XComDestructibleActor` in ~1250 edges. So the unnameable
+  window/fence/car problem is theoretical so far — and it hints the query may return ONLY
+  interactive actors, which would make §4's window row unreachable for a second reason.
+- ❌ **THE REAL FAILURE, and it is the overlap, not the doors.** From the squad's own position the
+  ring was **8 of 8 LADDERS** — `world.exits` was `world.connectors` under another name, because
+  the nearest door on that map is 43 tiles away and the threshold sweep only reaches 12. On a
+  door-poor map `V` currently buys nothing over `Ctrl+PageDown` to the connectors ring.
+  - Cost says the radius can be raised freely, and that is the cheap fix — but a door 43 tiles away
+    is not "the way out of this room" either, and the thing that would know the difference is the
+    ROOM PARTITION (item 13, §8.6). **This run is the first real evidence FOR the partition rather
+    than against it.**
+  - ⛔ Do not redesign off one map. What is needed is the same ring on a door-dense plot (a city
+    block, an ADVENT facility) before deciding between a wider radius, a kind-first sort, and
+    waiting for §8.6.
+
+Still unheard, and needing the KEY rather than `/call`:
+
+1. `V` and `Shift+V` actually reaching the handler in world mode, and Interact still working at
+   `Ctrl+V` (the leniency bargain — never verified for this key).
+2. `/` on an exit must plant the cursor ON the near side of the door, not through it — the spoken
+   tile is the nearer end of the edge, and getting that backwards would send Backspace walking into
    the far room.
-6. ⚠ **Cost, unmeasured.** ~625 `TileSeen` + ~1250 `GetPathObjectFromTraversalToNeighbor` per
-   press, on top of `AddConnectors`' ~1900. The path-object query is the unknown — it is the only
-   one of the three that is not a flag lookup, and nothing has ever called it 1250 times in a
-   frame. If `V` is audibly slower than `J`, this is why.
+3. **A door that `objects.interact` does NOT list** (already open, or with no live interaction).
+   This is the ring's genuinely new content and the reason it is not just two old rings joined. On
+   the prison map the one door in both rings was the same cell door, so this is unproven.
 
 **Supply Extraction crates in the markers ring** (2026-09-16, `X2AccessObjectScanner.AddObjectiveMarkers`
 re-fetching each owner by ObjectID / `InteractiveMarkWords`; the `MissionIcon_` counter table in

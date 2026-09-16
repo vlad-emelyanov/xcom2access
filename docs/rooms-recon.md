@@ -392,6 +392,15 @@ is what a room boundary is made of. A `!` pair marks an obstacle tile between th
     (`surfaces/tactical.md`), but it means the exits ring's genuinely NEW content is the doors
     `objects.interact` misses — the open ones, the ones with no live interaction — plus the
     framing and the sort. Worth knowing before judging the live run.
+  - ❌ **And the overlap is what bit, on the very first live run** (2026-09-16, prison map, driven
+    through `/call`). From the squad's position the ring read **8 of 8 ladders** — `world.exits`
+    was `world.connectors` under another name, because the nearest door was 43 tiles off and the
+    threshold sweep reaches 12. The model is right (planted beside that door it named it, in the
+    player's own language, off the edge); the SCOPE is what has no answer without a room.
+    **So this section's fallback works and is thinner than it promised**, and the run is the first
+    evidence FOR the partition rather than against it: a door 43 tiles away is not "the way out of
+    this room", and only a partition knows the difference. Cost is not the obstacle — the sweep
+    measured indistinguishable from the cheapest category in the scanner (`next-steps.md`).
 - **Cost.** A per-level partition per keypress on an 80×80×12 map, on top of the frontier sweep.
 - **Procedural parcels.** XCOM 2 assembles maps from parcels at runtime; a "room" that straddles a
   parcel seam may be shaped in ways a hand-authored level never would be. Unknown until §8.6.
