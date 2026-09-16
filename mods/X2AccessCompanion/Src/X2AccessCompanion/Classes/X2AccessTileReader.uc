@@ -57,10 +57,11 @@ var int PlantedMissionID;
 var bool bMovePending;
 var TTile PendingMoveTile;
 
-// The floor value the player last heard (or our own code last set), CursorFloorPoll's change
+// The floor LEVEL the player last heard (or our own code last set), CursorFloorPoll's change
 // detector. -1 until the first observation. The game's m_iRequestedFloor is the truth; this
 // only remembers what was spoken, so external changes — the mouse wheel, the game re-flooring
-// on a soldier switch — announce exactly once. Every SetCursorTile adopts it silently.
+// on a soldier switch — announce exactly once. Every SetCursorTile adopts it silently. The
+// level is a CEILING the cursor lands under, never a floor it is pinned to (LandingTile).
 var int LastSpokenFloor;
 
 // What the player last heard about buildings — DescribeIndoor's change detector, so "Inside
@@ -108,25 +109,29 @@ function CursorStep(int Cardinal)
 		return;
 	}
 
-	// Follow the terrain: resolve the target column's floor near the current height. When
-	// there is no floor to resolve (a wall interior, a pit), the tile is visited at the
-	// current level anyway — it reads "Impassable" rather than blocking the survey.
-	ResolveFloor(WorldData, Target);
+	// Land where the mouse would: the highest surface of the target column at or below the
+	// current floor level (LandingTile). Off a roof edge that is the ground, four tiles down;
+	// up a slope it is the next tile up. The height change is spoken, since a sighted player
+	// watches the cursor take it.
+	Target = LandingTile(Cursor, WorldData, Target.X, Target.Y, Cursor.m_iRequestedFloor);
 
+	NativeResult = HeightWord(CurZ, Target.Z);
 	SetCursorTile(Cursor, WorldData, Target);
-	NativeResult = DescribeIndoor(WorldData, Target, false);
+	AppendPart(NativeResult, DescribeIndoor(WorldData, Target, false));
 	AppendPart(NativeResult, DescribeTile(Target, false));
 }
 
-// Step one floor level up (+1) or down (-1) by driving the game's OWN floor verbs — the same
+// Step the floor LEVEL up (+1) or down (-1) by driving the game's OWN floor verbs — the same
 // AscendFloor/DescendFloor the mouse wheel and the controller D-pad call. The floor is shared,
 // load-bearing state with four consumers (the camera band, the building cutaway, WorldCascadeZ,
 // and the pathing pawn's MaxZ destination clamp, XComPathingPawn:991), so an invented per-column
 // Z hop that bypassed it left the pawn refusing tiles the reachable cache called Dash (live
 // 2026-08-31, the evac-zone roof). One press = one 4-tile band, the game's own granularity.
-// After the game accepts the change, land our cursor in the new band of the current column and
-// read it out; the only refusal in X2 is the game's own top/bottom clamp (DisableFloorChanges
-// is hardwired false).
+// The level is a CEILING, not a target (LandingTile): after the game accepts the change the
+// cursor re-lands on the highest surface of its column at or below the new level, which on open
+// ground means it does not move at all and only the camera band does — exactly what a sighted
+// player sees the wheel do. The only refusal in X2 is the game's own top/bottom clamp
+// (DisableFloorChanges is hardwired false).
 function CursorFloor(int Delta)
 {
 	local XComTacticalController TC;
@@ -158,20 +163,21 @@ function CursorFloor(int Delta)
 		return;
 	}
 
-	Target = FloorBandTile(Cursor, WorldData, Cursor.m_iRequestedFloor);
-	SetCursorTile(Cursor, WorldData, Target);
+	Target = LandingTile(Cursor, WorldData, CurX, CurY, Cursor.m_iRequestedFloor);
 	NativeResult = FloorWord(Cursor) $ ".";
+	AppendPart(NativeResult, HeightWord(CurZ, Target.Z));
+	SetCursorTile(Cursor, WorldData, Target);
 	AppendPart(NativeResult, DescribeIndoor(WorldData, Target, false));
 	AppendPart(NativeResult, DescribeTile(Target, false));
 }
 
 // Passive poll — native calls this on its tick while the tile cursor owns world mode. When the
 // game's floor changed OUTSIDE our own pushes (the mouse wheel, the game re-flooring on a
-// soldier switch via MoveToUnit's GetIdealPawnFloor), speak it and pull the planted cursor into
-// the new band, so the game's floor and our cursor can never stay diverged — the exact
-// contradiction the pathing clamp punishes. Our own writes adopt LastSpokenFloor inside
-// SetCursorTile and never echo here. Before the cursor is planted there is nothing to sync,
-// and announcing the game's own camera housekeeping would be noise: adopt silently.
+// soldier switch via MoveToUnit's GetIdealPawnFloor), speak it and re-land the planted cursor
+// under the new ceiling, so the cursor can never sit above the level the pathing clamp keys on.
+// Our own writes adopt LastSpokenFloor inside SetCursorTile and never echo here. Before the
+// cursor is planted there is nothing to sync, and announcing the game's own camera housekeeping
+// would be noise: adopt silently.
 function CursorFloorPoll()
 {
 	local XComTacticalController TC;
@@ -191,9 +197,10 @@ function CursorFloorPoll()
 	}
 
 	bMovePending = false;
-	Target = FloorBandTile(Cursor, WorldData, Cursor.m_iRequestedFloor);
-	SetCursorTile(Cursor, WorldData, Target);
+	Target = LandingTile(Cursor, WorldData, CurX, CurY, Cursor.m_iRequestedFloor);
 	NativeResult = FloorWord(Cursor) $ ".";
+	AppendPart(NativeResult, HeightWord(CurZ, Target.Z));
+	SetCursorTile(Cursor, WorldData, Target);
 	AppendPart(NativeResult, DescribeIndoor(WorldData, Target, false));
 	AppendPart(NativeResult, DescribeTile(Target, false));
 }
@@ -220,12 +227,13 @@ function CursorRecenter()
 		NativeResult = "No unit selected";
 		return;
 	}
+	NativeResult = AdoptFloor(Cursor, WorldData, UnitState.TileLocation);
 	SetCursorTile(Cursor, WorldData, UnitState.TileLocation);
 
 	// No name prefix: DescribeTile's own DescribeUnitsOnTile leads with "Ally: <name>" for the
 	// unit standing here, which on a recenter is always this one. Prefixing it said the name
 	// three times in one line ("Shreya Bose. Ally: Shreya Bose. ... At Shreya Bose").
-	NativeResult = DescribeIndoor(WorldData, UnitState.TileLocation, false);
+	AppendPart(NativeResult, DescribeIndoor(WorldData, UnitState.TileLocation, false));
 	AppendPart(NativeResult, DescribeTile(UnitState.TileLocation, false));
 }
 
@@ -395,7 +403,6 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 	local FOWTileStatus FOW;
 	local byte GameplayFlags;
 	local bool bImpassable;
-	local int LedgeDrop;
 
 	WorldData = `XWORLD;
 	TilePos = WorldData.GetPositionFromTileCoordinates(Tile);
@@ -415,22 +422,12 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 
 	// Occupied is not impassable: a tile with a live unit on it fails CanUnitsEnterTile, and
 	// speaking "Impassable" over an ally read as a bug in the first live test.
+	// A drop is no longer a kind of impassable tile: the cursor follows the ground off a roof
+	// edge (LandingTile) and the step speaks the height it took (HeightWord), so the tile this
+	// describes is always a surface, and Impassable means a wall or an object on it.
 	bImpassable = (UnitPart == "" && !WorldData.CanUnitsEnterTile(Tile));
 	if (bImpassable)
-	{
-		// A LEDGE outranks "Impassable", because the two are not the same fact and only one of
-		// them is what a sighted player sees. Sweeping the cursor off a roof, a catwalk or the
-		// top of a container lands on a tile with no floor at this Z and open air below it — the
-		// railing a sighted player is looking at. "Impassable" describes that identically to a
-		// wall, which is exactly the information a blind player most needs to tell apart.
-		// Ported from WrathAccess's grid.edge_drop (Pathfinder: WotR), which has to infer the
-		// drop from a physics linecast plus a navmesh-validity test; XCOM answers it outright.
-		LedgeDrop = LedgeDepth(WorldData, Tile);
-		if (LedgeDrop > 0)
-			AppendPart(Result, "Ledge," @ string(LedgeDrop) @ "down");
-		else
-			AppendPart(Result, "Impassable");
-	}
+		AppendPart(Result, "Impassable");
 	AppendPart(Result, UnitPart);
 
 	AppendPart(Result, DescribeInteractives(Tile));
@@ -1053,8 +1050,9 @@ private function bool EnsurePlanted(XComTacticalController TC, XCom3DCursor Curs
 	bMovePending = false;
 	LastIndoorState = 0;
 
-	SetCursorTile(Cursor, WorldData, UnitState.TileLocation);
 	NativeResult = "Cursor on.";
+	AppendPart(NativeResult, AdoptFloor(Cursor, WorldData, UnitState.TileLocation));
+	SetCursorTile(Cursor, WorldData, UnitState.TileLocation);
 	AppendPart(NativeResult, DescribeIndoor(WorldData, UnitState.TileLocation, false));
 	AppendPart(NativeResult, DescribeTile(UnitState.TileLocation, false));
 	return true;
@@ -1094,8 +1092,9 @@ function CursorGoToMarker()
 	PlantedMissionID = CurrentMissionID();
 	bMovePending = false;
 	LastIndoorState = 0;
-	SetCursorTile(Cursor, WorldData, Target);
 	NativeResult = "Cursor.";
+	AppendPart(NativeResult, AdoptFloor(Cursor, WorldData, Target));
+	SetCursorTile(Cursor, WorldData, Target);
 	AppendPart(NativeResult, DescribeIndoor(WorldData, Target, false));
 	AppendPart(NativeResult, DescribeTile(Target, false));
 }
@@ -1132,21 +1131,39 @@ private function SetCursorTile(XCom3DCursor Cursor, XComWorldData WorldData, TTi
 	Cursor.m_fMaxChainedDistance = 0;
 	Cursor.m_fMinChainedDistance = 0;
 	Pos = WorldData.GetPositionFromTileCoordinates(Tile);
-	// The FLOOR STATE has to travel with the position. XComPathingPawn:991 caps its
-	// destination search at m_iRequestedFloor's ceiling whenever the cursor is inside a
-	// building volume, so a push onto a roof with the floor state still at ground makes the
-	// pawn clamp to a lower tile and the move key refuse a tile the reachable cache itself
-	// calls Dash (measured live 2026-08-31: cursor at Z=13, pawn destination Z=9,
-	// m_iRequestedFloor 1). No mouse player can produce that contradiction — the cutaway
-	// hides a roof until camera-level-up raises the floor. The field write alone is only half
-	// the sync: CursorSnapToFloor is what derives the camera band, the building-cutdown height
-	// and the effective floor from m_iRequestedFloor — on the mouse cursor it moves nothing
-	// (XCom3DCursorMouse:11). The exact position is pushed LAST, so a base-class snap (which
-	// does move the cursor) could never displace the tile the reader spoke.
-	Cursor.m_iRequestedFloor = Cursor.WorldZToFloor(Pos);
+	// The floor LEVEL (m_iRequestedFloor) is not written here. It is a ceiling the caller has
+	// already honoured — LandingTile never picks a surface above it while one exists at or
+	// below — and XComPathingPawn:991 caps its destination search at that ceiling whenever the
+	// cursor is inside a building volume, so a cursor ABOVE it is the one contradiction the pawn
+	// punishes (measured live 2026-08-31: cursor at Z=13, pawn destination Z=9, level 1, the
+	// move key refusing a tile the reachable cache itself called Dash). A cursor below the
+	// level is what a mouse player produces every time they hover the ground with the wheel
+	// left on a roof, and the pawn accepts it. The level moves only where the game's own moves
+	// it: the floor keys (AscendFloor/DescendFloor), a soldier switch, and an explicit jump
+	// (AdoptFloor). CursorSnapToFloor is still called so the camera band, the building-cutdown
+	// height and the effective floor are re-derived from the level — on the mouse cursor it
+	// moves nothing (XCom3DCursorMouse:11). The exact position is pushed LAST, so a base-class
+	// snap (which does move the cursor) could never displace the tile the reader spoke.
 	Cursor.CursorSnapToFloor(Cursor.m_iRequestedFloor, eCursorSearch_ExactFloor);
 	LastSpokenFloor = Cursor.m_iRequestedFloor;
 	Cursor.CursorSetLocation(Pos, false, false);
+}
+
+// An explicit jump — plant, recenter, the scanner marker — adopts the target tile's own floor
+// as the level, the way the game's own soldier switch does (CursorMode_NoCollision.Reset →
+// GetIdealPawnFloor), so a marker on a roof is reachable without a floor key first. Returns the
+// spoken level when it changed, "" otherwise: a silently moved ceiling would make the next
+// step's landing unexplainable. Called BEFORE SetCursorTile, which re-derives the camera band
+// from the level.
+private function string AdoptFloor(XCom3DCursor Cursor, XComWorldData WorldData, TTile Tile)
+{
+	local int NewFloor;
+
+	NewFloor = Cursor.WorldZToFloor(WorldData.GetPositionFromTileCoordinates(Tile));
+	if (NewFloor == Cursor.m_iRequestedFloor)
+		return "";
+	Cursor.m_iRequestedFloor = NewFloor;
+	return FloorWord(Cursor) $ ".";
 }
 
 private function TTile CurTile()
@@ -1159,42 +1176,61 @@ private function TTile CurTile()
 	return T;
 }
 
-// The tile our cursor should occupy in floor band FloorIdx of the current column: the lowest
-// tile of the band with a real floor (the walking surface of that level), else the band's
-// lowest tile, left hanging — which reads as a ledge or impassable, the honest answer for a
-// level this column has nothing on, and the same "feel the edge" rule stepping off a roof
-// follows. Band membership is asked of the engine (WorldZToFloor) per tile rather than derived
-// from the 4-tiles-per-band constant, so a map with an offset ground plane cannot skew it.
-private function TTile FloorBandTile(XCom3DCursor Cursor, XComWorldData WorldData, int FloorIdx)
+// The tile the cursor lands on in column (X, Y) with the floor level at FloorIdx — the mouse
+// trace's rule, transcribed from XComTacticalHUD.GetMouseInteractionInterface: of every surface
+// the pick ray crosses it keeps "the first actor that is at or below the requested floor, unless
+// there are no hits below our requested floor, in which case we take the lowest floor above".
+// So the level is a CEILING: with the wheel left on a roof, hovering open ground picks the
+// ground, a shed picks its roof, a three-storey block picks its second floor. The same three
+// answers here — the highest floor tile whose band is at or below the level, else the lowest
+// floor tile above it (the move key will refuse that one as the pawn clamps it, as it does for
+// a mouse player), else, for a column with no surface at all, the current height, left hanging
+// so it reads Impassable. Band membership is asked of the engine (WorldZToFloor) per tile
+// rather than derived from the 4-tiles-per-band constant, so a map with an offset ground plane
+// cannot skew it.
+private function TTile LandingTile(XCom3DCursor Cursor, XComWorldData WorldData, int X, int Y,
+	int FloorIdx)
 {
-	local TTile T, FirstInBand;
-	local bool bFoundBand;
-	local int Z;
+	local TTile T;
+	local int Z, BestBelow, BestAbove;
 
-	T.X = CurX;
-	T.Y = CurY;
+	BestBelow = -1;
+	BestAbove = -1;
+	T.X = X;
+	T.Y = Y;
 	for (Z = 0; Z < WorldData.NumZ; Z++)
 	{
 		T.Z = Z;
-		if (Cursor.WorldZToFloor(WorldData.GetPositionFromTileCoordinates(T)) != FloorIdx)
-		{
-			if (bFoundBand)
-				break; // past the band's top — bands are contiguous in Z
+		if (!WorldData.IsFloorTile(T))
 			continue;
-		}
-		if (!bFoundBand)
+		if (Cursor.WorldZToFloor(WorldData.GetPositionFromTileCoordinates(T)) <= FloorIdx)
+			BestBelow = Z; // rising Z, so the last hit is the highest at or below
+		else
 		{
-			bFoundBand = true;
-			FirstInBand = T;
+			BestAbove = Z; // the first hit above is the lowest above
+			break;
 		}
-		if (WorldData.IsFloorTile(T))
-			return T;
 	}
-	if (bFoundBand)
-		return FirstInBand;
-	// The requested band holds no tile of this map at all (asked above NumZ); stay put.
-	T.Z = Clamp(CurZ, 0, WorldData.NumZ - 1);
+	if (BestBelow >= 0)
+		T.Z = BestBelow;
+	else if (BestAbove >= 0)
+		T.Z = BestAbove;
+	else
+		T.Z = Clamp(CurZ, 0, WorldData.NumZ - 1);
 	return T;
+}
+
+// The height change a step or a floor key made the cursor take, in tiles — "Up 1" for a stair,
+// "Down 4" off a roof onto the ground, "" for none. A sighted player watches the cursor drop; a
+// blind one hears it, and this is the whole cue that an edge was crossed now that the cursor
+// follows the ground instead of hanging over the drop.
+private static function string HeightWord(int FromZ, int ToZ)
+{
+	if (ToZ > FromZ)
+		return "Up" @ string(ToZ - FromZ);
+	if (ToZ < FromZ)
+		return "Down" @ string(FromZ - ToZ);
+	return "";
 }
 
 // "Floor N of M" in the game's own numbering — m_iRequestedFloor is what the camera band, the
@@ -1312,49 +1348,6 @@ private function string DescribeIndoor(XComWorldData WorldData, TTile Tile, bool
 	if (Found != none)
 		LastIndoorBuildingPos = Found.Location;
 	return Result;
-}
-
-// How far the ground is below a tile that has no floor of its own — 0 when this is not a ledge.
-//
-// The two conditions are what separate "you are standing over a drop" from "there is a wall
-// here", and both come from the engine rather than from a rule of ours. NO FLOOR AT THIS Z is
-// the whole reason the cursor is left hanging: CursorStep's ResolveFloor searches only one tile
-// down (GetFloorTileForPosition's bUnlimitedSearch = false), so stepping off a roof keeps the
-// cursor's height instead of falling — deliberately, so the edge can be felt. GetFloorTileZ with
-// the UNLIMITED search then answers how deep, and documents its own miss by returning the source
-// Z, which is why the comparison is strictly-less-than rather than a bool.
-//
-// A wall at ground level is not caught by this and must not be: buildings sit on the ground grid,
-// so a tile inside a wall still HAS a floor and never reaches here. That is what keeps the word
-// honest — a ledge is open air, not merely something you cannot walk into.
-private function int LedgeDepth(XComWorldData WorldData, TTile Tile)
-{
-	local int FloorZ;
-
-	if (WorldData.IsFloorTile(Tile))
-		return 0;
-
-	FloorZ = WorldData.GetFloorTileZ(Tile, true);
-	if (FloorZ >= Tile.Z)
-		return 0;
-
-	return Tile.Z - FloorZ;
-}
-
-// Snap a target tile to the floor of its column near the current height, so stepping follows
-// terrain (up a slope, down off a roof edge). Leaves the tile untouched when no floor resolves.
-private function ResolveFloor(XComWorldData WorldData, out TTile Tile)
-{
-	local TTile Floor;
-	local vector Pos;
-
-	Pos = WorldData.GetPositionFromTileCoordinates(Tile);
-	if (WorldData.GetFloorTileForPosition(Pos, Floor, false))
-	{
-		Tile.X = Clamp(Floor.X, 0, WorldData.NumX - 1);
-		Tile.Y = Clamp(Floor.Y, 0, WorldData.NumY - 1);
-		Tile.Z = Clamp(Floor.Z, 0, WorldData.NumZ - 1);
-	}
 }
 
 // The world-axis delta for a compass cardinal — pure table composition, infallible by

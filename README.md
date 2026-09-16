@@ -72,7 +72,7 @@ facilities, faction headquarters and continents, each with distance and bearing
 from a sort origin you choose.
 
 **Tactical combat** — a tile cursor you walk around the map with (cover per
-edge, hazards, ledges, fog parity, reachability, and a two-press move-to that
+edge, hazards, height changes, fog parity, reachability, and a two-press move-to that
 commits through the game's own click path); an object scanner ring over eleven
 categories (markers, enemies — the Lost included, as one swarm entry — your squad,
 loot, reinforcements, evac, civilians, hazards, interactables, towers, and

@@ -1626,9 +1626,13 @@ private function TTile AimTile()
 	return T;
 }
 
-// Snap a target tile to the floor of its column near the current height, so aiming follows
-// terrain. Mirrors X2AccessTileReader.ResolveFloor; kept local because that one is private and
-// the two differ in nothing but which state they belong to.
+// Snap a target tile to the floor of its column near the current height (at or ONE tile
+// below), so aiming follows gentle terrain. The world-mode cursor used to step the same way
+// and no longer does: X2AccessTileReader.LandingTile lands on the highest surface at or below
+// the floor LEVEL, the mouse trace's rule, so a step off a roof reaches the ground. Targeting
+// mode keeps the old one-tile search on purpose — whether the floor level means anything to a
+// targeting method across floors is the open question in docs/next-steps.md, and this is the
+// half that was deliberately left unchanged.
 private function ResolveAimFloor(XComWorldData WorldData, out TTile Tile)
 {
 	local TTile Floor;

@@ -32,41 +32,51 @@ focus.
   always: never read the cursor pawn back (it sits at body-center heights and is
   repositioned natively every frame). `XCom3DCursorMouse.CursorSnapToFloor` is
   overridden to a no-op, so floor keys must set exact Z themselves.
-- ⛔ **The game's FLOOR is shared, load-bearing state — never bypass it, never
-  duplicate it.** Four consumers key on `m_iRequestedFloor`: the camera band,
-  the building cutaway, `WorldCascadeZ`, and `XComPathingPawn:991`, which caps
-  the destination search at that floor's ceiling whenever the cursor is inside
-  a `XComBuildingVolume` — so a position-only push onto a roof leaves the pawn
-  clamped to a lower tile and the move key refusing a tile the reachable cache
-  itself calls Dash (measured live 2026-08-31: cursor Z=13, pawn destination
-  Z=9, floor still 1 — the evac-zone roof). No mouse player can produce that
-  contradiction: the cutaway hides a roof until the wheel raises the floor
-  first. The clamp masks as "genuinely out of range" whenever the tile IS out
-  of range, which is why it survived every ground-level test. Three
-  consequences, all in `X2AccessTileReader`: every `SetCursorTile` syncs the
-  floor — the field write from `WorldZToFloor` (the programmatic-move idiom,
-  `X2MeleePathingPawn:188`) is only HALF the sync; `CursorSnapToFloor` is what
-  derives camera band, cutdown height and effective floor from it, and on the
-  mouse cursor moves nothing (`XCom3DCursorMouse:11`), so position is pushed
-  LAST. The floor KEYS drive the game's own `AscendFloor`/`DescendFloor` (one
-  press = one 4-tile band, announced as "Floor N of M" in the game's numbering)
-  rather than an invented per-column Z hop — the class-scope versions are empty
-  stubs, the real bodies live in `state CursorMode_NoCollision`, and script
-  dispatch reaches them. And the reverse direction is POLLED
-  (`CursorFloorPoll`, 150 ms from `TileReader::OnTick`, only while the layer
-  owns world mode): the wheel or the game itself re-flooring on a soldier
-  switch is spoken once and the planted cursor re-landed in the new band, so
-  the two can never stay diverged.
-- **A LEDGE outranks "Impassable"**: a tile with no floor of its own but ground
-  below is the railing a sighted player sees, and "Impassable" described it
-  identically to a wall. Both halves of the test are the engine's: `IsFloorTile`
-  false is why the cursor was left hanging there (`ResolveFloor` searches only one
-  tile down, so stepping off a roof keeps its height — deliberately, so the edge
-  can be FELT), and `GetFloorTileZ(tile, bUnlimitedSearch=true)` answers how deep,
-  documenting its own miss by returning the source Z. A wall at ground level is
-  not caught and must not be: buildings sit on the ground grid, so a tile inside a
-  wall still HAS a floor. A ledge is open air, not merely something you cannot
-  walk into.
+- ⛔ **The game's FLOOR LEVEL is a CEILING the cursor lands under, never a floor it is
+  pinned to — and it is shared, load-bearing state: never bypass it, never duplicate it.**
+  The rule is the mouse trace's own, `XComTacticalHUD.GetMouseInteractionInterface`: of every
+  surface the pick ray crosses it keeps *"the first actor that is at or below the requested
+  floor, unless there are no hits below our requested floor, in which case we take the lowest
+  floor above"*. With the wheel left on a roof, hovering open ground picks the ground, a shed
+  its roof, a three-storey block its second floor — and hovering never moves the level; only
+  the wheel, the D-pad and a soldier switch (`CursorMode_NoCollision.Reset`) do. Camera ZOOM
+  is a separate binding and plays no part. `X2AccessTileReader.LandingTile` transcribes that
+  rule per column (highest floor tile whose band is at or below the level, else the lowest
+  above, else hang), every step and floor key lands through it, and the step speaks the height
+  it took (`HeightWord`, "Down 4" off a roof) because a sighted player watches the cursor drop.
+  The previous design pinned the level to the landed tile and stepped with a one-tile-down
+  search, so a step off a roof hung in the air, a step back under it hit the wall, and a
+  one-tile rise was never found — a sniper on a roof could not point at the ground without a
+  floor key (player report 2026-09-16).
+  - Four consumers key on `m_iRequestedFloor`: the camera band, the building cutaway,
+    `WorldCascadeZ`, and `XComPathingPawn:991`, which caps the destination search at that
+    level's ceiling whenever the cursor is inside a `XComBuildingVolume`. The clamp is an UPPER
+    bound only — a cursor below the level is what every mouse player produces and the pawn
+    accepts it — so the invariant is *never land ABOVE the level while a surface exists at or
+    below*, which `LandingTile` holds by construction. Breaking it is what a position-only push
+    onto a roof did (measured live 2026-08-31: cursor Z=13, pawn destination Z=9, level 1 — the
+    evac-zone roof), masked as "genuinely out of range" whenever the tile WAS out of range,
+    which is why it survived every ground-level test. The trace's own fallback, the lowest
+    surface above, breaks it too and is kept for parity: the move key refuses that tile
+    exactly as the pawn refuses a mouse player's.
+  - `SetCursorTile` does NOT write the level. It still calls `CursorSnapToFloor`, which is what
+    derives camera band, cutdown height and effective floor from the level and on the mouse
+    cursor moves nothing (`XCom3DCursorMouse:11`), and pushes the exact position LAST so a
+    base-class snap could never displace the tile the reader spoke. An explicit JUMP — plant,
+    recenter, the scanner marker — adopts the target tile's band as the level (`AdoptFloor`,
+    the soldier-switch idiom) and speaks it when it changed, so a marker on a roof is reachable
+    without a floor key first.
+  - The floor KEYS drive the game's own `AscendFloor`/`DescendFloor` (one press = one 4-tile
+    band, announced as "Floor N of M" in the game's numbering) rather than an invented
+    per-column Z hop — the class-scope versions are empty stubs, the real bodies live in
+    `state CursorMode_NoCollision`, and script dispatch reaches them. Ascending on open ground
+    moves the camera band and not the cursor, as the wheel does. And the reverse direction is
+    POLLED (`CursorFloorPoll`, 150 ms from `TileReader::OnTick`, only while the layer owns
+    world mode): the wheel or the game itself re-flooring on a soldier switch is spoken once
+    and the planted cursor re-landed under the new level, so the two can never stay diverged.
+  - ⚠ Targeting mode's aim cursor (`X2AccessTacticalReader.ResolveAimFloor`) still steps with
+    the old one-tile search; whether the level means anything to a targeting method is the
+    open question in `docs/next-steps.md`.
 - **Inside / outside is the game's floor-volume rule, asked synchronously
   (`X2AccessTileReader.DescribeIndoor`).** `XComPawnIndoorOutdoorInfo` defines inside as
   "in an `XComFloorVolume`" — a building volume alone is outside, a nested

@@ -603,12 +603,24 @@ caret N, selection A..B)`); the Resistance Ring's covert-op status line, in BOTH
 action running (name + days left) and none assigned.
 
 The tile cursor **across floors, in TARGETING mode** — the half of the floor redesign that was
-deliberately left unchanged. World mode now syncs the game's floor state on every cursor push
-and has run; `X2AccessTacticalReader`'s `PushAim` / `EnsureAimPlanted` still push position
-WITHOUT floor state. The pathing-pawn clamp that motivated the redesign does not apply there, so
-this is an open question rather than a known defect: whether any targeting method, or the melee
-pathing pawn, cares about `m_iRequestedFloor` across floors. Throw a grenade onto a roof from
-the ground and compare the spoken land tile against `GetTargetLocations`.
+deliberately left unchanged. World mode treats the game's floor level as a ceiling and lands
+every step on the highest surface under it (`LandingTile`, the mouse trace's rule, 2026-09-16);
+`X2AccessTacticalReader`'s `ResolveAimFloor` still steps with the old one-tile-down search and
+`PushAim` / `EnsureAimPlanted` push position WITHOUT floor state. The pathing-pawn clamp that
+motivated the redesign does not apply there, so this is an open question rather than a known
+defect: whether any targeting method, or the melee pathing pawn, cares about
+`m_iRequestedFloor` across floors — and whether free aim should step off a roof to the ground
+the way world mode now does. Throw a grenade onto a roof from the ground and compare the spoken
+land tile against `GetTargetLocations`.
+
+The world-mode cursor's **ceiling model, live** (`docs/surfaces/tactical.md`, the floor-level
+rule) has not been heard yet. Gatecrasher with a soldier on a roof: step off the edge and expect
+`Down 4` then the ground tile, step back and expect `Up 4` onto the roof (the level stays where
+the soldier switch put it), `Ctrl+,` on open ground should speak `Floor N of M` and NOT move the
+cursor, and a marker jump onto a roof from the ground should speak the new level and then be
+movable with Backspace. Shape-count the ring for `Up N`/`Down N` afterwards: stairs should show
+`N=1`, roofs `N=4`, and a distribution with nothing but one value is the audit rule from
+`CLAUDE.md` firing.
 
 The tile cursor's **detection readout on a hacked tower** — the one branch of the concealment
 work a normal Gatecrasher sweep does not produce. "Tower detection" is confirmed; what nobody

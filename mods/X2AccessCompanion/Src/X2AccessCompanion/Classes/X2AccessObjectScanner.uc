@@ -1419,7 +1419,7 @@ private function AddConnectorCandidate(XComWorldData WorldData, TTile Origin, TT
 //
 // ⛔ The sweep is ONE Z BAND (±1, the connectors' own bound) and the empty text says so. XCOM
 // ground is not flat — kerbs, slopes and ramps move Z under a plain cardinal step, which is why
-// the cursor has ResolveFloor at all — so an exact-Z filter would drop most of the cover beside
+// the cursor follows the ground (X2AccessTileReader.LandingTile) — so an exact-Z filter would drop most of the cover beside
 // any slope. Widening it further is what the floor keys are for.
 const COVER_RADIUS = 12;   // tiles, in X and Y, swept around the scan origin
 const COVER_MAX = 16;      // entries; a ring longer than this is a list, not a cue
