@@ -233,7 +233,11 @@ void* FindMainMenuShell()
 {
     static ScreenFinder sFinder{"UIFinalShell"};
     static bool sReported = false;
-    return PreferStack("UIFinalShell", sFinder, sReported);
+    // ⛔ UIFinalShell, tolerantly — never UIShell, which it extends. The -review rule exists
+    // precisely because the game otherwise boots the DEVELOPER shell, and a match on the base
+    // would make that shell answer to the retail recipe and hide the mistake the rule is there
+    // to make loud.
+    return PreferStack("UIFinalShell", sFinder, sReported, ClassMatch::Derived);
 }
 
 std::vector<MenuItem> ReadMainMenu(void* shell)
@@ -289,6 +293,13 @@ void* FindOptionsScreen()
 {
     static ScreenFinder sFinder{"UIOptionsPCScreen"};
     static bool sReported = false;
+    // ⛔ EXACT, and it is the one confirmed override we are deliberately still missing.
+    // UIOptionsPCScreen_LW extends this class and ADDS tabs, while ReadOptions names exactly five
+    // of them from five fixed class fields (kOptsTabNameOffsets). The rows would read fine —
+    // m_arrMechaItems is repopulated by the mod — but the tab strip would come back with five
+    // entries on a screen that has more, and a count that quietly drops the tail reads to a blind
+    // player as "that is all there is". Finding the screen is not the blocker; naming its tabs
+    // from its own tab list instead of from five class fields is, and that is owed work.
     return PreferStack("UIOptionsPCScreen", sFinder, sReported);
 }
 
@@ -683,7 +694,13 @@ void* FindSaveLoadScreen()
 
 bool SaveScreenIsSaving(void* screen)
 {
-    return screen && ObjectClassNamedRaw(screen, "UISaveGame");
+    // ⛔ IN LOCKSTEP with the kScrSaveGame entry in game_ui.cpp's tracked table. This single
+    // boolean picks the title offset, the busy flag and the semantics of the whole recipe, so a
+    // tolerant finder with an exact discriminator here would find a mod's save-screen subclass
+    // and then read it as a LOAD screen — on the one surface where docs/surfaces/shell.md already
+    // records the overwrite-the-wrong-save hazard. Safe as Derived because UILoadGame is a
+    // SIBLING (both extend UIScreen), so neither can ever answer for the other.
+    return screen && ObjectClassNamedRaw(screen, "UISaveGame", ClassMatch::Derived);
 }
 
 SaveLoadView ReadSaveLoad(void* screen)
@@ -864,7 +881,7 @@ void* FindCharacterPoolScreen()
 {
     static ScreenFinder sFinder{"UICharacterPool"};
     static bool sReported = false;
-    void* screen = PreferStack("UICharacterPool", sFinder, sReported);
+    void* screen = PreferStack("UICharacterPool", sFinder, sReported, ClassMatch::Derived);
     return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
 }
 
@@ -923,7 +940,9 @@ void* FindPoolFilesScreen()
 {
     static ScreenFinder sFinder{"UICharacterPool_ListPools"};
     static bool sReported = false;
-    void* screen = PreferStack("UICharacterPool_ListPools", sFinder, sReported);
+    // A SIBLING of UICharacterPool, not a descendant, so tolerating both changes no ordering.
+    void* screen
+        = PreferStack("UICharacterPool_ListPools", sFinder, sReported, ClassMatch::Derived);
     return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
 }
 

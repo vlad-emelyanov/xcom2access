@@ -29,9 +29,13 @@ namespace GameUI {
 
 namespace {
 
-// Ordered most-specific first only for readability; the match is exact on the class name, so
-// order does not matter. UIAlert's two DLC subclasses are listed because the finder compares the
-// concrete class name, not the base.
+// An allow-list, not an ordered probe: every entry answers the same yes, and the concrete class
+// name comes back separately (TopStackScreenRaw's nameOut), so nothing here depends on which
+// entry matched. That is why the per-entry ClassMatch below is the whole of the discrimination —
+// there is no order for it to lean on.
+//
+// Most entries tolerate a subclass, which is what finds LWOTC's UIAdventOperations_LW and makes
+// UIAlert's two DLC entries redundant (kept: they cost nothing and they document the family).
 constexpr const char* kPopupClasses[] = {
     // Strategy alerts — one class, 118 variants (words come from Flash, see ReadAlertText)
     "UIAlert",
@@ -58,17 +62,53 @@ constexpr const char* kPopupClasses[] = {
     "UIRedScreen",
 };
 
+// ⛔ UIProgressDialogue stays EXACT. UIReconnectController extends it, and kPopupRecipe is SECOND
+// in kRecipes — so anything this table newly claims it claims ahead of nearly everything else. A
+// reconnect dialog is a screen no recipe owns and nobody has read, and claiming it would put our
+// stops in front of it sight unseen. Of the fourteen Derived entries only "UIAlert" has any
+// vanilla descendant — the two DLC alerts below — so tolerance on the other thirteen can only ever
+// reach a mod's own override.
+//
+// ⛔ The two DLC alerts stay EXACT for a different reason: under a tolerant entry 0 they are
+// UNREACHABLE. `UIAlert_DLC_Day60 extends UIAlert`, MatchClassIndexRaw returns the FIRST match,
+// and "UIAlert" is entry 0 — so a Derived policy here can never win, and still charges for the
+// attempt. A Derived name has to be RESOLVED to a class object, and these two live in DLC_2/DLC_3,
+// which a player who owns only XCOM 2 + WOTC never loads: a name that resolves to NOTHING costs a
+// full GObjects pass every time the resolver retries it. `ResolveBaseClassCached` now backs that
+// off from one second to a minute, but a minute apart forever is still a permanent cost bought in
+// exchange for a match that cannot happen. They stay in the table because they still document the
+// family, and Exact never asks the resolver anything.
+constexpr ClassMatch kPopupMatch[] = {
+    ClassMatch::Derived, // UIAlert
+    ClassMatch::Exact,   // UIAlert_DLC_Day60 — see above
+    ClassMatch::Exact,   // UIAlert_DLC_Day90 — see above
+    ClassMatch::Derived, // UIFactionPopup
+    ClassMatch::Derived, // UIAbilityPopup
+    ClassMatch::Derived, // UISoldierBondAlert
+    ClassMatch::Derived, // UIChosenFragmentRecovered
+    ClassMatch::Derived, // UIChosenLevelUp
+    ClassMatch::Derived, // UIChosenEncountered
+    ClassMatch::Derived, // UISoldierCaptured
+    ClassMatch::Derived, // UIUFOAttack
+    ClassMatch::Derived, // UISitRepInformation
+    ClassMatch::Derived, // UIAdventOperations
+    ClassMatch::Derived, // UIChosenReveal
+    ClassMatch::Derived, // UICombatLose
+    ClassMatch::Exact,   // UIProgressDialogue — see above
+    ClassMatch::Derived, // UIRedScreen
+};
+static_assert(sizeof(kPopupMatch) / sizeof(kPopupMatch[0])
+        == sizeof(kPopupClasses) / sizeof(kPopupClasses[0]),
+    "kPopupMatch must have one policy per popup class");
+
+constexpr int kPopupClassCount = sizeof(kPopupClasses) / sizeof(kPopupClasses[0]);
+
 } // namespace
 
-bool IsPopupClass(const char* className)
+bool IsPopupScreen(void* screen)
 {
-    if (!className)
-        return false;
-    for (const char* known : kPopupClasses) {
-        if (strcmp(className, known) == 0)
-            return true;
-    }
-    return false;
+    return screen
+        && MatchClassIndexRaw(screen, kPopupClasses, kPopupMatch, kPopupClassCount) >= 0;
 }
 
 PopupView FindPopupScreen()
@@ -78,7 +118,7 @@ PopupView FindPopupScreen()
     // a popup under another screen has already lost the keys, and answering for it would put
     // our stops in front of a screen the player is actually on. Same rule as UIRoom's finder.
     char name[64] = {};
-    v.screen = TopStackScreenRaw([](void*, const char* className) { return IsPopupClass(className); },
+    v.screen = TopStackScreenRaw([](void* screen, const char*) { return IsPopupScreen(screen); },
         name, static_cast<int>(sizeof(name)));
     if (v.screen)
         v.className = name;

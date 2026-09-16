@@ -32,6 +32,11 @@ struct TacticalGate {
     bool menuRaised = false; // shot HUD up — targeting owns the arrows
     bool blocked = false;    // a non-passive screen sits above the HUD
     char blocker[64] = {};   // its class name, for the log
+    /// The blocking screen itself, valid only for the frame this gate was read on (nothing
+    /// caches it — see the hard rule). ⛔ A caller asking "is the blocker MY screen" must use
+    /// this, never `blocker`: that name is truncated at 63 characters and, being a copied
+    /// string, cannot answer for a ModClassOverrides subclass at all.
+    void* blockerScreen = nullptr;
 
     /// Is a mission running AT ALL — a UITacticalHUD anywhere on the stack, however deep? Unlike
     /// hudOnStack this stays true under a pause menu, a dialogue box, or a cinematic reveal, so

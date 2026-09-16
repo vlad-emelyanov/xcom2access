@@ -34,7 +34,13 @@ AvengerGate ReadAvengerGate()
         char name[64];
         if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
             continue;
-        if (strcmp(name, "UIFacilityGrid") == 0) {
+        // ⛔ Tolerant, and that is what brings this gate's two halves BACK into agreement. The
+        // script half (X2AccessAvengerReader.GetGrid) casts with `UIFacilityGrid(Current)`, which
+        // UnrealScript makes tolerant of subclasses for free — so an override here would have had
+        // native say "not the grid" ten times a second while script said "yes", the exact
+        // half-a-rule failure the gate rule was written about. UIFacilityGrid has no vanilla
+        // descendants, so nothing else can answer for it.
+        if (ObjectClassNamedRaw(screens[i], "UIFacilityGrid", ClassMatch::Derived)) {
             gate.gridOnStack = true;
             gate.current = !sawTop;
             if (sawTop)
@@ -52,6 +58,11 @@ AvengerGate ReadAvengerGate()
         // drive the ant farm, and treating it as a blocker went silent exactly where a player is
         // choosing a room to excavate or build in. This is the game's own delegation, read off
         // its own source, not an exception we invented.
+        //
+        // ⛔ EXACT, unlike the grid above, because this entry runs in the PERMISSIVE direction:
+        // it says "this screen on top does NOT block". Extending that forgiveness to a subclass
+        // whose source we have not read means narrating the grid while the arrows drive something
+        // else — and the whole justification here is one line of THIS class's OnUnrealCommand.
         if (!sawTop && strcmp(name, "UIBuildFacilities") == 0) {
             gate.buildMode = true;
             continue;
@@ -134,7 +145,10 @@ ResourceStripView ReadResourceStrip()
     // ⛔ The HUD, never the screen asking. Every strategy screen that shows resources shows the
     // ONE strip on UIAvengerHUD underneath it — the same arrangement the room reader already
     // relies on for the facility header and the shortcut bar.
-    v.hud = FindStackScreenRaw("UIAvengerHUD");
+    // Tolerant, and in step with the two other UIAvengerHUD lookups (FindAvengerHud, the room
+    // reader) and the objectives walker in the tactical TU: if they disagreed about whether the
+    // HUD exists, the resource strip and the objective list would describe different layers.
+    v.hud = FindStackScreenRaw("UIAvengerHUD", ClassMatch::Derived);
     if (!v.hud)
         return v;
     v.container = ReadPtrRaw(v.hud, kAvengerHudResourceContainerOffset);
@@ -310,7 +324,7 @@ const uint8_t* ArrayData(const void* obj, int32_t offset, int* count)
 
 void* FindAvengerHud()
 {
-    return FindStackScreenRaw("UIAvengerHUD");
+    return FindStackScreenRaw("UIAvengerHUD", ClassMatch::Derived);
 }
 
 ShortcutBarView ReadShortcutBar()
@@ -646,7 +660,7 @@ RoomView ReadRoom(void* screen)
     // The header and the shortcut bar both live on UIAvengerHUD, which sits UNDER the room
     // screen and under the grid. That is not a layering accident to route around — it is where
     // the game itself keeps the room's name and the room's menu.
-    void* hud = FindStackScreenRaw("UIAvengerHUD");
+    void* hud = FindStackScreenRaw("UIAvengerHUD", ClassMatch::Derived);
     if (hud) {
         void* header = ReadPtrRaw(hud, kAvengerHudFacilityHeaderOffset);
         if (header) {
@@ -824,8 +838,10 @@ void* FindRoomBuildScreen()
 {
     // Topmost non-null entry, the GetCurrentScreen rule again — and UIRoom's own OnUnrealCommand
     // is unguarded, so anything above it has already taken the keys.
-    return TopStackScreenRaw([](void*, const char* className) {
-        return strcmp(className, "UIRoom") == 0;
+    // Tolerant, and topmost-only, so a match here can never reach past a screen that has already
+    // taken the keys.
+    return TopStackScreenRaw([](void* screen, const char*) {
+        return ObjectClassNamedRaw(screen, "UIRoom", ClassMatch::Derived);
     });
 }
 
@@ -941,7 +957,7 @@ enum ResearchReportArg {
 
 void* FindResearchReportScreen()
 {
-    return FindStackScreenRaw("UIResearchReport");
+    return FindStackScreenRaw("UIResearchReport", ClassMatch::Derived);
 }
 
 ResearchReportView ReadResearchReport(void* screen)
@@ -958,6 +974,10 @@ ResearchReportView ReadResearchReport(void* screen)
     // UIResearchArchives — so a report opened from the SHADOW archives closes with Enter, exactly
     // like the one that opens in the Labs, and its nav help says "Continue" too. FindStackScreenRaw
     // compares class-name strings, which reproduces that semantics for free.
+    //
+    // ⛔ So this one stays EXACT while its neighbours tolerate: the whole point is to MIRROR the
+    // game's own exact compare, and a tolerant read here would answer differently from the screen
+    // it is describing. Parity is defined against what the game does, not against what we can find.
     v.fromArchives = FindStackScreenRaw("UIResearchArchives") != nullptr;
 
     // The screen pushes through its OWN MC (AS_UpdateResearchReport calls MC.BeginFunctionOp
@@ -1023,7 +1043,7 @@ constexpr int32_t kUnlockedNumTechsOffset = 0x464;    // UIResearchUnlocked::Num
 
 void* FindResearchUnlockedScreen()
 {
-    return FindStackScreenRaw("UIResearchUnlocked");
+    return FindStackScreenRaw("UIResearchUnlocked", ClassMatch::Derived);
 }
 
 ResearchUnlockedView ReadResearchUnlocked(void* screen)
@@ -1338,7 +1358,7 @@ void* FindChooseFacilityScreen()
     // stack-managed" becomes a fact in the log rather than something we assumed.
     static ScreenFinder sFinder{"UIChooseFacility"};
     static bool sReported = false;
-    void* screen = PreferStack("UIChooseFacility", sFinder, sReported);
+    void* screen = PreferStack("UIChooseFacility", sFinder, sReported, ClassMatch::Derived);
     // PreferStack's two halves do not filter alike: the stack half takes inited/not-removed,
     // the scan half takes ScreenFinder's default IsFocusedRaw. The header promises the CURRENT
     // screen, so the focus test belongs here rather than in whichever half answered.
@@ -1412,7 +1432,7 @@ void* FindChooseUpgradeScreen()
     // pushes this screen, so the stack has it — with the GObjects scan as the logged fallback.
     static ScreenFinder sFinder{"UIChooseUpgrade"};
     static bool sReported = false;
-    void* screen = PreferStack("UIChooseUpgrade", sFinder, sReported);
+    void* screen = PreferStack("UIChooseUpgrade", sFinder, sReported, ClassMatch::Derived);
     return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
 }
 
@@ -1485,9 +1505,9 @@ std::string ReadLabel(void* obj, int32_t offset)
 
 void* FindBlackMarketScreen()
 {
-    // Exact class. The Buy and Sell screens are pushed OVER this one and are separate classes,
-    // so the stack walk's name match cannot confuse the three.
-    return FindStackScreenRaw("UIBlackMarket");
+    // The Buy and Sell screens are pushed OVER this one and are SIBLINGS of it (all three extend
+    // UIScreen), so tolerating a subclass here cannot confuse the three.
+    return FindStackScreenRaw("UIBlackMarket", ClassMatch::Derived);
 }
 
 BlackMarketView ReadBlackMarket(void* screen)
@@ -1515,7 +1535,7 @@ BlackMarketView ReadBlackMarket(void* screen)
 
 void* FindBlackMarketSellScreen()
 {
-    return FindStackScreenRaw("UIBlackMarket_Sell");
+    return FindStackScreenRaw("UIBlackMarket_Sell", ClassMatch::Derived);
 }
 
 SellView ReadBlackMarketSell(void* screen)
@@ -1611,9 +1631,13 @@ constexpr int kMaxRecruitRows = 64;
 
 void* FindRecruitScreen()
 {
-    // Exact class, focused only: the not-enough-supplies dialog it raises pushes no screen, so
-    // the recruit screen stays focused under it and the dialog recipe wins by probe order.
-    void* screen = FindStackScreenRaw("UIRecruitSoldiers");
+    // Focused only: the not-enough-supplies dialog it raises pushes no screen, so the recruit
+    // screen stays focused under it and the dialog recipe wins by probe order.
+    //
+    // The cleanest confirmed override there is: LWOTC's UIRecruitSoldiers_LW extends this class
+    // and replaces UpdateData alone, leaving the inherited List and its UIRecruitmentListItem
+    // rows — which the row filter below already matches tolerantly — exactly where they were.
+    void* screen = FindStackScreenRaw("UIRecruitSoldiers", ClassMatch::Derived);
     return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
 }
 
@@ -1689,7 +1713,7 @@ bool RecruitSelected(const RecruitView& view, int index)
 
 void* FindRewardsRecapScreen()
 {
-    void* screen = FindStackScreenRaw("UIRewardsRecap");
+    void* screen = FindStackScreenRaw("UIRewardsRecap", ClassMatch::Derived);
     return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
 }
 

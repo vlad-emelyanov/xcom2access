@@ -196,7 +196,13 @@ and note that a rule with no measurement under it any more is a rule to delete, 
     passed every readiness test, read as empty, and left the layer silently detached with the menu
     open. The durable fix is walking `UIScreenStack.Screens` (0x6C, index 0 = the top; Push inserts
     at 0): a popped screen leaves the stack immediately, whereas as an OBJECT it lingers with every
-    state bit intact until GC. `FindStackScreenRaw` matches by class name over a few dozen entries.
+    state bit intact until GC. `FindStackScreenRaw` walks those few dozen entries under one of two
+    policies. `ClassMatch::Exact` compares class NAMES and resolves no `UClass` at all;
+    `ClassMatch::Derived` — what makes a mod's `ModClassOverrides` subclass findable — must first
+    resolve the name to a class object through a full GObjects pass, then chases each entry's
+    `SuperField` chain. A resolved name is cached for the session and an unresolvable one backs off
+    to a retry a minute apart, so the steady state is cheap either way. ⛔ But "the stack is small"
+    is a statement about Exact; it is not a reason to assume Derived is free.
     GObjects scanning survives only as a fallback — for screens the stack does not manage
     (`UIDialogueBox` is permanent and never pushed) and for the window while the stack itself is
     being rebuilt — and the first fallback per class is logged, so "not stack-managed" is a fact in

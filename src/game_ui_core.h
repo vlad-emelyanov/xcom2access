@@ -93,6 +93,15 @@ bool MoviePlaying();
 /// test bIsVisible: the game leaves that false on screens it is plainly showing.
 bool IsScreenFocused(void* screen);
 
+/// Is this screen an instance of `baseClass`, or of anything extending it? The ONE way a feature
+/// TU outside the reader layer may ask "is this screen mine", and the one that survives a mod.
+///
+/// ⛔ Never compare a screen's class NAME to answer this. A big mod does not add screens, it
+/// REPLACES them: ModClassOverrides swaps a screen's class for a subclass, so the name is one we
+/// have never heard of while every inherited field is still exactly where it was. A name compare
+/// then reports the screen as absent, which sounds identical to our own silence. Game thread only.
+bool IsScreenKindOf(void* screen, const char* baseClass);
+
 /// Drop every screen finder's rate limit, so the next lookup runs a full GObjects pass instead
 /// of answering from a cache that may predate the change. Call it when a screen change is known
 /// to have happened (the navigator detaching): a finder that waits out its second there costs

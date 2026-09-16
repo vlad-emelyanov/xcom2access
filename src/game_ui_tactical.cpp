@@ -374,12 +374,12 @@ void* FindObjectiveListPanel(bool* tacticalOut)
         // keeps every state bit it had, so bIsRemoved is the only bit that settles it.
         if (!StackEntryLiveRaw(screens[i]))
             continue;
-        char name[64];
-        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
-            continue;
-
-        bool tactical = strcmp(name, "UITacticalHUD") == 0;
-        if (!tactical && strcmp(name, "UIAvengerHUD") != 0)
+        // Tolerant on both, and in step with the HUD finders in the core and avenger TUs — if
+        // they disagreed about which HUD is up, the objective list and the HUD recipe would be
+        // describing different layers. The two are SIBLINGS with no descendants, so neither can
+        // ever answer for the other.
+        bool tactical = ObjectClassNamedRaw(screens[i], "UITacticalHUD", ClassMatch::Derived);
+        if (!tactical && !ObjectClassNamedRaw(screens[i], "UIAvengerHUD", ClassMatch::Derived))
             continue;
 
         void* panel = ReadPtrRaw(screens[i],
@@ -521,10 +521,7 @@ std::vector<MissionCounter> ReadMissionCounters()
             continue;
         if (!StackEntryLiveRaw(screens[i]))
             continue;
-        char name[64];
-        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
-            continue;
-        if (strcmp(name, "UISpecialMissionHUD") != 0)
+        if (!ObjectClassNamedRaw(screens[i], "UISpecialMissionHUD", ClassMatch::Derived))
             continue;
 
         // Screen order, so the readout matches the column the player sees.
@@ -548,6 +545,13 @@ namespace {
 // mission). Anything not listed blocks the tile cursor — the conservative direction: an
 // unknown modal (mission summary, a mod's screen) keeps its arrow keys, and the log names it
 // so this list grows from observation, not guesswork.
+//
+// ⛔ EXACT, every entry, and deliberately the opposite call from the UISpecialMissionHUD read
+// above: this list runs in the PERMISSIVE direction, so tolerance means KEEPING the arrows under
+// a screen whose source nobody has read — us steering while the game steers too, which is the one
+// thing the tactical input rules exist to prevent. UIMouseGuard already has a vanilla descendant
+// (UIMouseGuard_RotatePawn) that would silently join the list. A mod screen that genuinely is
+// passive gets added BY NAME, with the line the comment above already promises.
 const char* const kTacticalPassives[] = {
     "UIReplay",
     "UISpecialMissionHUD",
@@ -579,7 +583,12 @@ TacticalGate ReadTacticalGate()
         char name[64];
         if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
             continue;
-        if (strcmp(name, "UITacticalHUD") == 0) {
+        // Tolerant, through the POINTER-compare form — this is the hottest matcher in the
+        // codebase, up to 32 stack entries every tick, and the base class object behind
+        // ClassMatch::Derived is resolved once and then walked as pointers. This one name also
+        // gates three surfaces (the tracked lookup, this gate, the objectives walker), so an
+        // override nobody tolerated would take the whole tactical layer silent at once.
+        if (ObjectClassNamedRaw(screens[i], "UITacticalHUD", ClassMatch::Derived)) {
             // Reached the HUD. If nothing above it claimed the surface, this is also the live
             // gate; if something did, we came here only to answer "is a mission running".
             gate.missionActive = true;
@@ -598,6 +607,12 @@ TacticalGate ReadTacticalGate()
             // name reads on a stack that is a handful of entries deep.
             gate.blocked = true;
             strncpy_s(gate.blocker, name, _TRUNCATE);
+            // The screen ITSELF alongside its name, so a caller that has to ask "is the blocker
+            // one of mine" can ask the class chain instead of comparing a copied string — the
+            // name is truncated at 63 chars and cannot answer for a subclass at all. Carried by
+            // value within this call, exactly like the geoscape gate's `map`: nothing caches it
+            // across frames, so the never-hold-a-UObject rule is untouched.
+            gate.blockerScreen = screens[i];
         }
     }
     return gate; // no tactical HUD anywhere on the stack: not in a mission
@@ -840,7 +855,9 @@ std::string JoinPhrase(const std::string& first, const std::string& second)
 
 void* FindMissionSummary()
 {
-    return FindStackScreenRaw("UIMissionSummary");
+    // Extends UIScreen directly, NOT UIMission, so the tolerant mission-blade probe in the popup
+    // TU cannot reach it either way.
+    return FindStackScreenRaw("UIMissionSummary", ClassMatch::Derived);
 }
 
 MissionSummaryView ReadMissionSummary(void* screen)
@@ -899,7 +916,8 @@ MissionSummaryView ReadMissionSummary(void* screen)
 
 void* FindChosenSummary()
 {
-    return FindStackScreenRaw("UIChosenMissionSummary");
+    // A SIBLING of UIMissionSummary, not a descendant — neither can answer for the other.
+    return FindStackScreenRaw("UIChosenMissionSummary", ClassMatch::Derived);
 }
 
 ChosenSummaryView ReadChosenSummary(void* screen)
@@ -1004,7 +1022,8 @@ constexpr int kMaxLootRows = 32;
 
 void* FindLootScreen()
 {
-    void* screen = FindStackScreenRaw("UIInventoryTactical");
+    // Extends UIScreen, NOT UIInventory, so the tolerant commodity probe cannot reach this one.
+    void* screen = FindStackScreenRaw("UIInventoryTactical", ClassMatch::Derived);
     return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
 }
 
@@ -1116,7 +1135,7 @@ std::string ReadCharInfoHint(void* hud)
 
 void* FindCharInfoScreen()
 {
-    void* screen = FindStackScreenRaw("UITacticalCharInfoScreen");
+    void* screen = FindStackScreenRaw("UITacticalCharInfoScreen", ClassMatch::Derived);
     return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
 }
 
@@ -1154,11 +1173,14 @@ CharInfoView ReadCharInfo(void* screen)
         e.index = i;
         // ⛔ Two kinds of row, matched by CLASS: AddEffectsToList spawns a bare UIText for each
         // category heading and a UIListItemPerk per effect, into the same container. An empty
-        // Text cannot tell them apart; the class can.
-        if (ObjectClassNamedRaw(rows[i], "UIText")) {
+        // Text cannot tell them apart; the class can. Tolerant on both, in either order: they are
+        // unrelated siblings under UIPanel with no descendants, so neither can ever match the
+        // other, and the `else continue` below stays the safe default — an unrecognised row is
+        // dropped rather than read with the wrong offsets.
+        if (ObjectClassNamedRaw(rows[i], "UIText", ClassMatch::Derived)) {
             e.header = true;
             e.text = ReadFStringField(rows[i], kWidgetTextOffset);
-        } else if (ObjectClassNamedRaw(rows[i], "UIListItemPerk")) {
+        } else if (ObjectClassNamedRaw(rows[i], "UIListItemPerk", ClassMatch::Derived)) {
             e.text = ReadFStringField(rows[i], kPerkNameOffset);
             e.description = ReadFStringField(rows[i], kPerkDescriptionOffset);
             char src[64];

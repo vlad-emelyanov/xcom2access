@@ -27,9 +27,11 @@ struct PopupView {
 /// topmost is deliberately refused. Game thread only.
 PopupView FindPopupScreen();
 
-/// Is `className` in the popup table? Exposed so the recipe can keep its probe and its build in
-/// agreement without re-listing the classes.
-bool IsPopupClass(const char* className);
+/// Is this screen one of the popup family — one of the listed classes, or a mod's subclass of
+/// one? Takes the SCREEN, not its name: a ModClassOverrides subclass has a name we have never
+/// heard of and can only be recognised by its class chain. Exposed so the recipe can keep its
+/// probe and its build in agreement without re-listing the classes.
+bool IsPopupScreen(void* screen);
 
 // ---- the mission blade family (UIMission + subclasses) — docs/mission-blade-recon.md ----
 //

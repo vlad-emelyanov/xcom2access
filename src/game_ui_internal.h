@@ -83,6 +83,30 @@ constexpr int kMaxStackScreens = 32;
 // The tallest of the generic UILists is an options tab; 64 is well past what any of them draws.
 constexpr int kMaxListRows = 64;
 
+// ---- how strictly a class name is matched ----
+//
+// EXACT is what every matcher here did before this type existed, and it stays the DEFAULT at
+// every entry point: a site becomes tolerant by being edited, never by being nearby.
+//
+// DERIVED exists because a big mod does not ADD screens, it REPLACES them: ModClassOverrides
+// swaps a screen's class for a subclass of it (LWOTC ships twelve, robojumper's squad select
+// one, and the Community Promotion Screen installs its own through a Highlander event). Every
+// such subclass only APPENDS fields — UnrealScript cannot reorder a parent's layout — so the
+// hand-transcribed offsets stay valid and only the NAME stops matching. An exact finder then
+// reads the mod as "this screen does not exist", which sounds exactly like our own silence.
+//
+// ⛔ DERIVED IS NOT FREE, and three shapes of site must stay EXACT:
+//   · an ordered probe that tells a family apart by name (UIArmory_Promotion's three classes,
+//     UIPauseMenu vs the UIShellStrategy that extends it) — see MatchClassIndexRaw;
+//   · an allow-list running in the PERMISSIVE direction (kTacticalPassives, the UIBuildFacilities
+//     exception), where tolerance means keeping the keys under a screen nobody has read;
+//   · a screen we can FIND but not READ — finding it makes a recipe attach and claim the arrows
+//     over a readout we know is wrong, which is worse than the silence it replaces.
+enum class ClassMatch {
+    Exact,
+    Derived,
+};
+
 // ---- raw, SEH-safe primitives (no C++ objects with destructors inside __try) ----
 
 // The only WRITE primitive into engine memory. Everything else here reads; a write is reserved
@@ -111,12 +135,15 @@ UObject* FindClassRaw(const char* className);
 bool ObjClassNameAnsiRaw(void* obj, char* buf, int bufLen);
 
 // A live INSTANCE: class matches by POINTER; its name is the class's display name, which
-// excludes the class default object ("Default__<name>") for free.
-bool IsInstanceRaw(UObject* obj, UObject* classObj, const char* className);
+// excludes the class default object ("Default__<name>") for free. Under Derived the pointer
+// compare becomes a chain walk and the CDO has to be excluded by hand — see the definition.
+bool IsInstanceRaw(UObject* obj, UObject* classObj, const char* className,
+    ClassMatch match = ClassMatch::Exact);
 
 // The instance of `classObj` that `usable` accepts. See game_ui.cpp for why "newest first" is
 // only a tie-break and the predicate is what decides.
-UObject* ScanInstanceRaw(UObject* classObj, const char* className, bool (*usable)(void*));
+UObject* ScanInstanceRaw(UObject* classObj, const char* className, bool (*usable)(void*),
+    ClassMatch match = ClassMatch::Exact);
 
 // The unique object named exactly `objName` (one full GObjects pass, oldest first) — how a CDO
 // is found by its "Default__<Class>" name.
@@ -135,9 +162,23 @@ bool IsShownRaw(void* screen);
 // class chain (bounded), so it needs no GObjects pass — the finder for a 22-subclass family.
 bool IsKindOfRaw(void* obj, const char* baseClass);
 
-// The object's class is named exactly `className` (no inheritance walk — used where the
-// concrete class is known).
-bool ObjectClassNamedRaw(void* obj, const char* className);
+// The same question decided by CLASS POINTER once the base class object is in hand: a few
+// derefs where IsKindOfRaw is a GNames lookup and a strcmp per level. This is what the
+// every-tick gates use, and what every Derived match ultimately runs.
+bool IsKindOfClassRaw(void* obj, UObject* baseClassObj);
+
+// The object's class is named `className` — exactly by default, or anywhere on its class chain
+// under Derived (which resolves the base class object once and then pointer-walks).
+bool ObjectClassNamedRaw(void* obj, const char* className,
+    ClassMatch match = ClassMatch::Exact);
+
+// The index of the FIRST name in `names` that `obj` answers to, or -1 for none. `matches` is
+// per-entry so one row of a table can stay exact while its neighbours tolerate.
+//
+// ⛔ THE TABLE'S ORDER IS THE DISCRIMINATION — most-derived FIRST. Under Derived it is the only
+// thing doing that work, since a tolerant compare against a base answers true for every subclass
+// of it. Both callers (kPromotionClasses, kPopupClasses) say so where they are declared.
+int MatchClassIndexRaw(void* obj, const char* const* names, const ClassMatch* matches, int count);
 
 // SEH-safe: the ANSI text of the FName stored AT `addr` (entry id, then instance number), the
 // way the engine prints it — instance N shows as "_N-1". Distinct from ObjNameAnsiRaw, which
@@ -154,6 +195,11 @@ extern uint64_t gScanEpoch;
 struct ScreenFinder {
     const char* className;
     bool (*usable)(void*) = IsFocusedRaw;
+    // THIRD on purpose: the ~20 aggregate initialisers here are positional ({"UIFinalShell"},
+    // {"UIScreenStack", StackIsLiveRaw}, {"XComTutorialMgr", nullptr}) and all of them keep
+    // working with a new member behind the two they name. PreferStack WRITES this from its own
+    // argument, so a call site cannot make the stack half tolerant and leave the scan half exact.
+    ClassMatch match = ClassMatch::Exact;
     UObject* classObj = nullptr;
     void* cached = nullptr;
     uint64_t lastScanMs = 0;
@@ -219,12 +265,18 @@ void* TopStackScreenRaw(bool (*matches)(void* screen, const char* className),
     char* nameOut = nullptr, int nameCap = 0);
 
 // The topmost live screen of `className` anywhere on the stack, or null. Unlike
-// TopStackScreenRaw this keeps LOOKING past a non-match.
-void* FindStackScreenRaw(const char* className);
+// TopStackScreenRaw this keeps LOOKING past a non-match. The stack is the authority and it is a
+// handful of entries, so a tolerant walk here is the cheapest half of the override story.
+void* FindStackScreenRaw(const char* className, ClassMatch match = ClassMatch::Exact);
 
 // Stack first, object scan second; the first time a class is only findable by the fallback it
 // is logged once, so "not stack-managed" becomes a fact rather than an assumption.
-void* PreferStack(const char* className, ScreenFinder& finder, bool& reportedFallback);
+//
+// ⛔ A gate is only as good as its other half: `match` is applied to BOTH halves (it is written
+// into the finder), because a screen findable on the stack but invisible to the scan would vanish
+// only during a world change — an intermittent failure far harder to diagnose than a flat one.
+void* PreferStack(const char* className, ScreenFinder& finder, bool& reportedFallback,
+    ClassMatch match = ClassMatch::Exact);
 
 // ---- the shared tracked-screen lookup ----
 //

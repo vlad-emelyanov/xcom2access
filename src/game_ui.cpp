@@ -279,17 +279,104 @@ bool ObjClassNameAnsiRaw(void* obj, char* buf, int bufLen)
 
 // A live INSTANCE: class matches by POINTER; its name is the class's display name, which
 // excludes the class default object ("Default__<name>") for free.
-bool IsInstanceRaw(UObject* obj, UObject* classObj, const char* className)
+//
+// ⛔ This is BOTH the scan filter (ScanInstanceRaw, ScanInstancesRaw) and the cache revalidation
+// in ScreenFinder::Find, FindTrackedScreen and FindSoundManager, so the two must be handed the
+// SAME `match`. A derived-aware scan revalidated exactly would have its cache rejected on every
+// call — the finder would rescan forever and, because of the one-second rate limit, answer null
+// between scans, making the screen flicker in and out of existence.
+bool IsInstanceRaw(UObject* obj, UObject* classObj, const char* className, ClassMatch match)
 {
     __try {
-        if (!obj || !classObj || reinterpret_cast<UObject*>(obj->Class) != classObj)
+        if (!obj || !classObj)
             return false;
         char name[64];
+        if (match == ClassMatch::Derived) {
+            if (!IsKindOfClassRaw(obj, classObj))
+                return false;
+            // The exact form gets this for free: an instance's display name IS its class's, so
+            // "Default__<Class>" already fails the compare. A pointer walk up the chain does not,
+            // and a CDO is a perfectly well-formed instance of its own class — it would be the
+            // first hit of every scan. Its name is the one thing that tells it apart.
+            return ObjNameAnsiRaw(obj, name, sizeof(name)) && strncmp(name, "Default__", 9) != 0;
+        }
+        if (reinterpret_cast<UObject*>(obj->Class) != classObj)
+            return false;
         return ObjNameAnsiRaw(obj, name, sizeof(name)) && strcmp(name, className) == 0;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
 }
+
+namespace {
+
+// Defined further down with the other reflection primitives; the scans below need it here.
+void* ReadObjectClassRaw(UObject* obj);
+
+// The class-level half of IsInstanceRaw for EVERY entry at once: bit `c` is set when `cls` could
+// possibly satisfy entry `c`. Exact needs `cls` to BE the class, Derived needs it anywhere in the
+// chain — so ONE walk answers all `count` questions, where asking per entry walked the whole
+// chain once per entry.
+//
+// ⛔ This is a PRE-FILTER and must never produce a false NEGATIVE. A set bit means only "ask
+// IsInstanceRaw"; the real test still decides, which is what keeps a scan's predicate identical
+// to the unfiltered form — CDO exclusion, name compare and SEH behaviour included. A false
+// POSITIVE costs one call on an object that then fails, which is why the fault path returns
+// "everything is a candidate" rather than nothing.
+uint32_t ClassCandidacyMaskRaw(
+    void* cls, UObject* const* classes, const ClassMatch* match, int count)
+{
+    uint32_t mask = 0;
+    __try {
+        auto* cur = reinterpret_cast<UStruct*>(cls);
+        // Bounded like every other SuperField walk here: a UE3 chain is a dozen deep, and a
+        // corrupt link must not spin.
+        for (int step = 0; cur && step < 32; step++) {
+            for (int c = 0; c < count; c++) {
+                if (!classes[c] || (mask & (1u << c)))
+                    continue;
+                if (reinterpret_cast<UObject*>(cur) != classes[c])
+                    continue;
+                // Exact only accepts the object's OWN class, which is step 0.
+                if (match[c] == ClassMatch::Derived || step == 0)
+                    mask |= 1u << c;
+            }
+            cur = reinterpret_cast<UStruct*>(cur->SuperField);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return ~0u; // unreadable chain: filter nothing, exactly as before this filter existed
+    }
+    return mask;
+}
+
+// The per-call memo both scans share: GObjects holds hundreds of thousands of instances of a few
+// thousand classes, so the candidacy answer is worth computing once per CLASS rather than once
+// per object. Direct mapped — a collision just recomputes, and there is nothing to invalidate
+// because the memo dies with the call.
+//
+// ⛔ Per CALL, never static. `classes[]` grows between scans as packages load, and a class object
+// that resolved late would otherwise be judged against a stale answer forever.
+constexpr int kMemoSlots = 256;
+struct ClassMemo {
+    void* cls;
+    uint32_t mask;
+};
+
+// The memo's answer for `cls`, computing it on a miss. `cls` is never null, and the slots start
+// null, so a zero slot can never read as a hit.
+uint32_t MemoMaskRaw(ClassMemo* memo, void* cls, UObject* const* classes, const ClassMatch* match,
+    int count)
+{
+    const int slot
+        = static_cast<int>((reinterpret_cast<uintptr_t>(cls) >> 4) & (kMemoSlots - 1));
+    if (memo[slot].cls != cls) {
+        memo[slot].cls = cls;
+        memo[slot].mask = ClassCandidacyMaskRaw(cls, classes, match, count);
+    }
+    return memo[slot].mask;
+}
+
+} // namespace
 
 // The instance of `classObj` that `usable` accepts, searching from the end of GObjects.
 //
@@ -300,15 +387,29 @@ bool IsInstanceRaw(UObject* obj, UObject* classObj, const char* className)
 // bits, taking the last match handed back a corpse that passed every readiness test, read as
 // empty, and left the layer silently detached with the menu open on screen. So the direction is
 // now just a tie-break; `usable` is what actually decides.
-UObject* ScanInstanceRaw(UObject* classObj, const char* className, bool (*usable)(void*))
+//
+// ⛔ This pass carries the SAME class-level memo as the multi-class one, and for a blunter reason:
+// there are NINETEEN Derived ScreenFinders and each owns its own full GObjects pass, so the
+// un-memoized path would run some nineteen times more often than the shared one. Worse, a
+// `gScanEpoch` bump cancels every finder's rate limit at once — so all nineteen passes fire in the
+// same tick, at a screen change, which is exactly when the player is waiting to be told what just
+// appeared. A single-class scan needs a one-bit mask, which is `count == 1`.
+UObject* ScanInstanceRaw(UObject* classObj, const char* className, bool (*usable)(void*),
+    ClassMatch match)
 {
     __try {
         TArray<UObject*>* objects = UObject::GObjObjects();
         if (!objects)
             return nullptr;
+        ClassMemo memo[kMemoSlots] = {};
         for (int32_t i = objects->size() - 1; i >= 0; i--) {
             UObject* obj = objects->at(i);
-            if (obj && IsInstanceRaw(obj, classObj, className) && (!usable || usable(obj)))
+            if (!obj)
+                continue;
+            void* cls = ReadObjectClassRaw(obj);
+            if (!cls || !MemoMaskRaw(memo, cls, &classObj, &match, 1))
+                continue;
+            if (IsInstanceRaw(obj, classObj, className, match) && (!usable || usable(obj)))
                 return obj;
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -324,9 +425,22 @@ namespace {
 // Returns false when the walk did not finish — GObjects unreadable, or a fault partway (the
 // object array is mutated by the game thread during a world change, so this genuinely happens).
 // The caller MUST NOT treat a partial result as "these screens are absent".
+//
+// ⛔ The per-object work here is why the class-level pre-filter exists. This pass runs over the
+// WHOLE of GObjects — a few hundred thousand entries on a mission — once a second, continuously,
+// because a tracked screen is absent almost always. Under ClassMatch::Exact the inner test was one
+// pointer compare that failed immediately; asking the Derived form per entry instead walks the
+// object's class chain to the root once PER ENTRY, thirteen times over, before failing. The memo
+// below turns that back into one deref and one mask test for every object whose class has been
+// seen before — which, over hundreds of thousands of instances of a few thousand classes, is
+// essentially all of them.
 bool ScanInstancesRaw(UObject* const* classes, const char* const* names,
-    bool (*const* usable)(void*), void** out, int count)
+    bool (*const* usable)(void*), const ClassMatch* match, void** out, int count)
 {
+    // The candidacy mask is one bit per entry. No caller comes close, but a silently truncated
+    // mask would drop screens rather than announce itself.
+    if (count < 0 || count > 32)
+        return false;
     __try {
         TArray<UObject*>* objects = UObject::GObjObjects();
         if (!objects)
@@ -337,12 +451,25 @@ bool ScanInstancesRaw(UObject* const* classes, const char* const* names,
             if (classes[i])
                 remaining++;
         }
+        ClassMemo memo[kMemoSlots] = {};
         for (int32_t i = objects->size() - 1; i >= 0 && remaining > 0; i--) {
             UObject* obj = objects->at(i);
             if (!obj)
                 continue;
+            // ⛔ Through ReadObjectClassRaw, not `obj->Class`. GObjects is mutated by the game
+            // thread during a world change, so a stale entry here is a fault the enclosing
+            // __except would turn into a whole ABORTED pass — where the per-entry IsInstanceRaw
+            // it replaces had its own guard and merely skipped the object. Same fault tolerance
+            // as before, and on x64 the guard is table-driven and costs nothing until it fires.
+            void* cls = ReadObjectClassRaw(obj);
+            if (!cls)
+                continue;
+            const uint32_t mask = MemoMaskRaw(memo, cls, classes, match, count);
+            if (!mask)
+                continue;
             for (int c = 0; c < count; c++) {
-                if (out[c] || !classes[c] || !IsInstanceRaw(obj, classes[c], names[c]))
+                if (!(mask & (1u << c)) || out[c] || !classes[c]
+                    || !IsInstanceRaw(obj, classes[c], names[c], match[c]))
                     continue;
                 if (usable[c] && !usable[c](obj))
                     continue; // a corpse or a half-built screen is not an answer
@@ -408,6 +535,179 @@ bool IsKindOfRaw(void* obj, const char* baseClass)
     }
 }
 
+// The same question as IsKindOfRaw, decided by CLASS POINTER instead of by name. Once the base
+// class object is in hand this is a handful of derefs where the name form is a GNames lookup and
+// a strcmp per level, and that difference is what lets the every-tick gates tolerate a subclass:
+// ReadTacticalGate walks up to 32 stack entries every frame, and the ant farm and geoscape gates
+// do the same on the strategy layer.
+bool IsKindOfClassRaw(void* obj, UObject* baseClassObj)
+{
+    if (!obj || !baseClassObj)
+        return false;
+    __try {
+        auto* cls = reinterpret_cast<UStruct*>(reinterpret_cast<UObject*>(obj)->Class);
+        // Bounded like every other SuperField walk here: a UE3 chain is a dozen deep, and a
+        // corrupt link must not spin.
+        for (int step = 0; cls && step < 32; step++) {
+            if (reinterpret_cast<UObject*>(cls) == baseClassObj)
+                return true;
+            cls = reinterpret_cast<UStruct*>(cls->SuperField);
+        }
+        return false;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+namespace {
+
+// The base class object behind a ClassMatch::Derived name, resolved once. Class objects are
+// created at package load and persist for the session, so a HIT is permanent.
+//
+// ⛔ A MISS is never cached PERMANENTLY. Packages load while the game runs — a mod's override
+// class does not exist during the first seconds after injection, and the Highlander's rebuilt
+// XComGame arrives with the map — so writing a class off for good would silently lose the screen
+// for the rest of the session.
+//
+// ⛔ But a miss must BACK OFF, and a fixed one-second retry is not backing off. `FindClassRaw` is
+// a full linear GObjects pass doing an `ObjNameAnsiRaw` — a nested SEH frame and a GNames deref —
+// per object, and these matchers run on the TICK. A name that resolves to nothing resolves to
+// nothing for the whole session, which is the ordinary case for any class in a package the
+// player does not own: retried every second, that is a permanent full scan per unresolvable name,
+// on the game thread, forever. It cost two of them before the popup table's DLC entries went back
+// to Exact (`game_ui_popup.cpp`).
+//
+// So: double the interval on each miss, from one second up to a minute. A class that loads late
+// is still picked up within a minute of loading — packages arrive at world changes, which are
+// minutes apart — while a name that will never resolve settles at 1/60th of the old cost. The
+// one-line give-up note is what turns "this screen is never found" from silent into diagnosable.
+//
+// ⛔ A FIXED ARRAY keyed by strcmp, not `unordered_map<std::string, …>`. The obvious map costs a
+// std::string construction — and a malloc for any name past MSVC's 15-char SSO limit, which is
+// most of ours — on EVERY call INCLUDING the hits. This is not a cold path: FindStackScreenRaw
+// asks once per stack entry, and the three layer gates walk the stack every tick. The `sLast`
+// front cache is what makes that loop one strcmp per entry, since a walk asks for the same name
+// all the way down.
+constexpr uint64_t kFirstRetryMs = 1000;
+constexpr uint64_t kMaxRetryMs = 60000;
+// Every Derived name in the tree is a string literal in a class table; ~35 of them today.
+constexpr int kBaseClassCacheMax = 128;
+
+UObject* ResolveBaseClassCached(const char* className)
+{
+    struct Entry {
+        const char* name;
+        UObject* cls;
+        uint64_t lastTryMs;
+        uint64_t retryMs;
+        bool noted;
+    };
+    static Entry sCache[kBaseClassCacheMax] = {}; // game thread only
+    static int sCount = 0;
+    static int sLast = -1;
+
+    Entry* entry = nullptr;
+    if (sLast >= 0 && strcmp(sCache[sLast].name, className) == 0) {
+        entry = &sCache[sLast];
+    } else {
+        for (int i = 0; i < sCount; i++) {
+            if (strcmp(sCache[i].name, className) != 0)
+                continue;
+            sLast = i;
+            entry = &sCache[i];
+            break;
+        }
+    }
+    if (!entry) {
+        if (sCount >= kBaseClassCacheMax) {
+            // Not reachable from a literal table, so it means someone started resolving a
+            // RUNTIME name — which would also mean `name` may not outlive this call.
+            LOG_WARN("GameUI: base-class cache is full at %d names — %s not resolved",
+                kBaseClassCacheMax, className);
+            return nullptr;
+        }
+        sLast = sCount++;
+        entry = &sCache[sLast];
+        entry->name = className; // a literal from a class table; it outlives us
+        entry->retryMs = kFirstRetryMs;
+    }
+
+    if (entry->cls)
+        return entry->cls;
+    const uint64_t now = GetTickCount64();
+    if (entry->lastTryMs && now - entry->lastTryMs < entry->retryMs)
+        return nullptr;
+    entry->lastTryMs = now;
+    entry->cls = FindClassRaw(className);
+    if (entry->cls) {
+        LOG_INFO("GameUI: %s base class object at 0x%p — subclass matching armed", className,
+            entry->cls);
+        return entry->cls;
+    }
+    if (entry->retryMs < kMaxRetryMs) {
+        entry->retryMs *= 2;
+        if (entry->retryMs > kMaxRetryMs)
+            entry->retryMs = kMaxRetryMs;
+    } else if (!entry->noted) {
+        // ⚠ "About two minutes", not one: the interval doubles BEFORE each wait, so the attempts
+        // land at 0, 2, 6, 14, 30, 62 and 122 seconds and this branch is the eighth miss. Saying
+        // "a minute" would have a tester call the mechanism broken while it was still counting.
+        entry->noted = true;
+        LOG_INFO("GameUI: %s still has no class object after about two minutes — subclass "
+                 "matching for it stays off, re-checked once a minute from here",
+            className);
+    }
+    return nullptr;
+}
+
+// One line the first time a Derived match lands on a class that is NOT the one asked for. This
+// is how a tester's log says WHICH override is live: without it a mod screen that we now find
+// and read is indistinguishable in the log from the vanilla one, and a screen we find and read
+// WRONG produces a bug report about silence somewhere else entirely.
+//
+// Latched per (base, actual) pair rather than per call site, because the same base is asked for
+// from several sites and the fact worth recording is which subclass is installed, not which of
+// our finders noticed it first.
+//
+// ⚠ It says "subclass", not "override", because it cannot tell the two apart and a log line that
+// guessed would be worse than none: `UIAlert_DLC_Day60` and `UIArmory_Loadout_MP` are stock
+// Firaxis classes that match their base here, and a tester reading "override" would go looking for
+// a mod that is not installed.
+//
+// ⛔ The latch allocates NOTHING on the repeat path, which is the only path that matters here: for
+// a player who actually has the subclass — the whole audience this line exists for — a per-tick
+// finder matches on every tick and takes this route every time. `std::unordered_set<std::string>`
+// cannot do that: its hash and equality are not transparent, so even a `find(key)` on a `char[]`
+// materialises a temporary std::string, and two class names are always past the SSO limit. A flat
+// array of fixed pairs, searched with strcmp, is both smaller and honest about being tiny — the
+// whole point is that it stops growing after the first few lines.
+constexpr int kNoteMax = 64;
+
+void NoteOverrideRaw(const char* base, void* obj)
+{
+    char actual[64];
+    if (!ObjClassNameAnsiRaw(obj, actual, sizeof(actual)) || strcmp(actual, base) == 0)
+        return;
+    struct Note {
+        char base[64];
+        char actual[64];
+    };
+    static Note sSeen[kNoteMax] = {}; // game thread only
+    static int sCount = 0;
+    for (int i = 0; i < sCount; i++) {
+        if (strcmp(sSeen[i].base, base) == 0 && strcmp(sSeen[i].actual, actual) == 0)
+            return;
+    }
+    if (sCount < kNoteMax) {
+        strncpy_s(sSeen[sCount].base, base, _TRUNCATE);
+        strncpy_s(sSeen[sCount].actual, actual, _TRUNCATE);
+        sCount++;
+    }
+    LOG_INFO("GameUI: %s matched subclass %s", base, actual);
+}
+
+} // namespace
+
 // Bumped by HintScreenChange. A finder that scanned in an older epoch has a cache from before a
 // known screen change, so it rescans immediately instead of waiting out its rate limit — the
 // rate limit is there to bound idle cost, not to make a screen change take a second to notice.
@@ -430,7 +730,7 @@ void* ScreenFinder::Find()
     // covered by another screen — drops it and waits for the next scan rather than handing
     // back a pointer that already failed the test.
     if (cached
-        && IsInstanceRaw(reinterpret_cast<UObject*>(cached), classObj, className)
+        && IsInstanceRaw(reinterpret_cast<UObject*>(cached), classObj, className, match)
         && (!usable || usable(cached)))
         return cached;
     cached = nullptr;
@@ -452,12 +752,15 @@ void* ScreenFinder::Find()
         emptyScans = 0;
     }
 
-    void* found = ScanInstanceRaw(classObj, className, usable);
+    void* found = ScanInstanceRaw(classObj, className, usable, match);
     // Only a CHANGE is worth a line. The rescan runs once a second for as long as the screen
     // exists but is covered (that is the whole point of it), so logging every hit would bury
     // the log in repeats of the same address.
-    if (found && found != cached)
+    if (found && found != cached) {
         LOG_INFO("GameUI: found %s instance at 0x%p", className, found);
+        if (match == ClassMatch::Derived)
+            NoteOverrideRaw(className, found);
+    }
     cached = found;
     if (!cached && ++emptyScans % 30 == 1)
         LOG_DEBUG("GameUI: no %s instance yet (scan #%d)", className, emptyScans);
@@ -742,21 +1045,33 @@ void* TopStackScreenRaw(bool (*matches)(void* screen, const char* className),
 }
 
 // The topmost live screen of `className` on the stack, or null if the stack does not hold one.
-// Matching is by class NAME, so no UClass has to be resolved first — the stack is at most a few
-// dozen entries, which makes the name compares cheaper than the class lookup would be.
 //
 // Unlike TopStackScreenRaw this keeps LOOKING past a non-match: the caller asked for a specific
 // screen wherever it sits, not for the one on top.
-void* FindStackScreenRaw(const char* className)
+//
+// This is the cheapest half of the ModClassOverrides story and the one that fixes most of it: the
+// stack is the authority on what is on screen and it is a handful of entries, so a tolerant walk
+// here finds an override the instant it is pushed.
+//
+// ⚠ The two policies cost differently, and the difference is not where it looks. Exact compares
+// class NAMES and resolves no UClass at all — a strcmp per entry over a few dozen entries, which
+// is why this was always cheap. Derived must RESOLVE `className` to a class object first, and
+// `ResolveBaseClassCached` does that with a full linear GObjects pass. A hit is resolved once and
+// then it is a bounded pointer chase per entry, so the steady state is fine; a name that resolves
+// to NOTHING is the case to think about, and the resolver backs off to once a minute rather than
+// scanning every second forever. Do not read "the stack is small" as "Derived is free here".
+void* FindStackScreenRaw(const char* className, ClassMatch match)
 {
     void* screens[kMaxStackScreens] = {};
     int count = WalkStackRaw(screens, kMaxStackScreens);
     for (int i = 0; i < count; i++) {
         if (!screens[i] || !StackEntryLiveRaw(screens[i]))
             continue;
-        char name[64];
-        if (ObjClassNameAnsiRaw(screens[i], name, sizeof(name)) && strcmp(name, className) == 0)
-            return screens[i];
+        if (!ObjectClassNamedRaw(screens[i], className, match))
+            continue;
+        if (match == ClassMatch::Derived)
+            NoteOverrideRaw(className, screens[i]);
+        return screens[i];
     }
     return nullptr;
 }
@@ -766,9 +1081,15 @@ void* FindStackScreenRaw(const char* className)
 // pushed) and the window during a world change while the stack itself is being rebuilt. The
 // first time a class can only be found by the fallback we say so once — that is how we learn
 // which screens are not stack-managed, instead of assuming.
-void* PreferStack(const char* className, ScreenFinder& finder, bool& reportedFallback)
+void* PreferStack(const char* className, ScreenFinder& finder, bool& reportedFallback,
+    ClassMatch match)
 {
-    if (void* onStack = FindStackScreenRaw(className))
+    // ⛔ A gate is only as good as its other half. Writing the policy into the finder rather than
+    // trusting its own initializer is what makes it impossible for a call site to tolerate an
+    // override on the stack and lose it to the scan — which would show up only during a world
+    // change, or never for UIDialogueBox, which the stack does not manage at all.
+    finder.match = match;
+    if (void* onStack = FindStackScreenRaw(className, match))
         return onStack;
     void* found = finder.Find();
     if (found && !reportedFallback) {
@@ -914,14 +1235,45 @@ void* ReadObjectClassRaw(UObject* obj)
 
 } // namespace
 
-// The object's class is named exactly `className` (no inheritance walk — used where the
-// concrete class is known).
-bool ObjectClassNamedRaw(void* obj, const char* className)
+// The object's class is named `className` — exactly by default (no inheritance walk, for where
+// the concrete class is known), or anywhere on its class chain under Derived.
+//
+// ⛔ Derived FALLS BACK to the exact compare while the base class object is still unresolved,
+// rather than answering "no". The first seconds after injection are exactly that window —
+// packages are still loading — and a flat refusal there would lose every screen until the class
+// turned up, which is the silence this whole mechanism exists to remove.
+bool ObjectClassNamedRaw(void* obj, const char* className, ClassMatch match)
 {
+    if (match == ClassMatch::Derived) {
+        if (UObject* base = ResolveBaseClassCached(className))
+            return IsKindOfClassRaw(obj, base);
+    }
     void* cls = ReadObjectClassRaw(reinterpret_cast<UObject*>(obj));
     char name[64];
     return cls && ObjNameAnsiRaw(reinterpret_cast<UObject*>(cls), name, sizeof(name))
         && strcmp(name, className) == 0;
+}
+
+// The index of the FIRST name `obj` answers to, or -1.
+//
+// ⛔ THE TABLE'S ORDER IS THE DISCRIMINATION, and under Derived it is the ONLY thing doing that
+// work. UIArmory_PromotionHero and UIArmory_PromotionPsiOp both extend UIArmory_Promotion, so a
+// tolerant compare against the base answers true for all three — most-derived first is what keeps
+// the Community Promotion Screen's CPS_UIArmory_PromotionHero reading with HERO offsets instead
+// of Classic ones. `matches` is per-entry for the other shape of the same problem: the popup
+// allow-list wants tolerance on fourteen classes and exactness on three — UIProgressDialogue,
+// whose UIReconnectController descendant no recipe has ever read, and the two DLC alerts, which
+// a tolerant entry 0 makes unreachable anyway (`game_ui_popup.cpp`).
+int MatchClassIndexRaw(void* obj, const char* const* names, const ClassMatch* matches, int count)
+{
+    for (int i = 0; i < count; i++) {
+        if (!ObjectClassNamedRaw(obj, names[i], matches[i]))
+            continue;
+        if (matches[i] == ClassMatch::Derived)
+            NoteOverrideRaw(names[i], obj);
+        return i;
+    }
+    return -1;
 }
 
 namespace {
@@ -1591,6 +1943,15 @@ bool IsScreenFocused(void* screen)
     return IsFocusedRaw(screen); // see there for why bIsVisible is not part of this
 }
 
+bool IsScreenKindOf(void* screen, const char* baseClass)
+{
+    if (!screen || !baseClass || !baseClass[0])
+        return false;
+    // The pointer-compare form: the base class object is resolved once and the chain is then
+    // walked as pointers, which is what makes this affordable on the tick.
+    return ObjectClassNamedRaw(screen, baseClass, ClassMatch::Derived);
+}
+
 uint32_t ScreenStateBits(void* screen)
 {
     return screen ? ReadU32Raw(screen, kPanelFlagsOffset) : 0;
@@ -1838,9 +2199,12 @@ std::string ReadPanelTooltip(void* panel)
 
     // Preformed path: a real UITextTooltip object in the Tooltips array. Only text tooltips
     // carry sTitle/sBody at these offsets; other subclasses (ability tooltips) would read
-    // garbage, so the class check gates the read.
+    // garbage, so the class check gates the read. Derived rather than exact because the check is
+    // asking "does this object HAVE those two fields", which every descendant of the class that
+    // declares them does — UITextTooltip has no vanilla descendants, so there is nothing else a
+    // tolerant compare can reach.
     void* tip = FindTooltipByIdRaw(mgr, id);
-    if (!tip || !ObjectClassNamedRaw(tip, "UITextTooltip"))
+    if (!tip || !ObjectClassNamedRaw(tip, "UITextTooltip", ClassMatch::Derived))
         return {};
 
     return JoinTooltip(ReadFStringField(tip, kTextTooltipTitleOffset),
@@ -1987,6 +2351,50 @@ const char* const kTrackedClassNames[kTrackedScreenCount] = {
     "UIInputDialogue",
 };
 
+// Per-screen matching policy, positional against the table above. Per screen and not per table
+// because these fifteen do not want the same answer, and three of them want the opposite of
+// their neighbours. A short initializer leaves Exact, which is today's behaviour — so a forgotten
+// entry is a screen that stays strict, never a screen that starts claiming things.
+constexpr ClassMatch kTrackedMatch[kTrackedScreenCount] = {
+    /*Difficulty*/ ClassMatch::Derived,
+    /*IronMan*/ ClassMatch::Derived,
+    /*Narrative*/ ClassMatch::Derived,
+    /*Soundtrack*/ ClassMatch::Derived,
+    /*Dialog*/ ClassMatch::Derived,
+    // ⛔ EXACT: UIShellStrategy EXTENDS UIPauseMenu (UIShellStrategy.uc:1) and is a different
+    // screen — the game itself tells them apart with IsA('UIShellStrategy') inside UIPauseMenu.
+    // This table probes each entry independently, so it has no most-derived-first order to lean
+    // on; tolerating here would hand the pause-menu recipe the developer strategy shell that
+    // XComHQPresentationLayer pushes. A mod's UIPauseMenu override needs an ordered probe first.
+    /*PauseMenu*/ ClassMatch::Exact,
+    /*LoadScreen*/ ClassMatch::Derived,
+    /*TacticalHUD*/ ClassMatch::Derived,
+    /*TutorialBox*/ ClassMatch::Derived,
+    // Deliberately accepted: the only vanilla descendant is UIArmory_Loadout_MP, which no recipe
+    // owns, so tolerance adds a multiplayer screen nobody has exercised rather than stealing one.
+    // It is the same widgets — refusing it would cost every mod loadout override instead.
+    /*ArmoryLoadout*/ ClassMatch::Derived,
+    // ⛔ EXACT, and this one is not about ambiguity: robojumper_UISquadSelect extends
+    // UISquadSelect and NEVER populates the inherited m_kSlotList (it spawns its own
+    // robojumper_UIList_SquadEditor). Finding it would make the recipe attach, TAKE THE ARROW
+    // KEYS and narrate a squad with no soldiers in it — strictly worse than today's silent
+    // non-attach, which at least leaves the keyboard to the game. Finding a screen is not the
+    // same as reading it, and this entry is the rule's clearest case.
+    /*SquadSelect*/ ClassMatch::Exact,
+    // ⛔ EXACT for the same reason in its other shape: UIAfterAction_LW adds m_kSlotList2/3/4 for
+    // a multi-row squad and ReadAfterAction reads only the inherited first list. Tolerating would
+    // read six soldiers of twenty-four and say nothing about the rest — a dropped tail reads to a
+    // blind player as "the screen has nothing more" and is therefore never reported as a bug.
+    /*AfterAction*/ ClassMatch::Exact,
+    /*LoadGame*/ ClassMatch::Derived,
+    // In LOCKSTEP with SaveScreenIsSaving (game_ui_shell.cpp): that one boolean picks the title
+    // offset, the busy flag and the whole semantics of the save/load recipe, so a tolerant finder
+    // with an exact discriminator would read a mod's save screen as a LOAD screen — on the one
+    // surface where the wrong-save-overwritten hazard is already documented.
+    /*SaveGame*/ ClassMatch::Derived,
+    /*TextInput*/ ClassMatch::Derived,
+};
+
 } // namespace
 
 // The top entry of a dialog box's queue — m_arrData.Length - 1, which is where OnAccept /
@@ -2058,8 +2466,8 @@ void* FindTrackedScreen(TrackedScreen which)
 
     void* cached = sCached[which];
     bool live = cached
-        && IsInstanceRaw(
-            reinterpret_cast<UObject*>(cached), sClasses[which], kTrackedClassNames[which]);
+        && IsInstanceRaw(reinterpret_cast<UObject*>(cached), sClasses[which],
+            kTrackedClassNames[which], kTrackedMatch[which]);
     if (live && kTrackedUsable[which](cached))
         return cached;
     if (!live)
@@ -2085,10 +2493,13 @@ void* FindTrackedScreen(TrackedScreen which)
     // what replaces a stale one after a world change.
     void* found[kTrackedScreenCount] = {};
     bool complete = ScanInstancesRaw(
-        sClasses, kTrackedClassNames, kTrackedUsable, found, kTrackedScreenCount);
+        sClasses, kTrackedClassNames, kTrackedUsable, kTrackedMatch, found, kTrackedScreenCount);
     for (int i = 0; i < kTrackedScreenCount; i++) {
-        if (found[i] != sCached[i] && found[i])
+        if (found[i] != sCached[i] && found[i]) {
             LOG_INFO("GameUI: found %s instance at 0x%p", kTrackedClassNames[i], found[i]);
+            if (kTrackedMatch[i] == ClassMatch::Derived)
+                NoteOverrideRaw(kTrackedClassNames[i], found[i]);
+        }
         // A partial walk proves nothing about what it did not reach. Clearing on one would
         // drop live screens for a second at exactly the moment they appear — during a world
         // change, which is when the walk is most likely to be cut short.
@@ -2106,7 +2517,10 @@ void* FindTrackedScreen(TrackedScreen which)
 void* FindScreen(TrackedScreen which)
 {
     static bool sReported[kTrackedScreenCount] = {};
-    if (void* onStack = FindStackScreenRaw(kTrackedClassNames[which]))
+    // Both halves take the same per-screen policy, the PreferStack rule applied to the shared
+    // lookup: a screen tolerated on the stack and refused by the scan would disappear exactly
+    // during a world change, and UIDialogueBox — never pushed at all — would never be found.
+    if (void* onStack = FindStackScreenRaw(kTrackedClassNames[which], kTrackedMatch[which]))
         return onStack;
     void* found = FindTrackedScreen(which);
     if (found && !sReported[which]) {

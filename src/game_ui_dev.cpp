@@ -104,8 +104,12 @@ std::string ConsoleCommand(const std::string& command)
 
 void* FindStackScreen(const char* className)
 {
+    // ⛔ EXACT, explicitly, while the finders around it tolerate subclasses: a diagnostic asked
+    // about class X must answer about exactly X, or the tool that settles "what is actually on
+    // screen" starts editorialising and stops being evidence. FindInstances below is where the
+    // harness answers the derived question, and it says so in its own name.
     if (className && className[0])
-        return FindStackScreenRaw(className);
+        return FindStackScreenRaw(className, ClassMatch::Exact);
 
     // No class asked for: the topmost screen the recipes would consider. Index 0 is the top
     // (Push inserts there), but the entry above a live screen can be a corpse the stack has

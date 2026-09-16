@@ -49,12 +49,17 @@ bool Active()
 
 // The screen-stack answer, taken from the tile cursor's own gate rather than a second walk — so
 // the two surfaces can never disagree about who owns the tactical input. ReadTacticalGate stops
-// at the first non-passive screen above UITacticalHUD and reports its class name; while the pad
-// is up that name is UIHackingScreen, which is exactly the instant the tile cursor stands down.
+// at the first non-passive screen above UITacticalHUD and hands back that screen; while the pad
+// is up it is the hacking screen, which is exactly the instant the tile cursor stands down.
+//
+// ⛔ The SCREEN, not the gate's copied `blocker` name. A name that was strncpy'd into a 64-byte
+// field can answer neither for a long mod class name nor for a subclass of ours, and the failure
+// is double: the hacking reader never announces the pad AND the tile cursor stays stood down
+// under a blocker it does not recognise — silence on both surfaces at once.
 bool ScreenUp()
 {
     GameUI::TacticalGate gate = GameUI::ReadTacticalGate();
-    return gate.blocked && strcmp(gate.blocker, kScreenClass) == 0;
+    return gate.blocked && GameUI::IsScreenKindOf(gate.blockerScreen, kScreenClass);
 }
 
 // One outbound call to the companion reader, then speak whatever it wrote to NativeResult.

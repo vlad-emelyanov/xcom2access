@@ -571,13 +571,14 @@ DropshipView ReadDropship()
         // screen over the briefing does not make the briefing the wrong answer.
         if (!screens[i] || !StackEntryLiveRaw(screens[i]))
             continue;
-        char name[64];
-        if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
-            continue;
-        if (strcmp(name, "UIDropShipBriefing_MissionStart") == 0) {
+        // Tolerant on each, which cannot make one answer for the other: they are SIBLINGS under
+        // UIDropShipBriefingBase, neither with descendants of its own.
+        if (ObjectClassNamedRaw(screens[i], "UIDropShipBriefing_MissionStart",
+                ClassMatch::Derived)) {
             v.screen = screens[i];
             v.missionStart = true;
-        } else if (strcmp(name, "UIDropShipBriefing_MissionEnd") == 0) {
+        } else if (ObjectClassNamedRaw(screens[i], "UIDropShipBriefing_MissionEnd",
+                       ClassMatch::Derived)) {
             v.screen = screens[i];
         }
     }
@@ -634,7 +635,7 @@ void* FindCovertActionsScreen()
 {
     static ScreenFinder sFinder{"UICovertActions"};
     static bool sReported = false;
-    void* screen = PreferStack("UICovertActions", sFinder, sReported);
+    void* screen = PreferStack("UICovertActions", sFinder, sReported, ClassMatch::Derived);
     return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
 }
 
@@ -680,9 +681,7 @@ CovertActionsView ReadCovertActions(void* screen)
         // game's own arrows skip it, so ours must too. Matched by CLASS rather than by the empty
         // Text: an empty answer is indistinguishable from a field looked up in the wrong place,
         // and this one has a name to ask for instead.
-        char cls[64];
-        if (ObjClassNameAnsiRaw(rows[i], cls, sizeof(cls))
-            && strcmp(cls, "UICovertOpsFactionListItem") == 0)
+        if (ObjectClassNamedRaw(rows[i], "UICovertOpsFactionListItem", ClassMatch::Derived))
             continue;
 
         CovertActionRow r;
@@ -774,7 +773,7 @@ void* FindStrategyPolicyScreen()
 {
     static ScreenFinder sFinder{"UIStrategyPolicy"};
     static bool sReported = false;
-    void* screen = PreferStack("UIStrategyPolicy", sFinder, sReported);
+    void* screen = PreferStack("UIStrategyPolicy", sFinder, sReported, ClassMatch::Derived);
     return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
 }
 
@@ -860,9 +859,14 @@ constexpr int32_t kPromoColPanelIndexOffset = 0x420; // m_iPanelIndex (int)
 constexpr int kMaxPromotionRows = 32;
 constexpr int kMaxPromotionBranches = 4;
 
-// Probe order is the class hierarchy's, most-derived first — FindStackScreenRaw and
-// IsInstanceRaw both match the EXACT class name, so a hero screen would never answer to
-// "UIArmory_Promotion" and the three can be told apart cleanly.
+// ⛔ PROBE ORDER IS THE DISCRIMINATION, most-derived first, and since the match became TOLERANT
+// the order is the ONLY thing doing that work. UIArmory_PromotionHero and UIArmory_PromotionPsiOp
+// both extend UIArmory_Promotion, so a tolerant compare against the base answers true for all
+// three; first hit wins, so the base must be last. Read the wrong way round, a hero screen is
+// read with Classic offsets — which is exactly what the Community Promotion Screen's
+// CPS_UIArmory_PromotionHero (installed through the Highlander's OverridePromotionUIClass, not
+// ModClassOverrides) would get if this table were reordered or if only one of the two probes
+// below were made tolerant.
 struct PromotionClass {
     const char* name;
     PromotionKind kind;
@@ -871,6 +875,21 @@ constexpr PromotionClass kPromotionClasses[] = {
     {"UIArmory_PromotionHero", PromotionKind::Hero},
     {"UIArmory_PromotionPsiOp", PromotionKind::PsiOp},
     {"UIArmory_Promotion", PromotionKind::Classic},
+};
+constexpr int kPromotionClassCount
+    = sizeof(kPromotionClasses) / sizeof(kPromotionClasses[0]);
+
+// The same names and the same order, flat, for the two probes that need an array rather than a
+// struct. Both arrays derive from the one table above, so they cannot drift out of order.
+constexpr const char* kPromotionNames[kPromotionClassCount] = {
+    kPromotionClasses[0].name,
+    kPromotionClasses[1].name,
+    kPromotionClasses[2].name,
+};
+constexpr ClassMatch kPromotionMatch[kPromotionClassCount] = {
+    ClassMatch::Derived,
+    ClassMatch::Derived,
+    ClassMatch::Derived,
 };
 
 ScreenFinder gPromoHeroFinder{"UIArmory_PromotionHero"};
@@ -881,15 +900,19 @@ ScreenFinder* const kPromotionFinders[]
 bool gPromoFallbackReported[3] = {};
 
 // Which of the three classes `screen` is, or false when it is none of them.
+//
+// ⛔ This is the SECOND copy of the probe and the easily-missed one: FindPromotionScreen below
+// walks the same table in the same order, and the two must agree. Make one tolerant and not the
+// other and the hero screen is either not found or found and then read with the wrong offsets —
+// a screen that reads as present and says the wrong things.
 bool PromotionKindOf(void* screen, PromotionKind* out)
 {
-    for (const PromotionClass& c : kPromotionClasses) {
-        if (ObjectClassNamedRaw(screen, c.name)) {
-            *out = c.kind;
-            return true;
-        }
-    }
-    return false;
+    const int i
+        = MatchClassIndexRaw(screen, kPromotionNames, kPromotionMatch, kPromotionClassCount);
+    if (i < 0)
+        return false;
+    *out = kPromotionClasses[i].kind;
+    return true;
 }
 
 // The ability slots of one row, in branch order. `icons` are the row's own UIIcon pointers; a
@@ -910,12 +933,15 @@ void ReadPromotionCells(void* const* icons, int count, std::vector<PromotionCell
 
 void* FindPromotionScreen()
 {
-    for (int i = 0; i < 3; i++) {
-        if (void* onStack = FindStackScreenRaw(kPromotionClasses[i].name))
+    // Ordered, most-derived first — see kPromotionClasses. Both halves take the same policy per
+    // entry, the PreferStack rule spelled out by hand because this finder predates it.
+    for (int i = 0; i < kPromotionClassCount; i++) {
+        if (void* onStack = FindStackScreenRaw(kPromotionClasses[i].name, kPromotionMatch[i]))
             return onStack;
     }
     // The stack is the authority; this only covers the window in which it is being rebuilt.
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < kPromotionClassCount; i++) {
+        kPromotionFinders[i]->match = kPromotionMatch[i];
         void* found = kPromotionFinders[i]->Find();
         if (found) {
             if (!gPromoFallbackReported[i]) {
@@ -1228,7 +1254,10 @@ GeoscapeGate ReadGeoscapeGate()
         char name[64];
         if (!ObjClassNameAnsiRaw(screens[i], name, sizeof(name)))
             continue;
-        if (strcmp(name, "UIStrategyMap") == 0) {
+        // Tolerant: this is the geoscape layer's whole existence test, so an override here would
+        // kill the tray recipe outright rather than degrade it. UIStrategyMap has no vanilla
+        // descendants, so nothing else can answer for it.
+        if (ObjectClassNamedRaw(screens[i], "UIStrategyMap", ClassMatch::Derived)) {
             gate.mapOnStack = true;
             gate.current = !sawTop;
             if (!sawTop) {
@@ -1537,9 +1566,10 @@ constexpr int kMaxBondRows = 256;
 
 // The stack-first finder every one of these screens shares, answering only while the screen is
 // the FOCUSED one — a bond screen under its own confirm screen has already lost the keys.
-void* FindFocusedStackScreen(const char* className, ScreenFinder& finder, bool& reported)
+void* FindFocusedStackScreen(const char* className, ScreenFinder& finder, bool& reported,
+    ClassMatch match = ClassMatch::Exact)
 {
-    void* screen = PreferStack(className, finder, reported);
+    void* screen = PreferStack(className, finder, reported, match);
     return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
 }
 
@@ -1549,7 +1579,7 @@ void* FindChosenInfoScreen()
 {
     static ScreenFinder sFinder{"UIChosenInfo"};
     static bool sReported = false;
-    return FindFocusedStackScreen("UIChosenInfo", sFinder, sReported);
+    return FindFocusedStackScreen("UIChosenInfo", sFinder, sReported, ClassMatch::Derived);
 }
 
 ChosenInfoView ReadChosenInfo(void* screen)
@@ -1570,7 +1600,7 @@ void* FindBondScreen()
 {
     static ScreenFinder sFinder{"UISoldierBondScreen"};
     static bool sReported = false;
-    return FindFocusedStackScreen("UISoldierBondScreen", sFinder, sReported);
+    return FindFocusedStackScreen("UISoldierBondScreen", sFinder, sReported, ClassMatch::Derived);
 }
 
 BondScreenView ReadBondScreen(void* screen)
@@ -1620,14 +1650,16 @@ void* FindBondConfirmScreen()
 {
     static ScreenFinder sFinder{"UISoldierBondConfirmScreen"};
     static bool sReported = false;
-    return FindFocusedStackScreen("UISoldierBondConfirmScreen", sFinder, sReported);
+    // A SIBLING of UISoldierBondScreen, so tolerating both changes no probe ordering.
+    return FindFocusedStackScreen(
+        "UISoldierBondConfirmScreen", sFinder, sReported, ClassMatch::Derived);
 }
 
 void* FindSkyrangerArrivesScreen()
 {
     static ScreenFinder sFinder{"UISkyrangerArrives"};
     static bool sReported = false;
-    return FindFocusedStackScreen("UISkyrangerArrives", sFinder, sReported);
+    return FindFocusedStackScreen("UISkyrangerArrives", sFinder, sReported, ClassMatch::Derived);
 }
 
 // ---- the monthly report and its Chosen page (docs/resistance-report-recon.md) ----
@@ -1646,7 +1678,11 @@ void* FindChosenEventsScreen()
 {
     static ScreenFinder sFinder{"UIResistanceReport_ChosenEvents"};
     static bool sReported = false;
-    return FindFocusedStackScreen("UIResistanceReport_ChosenEvents", sFinder, sReported);
+    // ⚠ Despite the name this is a SIBLING of UIResistanceReport, not a descendant — both extend
+    // UIX2SimpleScreen, as does UIResistanceReport_FactionEvents. So neither can answer for the
+    // other, and the kRecipes order that puts this one first is not load-bearing against this.
+    return FindFocusedStackScreen(
+        "UIResistanceReport_ChosenEvents", sFinder, sReported, ClassMatch::Derived);
 }
 
 ChosenEventsView ReadChosenEvents(void* screen)
@@ -1667,7 +1703,7 @@ void* FindResistanceReportScreen()
 {
     static ScreenFinder sFinder{"UIResistanceReport"};
     static bool sReported = false;
-    return FindFocusedStackScreen("UIResistanceReport", sFinder, sReported);
+    return FindFocusedStackScreen("UIResistanceReport", sFinder, sReported, ClassMatch::Derived);
 }
 
 // ---- the covert action report (UICovertActionReport) — docs/covert-actions-recon.md §8b ----
@@ -1685,7 +1721,10 @@ void* FindCovertReportScreen()
 {
     static ScreenFinder sFinder{"UICovertActionReport"};
     static bool sReported = false;
-    return FindFocusedStackScreen("UICovertActionReport", sFinder, sReported);
+    // A CONFIRMED override: LWOTC's UICovertActionReport_LW extends this class and replaces only
+    // RefreshMainPanel and GetRewardString, leaving every widget this reader touches where it
+    // was — so tolerance alone is the whole fix for that screen.
+    return FindFocusedStackScreen("UICovertActionReport", sFinder, sReported, ClassMatch::Derived);
 }
 
 CovertReportView ReadCovertReport(void* screen)
@@ -1726,7 +1765,10 @@ void* FindArmoryMenuScreen()
 {
     static ScreenFinder sFinder{"UIArmory_MainMenu"};
     static bool sReported = false;
-    return FindFocusedStackScreen("UIArmory_MainMenu", sFinder, sReported);
+    // Deliberately accepted, not inherited by accident: the one vanilla descendant is
+    // UIMPShell_UnitEditor, which no recipe owns, so tolerance adds an untested multiplayer
+    // screen rather than stealing one. Refusing it would cost every mod armory override instead.
+    return FindFocusedStackScreen("UIArmory_MainMenu", sFinder, sReported, ClassMatch::Derived);
 }
 
 ArmoryMenuView ReadArmoryMenu(void* screen)
@@ -1855,7 +1897,12 @@ WeaponUpgradeView ReadWeaponUpgrade(void* screen)
     if (!screen)
         return v;
     v.screen = screen;
-    v.trait = ObjectClassNamedRaw(screen, "UIArmory_WeaponTrait");
+    // ⛔ MOVES WITH the family finder above, which is already tolerant. Derived here is safe and
+    // necessary in the same breath: UIArmory_WeaponTrait EXTENDS UIArmory_WeaponUpgrade, so the
+    // class being asked for is the derived one and a tolerant compare can only reach further down
+    // the chain. Left exact against a tolerant finder, a mod's trait subclass would be found by
+    // the finder and then read as a plain upgrade screen.
+    v.trait = ObjectClassNamedRaw(screen, "UIArmory_WeaponTrait", ClassMatch::Derived);
     v.unitId = ReadI32Raw(screen, kArmoryUnitRefOffset);
     v.weaponId = ReadI32Raw(screen, kWeaponUpgradeWeaponRefOffset);
     v.slotsList = ReadPtrRaw(screen, kWeaponUpgradeSlotsListOffset);
@@ -2147,7 +2194,7 @@ void* FindManageEquipmentScreen()
 {
     static ScreenFinder sFinder{"UIManageEquipmentMenu"};
     static bool sReported = false;
-    return FindFocusedStackScreen("UIManageEquipmentMenu", sFinder, sReported);
+    return FindFocusedStackScreen("UIManageEquipmentMenu", sFinder, sReported, ClassMatch::Derived);
 }
 
 ManageEquipmentView ReadManageEquipment(void* screen)

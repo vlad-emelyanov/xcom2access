@@ -32,9 +32,15 @@ bool LoadScreenShowing();
 
 // ---- in-game pause menu (UIPauseMenu) ----
 
-/// The Escape menu shown over a running campaign, in both the tactical and the strategy layer
-/// (UIShellStrategy extends UIPauseMenu, so the same read covers it). A plain UIList of
-/// UIListItemString rows whose contents depend on where the game is — no fixed row set.
+/// The Escape menu shown over a running campaign, in both the tactical and the strategy layer.
+/// A plain UIList of UIListItemString rows whose contents depend on where the game is — no fixed
+/// row set.
+///
+/// ⚠ `UIShellStrategy` extends `UIPauseMenu` and this read WOULD cover its fields — but the finder
+/// has never reached it and still does not. The tracked entry is deliberately `ClassMatch::Exact`
+/// (`game_ui.cpp`, kTrackedMatch) because that table probes each entry independently, with no
+/// most-derived-first order to keep the developer strategy shell out. Layout coverage is not
+/// finder coverage; do not read this comment as "the strategy shell is already handled".
 struct PauseMenuView {
     std::string title;             // m_sPauseMenu, P10-cleaned
     std::vector<MenuItem> options; // rows in list order; handle is the UIListItemString
