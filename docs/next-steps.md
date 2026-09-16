@@ -15,34 +15,28 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 ## Live-run debt
 
 **The fog gate on the cursor's vertical words and the `world.unexplored` ring** (2026-09-16,
-`X2AccessTileReader.VerticalDrawn` / `DescribeOffset` / the three `HeightWord` sites, and
-`X2AccessObjectScanner.AddFrontier` / `CAT_UNEXPLORED`; rules in `surfaces/tactical.md` under the
-tile cursor and the object scanner) — compiled clean, **never run**. Both were built off `SrcOrig`
-and a dead game; the map that motivated them is `Plot_CSH_Stronghold_Short_04`, a Chosen Stronghold
-whose fog boundary runs along a wall at X=37..38. What to listen for:
+`X2AccessTileReader.VerticalDrawn` and `X2AccessObjectScanner.AddFrontier` / `CAT_UNEXPLORED`;
+rules in `surfaces/tactical.md`). **Both HEARD WORKING 2026-09-16** — the ring returned seven
+openings reading `Unexplored space, 7 tiles across, 6 tiles, 5 north, 6 west, out of range, 1 of 7`,
+distance-sorted, every bearing correctly missing its vertical leg; explored tiles in the same run
+still spoke `Down 4` and `13 north, 4 down`, so the gate is not over-firing; and the player
+confirmed the cursor half by ear. Three things remain unheard:
 
-1. Step the cursor into never-seen ground with a soldier who has moves left, onto a tile the puck
-   can reach: `Up 1` / `Down 4` MUST still be spoken, and the offset MUST still carry its `N up`.
-   That half is parity (the puck and the path ribbon are `bTranslucentIgnoreFOW`), and losing it
-   would mean `VerticalDrawn`'s reachable branch is answering false — check
-   `IsFloorTileAndValidDestination` first, since a never-seen tile is exactly where it is untested.
-2. The same step onto a never-seen tile the puck CANNOT reach: the line must be `Unexplored` plus a
-   bearing with NO vertical leg and NO height word. Before this change that read `Up 1. Unexplored.
-   6 south, 11 west, 1 up`.
-3. ⚠ Then re-do 1 with a soldier out of moves: the SAME tile must go quiet. That is correct — the
-   border and the puck are drawn for the active unit or not at all — but it is the single most
-   bug-looking consequence of the gate, so confirm it deliberately rather than meeting it by
-   surprise. A shape-count over the run will show the same tile both ways.
-4. `Ctrl+PageDown` to `Unexplored` on that map: one entry along the wall, roughly `Unexplored
-   space, 40-odd tiles across, 1 west`. Many small entries instead means `FRONTIER_MIN = 2` is too
-   low for XCOM's tile size, or the 8-way fill is being broken by something.
-5. ⚠ The MAP EDGE is the untested case. Never-seen tiles on the outermost ring of the grid are
-   frontier cells like any other the moment explored ground touches them, so a squad spawning near
-   the map border may hear an "opening" that is just the edge of the level volume. If it happens,
-   the fix is a `TileDataIsBorderTile*` test, not a radius.
-6. COST: `AddFrontier` does `NumX × NumY` `GetTileFOWValue` calls per rebuild (3,136 on that map,
-   ~6,400 on an 80×80). Unmeasured. `Ctrl+PageDown` through the whole ring builds it once; if a
-   press is audibly slow, that is where to look first.
+1. ⚠ **A soldier with NO moves left, on a fogged tile another soldier could reach.** The same tile
+   must go quiet, because the puck and the move border are drawn for the active unit or not at all.
+   Correct, and the single most bug-looking consequence of the gate — confirm it deliberately
+   rather than meeting it by surprise. A shape-count over a run will show the same tile both ways.
+2. ⚠ **The MAP EDGE.** Never-seen tiles on the outermost ring of the grid are frontier cells like
+   any other the moment explored ground touches them, so a squad spawning near the map border may
+   hear an "opening" that is just the edge of the level volume. Not seen yet — the 2026-09-16 map
+   put all seven openings inland. If it happens, the fix is a `TileDataIsBorderTile*` test
+   (`rooms-recon.md` §2.1 has the constant), not a radius.
+3. **COST, still unmeasured.** `AddFrontier` does `NumX × NumY` `GetTileFOWValue` calls per rebuild
+   (~3,100 on a 56×56 map, ~6,400 on an 80×80). Nothing sounded slow in the live run, but nothing
+   was timed either.
+   ⚠ Also unjudged: on that map EVERY opening read `out of range`, which is honest but may make the
+   clause a wasted word. Listen on a map where the fog edge is close before deciding it earns its
+   place.
 
 **Supply Extraction crates in the markers ring** (2026-09-16, `X2AccessObjectScanner.AddObjectiveMarkers`
 re-fetching each owner by ObjectID / `InteractiveMarkWords`; the `MissionIcon_` counter table in
@@ -915,26 +909,34 @@ a repeating announcement.
      ⚠ The steady-state claims are still UNMEASURED: on vanilla no `Derived` entry ever matched a
      subclass, so the scan-heavy path this reasoning is about was never actually taken. Only the
      resolver cost above has a number against it.
-13. **Rooms and exits** — the WH40KRTAccess `RoomMap` / `V`-exit-cycle port. **Scoped in
-   `docs/rooms-recon.md`** (2026-09-16, source-derived with the game down). ⛔ NO CODE until that
-   doc's §8 checklist has been run — it is seven live measurements and the whole design rests on
-   the first one. What the doc settles, in one line each:
-   - XCOM 2 has no tactical room concept; rooms are mod-invented, as in RT.
-   - RT's law 1 (ask the engine's per-edge bit) transfers onto a better oracle —
-     `GetTileData().StaticFlags` / `CoverFlags` / `IsAdjacentTileBlocked`. RT's law 2 (the
-     clearance watershed) does NOT transfer: walls are explicit here, so a room is a flood fill
-     and `RoomSegmenter.cs` is unnecessary.
-   - ⚠ **The one open question is which blocked edges are walls and which are merely cover**, since
-     chest-high cover is boundary geometry in this engine. Three candidate predicates, ranked, in
-     §3. The preferred one rests on `COVER_ClimbOver_*`, which is DECLARED AND USED NOWHERE in
-     shipped script — if those bits are dead, the ranking changes. That is §8.1 and it is the
-     first thing to measure.
+13. **Rooms and exits** — the WH40KRTAccess `RoomMap` / `V`-exit-cycle port. **Scoped AND measured
+   in `docs/rooms-recon.md`** (2026-09-16: source scope, then a live run through
+   `X2AccessTileProbe`). Five of the seven measurements are answered and the design SURVIVED them.
+   - ✅ The bits the design rests on are LIVE. `COVER_ClimbOver_*` / `ClimbOnto_*` are populated —
+     6/6 against the object scanner's own cover ring, every low edge climbable, no high edge. So
+     the preferred predicate (`blocked && cover && !climb`) stands.
+   - ✅ ONE cover oracle: `TileData.CoverFlags`, `XComCoverPoint.Flags` and the engine's own debug
+     string are the same word, so the cover ring and a room map cannot drift.
+   - ✅ `TraversalStarts` is a live adjacency list (13–16 neighbours per tile) — connectivity with
+     no bit transcription, though it does not name the traversal TYPE.
+   - ⚠ `IsAdjacentTileBlocked` is DIRECTED, not an edge predicate: it folds in the destination
+     tile's own occupancy. Correct behaviour, and the resulting asymmetry is a TELL that marks
+     obstacle tiles. Barriers on EDGES are recorded symmetrically on both sides.
+   - ❌ **Still owed: §8.6** (render the predicates over three maps of different character) and
+     **§8.7** (agree with `DescribeIndoor`). ⛔ `ProbeRow` had an axis bug — it read the farther
+     tile's west face, one edge too far — fixed but NOT re-run, so §8.6 starts from scratch.
+   - ⚠ §8.5 is only PARTIAL: `GetTileDebugString_StaticFlags` blows the 160-char `/props` cap after
+     about two flags AND is localized (`Да`/`Нет` here). The hand-transcribed `TileStaticFlags`
+     constants agree on everything visible and still have no `static_assert` net.
    - `V` is the exits key (player decision 2026-09-16) and is the first vanilla binding the mod
      DISPLACES — §6, and read `docs/input-map.md` first.
-   - Fallback if the partition cannot be made to work: **ship EXITS without ROOMS**. Most of the
+   - Fallback if the partition renders badly at §8.6: **ship EXITS without ROOMS**. Most of the
      value is there and it needs no partition at all (§9).
    - The per-room "{pct}% unexplored" half of `rt-unexplored-frontier` waits for this; the frontier
-     half shipped on its own as `world.unexplored` (live-run debt above).
+     half shipped on its own as `world.unexplored` — and was **heard working live 2026-09-16**
+     (live-run debt above).
+   - ⛔ `X2AccessTileProbe` is recon instrumentation living in a shipping package. DELETE IT once
+     §8.6/§8.7 are answered, or promote the parts that earned their place.
 14. **Regenerate the SDK dump under the Highlander BETA.** The machine switched from the stable
    Highlander to the beta on 2026-09-16 (`docs/build.md`, dependencies). The source-level check
    there is reassuring — of the 139 classes `sdk_layout_checks.cpp` pins, the 47 the Highlander

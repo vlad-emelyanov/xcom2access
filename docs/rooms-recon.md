@@ -1,10 +1,12 @@
 # Rooms and exits — recon
 
-Measured 2026-09-16 from the WOTC SDK's `Development/SrcOrig/XComGame/Classes/` and the installed
-Community Highlander beta, with the game DOWN — so every claim here is source-derived and the
-live-verification debt it creates is §8, filed in `next-steps.md` item 13. Ghidra was tried and
-abandoned: the binary carries no symbols for the world-data builder, and every question it could
-have answered is answered faster by one `GetTileData` read on a running mission.
+Scoped 2026-09-16 from the WOTC SDK's `Development/SrcOrig/XComGame/Classes/` and the installed
+Community Highlander beta, then **measured live the same day** on a running mission through
+`X2AccessTileProbe` — §8 says which claims are which, and two of the outstanding items are still
+source-derived. Ghidra was tried and abandoned: the binary carries no symbols for the world-data
+builder, and every question it could have answered was answered faster by one `GetTileData` read on
+a running mission. That was the right call twice over — the live reads also corrected a conclusion
+the source alone had led to (§2.3).
 
 The question, asked by the player after a Chosen Stronghold where the objective was unreachable and
 every scanner ring went silent: *can we port the WH40KRTAccess room model — `RoomMap`, the `V` exit
@@ -78,24 +80,61 @@ The game's own reading of the first two groups is `X2AbilityToHitCalc_StandardAi
 exists in a direction if `CoverFlags & COVER_<dir>`, and it is HIGH if the matching `…Low` bit is
 absent. That is the pattern to copy.
 
-⛔ **`COVER_ClimbOnto_*` and `COVER_ClimbOver_*` are DECLARED AND USED NOWHERE in shipped script.**
-Their layout is given but their *population* is unverified — they may be dead constants like
-`XCom3DCursor.m_kHeightCylinder`. The entire ranking in §3 depends on them being live, so §8.1 is
-the first measurement and the rest of this document is provisional until it comes back.
+✅ **`COVER_ClimbOnto_*` and `COVER_ClimbOver_*` are LIVE** — measured 2026-09-16 (§8.1). They are
+declared and used nowhere in shipped script, so this was the one thing the whole design rested on
+and it could have gone the other way. Six tiles, checked against what the object scanner's cover
+ring says independently: **every LOW ("half cover") edge carries a climb bit; no HIGH ("full cover")
+edge carries one.**
 
-`XComCoverPoint.Flags` (`XGTacticalGameCoreNativeBase.uc:116`) is an `int` that appears to use the
-same bit space — `X2AccessTileReader.CoverSignature` already masks its low byte. Whether
-`GetCoverPoints`' flags and `TileData.CoverFlags` are identical is §8.2; if they are, the cover ring
-and the room map share one oracle for free and the "make our own surfaces agree" rule is satisfied
-by construction.
+| tile | cover ring says | `CoverFlags` |
+|---|---|---|
+| (11,7,1) | Half cover south + west | `S:low+onto  W:low+over` |
+| (13,10,1) | Half cover north | `N:low+onto` |
+| (12,6,1) | Half cover east | `E:low+onto` |
+| (10,10,1) | Full cover north + east | `N:high E:high` |
+| (14,10,1) | Full cover north | `N:high` |
+| (10,5,1) | Full cover west | `W:high` |
+
+✅ **`TileData.CoverFlags` and `XComCoverPoint.Flags` are the SAME WORD** (§8.2) — bit-identical on
+every tile tried (`0x010482AA`, `0x00004105`), and the engine's own `GetTileDebugString_StaticFlags`
+reports the same value again. So the cover ring, the tile cursor and any room map share ONE oracle
+and cannot drift apart; the "make our own surfaces agree" rule is satisfied by construction rather
+than by discipline.
 
 ### 2.3 The direct edge query — `IsAdjacentTileBlocked`
 
 `native function bool IsAdjacentTileBlocked(TTile SourceTile, const out TTile DestinationTile) const`
 (`:792`). One shipped caller, `X2Condition_Wrath.DefaultMeleeVisibility`, which passes two tiles
-adjacent in X/Y at differing Z — so it is the general "is there a barrier between these two
-neighbours" query rather than a cardinal-only one. It is the convenient form of §2.1 and needs no
-transcription; whether it agrees bit-for-bit with the `StaticFlags` faces is §8.3.
+adjacent in X/Y at differing Z — so it is the general query rather than a cardinal-only one.
+
+⛔ **It is DIRECTED, not an edge predicate: it answers "can a unit move A→B", and it folds in B's
+OWN occupancy.** Measured 2026-09-16 (§8.3) by asking every edge both ways round. An obstacle tile
+answers `0` outward on all four sides and `1` inward on all four, because nothing stops you leaving
+it and everything stops you entering it. That is correct behaviour and NOT the `HasFenceWithNode`
+trap it first looked like — the first read of this compared a floor tile against an obstacle tile
+and mistook a directed query for a one-sided one.
+
+### 2.3.1 Obstacle TILES and barrier EDGES are different things, and only one of them is a wall
+
+The distinction the measurements turned on, and the one a segmenter has to get right:
+
+- **A barrier on an EDGE** (a wall, a fence, a sandbag) is recorded SYMMETRICALLY. Both tiles carry
+  the mirrored face bits and both receive cover from it. The wall between (10,10,1) and (10,11,1):
+  ```
+  (10,10,1)  [N:high]  path:x--Yz-  vis:---Y--
+  (10,11,1)  [S:high]  path:--y-z-  vis:--y---
+  ```
+  and `IsAdjacentTileBlocked` reads `1/1` both ways. **This is what a room boundary looks like.**
+- **An obstacle TILE** (a crate, a car, a pillar) carries `Occupied` + `PathBlocking` and `CoverFlags
+  = 0` — no cover of its own, because cover is a property of standing somewhere and nobody stands
+  there. Its neighbours record `BlocksPathing<face>` toward it and it does not mirror them, because
+  the block is not on the edge, it IS the tile. `IsAdjacentTileBlocked` is asymmetric across every
+  one of its edges.
+
+✅ **So the asymmetry is a TELL, not a problem**: an edge where the forward and reverse answers
+disagree is an edge into an obstacle tile. Segment over standable floor only and obstacle tiles drop
+out as holes — which is what §3 predicted from first principles before any of this was measured —
+and between two standable tiles the query is symmetric and safe to use as an edge predicate.
 
 ### 2.4 Traversals and the actor at the threshold
 
@@ -150,10 +189,12 @@ and they become holes in a room, not walls across it.
 Three candidate predicates, all computable from the SAME `GetTileData` call, so the recon can render
 all three over one map and compare:
 
-**(a) Climb-gated — `blocked && has cover && !ClimbOver` — provisionally preferred.**
-The engine's own answer to "is this a barrier or just something to hide behind": if the game says you
-can vault it, it is not a wall. Directly the RT law-1 shape — ask the engine's bit, never infer.
-⛔ Rests entirely on the ClimbOver bits being populated (§2.2, §8.1). If they are dead, (a) dies.
+**(a) Climb-gated — `blocked && has cover && !(ClimbOver | ClimbOnto)` — PREFERRED, and the bits it
+rests on are now measured live (§2.2).** The engine's own answer to "is this a barrier or just
+something to hide behind": if the game says you can vault it or climb onto it, it is not a wall.
+Directly the RT law-1 shape — ask the engine's bit, never infer. Note it is BOTH climb bits, not
+just `ClimbOver`: the sample had three `+onto` edges to one `+over`, and both mean "passable to a
+soldier", which is what a boundary is not.
 
 **(b) Sight-gated — `BlocksPathing && BlocksVisibility`.**
 "You cannot walk through it and you cannot see through it" is a fair definition of a wall and maps
@@ -258,41 +299,70 @@ Exits are a natural twelfth-and-thirteenth scanner category (`world.exits`) reac
 with `V` as its dedicated key — which makes it the fifth mirrored `CAT_*` index and therefore a
 two-file change (`object_scanner.cpp` + the enum), unlike `CAT_UNEXPLORED`.
 
-## 8. Live-measurement checklist — nothing above is settled without these
+## 8. Live measurements
 
-Needs a running mission with the dev harness armed. ⛔ Nothing here is readable through the existing
-endpoints: no companion function exposes `GetTileData`, so **the first step is a throwaway probe
-function on a companion CDO** (`X2AccessTileReader` already has `NativeResult` and the
-`/call`+`/props` pattern), removed or left dev-only afterwards.
+Run 2026-09-16 on a live mission through `X2AccessTileProbe` — recon instrumentation, not a feature
+(the class says so at the top). ⛔ It exists because **nothing else can ask these questions**: every
+tile-data native takes a `TTile`, and `/call` REFUSES struct arguments, so each probe takes three
+plain ints and writes one flat line to `NativeResult`.
 
-1. **Are `COVER_ClimbOver_*` populated?** Stand beside a sandbag line or low wall. Dump
-   `CoverFlags` for the tile and its neighbour. Expect `COVER_<dir>` set, `COVER_<dir>Low` set, and
-   `COVER_ClimbOver_<dir>` set. If the ClimbOver nibble is always zero across a dozen obstacles,
-   predicate (a) is dead and §3 falls back to (b).
-2. **Do `TileData.CoverFlags` and `XComCoverPoint.Flags` agree?** Same tile, both paths
-   (`GetTileData` vs `GetCoverPointAtFloor`). If yes, one oracle serves the cover ring and the room
-   map.
-3. **Does `IsAdjacentTileBlocked` agree with the `StaticFlags` faces?** Sweep a row across a known
-   wall and compare both answers per edge. A disagreement means one of them includes something the
-   other does not (units, destructibles, large-unit clearance) and the choice between them matters.
-4. **What is in `TraversalStarts`?** Dump it for a tile beside a door, a ladder, a window and a
-   plain floor tile. If it is empty on all of them it is editor-time data and the exit design uses
-   `GetPathObjectFromTraversalToNeighbor` alone.
-5. **Transcription check.** Compare the hand-transcribed `TileStaticFlags` decode against
-   `GetTileDebugString_StaticFlags` on twenty mixed tiles. This is the only net there is.
-6. **Render all three predicates** over a raster of the whole level, one Z at a time, as ASCII.
-   The 2026-09-16 raster scripts are a starting point but read the CURSOR, not tile data — a new
-   sweep that dumps flags per tile is wanted. Three maps minimum (§3). Judge by eye against what the
-   map actually is.
-7. **Does a room map agree with `DescribeIndoor`?** Every tile the volumes call "inside building N,
-   floor M" should land in a room, and no room should straddle two buildings.
+⛔ **Every probe line stays under ~150 characters.** `/props` prints a string through
+`gui_dump.cpp`'s `kValueChars = 160` cap and marks the cut with an ellipsis. The first version of
+`ProbeTile` put the engine cross-check and the adjacency test at the END of the line and neither was
+ever seen — one question per call, and where a line must carry both an oracle and our own decode,
+**the oracle goes first**, because the half that gets cut must be the half we could recompute.
+
+| # | question | verdict |
+|---|---|---|
+| 8.1 | Are `COVER_ClimbOver_*` / `ClimbOnto_*` populated? | ✅ **YES** — 6/6 against the cover ring (§2.2). Predicate (a) survives. |
+| 8.2 | Do `TileData.CoverFlags` and `XComCoverPoint.Flags` agree? | ✅ **Bit-identical**, and the engine's debug string reports the same word (§2.2). |
+| 8.3 | Is `IsAdjacentTileBlocked` a symmetric edge predicate? | ⚠️ **Directed, not symmetric** — and that is correct, not a trap (§2.3, §2.3.1). |
+| 8.4 | What is in `TraversalStarts`? | ✅ **Live**: 13–16 neighbour tiles per tile, at X/Y offsets −1..+1, with duplicates where one pair carries two traversal types. |
+| 8.5 | Does our `TileStaticFlags` transcription match the engine's? | ✅ on every bit visible before the cap — cover word exact on 4 tiles, pathing faces agree. ⚠ PARTIAL, see below. |
+| 8.6 | Render the predicates over whole maps | ❌ **Outstanding.** |
+| 8.7 | Does a room map agree with `DescribeIndoor`? | ❌ **Outstanding.** |
+
+**On 8.4.** `TraversalStarts` is an adjacency LIST, and a useful one: an open floor tile carried 16
+entries (8 neighbours × 2 traversal types), while (10,10,1) with two full-cover edges carried 13 and
+(10,11,1) behind the wall carried 11. So it encodes connectivity directly, with no bit
+transcription — but it does NOT say which traversal TYPE, so it can tell you two tiles are joined
+and not whether they are joined by *vaulting*. The cover/climb bits remain the wall-vs-cover call.
+
+**On 8.5, and it is a real limit.** `GetTileDebugString_StaticFlags` prints one
+`TileDataBlocksPathingXNeg : <yes/no>` line per flag, so it blows the 160-char cap after about two
+flags, and **it is LOCALIZED** — this machine returned `Да`/`Нет`. Any future parse of it is
+language-dependent and must not assume English. What was checked agrees; the tail of the
+transcription is still unverified, and the constants still have no `static_assert` net.
+
+⛔ **`ProbeRow` had an axis bug and the fix is the lesson, not the bug.** It read the cover of the
+FARTHER tile's west face, which is the edge BEYOND that tile — so a sandbag's `LO` landed one edge
+early, measured against (11,7,1) whose `W:low+over` faces (12,7,1). West is **+X** in this project's
+compass (`X2AccessTileReader`'s `NORTH_DX`/`EAST_DX` table), so the nearer tile's west face is the
+shared edge. The blocked character was right throughout, because `IsAdjacentTileBlocked` was asked
+about the pair directly. Fixed, **not re-run** — so no `ProbeRow` output in this document is
+trustworthy and §8.6 starts from scratch.
+
+### What 8.6 still needs
+
+Render all three predicates over a raster, one Z at a time, and judge by eye against what the map
+actually is. Three maps minimum (§3): a dense urban plot, an interior-heavy plot, an open wilderness
+plot. The `ProbeRow` legend, kept here because the output has no room for it:
+
+```
+1st  B blocked (IsAdjacentTileBlocked forward)   . open   ! forward/reverse disagree → obstacle tile
+2nd  H high cover across the edge   L low   - none
+3rd  O climb-over   N climb-onto   - neither
+```
+
+So `B--` is a wall, `BLO` / `BLN` is a vaultable obstacle, `..-` is open floor, and a run of `B--`
+is what a room boundary is made of. A `!` pair marks an obstacle tile between them.
 
 ## 9. What could sink this
 
-- **ClimbOver dead AND sight-gating wrong.** If §8.1 fails and (b) renders badly on real maps, there
-  is no third good predicate and the honest outcome is to ship EXITS without ROOMS: an exit ring
-  keyed off doors, windows, ladders and ramps near the scan origin needs no partition at all, and it
-  is where most of the value sits anyway.
+- ~~**ClimbOver dead**~~ — retired 2026-09-16, §8.1 answered it. The fallback below stands on its
+  own merits regardless: **ship EXITS without ROOMS** if the partition renders badly at §8.6. An
+  exit ring keyed off doors, windows, ladders and ramps near the scan origin needs no partition at
+  all, and it is where most of the value sits anyway.
 - **Cost.** A per-level partition per keypress on an 80×80×12 map, on top of the frontier sweep.
 - **Procedural parcels.** XCOM 2 assembles maps from parcels at runtime; a "room" that straddles a
   parcel seam may be shaped in ways a hand-authored level never would be. Unknown until §8.6.
