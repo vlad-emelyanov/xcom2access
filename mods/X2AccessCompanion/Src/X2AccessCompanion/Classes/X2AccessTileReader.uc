@@ -1231,6 +1231,16 @@ private function string DescribeIndoor(XComWorldData WorldData, TTile Tile, bool
 	local int i, j, Highest, FloorNum, Count, Here;
 	local bool bChanged, bNewBuilding;
 	local string Result;
+	local FOWTileStatus FOW;
+	local byte GameplayFlags;
+
+	// Fog parity, the same gate DescribeTile's "Unexplored" branch applies: a never-seen tile
+	// reveals nothing, walls included. The change detector is left untouched, so the crossing
+	// is still spoken on the first EXPLORED tile after the fog, compared with the last one
+	// before it.
+	WorldData.GetTileFOWValue(Tile, FOW, GameplayFlags);
+	if (FOW == eFOWTileStatus_NeverSeen)
+		return "";
 
 	Pos = WorldData.GetPositionFromTileCoordinates(Tile);
 	WI = class'WorldInfo'.static.GetWorldInfo();
