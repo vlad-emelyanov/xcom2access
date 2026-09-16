@@ -20,3 +20,6 @@ __pycache__/
 /.env.rc
 # The release script's parked worktree, build tree, stage and archives.
 /release-stage/
+# Third-party mod sources cloned for reconnaissance (LWOTC and friends). Read-only reference —
+# never a build input, and never ours to commit.
+/refmods/

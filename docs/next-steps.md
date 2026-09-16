@@ -786,3 +786,70 @@ a repeating announcement.
    - **Then a HIDDEN workshop item** to test the install path, public only after the archive has
      had external installs. Workshop can only ever carry the companion; the ASI stays on the
      release page, so the listing must say so in its first line.
+11. Third-party mod support, scoped in `lwotc-recon.md` (2026-09-16, read off clones under
+   `refmods/`, nothing measured live — LWOTC is not installed on this machine). Long War of the
+   Chosen is five mods, three of which REPLACE screens we already read, and every replacement is a
+   plain subclass of the class it replaces — so the first item stands on its own and is worth doing
+   whatever happens to the rest:
+   - **Subclass-tolerant screen matching.** `FindStackScreenRaw`, `IsInstanceRaw` and
+     `ObjectClassNamedRaw` all compare with `strcmp`, so a `ModClassOverrides` subclass makes nine
+     call sites across five TUs go blind while every offset they read is still correct. ⛔ Not a
+     blanket replacement: `UIArmory_PromotionHero` and `UIArmory_PromotionPsiOp` both extend
+     `UIArmory_Promotion` and `UIMission` has sixteen subclasses the blade recipe tells apart by
+     name, so those hierarchy probes must keep most-derived-first ordering — and tolerance changes
+     which recipe wins a screen, so the `kRecipes` order has to be re-reasoned rather than assumed.
+   - ⛔ **Finding a screen is not reading it**, and the counter-example is already in hand:
+     `robojumper_UISquadSelect` does not populate the inherited `m_kSlotList` that
+     `X2AccessSquadReader` loops over. A tolerant match that lands on a reader which then reads
+     nothing narrates SILENCE, which a blind player cannot tell from an empty screen.
+   - The rest — roughly 12–18 new recipes, the haven layer first because it has no vanilla
+     analogue — is `lwotc-recon.md` §3 and §9, and the decision recorded there is to build it
+     NATIVE-ONLY: recipes match by class-name string, so a recipe for an absent screen simply never
+     probes true, and no second companion mod is needed until some derivation forces one.
+   - ⛔ Before the first LW offset is transcribed, settle §8: `sdk_layout_checks.cpp` pins against a
+     generated SDK that contains no LW classes, so the static-assert net stops at the vanilla
+     boundary.
+12. Debts created by the tolerant-matching pass itself (2026-09-16, built in the detached worktree
+   `XCOM2-wt/subclass-match`, **never run against the game** — no LWOTC, robojumper or CPS install
+   was exercised and every hierarchy claim comes from the SDK's `SrcOrig`, not from a
+   Highlander-derived dump). Four screens are deliberately left on `ClassMatch::Exact` because
+   finding them is not the same as reading them, and each one is owed the read before it can be
+   tolerated:
+   - `UISquadSelect` — `robojumper_UISquadSelect` spawns its own `robojumper_UIList_SquadEditor
+     SquadList` and never fills the inherited `m_kSlotList`. Owed: read that list (a new offset, or
+     find the `UIList` child by class or by its `Tag` `'rjSquadSelect_Navigable'`). ⛔ Until then
+     tolerating it would make the recipe attach, TAKE THE ARROW KEYS and narrate an empty squad —
+     worse than the silent non-attach, which at least leaves the keyboard to the game.
+   - `UIAfterAction` — `UIAfterAction_LW` adds `m_kSlotList2/3/4` and `ReadAfterAction` reads only
+     the first. Tolerating it would read six soldiers of twenty-four and drop the tail silently,
+     which is the "a cap that drops the tail must be LOUD" rule exactly.
+   - `UIOptionsPCScreen` — `UIOptionsPCScreen_LW` adds a tab strip while `ReadOptions` names five
+     tabs from five fixed class fields. Owed: source the tab names from the screen's own tab list.
+   - `UIPauseMenu` — `UIShellStrategy` extends it (the game itself separates them with
+     `IsA('UIShellStrategy')`), and the tracked table probes each entry independently with no
+     most-derived-first order to lean on. Owed: an ordered probe or an explicit exclusion.
+     ⚠ `game_ui_shell.h` claims the pause-menu read already covers `UIShellStrategy`; that was
+     only ever true of the field LAYOUT, never of the finder. Settle the two statements together.
+   - The companion still switches on the EXACT class name — `X2AccessPopupReader.uc:66`,
+     `X2AccessMissionReader.uc:65`/`:399`/`:420`. Now that the native popup finder tolerates
+     subclasses, LWOTC's `UIAdventOperations_LW` IS found and falls through to the `default:`
+     branch: the player gets "a modal is up" and the buttons rather than the bespoke text. Better
+     than not attaching, but a partial read. Fixing it means ordered `if (UIAlert(Screen) != none)`
+     cast chains — order matters, `UIAlert_DLC_*` extend `UIAlert` — and a companion recompile.
+   - Two vanilla MULTIPLAYER screens became claimable for the first time and neither has ever been
+     run: `UIArmory_Loadout_MP` (via the tracked loadout entry) and `UIMPShell_UnitEditor` (via
+     `FindArmoryMenuScreen`). Both drive the same inherited widgets their bases do, so an empty
+     read is unlikely — but nobody has exercised either, and a short read there costs the player
+     the game's own key handling too.
+   - Cost was reasoned about, never profiled. The `Derived` path adds a bounded pointer walk where
+     `Exact` did one compare, and three things keep that off the tick: BOTH GObjects scans
+     (`ScanInstanceRaw` and `ScanInstancesRaw`) carry a per-call class memo, so a pass does one
+     chain walk per distinct CLASS rather than one per (object × entry) — which matters most for
+     the single-class one, since sixteen of the seventeen `ScreenFinder`s are Derived, each owns a
+     full pass, and a `gScanEpoch` bump fires all of them in the same tick — at a screen change,
+     which is exactly when the player is waiting to be told what appeared;
+     `ResolveBaseClassCached` backs a miss
+     off from 1 s to 60 s so an unresolvable name cannot cost a full scan every second forever;
+     and both it and `NoteOverrideRaw` use flat strcmp arrays rather than `unordered_*<std::string>`,
+     which allocated a key on every call including the hits. ⚠ **None of it has been measured on a
+     running game** — the numbers in the review that drove these fixes were estimates too.
