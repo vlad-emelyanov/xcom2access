@@ -305,11 +305,26 @@ function CursorMoveTo()
 	}
 
 	// The pathing pawn's destination is clamped to the reachable area; when it disagrees with
-	// the cursor the game shows its out-of-range marker — we speak it instead.
+	// the cursor the game shows its out-of-range marker — we speak it instead, with the REASON,
+	// because "Out of range" covers three different refusals a sighted player tells apart by
+	// eye: a tile nobody can stop on (a crate top — the puck slides to the floor beside it), a
+	// tile beyond the move range (the red marker), and a tile the pawn's floor ceiling clamped
+	// (XComPathingPawn:991). Then where the puck actually went, which is the one fact the sighted
+	// player reads off the screen here: the tile the game WOULD walk to, said as an offset from
+	// the tile the player is standing on. Measured live 2026-09-16 (DescribeTile has the trace).
 	Dest = PathingPawn.LastDestinationTile;
 	if (!SameTile(Dest, CursorTile))
 	{
-		NativeResult = "Out of range";
+		if (!WorldData.IsFloorTileAndValidDestination(CursorTile, UnitState))
+			NativeResult = "Cannot stand there";
+		else if (ActiveUnit.m_kReachableTilesCache == none
+			|| ActiveUnit.m_kReachableTilesCache.GetPathCostToTile(CursorTile) < 0)
+			NativeResult = "Out of range";
+		else
+			NativeResult = "Cannot stop there";
+		Desc = OffsetWords(CursorTile, Dest);
+		if (Desc != "")
+			AppendPart(NativeResult, "Nearest" @ Desc);
 		bMovePending = false;
 		return;
 	}
@@ -402,7 +417,7 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 	local string Result, UnitPart;
 	local FOWTileStatus FOW;
 	local byte GameplayFlags;
-	local bool bImpassable;
+	local bool bImpassable, bNoFooting, bNoStop;
 
 	WorldData = `XWORLD;
 	TilePos = WorldData.GetPositionFromTileCoordinates(Tile);
@@ -425,9 +440,26 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 	// A drop is no longer a kind of impassable tile: the cursor follows the ground off a roof
 	// edge (LandingTile) and the step speaks the height it took (HeightWord), so the tile this
 	// describes is always a surface, and Impassable means a wall or an object on it.
+	//
+	// Passable is not standable. The game keeps two tests and the AI asks both
+	// (XGAIBehavior:3439): CanUnitsEnterTile is "can a unit pass through", true for the top of a
+	// crate a soldier climbs OVER; IsFloorTileAndValidDestination is "can a unit STOP here",
+	// false for that same top. The mouse never rests on such a surface — the pick keeps, within
+	// a floor band, a valid-destination hit over a non-valid one, so the ray slides off a crate
+	// onto the floor behind it (XComTacticalHUD.GetMouseInteractionInterface). Our column model
+	// cannot follow a ray, so the cursor lands on the crate top and has to SAY it cannot stand
+	// there — measured live 2026-09-16: the reader called a full-cover crate's top "Dash"
+	// (GetPathCostToTile is finite for anything on the path graph, climb-overs included) and the
+	// move key then said "Out of range" for a tile the pawn had merely declined to stop on. The
+	// object scanner's cover ring asks the same pair, so the two surfaces agree.
 	bImpassable = (UnitPart == "" && !WorldData.CanUnitsEnterTile(Tile));
+	bNoFooting = (UnitPart == "" && !bImpassable
+		&& !WorldData.IsFloorTileAndValidDestination(Tile, ActiveUnitState()));
+	bNoStop = bImpassable || bNoFooting;
 	if (bImpassable)
 		AppendPart(Result, "Impassable");
+	else if (bNoFooting)
+		AppendPart(Result, "Cannot stand here");
 	AppendPart(Result, UnitPart);
 
 	AppendPart(Result, DescribeInteractives(Tile));
@@ -439,8 +471,9 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 	AppendPart(Result, class'X2AccessHelper'.static.DescribeEvacZone(Tile));
 	AppendPart(Result, DescribeCoverEdges(TilePos, bVerbose));
 	// Straight after the cover it qualifies: who would see a soldier here, and whether that
-	// cover holds against them. Impassable tiles skip it for the reason they skip reachability.
-	if (!bImpassable)
+	// cover holds against them. Tiles nobody can stop on skip it for the reason they skip
+	// reachability.
+	if (!bNoStop)
 		AppendPart(Result, DescribeSight(Tile, TilePos));
 
 	// The red detection overlay, per tile (docs/concealment-recon.md §3). No FOW gate of our own:
@@ -448,7 +481,7 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 	// The helper itself goes silent the moment the active unit is not concealed — the same edge
 	// on which the game hides the overlay. Impassable tiles skip it for the same reason they skip
 	// reachability: nobody can stand there, so the warning has no move to warn about.
-	if (!bImpassable)
+	if (!bNoStop)
 		AppendPart(Result, class'X2AccessHelper'.static.DescribeDetection(ActiveUnitState(), Tile));
 
 	if (FOW == eFOWTileStatus_Seen)
@@ -463,7 +496,7 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 	// reachability to report, and this was the single noisiest line of the 2026-08-21 run
 	// (~99 of them, against 23 actual moves). Sweeping the cursor along a wall should cost one
 	// word per tile, not three.
-	if (!bImpassable)
+	if (!bNoStop)
 		AppendPart(Result, DescribeReachability(Tile));
 	AppendPart(Result, DescribeOffset(Tile));
 
@@ -473,7 +506,7 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 	// The game's own Gameplay option "Show Target Preview" keeps the strip up on every hover
 	// instead of only while Alt is held; on, the strip rides every step here too. LAST, because
 	// it is the long clause and everything before it is what a step is for.
-	if (!bImpassable && TargetPreviewAlwaysOn())
+	if (!bNoStop && TargetPreviewAlwaysOn())
 		AppendPart(Result, DescribeTargetPreview(Tile, false));
 
 	if (Result == "")
@@ -830,9 +863,13 @@ private function string DescribeInteractives(TTile Tile)
 }
 
 // "1 action" / "Dash" / "Out of range" for the active unit — the spoken version of the
-// blue/yellow move highlight, answered from the same cache the pathing pawn uses.
+// blue/yellow move highlight, answered from the same cache the pathing pawn uses. Silent on a
+// tile the unit could pass through but never stop on (a crate top): the cache prices every
+// tile on the path graph, and "Dash" over one of those is what sent a player to the move key
+// for a tile the pawn would only ever slide off (DescribeTile has the measurement).
 private function string DescribeReachability(TTile Tile)
 {
+	local XComWorldData WorldData;
 	local XGUnit ActiveUnit;
 	local XComGameState_Unit UnitState;
 	local float Cost;
@@ -842,6 +879,9 @@ private function string DescribeReachability(TTile Tile)
 		return "";
 	if (SameTile(Tile, UnitState.TileLocation))
 		return "Your tile";
+	WorldData = `XWORLD;
+	if (WorldData == none || !WorldData.IsFloorTileAndValidDestination(Tile, UnitState))
+		return "";
 	ActiveUnit = ActiveUnitVisualizer(UnitState);
 	if (ActiveUnit == none || ActiveUnit.m_kReachableTilesCache == none)
 		return "";
