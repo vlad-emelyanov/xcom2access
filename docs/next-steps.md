@@ -992,9 +992,18 @@ a repeating announcement.
    - ⚠ `IsAdjacentTileBlocked` is DIRECTED, not an edge predicate: it folds in the destination
      tile's own occupancy. Correct behaviour, and the resulting asymmetry is a TELL that marks
      obstacle tiles. Barriers on EDGES are recorded symmetrically on both sides.
-   - ❌ **Still owed: §8.6** (render the predicates over three maps of different character) and
-     **§8.7** (agree with `DescribeIndoor`). ⛔ `ProbeRow` had an axis bug — it read the farther
-     tile's west face, one edge too far — fixed but NOT re-run, so §8.6 starts from scratch.
+   - ❌ **Still owed: §8.6** (the predicate, over three maps of different character) and **§8.7**
+     (agree with `DescribeIndoor`). ✅ **The INSTRUMENT is built and compiles** (2026-09-16,
+     `X2AccessTileProbe.ProbeRooms` / `ProbeRoomRow`, plus the visibility character `ProbeRow` was
+     missing): §8.6's "judge by eye" is replaced by a scored partition — room count, size median,
+     largest, tiny-room count and the wall/open edge census, per predicate, in one line. **It needs
+     no map load and no special plot: any live mission is a sample.** So §8.6 is now three presses
+     on three missions rather than a project.
+   - ⛔ §8.7 should become the SCORING function rather than a checkbox: a room must never straddle
+     an `XComFloorVolume` boundary and every door edge must fall on a room boundary. That is
+     measurable, and it is the same rule that keeps the segmenter agreeing with `DescribeIndoor`
+     instead of competing with it (§2.5). Not built yet — it wants the volume lookup the tile
+     reader already does privately.
    - ⚠ §8.5 is only PARTIAL: `GetTileDebugString_StaticFlags` blows the 160-char `/props` cap after
      about two flags AND is localized (`Да`/`Нет` here). The hand-transcribed `TileStaticFlags`
      constants agree on everything visible and still have no `static_assert` net.

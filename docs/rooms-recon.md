@@ -358,18 +358,63 @@ trustworthy and §8.6 starts from scratch.
 
 ### What 8.6 still needs
 
-Render all three predicates over a raster, one Z at a time, and judge by eye against what the map
-actually is. Three maps minimum (§3): a dense urban plot, an interior-heavy plot, an open wilderness
-plot. The `ProbeRow` legend, kept here because the output has no room for it:
+⛔ **"Judge by eye" was the wrong instrument and has been replaced.** This project's only reader
+cannot compare a screenshot of an isometric camera against a 41-wide grid of characters with any
+confidence, and a predicate that renders *plausibly* is exactly the failure this section exists to
+catch. So the judgement moved onto NUMBERS a wrong predicate cannot survive — the same move the
+cover-distribution rule makes in `CLAUDE.md`, where counting found what listening never would. The
+instrument is `X2AccessTileProbe.ProbeRooms` / `ProbeRoomRow` (2026-09-16), and it needs no map
+load, no console trick and no special plot: **any live mission is a sample.**
+
+`ProbeRooms(X, Y, Z, Predicate, Radius)` runs the whole flood and answers in one line:
+
+```
+p=a-climb r=20 w=41 cells=1201 rooms=23 max=380 med=12 tiny=9 edges w/o=418/766
+```
+
+Run it three times, once per predicate (`0` = a-climb, `1` = b-sight, `2` = c-height), and the
+shape of the failure is in the numbers:
+
+- **Over-segmentation** — high `rooms`, high `tiny`, low `med`. The sandbag-cuts-the-street failure
+  §3 predicts for a naive "blocked" predicate.
+- **Under-segmentation** — `max` near `cells`, `rooms` in single figures. One room swallowing the
+  building and the street outside it.
+- **`edges w/o`** is the wall/open census over standable pairs, counted once per edge, so it says
+  directly what fraction of the passable geometry each predicate calls wall.
+
+`ProbeRoomRow(X, Y, Z, Predicate, Radius, Row)` keeps the SHAPE half — one character per cell,
+`a`..`z` cycling per room id, `#` where the ground is not standable, row 0 at the north edge. The
+numbers cannot show a room leaking down a corridor into the street; this can.
+
+Two deliberate departures from what ships, both noted in the class:
+
+- **4-WAY flood, never 8-way** — the opposite of `AddFrontier`, and for a reason: a boundary lives
+  on a cardinal EDGE, so a diagonal step has no edge to test and would leak a room through the
+  corner of a wall. A fog seam has no edges, which is why the frontier fill can afford 8.
+- **Fog is IGNORED.** This measures geometry; §5.1's rule that a room may never be built through
+  never-seen tiles belongs to the shipping segmenter, and applying it here would confound the
+  comparison with wherever the squad happened to have walked.
+
+⚠ All three predicates share the BLOCKED half (`IsAdjacentTileBlocked`, §8.3's measured oracle) and
+differ only in what makes a blocking edge a wall. (b) is therefore "blocked AND blocks visibility"
+rather than §3's literal `BlocksPathing && BlocksVisibility` — one variable between the three
+readings is what makes the counts comparable, and `ProbeRow` prints both halves if they ever
+disagree.
+
+Still three maps minimum (§3): a dense urban plot, an interior-heavy plot, an open wilderness plot.
+
+The `ProbeRow` cross-section legend, kept here because the output has no room for it:
 
 ```
 1st  B blocked (IsAdjacentTileBlocked forward)   . open   ! forward/reverse disagree → obstacle tile
 2nd  H high cover across the edge   L low   - none
 3rd  O climb-over   N climb-onto   - neither
+4th  V blocks visibility across the same face    - sees through
 ```
 
-So `B--` is a wall, `BLO` / `BLN` is a vaultable obstacle, `..-` is open floor, and a run of `B--`
-is what a room boundary is made of. A `!` pair marks an obstacle tile between them.
+So `B--V` is a wall, `BLO-` / `BLN-` is a vaultable obstacle, `..--` is open floor, and a run of
+`B--V` is what a room boundary is made of. A `!` pair marks an obstacle tile between them. The
+fourth character is what makes predicate (b) readable off a cross-section at all.
 
 ## 9. What could sink this
 

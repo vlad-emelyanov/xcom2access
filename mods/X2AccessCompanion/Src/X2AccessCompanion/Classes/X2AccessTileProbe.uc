@@ -256,13 +256,15 @@ function ProbeCoverAgreement(int X, int Y, int Z)
 // than twenty. It walks +X and prints one cell per EDGE (tile i to tile i+1), because a boundary
 // lives on an edge and the candidate predicates are all edge predicates.
 //
-// Three characters per edge, and no legend in the output — the cap is 160 characters and a legend
-// would eat two thirds of it. The legend lives in docs/rooms-recon.md:
+// FOUR characters per edge, and no legend in the output — the cap is 160 characters and a legend
+// would eat half of it. The legend lives in docs/rooms-recon.md:
 //   1st  B blocked (IsAdjacentTileBlocked, asked forward) . open  ! forward and reverse disagree
 //   2nd  H high cover across it   L low cover   - none
 //   3rd  O climb-over   N climb-onto   - neither
-// So "B--" is a wall, "BLO" is a vaultable sandbag, "..-" is open floor, and a run of "B--" is the
-// thing a room boundary is made of.
+//   4th  V blocks visibility across the same face   - sees through
+// So "B--V" is a wall, "BLO-" is a vaultable sandbag, "..--" is open floor, and a run of "B--V" is
+// the thing a room boundary is made of. The fourth character is what makes predicate (b) readable
+// off a cross-section at all — without it a row could score (a) and (c) and not the third.
 function ProbeRow(int X, int Y, int Z, int Count)
 {
 	local XComWorldData WorldData;
@@ -322,8 +324,297 @@ function ProbeRow(int X, int Y, int Z, int Count)
 			R $= "N";
 		else
 			R $= "-";
+		// The visibility half of predicate (b), on the same face as the cover bits above: +X is
+		// WEST, so the face is XPos. Same axis rule as the fix comment.
+		R $= (Data.StaticFlags & SF_BlocksVisibilityXPos) != 0 ? "V" : "-";
 	}
 	NativeResult = R;
+}
+
+// ---------------------------------------------------------------------------
+// Recon §8.6 — the segmentation predicate, SCORED rather than eyeballed
+// ---------------------------------------------------------------------------
+//
+// ⛔ §8.6 as written says "render all three predicates over a raster and judge by eye". That is the
+// wrong instrument for the only reader this project has: a screenshot shows one camera angle of an
+// isometric map and cannot be compared against a 41-wide grid of characters with any confidence.
+// So the raster stays (ProbeRoomRow, for shape) but the JUDGEMENT moves onto numbers that a wrong
+// predicate cannot survive — the same move the cover-distribution rule makes in CLAUDE.md, where
+// counting found what listening never would.
+//
+// The three predicates differ in ONE clause and this isolates it: all three agree that a boundary
+// must BLOCK (IsAdjacentTileBlocked, the measured oracle of §8.3), and they disagree only about
+// what makes a blocking edge a WALL rather than something to hide behind.
+//   0 = (a) climb-gated    — has cover, and the game offers neither ClimbOver nor ClimbOnto
+//   1 = (b) sight-gated    — blocks visibility across the same face
+//   2 = (c) cover-gated    — has cover, and it is not Low
+// ⚠ (b) is implemented as "blocked AND blocks visibility" rather than §3's literal
+// "BlocksPathing && BlocksVisibility", deliberately: sharing the blocked half with (a) and (c)
+// leaves exactly one variable between the three readings, which is what makes the counts
+// comparable. A disagreement between IsAdjacentTileBlocked and the BlocksPathing bit would be its
+// own finding and ProbeRow prints both.
+//
+// ⚠ FOG IS IGNORED HERE, on purpose and unlike anything that ships. This measures GEOMETRY; the
+// parity rule that a room may never be built through never-seen tiles (§5.1) belongs to the
+// shipping segmenter, and applying it here would confound the comparison with wherever the squad
+// happened to have walked.
+const ROOM_RADIUS_MAX = 30;
+const ROOM_TINY = 4;        // cells; a "room" smaller than this is over-segmentation, not a room
+
+// The whole partition in one line. Run it three times, once per predicate, and the numbers say
+// which one is describing the building: over-segmentation shows up as a high room count with a
+// large `tiny`, under-segmentation as one room swallowing most of the cells.
+function ProbeRooms(int X, int Y, int Z, int Predicate, int Radius)
+{
+	local array<int> Room;
+	local array<int> Sizes;
+	local int W, Count, Cells, Walls, Open, Tiny, Largest, Median;
+	local int i;
+
+	if (!Partition(X, Y, Z, Predicate, Radius, Room, W, Count, Cells, Walls, Open))
+		return;
+
+	Sizes.Length = Count;
+	for (i = 0; i < Room.Length; i++)
+	{
+		if (Room[i] >= 0)
+			Sizes[Room[i]] = Sizes[Room[i]] + 1;
+	}
+	for (i = 0; i < Sizes.Length; i++)
+	{
+		if (Sizes[i] > Largest)
+			Largest = Sizes[i];
+		if (Sizes[i] < ROOM_TINY)
+			Tiny++;
+	}
+	Sizes.Sort(CompareInts);
+	if (Sizes.Length > 0)
+		Median = Sizes[Sizes.Length / 2];
+
+	NativeResult = "p=" $ PredicateName(Predicate) $ " r=" $ string(Radius)
+		$ " w=" $ string(W)
+		$ " cells=" $ string(Cells) $ " rooms=" $ string(Count)
+		$ " max=" $ string(Largest) $ " med=" $ string(Median)
+		$ " tiny=" $ string(Tiny)
+		$ " edges w/o=" $ string(Walls) $ "/" $ string(Open);
+}
+
+// One row of the partition, as one character per cell: `a`..`z` cycling per room id, `#` where the
+// ground is not standable. Room ids are assigned in scan order, so two cells sharing a letter in
+// the same neighbourhood really are one room — the cycle only lies across 26 rooms apart, which on
+// a 41-wide window is a shape a reader can still follow.
+//
+// This is the SHAPE half, and it stays because numbers alone cannot show a room leaking down a
+// corridor into the street. Row 0 is the top (Y = Y0 + Radius, i.e. NORTH-most, since north is +Y).
+function ProbeRoomRow(int X, int Y, int Z, int Predicate, int Radius, int Row)
+{
+	local array<int> Room;
+	local int W, Count, Cells, Walls, Open, i, Id;
+	local string R;
+
+	if (!Partition(X, Y, Z, Predicate, Radius, Room, W, Count, Cells, Walls, Open))
+		return;
+	if (Row < 0 || Row >= W)
+	{
+		NativeResult = "row out of range (0.." $ string(W - 1) $ ")";
+		return;
+	}
+
+	R = PredicateName(Predicate) $ " y" $ string(Y + Radius - Row) $ ":";
+	for (i = 0; i < W; i++)
+	{
+		Id = Room[(W - 1 - Row) * W + i];
+		R $= (Id < 0) ? "#" : Mid("abcdefghijklmnopqrstuvwxyz", Id % 26, 1);
+	}
+	NativeResult = R;
+}
+
+// The shared flood. Returns false (and writes the reason) if the world is not there.
+//
+// 4-WAY, never 8-way — and this is the one structural difference from AddFrontier's fill, which is
+// 8-way because a fog seam has no edges. A boundary here LIVES on a cardinal edge, so a diagonal
+// step has no edge to test and would leak a room straight through the corner of a wall.
+private function bool Partition(int X0, int Y0, int Z, int Predicate, int Radius,
+	out array<int> Room, out int W, out int Count, out int Cells, out int Walls, out int Open)
+{
+	local XComWorldData WorldData;
+	local array<int> Stack;
+	local TTile T, N;
+	local int i, DX, DY, Cell, NIdx, CX, CY;
+
+	NativeResult = "";
+	WorldData = `XWORLD;
+	if (WorldData == none)
+	{
+		NativeResult = "no world data";
+		return false;
+	}
+	if (Radius <= 0 || Radius > ROOM_RADIUS_MAX)
+		Radius = 12;
+	W = Radius * 2 + 1;
+
+	// -1 unassigned-and-standable, -2 not standable. Filled as -2 first so the bounds cases and
+	// the void both read the same to the flood.
+	Room.Length = 0;
+	Room.Length = W * W;
+	T.Z = Z;
+	for (i = 0; i < Room.Length; i++)
+	{
+		T.X = X0 - Radius + (i % W);
+		T.Y = Y0 - Radius + (i / W);
+		if (WorldData.IsTileOutOfRange(T) || !WorldData.IsFloorTileAndValidDestination(T))
+			Room[i] = -2;
+		else
+		{
+			Room[i] = -1;
+			Cells++;
+		}
+	}
+
+	for (i = 0; i < Room.Length; i++)
+	{
+		if (Room[i] != -1)
+			continue;
+		Room[i] = Count;
+		Stack.Length = 0;
+		Stack.AddItem(i);
+		while (Stack.Length > 0)
+		{
+			Cell = Stack[Stack.Length - 1];
+			Stack.Remove(Stack.Length - 1, 1);
+			CX = Cell % W;
+			CY = Cell / W;
+			T.X = X0 - Radius + CX;
+			T.Y = Y0 - Radius + CY;
+			for (DY = -1; DY <= 1; DY++)
+			{
+				for (DX = -1; DX <= 1; DX++)
+				{
+					// Cardinal only: exactly one of the two offsets is non-zero.
+					if ((DX == 0 && DY == 0) || (DX != 0 && DY != 0))
+						continue;
+					if (CX + DX < 0 || CY + DY < 0 || CX + DX >= W || CY + DY >= W)
+						continue;
+					NIdx = (CY + DY) * W + (CX + DX);
+					if (Room[NIdx] != -1)
+						continue;
+					N = T;
+					N.X = T.X + DX;
+					N.Y = T.Y + DY;
+					if (IsWallEdge(WorldData, T, N, Predicate))
+						continue;
+					Room[NIdx] = Count;
+					Stack.AddItem(NIdx);
+				}
+			}
+		}
+		Count++;
+	}
+
+	// The edge census, counted ONCE per edge (+X and +Y only) over standable pairs, so the two
+	// numbers say what fraction of the passable geometry this predicate is calling wall.
+	for (i = 0; i < Room.Length; i++)
+	{
+		if (Room[i] < 0)
+			continue;
+		CX = i % W;
+		CY = i / W;
+		T.X = X0 - Radius + CX;
+		T.Y = Y0 - Radius + CY;
+		if (CX + 1 < W && Room[i + 1] >= 0)
+		{
+			N = T;
+			N.X = T.X + 1;
+			if (IsWallEdge(WorldData, T, N, Predicate)) Walls++; else Open++;
+		}
+		if (CY + 1 < W && Room[i + W] >= 0)
+		{
+			N = T;
+			N.Y = T.Y + 1;
+			if (IsWallEdge(WorldData, T, N, Predicate)) Walls++; else Open++;
+		}
+	}
+	return true;
+}
+
+// The one clause the three predicates disagree about. Everything before the switch is shared.
+private function bool IsWallEdge(XComWorldData WorldData, TTile T, TTile N, int Predicate)
+{
+	local TileData Data;
+	local int Side, LowBit, OverBit, OntoBit, VisBit;
+
+	if (!WorldData.IsAdjacentTileBlocked(T, N))
+		return false;
+
+	WorldData.GetTileData(T, Data);
+	EdgeBits(N.X - T.X, N.Y - T.Y, Side, LowBit, OverBit, OntoBit, VisBit);
+
+	switch (Predicate)
+	{
+	case 1:
+		return (Data.StaticFlags & VisBit) != 0;
+	case 2:
+		return (Data.CoverFlags & Side) != 0 && (Data.CoverFlags & LowBit) == 0;
+	}
+	return (Data.CoverFlags & Side) != 0 && (Data.CoverFlags & (OverBit | OntoBit)) == 0;
+}
+
+// The per-face constants for one cardinal step, all five of them together so a transposition is
+// visible at a glance rather than hidden across five switch statements.
+//
+// ⛔ THE COMPASS IS NOT THE OBVIOUS ONE. X2AccessTileReader's table is NORTH_DY=+1 and EAST_DX=-1,
+// so **+X is WEST and +Y is NORTH** — the mapping that ProbeRow got wrong the first time and had
+// to be measured against a sandbag to fix.
+private function EdgeBits(int DX, int DY, out int Side, out int LowBit, out int OverBit,
+	out int OntoBit, out int VisBit)
+{
+	if (DX > 0)        // +X is WEST
+	{
+		Side = class'XComWorldData'.const.COVER_West;
+		LowBit = class'XComWorldData'.const.COVER_WLow;
+		OverBit = class'XComWorldData'.const.COVER_ClimbOver_W;
+		OntoBit = class'XComWorldData'.const.COVER_ClimbOnto_W;
+		VisBit = SF_BlocksVisibilityXPos;
+	}
+	else if (DX < 0)   // -X is EAST
+	{
+		Side = class'XComWorldData'.const.COVER_East;
+		LowBit = class'XComWorldData'.const.COVER_ELow;
+		OverBit = class'XComWorldData'.const.COVER_ClimbOver_E;
+		OntoBit = class'XComWorldData'.const.COVER_ClimbOnto_E;
+		VisBit = SF_BlocksVisibilityXNeg;
+	}
+	else if (DY > 0)   // +Y is NORTH
+	{
+		Side = class'XComWorldData'.const.COVER_North;
+		LowBit = class'XComWorldData'.const.COVER_NLow;
+		OverBit = class'XComWorldData'.const.COVER_ClimbOver_N;
+		OntoBit = class'XComWorldData'.const.COVER_ClimbOnto_N;
+		VisBit = SF_BlocksVisibilityYPos;
+	}
+	else               // -Y is SOUTH
+	{
+		Side = class'XComWorldData'.const.COVER_South;
+		LowBit = class'XComWorldData'.const.COVER_SLow;
+		OverBit = class'XComWorldData'.const.COVER_ClimbOver_S;
+		OntoBit = class'XComWorldData'.const.COVER_ClimbOnto_S;
+		VisBit = SF_BlocksVisibilityYNeg;
+	}
+}
+
+private function string PredicateName(int Predicate)
+{
+	switch (Predicate)
+	{
+	case 1: return "b-sight";
+	case 2: return "c-height";
+	}
+	return "a-climb";
+}
+
+private function int CompareInts(int A, int B)
+{
+	return (A < B) ? -1 : ((A > B) ? 1 : 0);
 }
 
 // ---------------------------------------------------------------------------
