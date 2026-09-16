@@ -24,7 +24,8 @@
 //   * the ability / trait summary panel on the right — UIUtilities_Strategy.PopulateAbilitySummary
 //     and _Traits are MC ops on the screen with nothing retained, mirrored entry for entry.
 //
-// The two verbs: the soldier cycle (Tab / LeftShift in vanilla, both taken by the layer) through
+// The two verbs: the soldier cycle (Tab / LeftShift in vanilla; E / Q under our XComInput.ini,
+// which the game handles natively underneath the layer — this verb is the spinner's copy) through
 // the screen's own NextSoldier/PrevSoldier behind the screen's own gate, and the abilities/traits
 // toggle, which on mouse+keyboard is a nav-help button and on a gamepad FXS_BUTTON_X — no key.
 //
@@ -378,7 +379,7 @@ private function EmitAbility(int Index, string AbilityName, string Desc)
 // Verbs
 // ---------------------------------------------------------------------------------------
 
-// Vanilla's Tab / LeftShift, behind the screen's own gate. NextSoldier/PrevSoldier re-point every
+// Vanilla's Tab / LeftShift (E / Q under our config), behind the screen's own gate. NextSoldier/PrevSoldier re-point every
 // armory screen on the stack at the new soldier and re-populate this one.
 function CycleArmorySoldier(int Direction)
 {

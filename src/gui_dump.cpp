@@ -49,7 +49,10 @@ constexpr int kMaxNodes = 3000;   // a runaway tree must end in a truncation not
 // Elements listed per array property. Raised from 8 on 2026-08-20: the anchored tutorial blade
 // sat at index 8 of UIWorldMessageMgr.m_arrMsgs — the pool is 8 recycled slots plus one appended
 // per NAMED message, so the truncation hid precisely the entries that carry an id and matter.
-constexpr int kMaxArrayElems = 32;
+// Raised again to 160 on 2026-09-16: verifying the companion's XComInput.ini merge means reading
+// the whole of PlayerInput.Bindings off a CDO (100 entries in the tactical section), and a
+// dump that shows 32 of them cannot answer "is Tab still bound".
+constexpr int kMaxArrayElems = 160;
 constexpr int kMaxStaticElems = 64; // elements printed for a static array (ArrayDim > 1)
 constexpr int kMaxInstances = 32; // instances listed for an ambiguous ?instance=
 constexpr int kMaxRegistry = 512; // a screen's ChildPanels registry, for the reachability check

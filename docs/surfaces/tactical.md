@@ -11,7 +11,8 @@ screens is here.
 ## Tactical tile cursor
 
 The RT TileExplorer port, deliberately OUTSIDE the Graph kernel (the map is not a
-widget tree). C++ owns keys and speech — arrows (camera-relative), `Ctrl+,`/`Ctrl+.`
+widget tree). C++ owns keys and speech — arrows (world-absolute: Up is always north, so the
+camera's yaw plays no part, which is why the vanilla Q/E rotation could be given up), `Ctrl+,`/`Ctrl+.`
 floors, `C` recenter, `Delete` re-announce, `Backspace` two-press move-to. Each
 press makes one outbound call to the companion CDO (`GameUI::FindCompanionCDO` +
 `CallScriptFunction`) and speaks the `NativeResult` reflected back. Script drives
@@ -250,8 +251,8 @@ squad member, `J` next cover position, `V` next exit, **`Shift`+those five for t
 PREVIOUS one**,
 `PageDown`/`PageUp` within the category, `Ctrl+PageDown`/`Ctrl+PageUp` next/previous
 NON-EMPTY category (announcing its name), `O` re-announce, `/` plant the tile cursor
-on it. `Shift+Tab` is claimed here too — not a scanner verb, but the vanilla
-prev-soldier the Shift swallow would otherwise cost.
+on it. The Shift chords are safe because the companion's `XComInput.ini` unbinds
+`LeftShift` (its release used to cycle the soldier); nothing here claims Shift or Tab.
 
 ⛔ **Five `CAT_*` ids are mirrored in native, not three** — 0, 1, 2, **10**
 (`kCatCover`) and **12** (`kCatExits`). `CAT_COVER` sits at the END of the enum rather than beside
@@ -813,8 +814,8 @@ things generalize:
 
 The mod's first AMBIENT recipe (`recipes/recipe_tactical.cpp`): attached silently for the whole
 mission, UNFOCUSED by default, so the tile cursor keeps the arrows while the graph keeps its
-position and its render machinery warm. `Ctrl+Tab` focuses it (HUD mode — the navigator's claims
-come alive: arrows, Tab/Shift+Tab between stops, Enter, Home/End), `Escape` or `Ctrl+Tab` again
+position and its render machinery warm. `Tab` focuses it (HUD mode — the navigator's claims
+come alive: arrows, Tab/Shift+Tab between stops, Enter, Home/End), `Escape`
 returns to world mode ("Map"), and the shot HUD raising takes focus back WITHOUT a spoken exit —
 the targeting poll's own narration is the next thing heard, and an exit line would talk over it.
 Stops, in on-screen order: **Soldier** (companion-backed — one label node per fact off
@@ -861,10 +862,11 @@ panels do.
   (`AA_CannotAfford_ActionPoints`) with no localized form the widgets retain, and speaking it
   would hand a Russian player an internal identifier. It waits for the companion vocabulary; the
   node is marked "unavailable" meanwhile.
-- **The Shift swallow is wider than the tile cursor now**: the arbiter's `LeftShift` claim holds
-  while the HUD graph is focused too (`object_scanner.cpp`), because the graph's `Shift+Tab`
-  has the same problem the scanner's chords had — a Shift release reaching the engine at the end
-  of the chord fires `PrevUnit()`.
+- **Bare Tab is the entry key, and E / Q switch soldiers underneath the graph.** Both follow from
+  the companion's `XComInput.ini` (`docs/input-map.md`): the game has nothing left on Tab, and
+  a soldier switch made with E while the graph is focused is the game's own — the selection
+  poll narrates it and the soldier stop re-reads on the next rebuild. `Shift+Tab` is safe
+  because `LeftShift` carries no binding any more; there is no Shift swallow.
 - **Soldier stop**: one node per fact, all through the `;` readout's own composers where the two
   overlap (`DescribeTargetHealth`, `DescribeActions`, the effect lists) so the stop and the key
   cannot disagree, plus the facts `;` never carried: the weapon readout (primary weapon's

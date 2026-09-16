@@ -500,11 +500,21 @@ screen), because an attached recipe is the only one the navigator re-probes.
 ⛔ **UE3 matches modifiers LENIENTLY** — a bare vanilla binding fires under ANY modifier — so
 **every modifier chord we advertise on a key carrying a vanilla bare binding MUST be claimed, or it
 double-fires**, and, in the other direction, **taking a bare letter costs nothing**: the vanilla
-action stays reachable at `Ctrl+key` with no config and no rebind. ⚠ Leniency does NOT hand us a
-free `Shift`, so the arbiter SWALLOWS `LeftShift` itself (its release cycles the soldier); ⛔ do not
-try to solve that with the mouse-gate thunk trick. ⛔ **Tab stays the game's, in both of its
-meanings** — soldier switching is narrated by POLLING the controller — with `Shift+Tab` re-provided
-only as a debt the Shift swallow created. The mechanics and the proof for each: `docs/input-map.md`.
+action stays reachable at `Ctrl+key` with no config and no rebind. The mechanics and the proof for
+each: `docs/input-map.md`.
+
+⛔ **Soldier switching is `E` / `Q`, moved there by CONFIG, not by a claim.** The companion's
+`Config/XComInput.ini` moves the game's own next-unit and previous-unit COMMANDS off `Tab` and
+`LeftShift` onto `E` and `Q` in both input sections (they were camera rotation, useless to a
+world-absolute cursor). Every handler keys on the command, so E and Q are Tab and LeftShift in
+every meaning the game gives them — soldier, target, Armory — and the game's own key hints follow.
+Two rules fall out. **Never re-provide the switch by claim**: it is narrated by POLLING the
+controller, which also catches the mouse click, the turn start and the death-driven re-select.
+**Shift is an ordinary modifier ONLY because that binding is gone**: `Key_Left_Shift`'s release
+cycled the soldier unconditionally, and a Shift chord that cycles it again means the config did not
+merge — check that first (`just dev-props`), never bring back the modifier swallow or the
+mouse-gate thunk trick. Bare `Tab` is the HUD layer's entry key in both layers because that config
+leaves the game nothing on it.
 
 ⛔ **Before claiming a key, check `docs/input-map.md`.** Free keys are nearly exhausted: exactly two
 bare letters (`H`, `I`) and the punctuation the game never binds. ⛔ Do NOT poke

@@ -26,7 +26,7 @@ void Init();
 void OnTick();
 
 /// Is the ant farm the current, interactive screen — whether or not a graph recipe has focus
-/// over it? The gate the navigator's Tab / Ctrl+Tab layer-toggle claims read, so it is a plain
+/// over it? The gate the navigator's Tab layer-entry claim reads, so it is a plain
 /// flag published from OnTick (the arbiter evaluates predicates inside the window procedure).
 /// The narrate-only poll and the Delete key gate on this AND on the layer NOT owning input.
 bool IsGridActive();

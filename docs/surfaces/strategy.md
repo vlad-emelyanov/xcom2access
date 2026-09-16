@@ -433,7 +433,9 @@ lookup found the right package in a language nobody wrote the lookup for.
   the Highlander, re-sends Enter to the list so a mod-wrapped delegate runs. A greyed row keeps
   its node; `OnAccept` refuses it with the game's own sound.
 - **The soldier cycle is re-provided as a spinner** on the soldier node, gated exactly as
-  `UIArmory.OnUnrealCommand` gates Tab/LeftShift (which the layer displaces), and the
+  `UIArmory.OnUnrealCommand` gates Tab/LeftShift (the layer takes Tab; the game's own cycle lives
+  on E / Q under the companion's `XComInput.ini` and runs natively under the graph — the word
+  cache is keyed on the unit, so the readout follows either path), and the
   abilities/traits toggle — a nav-help button with no key — as a node under the summary. Both are
   the screen's own functions.
 - **The header composers are shared with the loadout** (`X2AccessHelper.DescribeArmorySoldier` /
@@ -519,8 +521,9 @@ as the TOPMOST stack entry that `IsKindOf UICustomize`. Built 2026-09-04 from so
   Enter picks and closes before the row's button could see it, so vanilla reaches PREVIEW by
   mouse only.
 - The soldier cycle is re-provided as a spinner exactly as the armory hub's, behind the same
-  gate vanilla puts on Tab / LeftShift (`bInArmory` and a soldier to cycle to); in the character
-  pool's editor there is no cycle and no spinner.
+  gate vanilla puts on Tab / LeftShift — E / Q under our config, and those run natively under the
+  graph — (`bInArmory` and a soldier to cycle to); in the character pool's editor there is no
+  cycle and no spinner.
 
 ## Covert actions
 

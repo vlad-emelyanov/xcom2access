@@ -24,7 +24,7 @@ bool IsAttached();
 
 /// A recipe is attached AND focused — the graph's claims are live and the arrows, Tab, Enter and
 /// Space belong to it. For every menu recipe this equals IsAttached(); the ambient tactical
-/// recipe attaches unfocused and only owns input after Ctrl+Tab. This is the gate the tile
+/// recipe attaches unfocused and only owns input after Tab. This is the gate the tile
 /// cursor and the legacy X2Access_Speak mute key off: a graph that is not consuming keys and not
 /// speaking is not "owning the surface", however long it stays attached.
 bool OwnsInput();

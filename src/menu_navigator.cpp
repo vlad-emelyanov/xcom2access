@@ -201,7 +201,7 @@ namespace {
 bool gAttached = false;
 // The claims' other half: attached AND focused. Every menu recipe is focused for its whole
 // attach, so for them this bit shadows gAttached exactly. An AMBIENT recipe (the tactical HUD)
-// attaches with it FALSE — the gameplay layer keeps the keyboard — and Ctrl+Tab toggles it.
+// attaches with it FALSE — the gameplay layer keeps the keyboard — and Tab / Escape toggle it.
 // While false, the navigator holds no claims, runs no differ and speaks nothing: attached means
 // only "this recipe would win the probe", which is what lets the graph keep its position and
 // its wire caches across a whole mission without ever contending with the tile cursor.
@@ -350,7 +350,7 @@ void Detach()
 
 // Screen name first (the user just landed here), then the landing readout queued behind it
 // (§9 standardized first-focus). Shared by a menu recipe's attach and an
-// ambient recipe's Ctrl+Tab focus entry, which are the same moment to the player.
+// ambient recipe's Tab focus entry, which are the same moment to the player.
 void AnnounceEntry()
 {
     TTS::Speak(gActive->ScreenName());
@@ -391,7 +391,7 @@ void Attach()
 
     // An ambient attach is SILENT and unfocused: it happens the moment a mission's HUD settles,
     // mid-gameplay, and announcing a screen the player did not navigate to would be noise. The
-    // player hears it when they ask for it (Ctrl+Tab → AnnounceEntry).
+    // player hears it when they ask for it (Tab → AnnounceEntry).
     if (gFocused)
         AnnounceEntry();
     if (gDetachMs) {
@@ -405,9 +405,9 @@ void Attach()
     }
 }
 
-// ---- the ambient recipe's focus toggle (Ctrl+Tab / Escape / targeting yield) ----
+// ---- the ambient recipe's focus toggle (Tab / Escape / targeting yield) ----
 
-// Ctrl+Tab into the HUD graph. The rebuild comes first because the graph was last rendered at
+// Tab into the HUD graph. The rebuild comes first because the graph was last rendered at
 // attach (or the previous focus), possibly minutes of gameplay ago — every widget pointer and
 // every word in it is suspect until Rerender() replaces them.
 void EnterAmbientFocus()
@@ -440,12 +440,11 @@ void ExitAmbientFocus(bool silent)
         silent ? "yielded to the game" : "player exit");
 }
 
-// The Ctrl+Tab handler. Claimed whenever a mission is active — broader than "attached", because
-// an UNCLAIMED Ctrl+Tab is not a dead key: UE3's lenient modifier matching fires the bare Tab
-// binding (next soldier / next target) under it, which is exactly the double-fire the input map
-// warns about. So the chord is swallowed mission-wide and the handler decides, and a refusal is
-// spoken — a blind player cannot otherwise tell "refused" from "broken".
-void OnLayerToggle()
+// The Tab handler. Claimed whenever a mission or the ant farm is active — broader than
+// "attached" — so that the handler decides, and a refusal is spoken: a blind player cannot
+// otherwise tell "refused" from "broken". The claim's predicate already excludes a focused
+// layer (there Tab is the stop cycle), so this only ever ENTERS; Escape leaves.
+void OnLayerEnter()
 {
     if (!gAttached || !gActive->ambient) {
         // Nothing attached to name, so name the layer the player is standing in: the claim is
@@ -454,10 +453,8 @@ void OnLayerToggle()
             Avenger::IsGridActive() ? Vocab::ScreenAvengerHud : Vocab::ScreenTacticalHud));
         return;
     }
-    if (gFocused) {
-        ExitAmbientFocus(/*silent*/ false);
+    if (gFocused)
         return;
-    }
     // Entering a focus the game would take straight back (the shot HUD is raised — the yield
     // test already says so) would announce a landing and then strip its keys 100 ms later.
     // Refuse up front instead, in the same words as any other unavailable surface.
@@ -833,36 +830,27 @@ void Init()
     RegisterClaim({VK_SUBTRACT, ModNone, attached, onDown([]() { OnAdjustKey(-1); }),
         "menu: adjust down (numpad -)"});
 
-    // ---- the ambient (tactical HUD) layer's own keys ----
+    // ---- the ambient layers' own key ----
     //
-    // Ctrl+Tab enters/exits the HUD graph. Claimed on MISSION ACTIVE, not on attached: UE3's
-    // lenient modifier matching means an unclaimed Ctrl+Tab fires the bare Tab binding (next
-    // soldier in world mode, next target while the shot HUD is raised), so a chord we advertise
-    // must be swallowed everywhere the player might try it — the handler owns the refusal.
-    // IsMissionActive is a plain flag published from TacticalHUD's tick, which is what a
-    // predicate evaluated inside the window procedure is allowed to read.
-    // ...and on the Avenger's ant farm, the second ambient layer: same chord, same handler, same
-    // leniency argument (bare Tab is bound in [XComGame.XComHeadquartersInput] too, line 468).
-    auto layerActive
-        = []() { return TacticalHUD::IsMissionActive() || Avenger::IsGridActive(); };
-    // No auto-repeat: a held chord flapping the mode would leave the player unable to tell
-    // which side of it they ended on.
-    RegisterClaim({VK_TAB, ModCtrl, layerActive,
-        [](const KeyEvent& e) { if (e.down && !e.repeat) OnLayerToggle(); },
-        "HUD layer: enter/exit (tactical and Avenger)"});
-
-    // ⚠ PLAIN Tab enters the Avenger layer too — a key the tactical layer can never take (there
-    // it is next unit / next target), but on the ant farm it is DEAD in retail: the only handler
-    // it reaches, UIAvengerHUD.OnUnrealCommand's FXS_KEY_TAB case, is compiled out under
-    // `if(`notdefined(FINAL_RELEASE)) (it opened the personnel list in dev builds, beside `P`),
-    // UIFacilityGrid never handles Tab, and the shortcut bar cycles categories on the bumpers
-    // only. So the bare binding's forwarder fires into nothing, and claiming it displaces
-    // nothing. Only while the layer is NOT already focused — focused, Tab is the stop cycle
-    // (the `attached` claim above), and the two predicates are disjoint by construction.
-    auto gridUnfocused = []() { return Avenger::IsGridActive() && !(gAttached && gFocused); };
-    RegisterClaim({VK_TAB, ModNone, gridUnfocused,
-        [](const KeyEvent& e) { if (e.down && !e.repeat) OnLayerToggle(); },
-        "Avenger HUD: enter the layer"});
+    // Bare Tab enters the HUD graph — on a mission and on the Avenger's ant farm alike. Tab is
+    // DEAD in the game under X2Access: the companion's Config/XComInput.ini moves the game's
+    // next-unit command off Tab onto E (and previous-unit off LeftShift onto Q) in both input
+    // sections, so the vanilla forwarder no longer exists and claiming the key displaces
+    // nothing. Claimed on MISSION ACTIVE / GRID ACTIVE rather than on attached, so that a press
+    // while the layer cannot be entered is REFUSED aloud — a blind player cannot otherwise tell
+    // "refused" from "broken" — and only while the layer is NOT already focused: focused, Tab is
+    // the stop cycle (the `attached` claim above), and the two predicates are disjoint by
+    // construction. Escape is the way back out. IsMissionActive and IsGridActive are plain
+    // flags published from a tick, which is what a predicate evaluated inside the window
+    // procedure is allowed to read.
+    auto layerUnfocused = []() {
+        return (TacticalHUD::IsMissionActive() || Avenger::IsGridActive())
+            && !(gAttached && gFocused);
+    };
+    // No auto-repeat: a held key re-entering the layer would re-announce the landing.
+    RegisterClaim({VK_TAB, ModNone, layerUnfocused,
+        [](const KeyEvent& e) { if (e.down && !e.repeat) OnLayerEnter(); },
+        "HUD layer: enter (tactical and Avenger)"});
 
     // Escape backs out of the HUD graph to the gameplay layer. Only while an ambient recipe is
     // focused — on every menu recipe Escape stays the game's own close key, unclaimed.

@@ -655,12 +655,12 @@ inline constexpr const char* Loading = "Loading";
 inline constexpr const char* GroupDifficulty = "Difficulty";
 inline constexpr const char* GroupCampaignOptions = "Campaign options";
 
-// ---- the tactical HUD graph (the ambient recipe, Ctrl+Tab) ----
+// ---- the tactical HUD graph (the ambient recipe, Tab) ----
 
-// Spoken on Ctrl+Tab into the HUD layer, and by its refusal ("HUD unavailable.").
+// Spoken on Tab into the HUD layer, and by its refusal ("HUD unavailable.").
 inline constexpr const char* ScreenTacticalHud = "HUD";
 
-// Spoken when Ctrl+Tab or Escape hands the keys back to the tile cursor. "Map" rather than
+// Spoken when Escape hands the keys back to the tile cursor. "Map" rather than
 // "world mode" because it names what the arrows now drive, not an internal state.
 inline constexpr const char* TacticalWorldMode = "Map";
 
@@ -676,11 +676,11 @@ inline constexpr const char* StopTargets = "Targets";
 inline constexpr const char* TargetFallback = "Target";
 inline constexpr const char* StopObjectives = "Objectives";
 
-// ---- the Avenger HUD graph (the ant farm's ambient recipe, Tab / Ctrl+Tab) ----
+// ---- the Avenger HUD graph (the ant farm's ambient recipe, Tab) ----
 //
 // The second ambient layer. Same shape as the tactical one: the game keeps the arrows (they
 // walk the rooms, with the camera swoop and the room name the narrate-only reader speaks),
-// Tab or Ctrl+Tab focuses the HUD's panels, Escape hands the arrows back.
+// Tab focuses the HUD's panels, Escape hands the arrows back.
 
 // Spoken on entering the layer, and by its refusal ("Avenger HUD unavailable.").
 inline constexpr const char* ScreenAvengerHud = "Avenger HUD";

@@ -6,8 +6,9 @@
 // Everything about how this recipe holds input is INVERTED from the menu recipes, and the
 // Recipe::ambient flag is what expresses it: it attaches SILENTLY the moment a mission's HUD
 // settles and then sits UNFOCUSED for most of the mission, while the tile cursor keeps the
-// arrows and the game keeps Tab. Ctrl+Tab focuses it (HUD mode — the navigator's claims come
-// alive and arrows walk the stops); Escape or Ctrl+Tab again hands the keys back; raising the
+// arrows and the game switches soldiers on E / Q (the companion's XComInput.ini moves the vanilla
+// Tab / LeftShift commands there, which is what frees Tab). Tab focuses it (HUD mode — the
+// navigator's claims come alive and arrows walk the stops); Escape hands the keys back; raising the
 // shot HUD takes them back without asking (YieldFocus — targeting owns the arrows, and the
 // targeting poll's narration speaks next, so the yield is silent).
 //

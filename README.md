@@ -185,17 +185,18 @@ stand down the moment the shot HUD goes up, and so on.
 | Backspace ×2    | Move the selected soldier to the cursor tile                       |
 | Alt             | Targets from the cursor tile — the game's target preview, spoken (the game keeps the key too) |
 | ;               | Read the selected soldier in full                                  |
+| E / Q           | Next / previous soldier (the game's own switch, moved here from Tab / Shift; also next / previous target while aiming) |
 
 Every step also says who would see a soldier on that tile ("Seen by 2") and whether its cover
 holds against them ("flanked"), the way the game draws the eye markers and the red cover shield
 on every hover. With the game's own "Show Target Preview" option on, the Alt readout rides every
 step as well.
 
-**Tactical — the HUD layer** — Ctrl+Tab moves the arrows from the map onto the HUD's panels
+**Tactical — the HUD layer** — Tab moves the arrows from the map onto the HUD's panels
 
 | Key             | Action                                                                                   |
 |-----------------|------------------------------------------------------------------------------------------|
-| Ctrl+Tab        | Enter / leave the HUD layer                                                              |
+| Tab             | Enter the HUD layer (from the map)                                                       |
 | Tab / Shift+Tab | Next / previous panel: Soldier, Abilities, Commands, Targets, Objectives                 |
 | Arrow keys      | Walk a panel (Left/Right along the ability bar, the command strip and the target strip)  |
 | Enter           | Use the ability, press the command, or aim at the target                                 |
@@ -216,7 +217,6 @@ and how far away it is.
 | Ctrl+PageDn / Ctrl+PageUp | Next / previous non-empty category            |
 | O                         | Re-announce the last entry                    |
 | /                         | Put the tile cursor on it                     |
-| Shift+Tab                 | Previous soldier (re-provided; see below)     |
 
 **Tactical — aiming a shot** — while the shot HUD is up
 
@@ -245,7 +245,9 @@ and how far away it is.
 
 | Key    | Action                                      |
 |--------|---------------------------------------------|
+| Tab    | Enter the Avenger HUD layer (Escape leaves) |
 | Delete | Re-announce the focused room / the briefing |
+| E / Q  | Next / previous soldier on the Armory, Customize and Bond screens (the game's own cycle, moved here from Tab / Shift) |
 
 **Geoscape**
 
@@ -264,17 +266,26 @@ and how far away it is.
 |-----|------------------------------|
 | I   | Re-read the tutorial message |
 
-**About the keys we take.** X2Access never edits your key bindings, and it
-never needs to. The engine matches a binding leniently — a bare key fires
-whatever modifiers you happen to be holding — so every vanilla action on a key
-we claim stays reachable at **Ctrl+key**: the arbiter swallows the bare key, the
-Ctrl chord passes through untouched, and the game matches its own binding with
-Ctrl held. Bare `Left` drives the tile cursor; `Ctrl+Left` still scrolls the
-camera. Tab stays yours in both of its meanings — switching soldiers is narrated
-by watching the game rather than by taking the key, which also catches the mouse
-click, the turn start and the re-select after a soldier goes down. The one debt
-is `Shift+Tab`, which the scanner claims and re-provides, because holding Shift
-for a reverse cycle would otherwise trip the game's own prev-soldier binding.
+**About the keys we take.** The engine matches a binding leniently — a bare key
+fires whatever modifiers you happen to be holding — so every vanilla action on a
+key we claim stays reachable at **Ctrl+key**: the arbiter swallows the bare key,
+the Ctrl chord passes through untouched, and the game matches its own binding
+with Ctrl held. Bare `Left` drives the tile cursor; `Ctrl+Left` still scrolls the
+camera.
+
+**The one binding change we ship.** The companion mod carries an `XComInput.ini`
+that moves the game's own *next unit* and *previous unit* commands from Tab and
+Left Shift onto **E** and **Q**, in tactical and on the Avenger alike. Q and E
+were camera rotation, which a cursor that always steps north has no use for.
+Everything the game did on Tab it now does on E — next soldier, next target while
+aiming, next soldier in the Armory — and its own key hints say so. Switching is
+narrated by watching the game rather than by taking the key, which also catches
+the mouse click, the turn start and the re-select after a soldier goes down.
+Because Left Shift no longer carries a binding, Shift is a plain modifier for
+every reverse-cycle chord above, and bare Tab is free to be the HUD layer's key.
+The game's Controls screen shows the new bindings and will save them into your
+profile if you press Save there; they then persist even without the mod, and the
+Controls screen is where to put them back.
 
 ### Logging
 

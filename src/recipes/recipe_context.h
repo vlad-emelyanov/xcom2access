@@ -60,7 +60,7 @@ struct Recipe {
 
     // An AMBIENT recipe sits under a GAMEPLAY layer that keeps the keyboard: it attaches
     // SILENTLY and UNFOCUSED (no claims live, no differ running, no attach speech), and only
-    // Ctrl+Tab focuses it. That is the tactical HUD's required state — attached-but-unfocused
+    // Tab focuses it. That is the tactical HUD's required state — attached-but-unfocused
     // while the tile cursor owns the arrows (CLAUDE.md, "The tactical layer: input ownership").
     // Every menu recipe leaves this false and behaves exactly as before.
     bool ambient = false;
@@ -71,7 +71,7 @@ struct Recipe {
     // poll), so a spoken exit here would talk over it.
     bool (*YieldFocus)() = nullptr;
 
-    // Ambient recipes only: the word spoken when Ctrl+Tab or Escape hands the keys BACK to the
+    // Ambient recipes only: the word spoken when Escape hands the keys BACK to the
     // gameplay layer underneath — what the arrows drive from then on ("Map" for the tile cursor,
     // "Rooms" for the ant farm). Named per recipe because two ambient layers now exist and the
     // player has to hear which one they fell back into. Null degrades to the tactical word.

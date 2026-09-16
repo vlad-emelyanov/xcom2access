@@ -14,6 +14,27 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**Soldier switching on `E` / `Q` by config, bare `Tab` as the HUD layer key, the Shift swallow
+retired** (2026-09-16, `mods/X2AccessCompanion/Config/XComInput.ini`; `MenuNavigator::OnLayerEnter`;
+the rule is in `CLAUDE.md` and the census in `input-map.md` §Soldier switching). Builds clean.
+The config MERGE is measured (both CDO arrays read back correct at the main menu, over the
+player's own saved ini — `input-map.md` has the numbers); the keys themselves have not been
+pressed. What a first run must settle, in order:
+
+1. **Tactical**: E / Q switch soldiers in world mode; Tab enters the HUD layer (once — the
+   landing speaks), Escape leaves; `Shift+B` / `Shift+.` / `Shift+,` / `Shift+J` / `Shift+V` walk
+   backward WITHOUT cycling the soldier; E / Q are next / previous target while the shot HUD is
+   raised; Ctrl+Tab does nothing; `Shift+Tab` inside the layer is the previous stop and nothing
+   else.
+2. **Strategy**: E / Q cycle soldiers on the Armory menu, Customize and the Bond screen with
+   the graph focused, and the soldier node re-reads the new name — the word caches are keyed on
+   the unit, but the DIFFER has never been asked to announce a cycle it did not drive. Tab on the
+   ant farm still enters the Avenger layer. In Squad Select `E` moves to the next slot; check what
+   `Q` does there (the screen's previous-slot key is the left bumper, so probably nothing — decide
+   whether that earns a claim).
+3. **The Controls screen** shows E / Q under NEXT / PREVIOUS UNIT and no key under the two camera
+   rotations; the tutorial's "press Tab" hint now says E.
+
 **The fog gate on the cursor's vertical words and the `world.unexplored` ring** (2026-09-16,
 `X2AccessTileReader.VerticalDrawn` and `X2AccessObjectScanner.AddFrontier` / `CAT_UNEXPLORED`;
 rules in `surfaces/tactical.md`). **Both HEARD WORKING 2026-09-16** — the ring returned seven
@@ -214,7 +235,8 @@ listen for, in the order a single Gatecrasher run settles them:
 6. **`J` must not double-fire.** It displaces a live vanilla ability-hotkey forwarder bound in TWO
    input sections; the log should show the claim swallowing it, and no ability should trigger.
    `Ctrl+J` must still reach the vanilla action. Check `Shift+J` walks BACKWARD and does not cycle
-   the soldier (the `LeftShift` swallow covers it, but this is a new chord on that swallow).
+   the soldier (the companion's `XComInput.ini` unbinds `LeftShift`, so a Shift release fires
+   nothing; a cycle here means the config did not merge).
 
 ⚠ Two design calls this run should raise rather than settle: whether `COVER_MAX = 16` entries is a
 ring or a list on a dense urban map, and whether the label wants the sentence join it inherits from

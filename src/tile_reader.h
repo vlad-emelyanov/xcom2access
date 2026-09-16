@@ -1,8 +1,9 @@
 #pragma once
 
 // Tactical tile cursor — the RT TileExplorer port for XCOM 2's tactical map. Always active
-// while the tactical HUD owns the screen: camera-relative arrow steps drive the game's OWN
-// XCom3DCursor, Shift+comma/period step floors, C recenters on the active unit, Delete
+// while the tactical HUD owns the screen: world-absolute arrow steps (Up is always north; the
+// camera's yaw plays no part) drive the game's OWN XCom3DCursor, Ctrl+comma/period step floors,
+// C recenters on the active unit, Delete
 // re-announces, Backspace is the two-press guarded move order.
 //
 // Division of labor: this module owns the keys (input arbiter claims) and speech; all

@@ -279,7 +279,7 @@ private function AppendTraitHeader(UIArmory_WeaponTrait Trait)
 // Verbs
 // ---------------------------------------------------------------------------------------
 
-// Vanilla's Tab / LeftShift, behind the screen's own gate.
+// Vanilla's Tab / LeftShift (E / Q under our config), behind the screen's own gate.
 function CycleWeaponUpgradeSoldier(int Direction)
 {
 	local UIArmory_WeaponUpgrade Screen;

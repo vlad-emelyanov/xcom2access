@@ -2,7 +2,6 @@
 #include "free_aim.h"
 #include "script_call.h"
 #include "input_arbiter.h"
-#include "menu_navigator.h"
 #include "narrator.h"
 #include "tile_reader.h"
 #include "ue3_reflection.h"
@@ -224,50 +223,17 @@ void Init()
         }),
         "scanner: cursor to marker / aim at marker"});
 
-    // ---- taking Shift off the game, so the reverse-cycle chords above are safe ----
+    // ---- why the Shift chords above are safe ----
     //
-    // ⛔ `LeftShift` is bound in [XComGame.XComTacticalInput] and `Key_Left_Shift`'s RELEASE
-    // calls PrevUnit() UNCONDITIONALLY in state ActiveUnit_Moving (XComTacticalInput.uc:2147).
-    // So a bare Shift tap — and therefore the tail of EVERY Shift chord — cycles the selected
-    // soldier when the player lets go. That is what made Shift unusable as a modifier here, and
-    // it silently afflicted the tile cursor's old Shift+comma / Shift+period floor keys for
-    // months. It never showed up in testing because the tutorial runs state InReplayPlayback,
-    // whose copy of the same function (:587) is a bare `return false`.
-    //
-    // The fix is to swallow the modifier itself at the window procedure while our layer owns
-    // tactical input: the engine never sees LeftShift go down or up, so the bound command never
-    // runs. Our own chord matching is unaffected — GetKeyState reflects the state the OS updated
-    // when the message was pulled off the queue, not what the window procedure did with it.
-    //
-    // Considered and rejected: the mouse-gate trick on that UFunction (docs/object-scanner-recon
-    // §4.6 Option B). It does NOT apply verbatim there — Key_Left_Shift takes an `int ActionMask`
-    // and returns a bool, so MouseGate's thunk would find a parameter expression instead of the
-    // EX_EndFunctionParms it expects, leave the VM's Code pointer mid-expression, and hand the
-    // caller an unwritten return value. Making it correct needs UStruct::Script, an offset this
-    // project has never measured. A swallow needs no engine offset at all.
-    //
-    // ⚠ RightShift is deliberately NOT claimed: it carries no binding in the tactical section, so
-    // it was never part of the problem — and leaving it alone keeps a vanilla escape hatch, since
-    // Key_Tab checks for RightShift in PressedKeys too.
-    // ⚠ Wider than the other claims by design: the HUD graph's Shift+Tab (previous stop) has
-    // the same problem this swallow solves — a Shift release reaching the engine at the end of
-    // the chord cycles the soldier — so the swallow holds while the ambient tactical recipe is
-    // focused too, not only while the tile cursor is active. MenuAttached() keeps it OFF under
-    // an ordinary menu recipe (a dialog over tactical), same as today.
-    auto tacticalOwnsShift = [] {
-        return TileReader::IsActive()
-            || (MenuNavigator::OwnsInput() && !MenuNavigator::MenuAttached());
-    };
-    RegisterClaim({VK_LSHIFT, ModNone, tacticalOwnsShift, nullptr,
-        "scanner: own Shift (suppress PrevUnit)"});
-
-    // What the swallow costs, paid straight back. Key_Tab's own prev-soldier branch reads
-    // PressedKeys, which no longer contains LeftShift while we hold the key — so Shift+Tab would
-    // silently become NEXT soldier. Claiming the chord and doing it ourselves keeps the vanilla
-    // meaning and makes it deterministic in both directions (a RightShift+Tab now also comes
-    // through here rather than through the engine, so there is one behaviour, not two).
-    RegisterClaim({VK_TAB, ModShift, active, OnPress([] { SimpleCall("PrevSoldier"); }),
-        "scanner: previous soldier (Shift+Tab)"});
+    // In vanilla `LeftShift` is bound in [XComGame.XComTacticalInput] and `Key_Left_Shift`'s
+    // RELEASE calls PrevUnit() UNCONDITIONALLY in state ActiveUnit_Moving
+    // (XComTacticalInput.uc:2147), so the tail of EVERY Shift chord cycled the selected soldier.
+    // The arbiter used to swallow the modifier itself and re-provide Shift+Tab by hand. Neither
+    // exists any more: the companion's Config/XComInput.ini moves the previous-unit command off
+    // LeftShift onto Q (and next-unit off Tab onto E), and a command with no binding has no
+    // handler to reach — the release fires nothing. Shift is an ordinary modifier here now, and
+    // the rule is in docs/input-map.md. If a Shift chord ever cycles the soldier again, the
+    // first thing to check is whether that config still merges (`just dev-props`), not this file.
 
     LOG_INFO("ObjectScanner: claims registered");
 }

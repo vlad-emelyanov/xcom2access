@@ -28,16 +28,15 @@ mute gate on OWNS INPUT, the targeting poll on `MenuAttached()` (a non-ambient r
 surface), and every navigator claim on attached-AND-focused. Gating the tile reader on mere
 attachment is right for menus and was wrong here.
 
-HUD mode's own keys: `Ctrl+Tab` toggles the layer — claimed whenever a mission is active, not
-merely while attached, because an UNCLAIMED Ctrl+Tab is not a dead key (leniency fires the bare
-Tab binding under it — next soldier, or next target while the shot HUD is raised), so the chord
-is swallowed mission-wide and the handler speaks its refusals ("HUD unavailable."). `Escape`
-while HUD-focused exits to world mode ("Map") and is claimed only then — on every menu recipe
-Escape stays the game's own close key. While focused the navigator's generic set applies
-(arrows, Tab/Shift+Tab between stops, Enter, Space, Home/End), which displaces vanilla Tab =
-next soldier for exactly as long as the player stays in the layer. The `LeftShift` swallow also
-holds while HUD-focused (see below), or the Shift release at the end of Shift+Tab would fire
-`PrevUnit()`.
+HUD mode's own keys: bare `Tab` enters the layer — claimed whenever a mission is active and
+the layer is not already focused, not merely while attached, so that a press the layer cannot
+honour is refused aloud ("HUD unavailable.") rather than dying silently. Tab is free to take
+because the companion's `XComInput.ini` moves the game's next-unit command off it (§Soldier
+switching below): there is no vanilla binding left under the claim. `Escape` while HUD-focused
+exits to world mode ("Map") and is claimed only then — on every menu recipe Escape stays the
+game's own close key. While focused the navigator's generic set applies (arrows, Tab/Shift+Tab
+between stops, Enter, Space, Home/End). `E` / `Q` are NOT claimed in either mode: a soldier
+switch made while the graph is focused is the game's own, and the selection poll narrates it.
 
 **UE3 matches modifiers LENIENTLY.** A `KeyBind`'s `Control`/`Shift`/`Alt` are modifiers the chord
 REQUIRES; modifiers the player merely happens to hold are NOT checked.
@@ -46,8 +45,19 @@ will not be activated if the corresponding key is held down"* — and the entire
 exactly twice: on `R`, so `Shift+R` reaches ErrorReport without also reloading, and on `F4`, so Alt+F4
 does not also fire the game action. (Those exist to SUPPRESS a bare bind, which is only necessary
 because matching is lenient.) So a bare binding fires under ANY modifier. **Every modifier chord we
-advertise on a key that carries a vanilla bare binding MUST be claimed, or it double-fires.** Ctrl+Tab
-therefore enters/exits the HUD layer and plain Tab is claimed ONLY while the layer is focused.
+advertise on a key that carries a vanilla bare binding MUST be claimed, or it double-fires.** (This
+is why the HUD layer's entry key was `Ctrl+Tab` for as long as bare Tab carried the game's
+next-unit binding — the chord had to be claimed mission-wide to keep leniency from firing the bare
+binding under it. With that binding moved to `E` by config the chord is retired and bare Tab is
+the entry key.)
+
+**The engine executes exactly ONE binding per key event.** `UPlayerInput::InputKey` asks
+`GetBind` for a single command string and execs that; `GetBind` walks `Bindings` from the END and
+returns the first match, so a later entry shadows an earlier one for the same key. Measured in the
+exe (the key handler at `0x1407504a0` fetches one string through the vtable and hands it to the
+exec parser at `0x140742b60`). Consequence for a config change: an appended `+Bindings` line for
+a key already bound silently WINS; removing the old line is cosmetic (the Controls screen would
+otherwise list the key twice), not functional.
 
 **The accessibility verbs outrank the vanilla bindings**, and taking a bare letter costs **nothing: no
 config snippet, no rebind at all**. Because matching is lenient, every vanilla bare-key action is
@@ -78,30 +88,78 @@ ability bar besides, which the tactical recipe already reads. ⚠ `rooms-recon.m
 preceded it on the same argument — and the recon is corrected in place. **Displacing an ability
 hotkey has been the rule here since the cover ring, not an exception being made for exits.**
 
-⚠ **The one thing leniency does NOT hand us is a free `Shift` — so we take it.** `LeftShift` is bound
-in `[XComGame.XComTacticalInput]` and `Key_Left_Shift`'s RELEASE calls `PrevUnit()` UNCONDITIONALLY
-(`XComTacticalInput.uc:2147`, state `ActiveUnit_Moving`), so every `Shift+` chord cycled the soldier
-when the player let go. It never showed up in testing because the tutorial runs `InReplayPlayback`,
-whose copy of the same function (`:587`) is a bare `return false` — the one place being a replay HID a
-bug instead of causing one. **The fix is a SWALLOW of the modifier itself**, not of the function: the
-arbiter accepts a claim on a modifier key (`{VK_LSHIFT, ModNone}`, side-resolved from lParam's scan
-code because WM_KEYDOWN reports the generic `VK_SHIFT`), so while our tactical layer owns input the
-engine never sees LeftShift go down or up. **Our own chord matching is untouched**, and that is the
-linchpin: `GetKeyState` reflects the state the OS updated when the message was pulled off the queue,
-not what the window procedure then did with it.
-⛔ **`object-scanner-recon.md` §4.6's Option B is WRONG and must not be tried**: the mouse-gate
-trick does not apply verbatim to `Key_Left_Shift`, which takes an `int ActionMask` and returns a bool.
-`MouseGate`'s thunk consumes a lone `EX_EndFunctionParms`; here it would meet a parameter expression
-instead, leave the VM's `Code` pointer mid-expression, and hand the caller an unwritten return value.
-Doing it properly needs `UStruct::Script`, an offset this project has never measured — and the swallow
-needs no engine offset at all.
-Two consequences: `RightShift` is deliberately NOT claimed (it carries no binding in the tactical
-section). And the swallow costs `PressedKeys` its `LeftShift` entry, which is what `Key_Tab`'s
-prev-soldier branch reads — so `Shift+Tab` is claimed and re-provided by
-`X2AccessObjectScanner.PrevSoldier`, reproducing `XComTacticalInput.IsManualUnitSwitchAllowed`'s guard
-rule for rule. `Ctrl` remains the safe modifier for anything that does NOT want to displace a vanilla
-key: `Key_Left_Control` merely toggles the pathing pawn's waypoint mode on press and untoggles it on
-release.
+## Soldier switching: `E` / `Q`, moved there by config
+
+**The one binding change the mod ships**, `mods/X2AccessCompanion/Config/XComInput.ini`, merged
+over `DefaultInput.ini` when the companion loads. It removes the vanilla `Q`, `E`, `Tab` and
+`LeftShift` lines from `[XComGame.XComTacticalInput]` and the `Tab` / `LeftShift` lines from
+`[XComGame.XComHeadquartersInput]`, and adds `E` = the `Tab_Key_Press` command and `Q` = the
+`Left_Shift_Key_Press` command in both. Why that is the whole change:
+
+- **The game's Controls screen is a key-name-for-command swap over the same array.** The
+  rebindable actions are fixed command strings in the exe: "NEXT UNIT / TARGET" is
+  `Tab_Key_Press | onrelease Tab_Key_Release`, "PREVIOUS UNIT / TARGET" is
+  `Left_Shift_Key_Press | onrelease Left_Shift_Key_Release` (both literal in `XCom2.exe` at
+  `0x1417f1a40`/`0x1417f1ab0`). Every state's handler in `XComTacticalInput` and every screen's
+  `OnUnrealCommand` keys on the COMMAND (the exec runs `InputEvent(FXS_KEY_TAB)`), never on the
+  physical key. So a key bound to Tab's command IS Tab in every meaning: next soldier in world
+  mode, next target while the shot HUD is raised (`UITacticalHUD.uc:459`), next soldier in the
+  Armory / Customize / Bond screens (`UIArmory.uc:448`, `UICustomize.uc:425`,
+  `UISoldierBondScreen.uc:576`), dead in the tutorial as Tab was. The game's own key hints follow,
+  because `%NEXT_SOLDIER` / `%NEXT_TARGET` resolve from the live binding
+  (`UIUtilities_Input.uc:373-383`).
+- **`Q` / `E` were camera rotation and nothing else** — every tactical state's `Key_Q`/`Key_E`
+  is a `YawCamera(±90)` (`XComTacticalInput.uc:636`, `:1243`, `:2373`; the secondary-targeting
+  state forwards to the D-pad handlers, which also just yaw). The tile cursor is world-absolute
+  (`X2AccessTileReader.uc`: Up is always north), so yaw changes nothing spoken, and a camera that
+  never turns keeps stereo panning aligned with the compass. In the headquarters section they
+  carried no binding at all.
+- **`LeftShift` carried the previous-unit command as a key of its own**, and `Key_Left_Shift`'s
+  RELEASE calls `PrevUnit()` UNCONDITIONALLY (`XComTacticalInput.uc:2147`, state
+  `ActiveUnit_Moving`), so every `Shift+` chord cycled the soldier when the player let go. It
+  never showed up in testing because the tutorial runs `InReplayPlayback`, whose copy of the same
+  function (`:587`) is a bare `return false`. The arbiter used to SWALLOW the modifier itself
+  (`{VK_LSHIFT, ModNone}`) and re-provide `Shift+Tab` by hand through
+  `X2AccessObjectScanner.PrevSoldier`; the swallow also had to widen to the HUD graph's own
+  `Shift+Tab`. **A command with no binding has no handler to reach**, so with the line removed the
+  release fires nothing and Shift is an ordinary modifier again — in the Armory too, where the
+  same release reached `UIArmory.OnUnrealCommand`'s prev-soldier case under the graph's
+  `Shift+Tab` (`UIArmory.uc:468`, gated on release only). ⛔ A Shift chord that cycles the
+  soldier again means the CONFIG did not merge; check `PlayerInput.Bindings` through
+  `just dev-props` before touching the arbiter. ⛔ Neither the modifier swallow nor
+  `object-scanner-recon.md` §4.6's mouse-gate thunk comes back: the thunk does not apply to
+  `Key_Left_Shift`, which takes an `int ActionMask` and returns a bool, so `MouseGate`'s
+  `EX_EndFunctionParms` assumption would leave the VM's `Code` pointer mid-expression.
+- **Text entry is unaffected in the strategy layer.** `UIInputDialogue` and `UISaveGame` are
+  `eInputState_Consume` and ignore Tab, so an `E` typed into a name never reaches the Armory
+  underneath. The retail census of `FXS_KEY_TAB` handlers is the soldier-cycle screens above,
+  the Photobooth (swallows both keys), and Squad Select's slot focus (`UIList_SquadEditor.uc:53`,
+  Tab only — its previous-slot key is the left bumper, so `Q` may do nothing there); every other
+  case is compiled out under `FINAL_RELEASE`.
+- **The Controls screen bakes it.** Its Save writes the live array into the player's own
+  `XComInput.ini`, so once they save there the bindings persist without the mod — and that
+  screen is where to put them back. The headquarters pair is "BINDABLE in game but not in menus"
+  (`DefaultInput.ini:467`), so config is the only way to move those two at all.
+- ⛔ **A `-Bindings` removal matches the vanilla line TEXT exactly, tabs included.** The four
+  tactical lines and the two headquarters lines in our file reproduce `DefaultInput.ini`'s
+  spacing; reformatting them turns a removal into a no-op (harmless, per the one-binding rule
+  above, but the Controls screen then lists the key twice).
+- **Measured 2026-09-16, at the main menu, `just dev-props "cdo=XComTacticalInput" Bindings`
+  and the same for `XComHeadquartersInput`:** all six removals took (no `Tab`, `LeftShift`,
+  `Q_Key_Press` or `E_Key_Press` entry left in either array), the additions sit at the array
+  tail (tactical `[98]`/`[99]` of 100, headquarters `[78]`/`[79]` of 80), and the player's own
+  `Documents\...\XComInput.ini` — which carries a Controls-screen save from 2026-08-20 — was not
+  rewritten. So the mod layer merges IN MEMORY over the player's saved file, not only over
+  `Default*.ini`, and a config array is readable off the CDO before any input class is
+  instanced, which is the cheap way to verify any future config change.
+
+**Never re-provide the switch by claim.** It is narrated by POLLING the controller, which leaves
+the binding untouched AND catches the mouse click, the turn start and the death-driven re-select
+that a key claim never could. `E` / `Q` are unclaimed in every mode, HUD mode included.
+
+`RightShift` is not claimed and carries no binding in the tactical section. `Ctrl` remains the
+safe modifier for anything that does NOT want to displace a vanilla key: `Key_Left_Control`
+merely toggles the pathing pawn's waypoint mode on press and untoggles it on release.
 
 **`LeftAlt` is claimed PASS-THROUGH in world mode** — `Claim::passThrough`, a third kind beside
 swallow and observe: the handler runs from the tick like any claim's, and the game receives the key
@@ -113,15 +171,14 @@ instead of `F4_Key_Press`, and an engine that never saw Alt go down would fire t
 skip the quit. Presses only — a pass-through is never latched, so the release and the repeats are the
 game's. Displaces nothing. `RightAlt` is left alone: the game's strip listens for the left key only.
 
-⛔ **Tab stays the game's, in both of its meanings.** `eTBC_NextUnit` in world mode
-(`UIUtilities_Input.uc:451`) and `NextTarget` while the shot HUD is raised (`UITacticalHUD.uc:459`)
-are the player's own bindings and the layer does not take them: switching soldiers is narrated by
-POLLING the controller instead, which leaves the binding untouched AND catches the mouse click, the
-turn start and the death-driven re-select that a key claim never could. The one exception is
-`Shift+Tab`, claimed and re-provided only because the Shift swallow costs `Key_Tab`'s prev-soldier
-branch the `PressedKeys` entry it reads — a debt the swallow created, not a verb the layer wanted.
+**Bare `Tab` is the HUD layer's entry key** because the config above leaves the game nothing on
+it — in world mode, and on the Avenger's ant farm, which never had a live Tab (see the strategy
+table). Escape is the way back. One claim, one handler (`MenuNavigator::OnLayerEnter`), gated on
+the mission or the grid being active and the layer NOT already focused; focused, Tab is the stop
+cycle, and the two predicates are disjoint by construction.
 
-**Exactly two letter keys are free: H and I.** Measured across every input section of
+**Exactly two letter keys are free: H and I.** (`Q` and `E` are not free either: the config above
+spends them on the soldier switch.) Measured across every input section of
 `DefaultInput.ini` — and it must be measured across ALL of them. Two traps. First, most letter
 bindings are generic `X_Key_Press | onrelease X_Key_Release` forwarders into
 `XComInputBase.InputEvent`: they look empty and are not (`Y` is Overwatch's default ability hotkey via
@@ -148,7 +205,9 @@ target hotkeys (`UITacticalHUD.uc:432`). The dev harness answers what a key answ
 
 A different and much richer budget, because `[XComGame.XComHeadquartersInput]` binds almost
 nothing: the geoscape recon measured **sixteen free bare letters** —
-`C E F G H I K L O Q R T V X Y Z` (`geoscape-recon.md` §7) — against tactical's two.
+`C E F G H I K L O Q R T V X Y Z` (`geoscape-recon.md` §7) — against tactical's two. Two of
+them are spent since: the companion's `XComInput.ini` binds `E` / `Q` to the barracks soldier
+cycle in this section too (§Soldier switching above), so **fourteen** remain.
 
 ⛔ **The two layers' budgets are NOT interchangeable, and the tell is `R`.** In
 `[XComGame.XComTacticalInput]` it carries a bare `R_Key_Press | onrelease R_Key_Release`
@@ -168,8 +227,8 @@ Claimed here:
 | `/` | geo ring: camera to selection | same | — |
 | `Delete` | ant farm / dropship: re-announce | that screen | `Toggledebugcamera`, still at `Ctrl+Delete` |
 | `R` | read the whole resource strip | **the strip is on screen** | nothing — no bare `R` in this layer |
-| `Tab` | enter the Avenger HUD layer | the ant farm is current AND the layer is not focused | nothing — see below |
-| `Ctrl+Tab` | enter/exit the Avenger HUD layer | the ant farm is current (shared with tactical's mission gate) | the bare Tab it would double-fire, which is dead here |
+| `Tab` | enter the Avenger HUD layer | the ant farm is current AND the layer is not focused (one claim shared with tactical's mission gate) | nothing — see below, and the config removes the section's Tab line anyway |
+| `E` / `Q` | next / previous soldier on the Armory, Customize and Bond screens | — (not claimed: the game's own binding under our config) | the vanilla Tab / LeftShift cycle, moved rather than displaced |
 | `Escape` | leave the layer | an ambient recipe is focused | the pause menu, for that one press |
 | `+` / `-` (also `Shift+=` and numpad `+`/`-`) | adjust the focused control — the kernel's `TryAdjust`; today the trading post's sell quantity | ANY menu recipe focused, in either layer | `=`/`-`: nothing, no binding in any input section; numpad `Add`/`Subtract`: tactical `SpeedUpGame`/`SlowDownGame`, only while a menu holds the keyboard mid-mission, still at `Ctrl+numpad` |
 
@@ -179,14 +238,14 @@ travel and cannot be both — and the trading post's sell quantity is a table ro
 whose vanilla keys are exactly the row's `FXS_ARROW_LEFT`/`_RIGHT`. The claim is general
 (`OnAdjustKey`), not per screen: silent on a node with no `OnAdjust`, like every refusal here.
 
-⚠ **Bare `Tab` on the ant farm is dead in retail, which is the only reason it is claimed.** The
+⚠ **Bare `Tab` on the ant farm was dead in retail even before the config change.** The
 forwarder at line 468 reaches `FXS_KEY_TAB`, and every handler on that screen that could act on
 it does not: `UIAvengerHUD.OnUnrealCommand`'s Tab case is compiled out under
 `` `if(`notdefined(FINAL_RELEASE)) `` (`UIAvengerHUD.uc:588` — it opened the personnel list in
 dev builds, beside `P`), `UIFacilityGrid` never handles Tab, and `UIAvengerShortcuts` cycles
-categories on the bumpers only. This does NOT generalise: in tactical Tab is next unit, and
-inside a room the shortcut submenu is a `UIList` with its own Tab. Measure the screen, not the
-layer, before claiming it anywhere else.
+categories on the bumpers only. Since the config moved the section's Tab command to `E`, no
+strategy screen has a native Tab left; the menu recipes take it as the stop cycle while
+attached, and the ant farm's claim is the layer entry.
 
 ⚠ **`R`'s gate is the strip's own visibility, and that is doing two jobs.** It keeps the claim out
 of tactical, where `R` IS bound, without the module knowing anything about layers; and it keeps

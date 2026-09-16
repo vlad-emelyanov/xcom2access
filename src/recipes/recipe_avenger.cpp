@@ -2491,7 +2491,7 @@ const Recipe kRewardsRecapRecipe{"rewards recap", ProbeFocused<GameUI::FindRewar
 // narrate-only rule and a Tab layer coexist on one screen: the ant farm keeps its arrows (the
 // game's own UINavigator walks the rooms, with the camera swoop, the highlight box and the room
 // name that is set only under `if( bIsFocused )` — the three things the rule says our own focus
-// model would destroy), and this recipe attaches SILENTLY underneath. Tab or Ctrl+Tab focuses it;
+// model would destroy), and this recipe attaches SILENTLY underneath. Tab focuses it;
 // then the arrows walk the HUD's panels and Escape hands them back. Nothing about room
 // navigation changes while it is unfocused, which is the whole argument.
 //

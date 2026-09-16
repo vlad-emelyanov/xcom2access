@@ -41,7 +41,9 @@ struct KeyEvent {
 /// itself, press and release, so the engine never sees it. That is a heavy hammer (the game
 /// stops counting the key as held for its own bindings) and exists for exactly one reason: an
 /// engine binding whose RELEASE does something we cannot allow while our chords use that
-/// modifier. See ObjectScanner's LeftShift claim. Matching strips the key's OWN modifier bit
+/// modifier. Its one user was the object scanner's LeftShift claim, retired when the
+/// companion's XComInput.ini unbound LeftShift in both layers (docs/input-map.md); the
+/// capability stays for the next such binding. Matching strips the key's OWN modifier bit
 /// before comparing, so the natural registration is {VK_LSHIFT, ModNone} — GetKeyState already
 /// reports Shift down while delivering Shift's own key-down, and demanding ModShift there would
 /// read as a chord with itself. Observers are NOT notified for modifier keys, claimed or not.

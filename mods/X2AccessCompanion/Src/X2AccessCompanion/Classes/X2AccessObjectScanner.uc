@@ -212,51 +212,6 @@ function ScanCurrent(int Delta)
 	ScanCategory(CurCategory, Delta);
 }
 
-// Shift+Tab: select the PREVIOUS soldier — vanilla's own meaning, re-provided because we now
-// swallow LeftShift outright (object_scanner.cpp explains why). Key_Tab's prev-soldier branch
-// reads Input.PressedKeys, which cannot contain a key the engine never saw pressed, so without
-// this Shift+Tab would quietly become NEXT soldier.
-//
-// The guard is XComTacticalInput.IsManualUnitSwitchAllowed's, copied rule for rule (:1850): it is
-// declared inside state ActiveUnit_Moving and so is unreachable by name from here, but both of its
-// tests are plain script. The visualizer-busy flag is set the same way PrevUnit does it (:2165) —
-// the controller reads it when the visualization finishes to decide whether to re-select.
-//
-// SILENT on purpose. The selected-unit reader (src/unit_info.cpp) POLLS the controller for
-// selection changes, so it announces this one like every other — including the mouse click and
-// the turn start that no key claim could see. Speaking here too would name the soldier twice.
-//
-// And note what this claim is NOT: it does not break "Tab stays the game's, in both of its
-// meanings". Bare Tab is untouched and still the player's `eTBC_NextUnit`. Shift+Tab is taken
-// only because WE took Shift, which is what removed the LeftShift entry from Input.PressedKeys
-// that Key_Tab's prev-soldier branch reads — so this restores the vanilla meaning rather than
-// displacing it. Give Shift back and this claim goes with it.
-function PrevSoldier()
-{
-	local XComTacticalController TC;
-	local XComGameStateVisualizationMgr VisMgr;
-
-	NativeResult = "";
-
-	TC = class'X2AccessTileReader'.static.TacCtrl();
-	if (TC == none)
-		return;
-
-	if (class'XComGameState_Cheats'.static.GetVisualizedCheatsObject().DisableUnitSwitching)
-		return;
-
-	VisMgr = `XCOMVISUALIZATIONMGR;
-	if (VisMgr == none)
-		return;
-	if (VisMgr.VisualizerBlockingAbilityActivation(true))
-		return;
-	if (class'XComGameStateVisualizationMgr'.static.VisualizerBusy())
-		TC.bManuallySwitchedUnitsWhileVisualizerBusy = true;
-
-	// NativeResult stays empty whatever this returns — see the SILENT note above.
-	TC.Visualizer_SelectPreviousUnit();
-}
-
 // Move the ring cursor to the next category that HAS something in it, and announce that something
 // with the category named in front of it.
 //

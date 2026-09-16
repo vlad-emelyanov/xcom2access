@@ -44,7 +44,7 @@ bool ComputeActive(char* why, size_t whyLen, bool* hudOnStack)
     why[0] = '\0';
     *hudOnStack = false;
     // A graph recipe OWNING INPUT (pause menu, a modal dialog over tactical, the HUD layer
-    // focused by Ctrl+Tab) wins. ⛔ Not IsAttached(): the ambient tactical recipe is attached
+    // focused by Tab) wins. ⛔ Not IsAttached(): the ambient tactical recipe is attached
     // for the whole mission precisely so it can sit here UNFOCUSED while the cursor keeps the
     // arrows — gating on attachment would make the HUD graph and the cursor mutually exclusive,
     // the exact defect the navigator's focus split exists to remove.

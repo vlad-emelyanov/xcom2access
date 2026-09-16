@@ -18,7 +18,8 @@
 //     CanHaveBondAtLevel guard stays the game's.
 //   * Sorting — FXS_DPAD_LEFT/RIGHT and FXS_BUTTON_L3, controller constants all. ClickBondSort
 //     presses the header the way a mouse does (X2AccessPersonnelReader's route, for its reasons).
-//   * Switch-to-soldier IS on Enter in vanilla and the cycle is Tab / LeftShift — both gated on
+//   * Switch-to-soldier IS on Enter in vanilla and the cycle is Tab / LeftShift (E / Q under our
+//     XComInput.ini, handled natively underneath the layer) — both gated on
 //     !IsInSquadScreen(), which is the screen's own function and is asked, never re-derived.
 //
 // ⛔ NO Caps(). The rows and the header upper-case names for Flash; a reader spelling out all-caps
@@ -341,7 +342,7 @@ function SwitchSoldier(int Index)
 	Screen.OnSelectSoldier(Row.UnitRef);
 }
 
-// Vanilla's Tab / LeftShift. Same gate.
+// Vanilla's Tab / LeftShift (E / Q under our config). Same gate.
 function CycleSoldier(int Direction)
 {
 	local UISoldierBondScreen Screen;

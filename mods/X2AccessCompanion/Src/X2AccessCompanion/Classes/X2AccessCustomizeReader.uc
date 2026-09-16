@@ -17,7 +17,8 @@
 //     native names it by the row that opened it);
 //   * the info screen's BIOGRAPHY box (AS_SetCharacterBio, retained nowhere).
 //
-// The verb: the soldier cycle (Tab / LeftShift in vanilla, both taken by the layer), through the
+// The verb: the soldier cycle (Tab / LeftShift in vanilla; E / Q under our XComInput.ini, which
+// the game handles natively underneath the layer — this is the spinner's copy), through the
 // screen's own NextSoldier / PrevSoldier behind the screen's own gate.
 //
 // GC rule: this object is a CDO — value-typed state only, NEVER object references.
@@ -118,7 +119,7 @@ function bool CanCycleTo(XComGameState_Unit Unit)
 // Verbs
 // ---------------------------------------------------------------------------------------
 
-// Vanilla's Tab / LeftShift, behind the screen's own gate. NextSoldier / PrevSoldier refresh
+// Vanilla's Tab / LeftShift (E / Q under our config), behind the screen's own gate. NextSoldier / PrevSoldier refresh
 // every customize screen on the stack and may POP them all for a unit of another customization
 // class (a SPARK after a human), pushing a fresh menu — the recipe re-probes either way.
 function CycleCustomizeSoldier(int Direction)

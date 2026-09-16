@@ -143,7 +143,7 @@ and the full per-screen table: `../avenger-view-recon.md` §2.2.
 
 The ant farm's Tab layer: the mod's second AMBIENT recipe (`kAvengerHudRecipe`,
 `recipe_avenger.cpp`), attached silently whenever `UIFacilityGrid` is the current screen and
-focused by Tab or Ctrl+Tab. Five stops, information first and the verbs last: the resource
+focused by Tab. Five stops, information first and the verbs last: the resource
 strip (`Recipes::AddResourceStop`), the objectives and dark events (the Ctrl+X composers), the
 to-do strip, the event queue with the date, and — last, because its Enter leaves the screen and
 Shift+Tab from the landing reaches it in one press — the row of category buttons plus the

@@ -16,6 +16,7 @@
   <ItemGroup>
     <Content Include="Config\XComEngine.ini" />
     <Content Include="Config\XComGame.ini" />
+    <Content Include="Config\XComInput.ini" />
     <Content Include="Localization\X2AccessCompanion.int" />
     <Content Include="Src\X2AccessCompanion\Classes\X2DownloadableContentInfo_X2AccessCompanion.uc" />
     <Content Include="Src\X2AccessCompanion\Classes\UIScreenListener_MainMenu.uc" />
