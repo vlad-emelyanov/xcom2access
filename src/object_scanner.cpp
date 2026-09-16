@@ -54,6 +54,8 @@ constexpr int32_t kCatSquad = 2;
 // through the category ring below, so nothing here names them. Listed for the record, since this
 // comment block is the only place the two halves' numbering is written down side by side.
 constexpr int32_t kCatCover = 10;
+// 11 is world.unexplored, ring-only. 12 is the exits cycle below.
+constexpr int32_t kCatExits = 12;
 
 // Delta 0 re-announces the current selection without moving it — the reason a one-entry ring is
 // answerable at all without cycling through it.
@@ -159,6 +161,29 @@ void Init()
         "scanner: next cover position"});
     RegisterClaim({'J', ModShift, active, OnPress([] { ScanCall(kCatCover, -1); }),
         "scanner: previous cover position"});
+
+    // V / Shift+V — the EXITS: the doors, ramps and ladders that get you out of where you are,
+    // nearest first. RT's own V and RT's own verb (its RoomModel.CycleExit), which is why the key
+    // is the one the player asked for by name.
+    //
+    // A fifth dedicated key, and it passes the same test the other four did — "which way out" is
+    // asked every time a room turns out to be the wrong room, and reaching it through the ring
+    // would mean stepping past eleven categories while doing it.
+    //
+    // ⚠ Bare V carries a vanilla `V_Key_Press` forwarder in [XComGame.XComTacticalInput] — it is
+    // the Interact ability's default hotkey (`AddInteractAbility` sets DefaultKeyBinding =
+    // FXS_KEY_V, and XComTacticalController:2628 routes Key_V to ActivateAbilityByHotKey). That is
+    // EXACTLY the shape of J's binding above and it costs the player exactly as much: UE3 matches
+    // modifiers leniently, so swallowing the bare key leaves Interact reachable at Ctrl+V with no
+    // config and no rebind, and the claim stands down entirely outside world mode. Interact is
+    // also on the ability bar, which the tactical recipe already reads.
+    // ⛔ docs/rooms-recon.md §6 called this "the first vanilla binding the mod DISPLACES". That was
+    // wrong when written — B, O and J are all generic ability-hotkey forwarders taken on the same
+    // terms, J since the cover ring — so V is precedent, not a precedent-setter.
+    RegisterClaim({'V', ModNone, active, OnPress([] { ScanCall(kCatExits, 1); }),
+        "scanner: next exit"});
+    RegisterClaim({'V', ModShift, active, OnPress([] { ScanCall(kCatExits, -1); }),
+        "scanner: previous exit"});
 
     // Everything else is reached through the RING rather than through a key of its own. The
     // recon doc budgets THREE dedicated keys — markers, enemies, squad — and cover is the one

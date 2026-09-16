@@ -272,12 +272,18 @@ project forbids.** The rules, all inherited and all already proven here:
 
 ## 6. Keys
 
-`V` — **the player's decision, 2026-09-16** — cycles the current room's exits, matching RT's `V`.
+`V` — **the player's decision, 2026-09-16, and CLAIMED the same day** — cycles the exits, matching
+RT's `V`. `Shift+V` is the previous one.
 
-⛔ This is the first time the mod DISPLACES a vanilla binding rather than taking a free key. The
-game binds `V` to the Interact ability (`AddInteractAbility` sets `DefaultKeyBinding = FXS_KEY_V`;
-`XComTacticalController:2628` routes `Key_V` → `ActivateAbilityByHotKey(FXS_KEY_V)`). Read
-`docs/input-map.md` before claiming it. Two things that make it affordable:
+⚠ **This paragraph originally called `V` "the first time the mod DISPLACES a vanilla binding rather
+than taking a free key". That was wrong when written, and the correction matters more than the
+claim did.** The game binds `V` to the Interact ability (`AddInteractAbility` sets
+`DefaultKeyBinding = FXS_KEY_V`; `XComTacticalController:2628` routes `Key_V` →
+`ActivateAbilityByHotKey(FXS_KEY_V)`) — but that is a generic `X_Key_Press` forwarder, which is
+exactly what `B`, `O` and **`J`** already displace, `J` being an ability hotkey slot itself and
+taken by the cover ring before this. So `V` sets no precedent; it follows one, and the ⚠ below
+about "the claim is reversible, the habit is not" was worrying about a habit the mod already had.
+`docs/input-map.md` is the authority and now says so. Two things that make it affordable:
 
 - UE3 matches modifiers LENIENTLY, so a bare claim on `V` leaves the vanilla Interact reachable at
   `Ctrl+V` with no config and no rebind — the same trade already taken for other bare letters.
@@ -288,16 +294,24 @@ room am I in") should ride the tile cursor's existing re-announce rather than ta
 
 ## 7. Where it lives
 
-Companion-side, a new class beside `X2AccessObjectScanner` — the scanner's own model shape (rebuild
-per keypress, NO REGISTRY, selection is an int key plus a tile) applies unchanged and there is no
-reason to invent a second lifecycle. The rebuild cost is the open perf question: a room map is
-`NumX × NumY` per level, the same order as `AddFrontier`'s FOW sweep, and unlike RT's there is no
-ticked model to amortise it. If per-keypress proves too slow, the cache key is the tile-data
-version, NOT a timer.
+**SETTLED 2026-09-16, and not where this section first said.** The exits half is a THIRTEENTH
+scanner category, `world.exits` at `CAT_EXITS = 12`, inside `X2AccessObjectScanner` — the fifth
+mirrored `CAT_*` index and therefore a two-file change (`object_scanner.cpp` + the enum), unlike
+`CAT_UNEXPLORED`.
 
-Exits are a natural twelfth-and-thirteenth scanner category (`world.exits`) reachable from the ring,
-with `V` as its dedicated key — which makes it the fifth mirrored `CAT_*` index and therefore a
-two-file change (`object_scanner.cpp` + the enum), unlike `CAT_UNEXPLORED`.
+⛔ **A new class beside the scanner would have been the wrong call and the tell was the `/` key.**
+The plant verb reads `class'X2AccessObjectScanner'.default.Sel*`, so a selection living anywhere
+else could not be planted on, walked to, or re-announced without re-plumbing all three. Inside the
+scanner, every piece of that plumbing is free and already proven: per-category remembered
+selection, `IndexOfKey` identity across rebuilds, `InsertByDistance`'s one-key-one-entry guard,
+`FormatMarker`'s compass and `ReachWords`' reach clause, and the ring's empty-skip. What this
+section was actually reasoning about was the ROOM MAP's lifecycle, which is a different object and
+still unbuilt.
+
+The ROOM half, if §8.6 ever lets it ship, keeps this section's original answer: the rebuild cost is
+the open question — a room map is `NumX × NumY` per level, the same order as `AddFrontier`'s FOW
+sweep, and unlike RT's there is no ticked model to amortise it. If per-keypress proves too slow,
+the cache key is the tile-data version, NOT a timer.
 
 ## 8. Live measurements
 
@@ -363,6 +377,21 @@ is what a room boundary is made of. A `!` pair marks an obstacle tile between th
   own merits regardless: **ship EXITS without ROOMS** if the partition renders badly at §8.6. An
   exit ring keyed off doors, windows, ladders and ramps near the scan origin needs no partition at
   all, and it is where most of the value sits anyway.
+  - ✅ **TAKEN 2026-09-16, before §8.6 rather than after it** — not because the partition failed
+    but because it did not have to succeed first. `world.exits` ships on `V`; §8.6 now gates only
+    the "leads to \<room\>" clause and the room readout, not the feature.
+  - ⚠ **Two of the four kinds in §4's table did NOT survive contact.** Windows and drop-downs are
+    unlistable: script cannot ask an arbitrary edge what traversal it would take
+    (`MaybeModifyTraversalForWindow` is cpptext, `XComWorldData.uc:510`) and a destructible carries
+    no localized name, so a window, a fence and a parked car are one indistinguishable thing with
+    no word between them. §4's table was source-derived and this is the half of it that was wrong.
+    What shipped is doors, ramps and ladders.
+  - ⚠ **The overlap §9 never priced**: ramps and ladders were ALREADY `world.connectors` and
+    hackable doors already `objects.interact`, so two thirds of the fallback's content existed
+    before it did. That is answered by sharing the contributors rather than by dropping them
+    (`surfaces/tactical.md`), but it means the exits ring's genuinely NEW content is the doors
+    `objects.interact` misses — the open ones, the ones with no live interaction — plus the
+    framing and the sort. Worth knowing before judging the live run.
 - **Cost.** A per-level partition per keypress on an 80×80×12 map, on top of the frontier sweep.
 - **Procedural parcels.** XCOM 2 assembles maps from parcels at runtime; a "room" that straddles a
   parcel seam may be shaped in ways a hand-authored level never would be. Unknown until §8.6.

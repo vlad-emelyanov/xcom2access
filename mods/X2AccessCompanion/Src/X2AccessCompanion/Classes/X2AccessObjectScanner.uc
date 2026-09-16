@@ -50,6 +50,11 @@
 //                           category that names an ABSENCE rather than a thing. It is also the
 //                           only one that is map-wide in X and Y, because a fog edge is a
 //                           large-scale fact and a radius would truncate the very thing it names.
+//   world.exits           — the ways OUT of where you are: doors, ramps and ladders, nearest
+//                           first. The WH40KRTAccess `V` cycle, ported WITHOUT the room partition
+//                           it stands on there. The only category that deliberately RE-LISTS what
+//                           two others already hold — see AddExits for why that is allowed here
+//                           and nowhere else.
 //
 // The connectors and the cover ring exist because they are where the gap is WIDEST: the game gives
 // a sighted player a countdown (a number on the HUD counter, a number on the loot waypoint) and a
@@ -99,18 +104,25 @@ const KEY_COVER = -400000000;
 // And again for the fog-frontier blobs, minus the lowest linear tile index in the blob, for the
 // same reason and with the same 100-million budget below KEY_COVER.
 const KEY_FRONTIER = -500000000;
+// Exits fall back to this — minus the linear index of the LOWER-coordinate tile of the edge —
+// only when the threshold's actor has no state object to key on. A door that HAS one is keyed by
+// its own ObjectID instead, which is the same key objects.interact gives the same door, so the two
+// rings identify it identically rather than merely describing it alike.
+const KEY_EXIT = -600000000;
 
 // Categories. Each has its own remembered position, so checking an enemy and then checking a
 // marker does not lose your place in either.
 //
-// ⛔ FOUR INDICES ARE MIRRORED IN NATIVE — 0, 1, 2 AND 10. object_scanner.cpp hardcodes
-// kCatMarkers 0, kCatEnemies 1, kCatSquad 2 and kCatCover 10 for its four cycle keys; every other
-// category is reached only through StepCategory, which is relative and index-agnostic. So
-// renumbering at 3..9 is free — as removing CAT_EVAC was — and renumbering any of the mirrored
-// four is a two-file change or a silent wrong-ring bug. Change both halves or neither.
+// ⛔ FIVE INDICES ARE MIRRORED IN NATIVE — 0, 1, 2, 10 AND 12. object_scanner.cpp hardcodes
+// kCatMarkers 0, kCatEnemies 1, kCatSquad 2, kCatCover 10 and kCatExits 12 for its five cycle
+// keys; every other category is reached only through StepCategory, which is relative and
+// index-agnostic. So renumbering at 3..9 is free — as removing CAT_EVAC was — and renumbering any
+// of the mirrored five is a two-file change or a silent wrong-ring bug. Change both halves or
+// neither.
 // ⚠ CAT_COVER sits at the END rather than beside the other keyed rings precisely to keep that
 // free range contiguous: a new category appended after it would take 11 and shift nothing — which
-// is exactly what CAT_UNEXPLORED did, native untouched.
+// is exactly what CAT_UNEXPLORED did, native untouched. CAT_EXITS then appended at 12 the same
+// way, and paid the two-file price only because it wanted a KEY, not because of where it sits.
 const CAT_MARKERS = 0;
 const CAT_ENEMIES = 1;
 const CAT_SQUAD = 2;
@@ -123,7 +135,8 @@ const CAT_TOWERS = 8;
 const CAT_CONNECTORS = 9;
 const CAT_COVER = 10;
 const CAT_UNEXPLORED = 11;
-const CAT_COUNT = 12;       // how many are REAL — what the category ring wraps around
+const CAT_EXITS = 12;
+const CAT_COUNT = 13;       // how many are REAL — what the category ring wraps around
 const NUM_CATEGORIES = 16;  // headroom for the rest; a static array, so the slack costs nothing
 
 // Hazard types, in the order HazardWord/HazardClass/TileHasHazard agree on.
@@ -394,6 +407,9 @@ private function BuildCategory(int Category, TTile Origin, out array<AccessMarke
 	case CAT_UNEXPLORED:
 		AddFrontier(Origin, Entries);
 		break;
+	case CAT_EXITS:
+		AddExits(Origin, Entries);
+		break;
 	}
 }
 
@@ -427,6 +443,10 @@ private function string EmptyText(int Category)
 	// level, which is the one scope this sweep does narrow. Said rather than left silent because
 	// "the whole floor is explored" is a real and useful answer.
 	case CAT_UNEXPLORED: return "Nothing unexplored on this floor";
+	// Names the SCOPE for the connectors' reason, and carries one more caveat the others do not
+	// need: this ring lists the exits it can NAME, so "none nearby" means no door, ramp or ladder
+	// — never "you are sealed in". A smashable wall is a way out and is deliberately not here.
+	case CAT_EXITS: return "No doors, ramps or ladders nearby";
 	}
 	return "Nothing here";
 }
@@ -448,6 +468,7 @@ private function string CategoryName(int Category)
 	case CAT_CONNECTORS: return "Level connectors";
 	case CAT_COVER: return "Cover";
 	case CAT_UNEXPLORED: return "Unexplored";
+	case CAT_EXITS: return "Exits";
 	}
 	return "Category" @ string(Category);
 }
@@ -1878,6 +1899,173 @@ private function ClaimFrontierCell(out array<int> Front, int W, int H, int X, in
 		return;
 	Front[Idx] = 0;
 	Stack.AddItem(Idx);
+}
+
+
+// ---------------------------------------------------------------------------
+// Exits (the V cycle)
+// ---------------------------------------------------------------------------
+//
+// The ways OUT of where you are — doors, ramps and ladders, nearest first. The WH40KRTAccess `V`
+// cycle (its RoomModel.CycleExit), ported WITHOUT the room partition it stands on there.
+//
+// ⛔ THE ROOM HALF IS DELIBERATELY ABSENT, and this is not a stub. docs/rooms-recon.md §3 forbids
+// shipping a segmentation predicate until it has been rendered over three maps of different
+// character (§8.6, unanswered), and an exit ring needs no partition at all: a door is a door
+// whether or not we know which two spaces it joins. What the missing partition costs is exactly
+// one clause — "leads to <room>" — and its most useful case is already answered from the other
+// end, since world.unexplored names every opening into the dark. If the predicate never renders
+// well, this ring is the whole feature and loses nothing it ever had (§9).
+//
+// ⚠ IT RE-LISTS world.connectors AND objects.interact ON PURPOSE. The precedent is AddEvac's, and
+// so is the reasoning: two rings may name one thing when they answer different QUESTIONS — "how
+// do I change floor" and "how do I get out of here" are not the same question, and a way out that
+// lives only in a ring you must STEP to is one you find by accident or never. The ⛔ one-key-one-
+// entry rule is about a SINGLE ring holding a key twice, which InsertByDistance enforces here as
+// everywhere; it has never been about two rings.
+//   * Ramps and ladders come from AddConnectors VERBATIM rather than being re-swept, so the two
+//     rings cannot drift about where the stairs are — the shared-oracle rule applied to our own
+//     two answers instead of to the game's.
+//   * Doors keep the state ObjectID objects.interact keys them by, so the same door is the same
+//     ENTRY in both rings and not merely the same words.
+const EXIT_RADIUS = 12;   // tiles, in X and Y, swept around the scan origin for thresholds
+const EXIT_MAX = 12;      // entries; a ring longer than this is a list, not a cue
+
+private function AddExits(TTile Origin, out array<AccessMarker> Entries)
+{
+	local XComWorldData WorldData;
+	local array<AccessMarker> Conn, Raw;
+	local AccessMarker M;
+	local TTile T;
+	local int DX, DY, i, Dropped;
+
+	WorldData = `XWORLD;
+	if (WorldData == none)
+		return;
+
+	AddConnectors(Origin, Conn);
+	for (i = 0; i < Conn.Length; i++)
+	{
+		M = Conn[i];
+		InsertByDistance(Origin, M, Raw);
+	}
+
+	// Thresholds are swept at the origin's Z ONLY, unlike the connectors' three-level box: a door
+	// is crossed on the level you are standing on, and the ramp that gets you to the door on the
+	// floor above is already in this ring by the time you need it.
+	T.Z = Origin.Z;
+	for (DY = -EXIT_RADIUS; DY <= EXIT_RADIUS; DY++)
+	{
+		T.Y = Origin.Y + DY;
+		if (T.Y < 0 || T.Y >= WorldData.NumY)
+			continue;
+		for (DX = -EXIT_RADIUS; DX <= EXIT_RADIUS; DX++)
+		{
+			T.X = Origin.X + DX;
+			if (T.X < 0 || T.X >= WorldData.NumX)
+				continue;
+			if (!TileSeen(WorldData, T, true))
+				continue;
+			// +X and +Y only. Every edge is shared by two tiles, so asking once per edge halves
+			// the sweep AND makes a double-listing impossible by construction rather than by a
+			// dedup pass afterwards.
+			AddThresholdEdge(WorldData, Origin, T, 1, 0, Raw, Dropped);
+			AddThresholdEdge(WorldData, Origin, T, 0, 1, Raw, Dropped);
+		}
+	}
+
+	// Not speech — a count for the log, because how many thresholds this ring throws away is the
+	// open question below and guessing at it twice would be worse than measuring it once.
+	if (Dropped > 0)
+		`log("X2Access: exits sweep dropped" @ string(Dropped)
+			@ "unnameable destructible threshold(s)", , 'X2Access');
+
+	// Cap LAST, over the already-distance-sorted list, so the exits that survive are the nearest
+	// ones rather than whichever the sweep reached first — as the cover and frontier rings do.
+	for (i = 0; i < Raw.Length && i < EXIT_MAX; i++)
+		Entries.AddItem(Raw[i]);
+}
+
+// One edge, asked what is standing in it.
+//
+// GetPathObjectFromTraversalToNeighbor hands back the actor sitting in a threshold
+// (docs/rooms-recon.md §2.4) — the thing RT never had. RT's CycleExit merges door items with bare
+// openings using a 2.5 m proximity test that its own notes call loose; this answers per EDGE, so a
+// doorway with a door in it simply IS that door, with no proximity guess and no double-listing.
+//
+// ⛔ ONLY XComInteractiveLevelActor THRESHOLDS ARE LISTED; a plain XComDestructibleActor is
+// DROPPED. Both reasons are about WORDS, not about topology:
+//   * A destructible carries no localized name of any kind — no DisplayName, no FriendlyName, no
+//     LootingName (checked against XComDestructibleActor.uc). The only label left would be one of
+//     ours, in English, guessed.
+//   * Script cannot ask what TRAVERSAL an arbitrary edge would take, because the one function that
+//     knows — MaybeModifyTraversalForWindow — is cpptext (XComWorldData.uc:510), and TraversalStarts
+//     names neighbours without naming their kind (§8.4). So a window, a fence and a parked car are
+//     indistinguishable here, and a bare "Breakable" on all three would be noise in a list whose
+//     entire job is "which way out".
+// The consequence is stated in the empty text: this ring lists the exits it can NAME. A smashable
+// wall is a way out and is knowingly not in it.
+private function AddThresholdEdge(XComWorldData WorldData, TTile Origin, TTile T, int DX, int DY,
+	out array<AccessMarker> Raw, out int Dropped)
+{
+	local TTile N;
+	local Actor PathObj;
+	local XComInteractiveLevelActor Interactive;
+	local XComGameState_InteractiveObject ObjState;
+	local AccessMarker M;
+
+	N = T;
+	N.X = T.X + DX;
+	N.Y = T.Y + DY;
+	if (N.X >= WorldData.NumX || N.Y >= WorldData.NumY)
+		return;
+	if (!TileSeen(WorldData, N, true))
+		return;
+
+	// bUnitIsLarge false: the question is what is IN the edge, not whether one particular unit
+	// fits through it. A large unit's answer is about clearance and would name the same door.
+	PathObj = WorldData.GetPathObjectFromTraversalToNeighbor(T, N, false);
+	if (PathObj == none)
+		return;
+
+	Interactive = XComInteractiveLevelActor(PathObj);
+	if (Interactive == none)
+	{
+		Dropped++;
+		return;
+	}
+
+	// ObjectID is `transient protectedwrite` on XComDestructibleActor and stays 0 until the actor
+	// is bound to a state, so this lookup can legitimately come back empty on a level actor the
+	// history never adopted — hence a key of our own for that case rather than a key of 0, which
+	// every such door would share.
+	ObjState = XComGameState_InteractiveObject(
+		`XCOMHISTORY.GetGameStateForObjectID(Interactive.ObjectID));
+	if (ObjState != none)
+	{
+		M.Key = ObjState.ObjectID;
+		M.Label = InteractiveLabel(ObjState);
+	}
+	else
+	{
+		M.Key = KEY_EXIT - ((T.Z * WorldData.NumY + T.Y) * WorldData.NumX + T.X);
+	}
+	// Our own word only where the game gave none. IsDoor is the engine's own question
+	// (XComInteractiveLevelActor.uc:475), so even the fallback is the game's classification and
+	// not our guess at one.
+	if (M.Label == "")
+		M.Label = Interactive.IsDoor() ? "Door" : "Passage";
+
+	// The tile you would WALK to is the nearer end of the edge — the same answer the frontier and
+	// cover rings give to the same question. The KEY above is deliberately NOT this tile: it is
+	// built from T, which is the lower-coordinate end by the +X/+Y sweep order and therefore
+	// origin-independent, so the selection survives the scan window sliding with the cursor.
+	M.Tile = (TileDistance(Origin, T) <= TileDistance(Origin, N)) ? T : N;
+	M.Detail = "";
+	// Somewhere you WALK to, so the reach clause earns its place — the same call the connectors
+	// and the cover ring make about the same kind of answer.
+	M.bIsDestination = true;
+	InsertByDistance(Origin, M, Raw);
 }
 
 

@@ -233,29 +233,34 @@ focus.
 
 ## Object scanner
 
-The RT `Scanner.cs` port, a PULL surface next to the tile cursor's push. TWELVE
+The RT `Scanner.cs` port, a PULL surface next to the tile cursor's push. THIRTEEN
 categories: `markers` (tutorial required-action marker + objective-carrying objects
 + the evac zone — one group, because a waypoint, an objective glint and a
 destination are the same thing to a player working out where to go),
 `units.enemies`, `units.squad`, `ground.loot`, `ground.reinforcements`,
 `units.civilians`, `hazards`, `objects.interact`, `objects.towers`,
-`world.connectors`, `ground.cover`, `world.unexplored`. Each keeps its OWN remembered position; the
+`world.connectors`, `ground.cover`, `world.unexplored`, `world.exits`. Each keeps its OWN
+remembered position; the
 `CAT_*` ids are the one thing the two halves share as a NUMBER rather than a name.
 The ring is what makes a further category cost one `case` label instead of a key.
 
 Keys, all gated on `TileReader::IsActive()` (shared, not recomputed — both surfaces
 must stand down at the same instants): `B` next marker, `.` next enemy, `,` next
-squad member, `J` next cover position, **`Shift`+those four for the PREVIOUS one**,
+squad member, `J` next cover position, `V` next exit, **`Shift`+those five for the
+PREVIOUS one**,
 `PageDown`/`PageUp` within the category, `Ctrl+PageDown`/`Ctrl+PageUp` next/previous
 NON-EMPTY category (announcing its name), `O` re-announce, `/` plant the tile cursor
 on it. `Shift+Tab` is claimed here too — not a scanner verb, but the vanilla
 prev-soldier the Shift swallow would otherwise cost.
 
-⛔ **Four `CAT_*` ids are mirrored in native, not three** — 0, 1, 2 and **10**
-(`kCatCover`). `CAT_COVER` sits at the END of the enum rather than beside its keyed
+⛔ **Five `CAT_*` ids are mirrored in native, not three** — 0, 1, 2, **10**
+(`kCatCover`) and **12** (`kCatExits`). `CAT_COVER` sits at the END of the enum rather than beside
+its keyed
 siblings precisely so the free-to-renumber range stays contiguous at 3..9; a new
 category appended after it takes 11 and shifts nothing — which is what
-`CAT_UNEXPLORED` did (2026-09-16), companion-only, native untouched.
+`CAT_UNEXPLORED` did (2026-09-16), companion-only, native untouched. `CAT_EXITS` appended at 12
+the same way and paid the two-file price only because it wanted a KEY, not because of where it
+sits.
 
 - **`world.unexplored` names the FOG FRONTIER** — never-seen tiles touching explored
   ground, flood-filled 8-way into one entry per opening ("Unexplored space, 43 tiles
@@ -285,6 +290,41 @@ category appended after it takes 11 and shifts nothing — which is what
     the member NEAREST the origin — the two different answers `AddCover` spells out.
     Extent is the bounding box (`AddHazards`' measure for the same kind of shape), not the
     cell count, which means nothing a player can picture once a blob wraps around them.
+
+- **`world.exits` is the ROOMS port shipping WITHOUT its rooms** (2026-09-16, `V` / `Shift+V`;
+  recon `rooms-recon.md` §4 and §9). Doors, ramps and ladders, nearest first — RT's `V` and RT's
+  verb (`RoomModel.CycleExit`), minus the partition it stands on there. That is deliberate and not
+  a stub: §3 forbids shipping a segmentation predicate until it has been rendered over three maps
+  (§8.6, unanswered), and an exit needs no partition — a door is a door whether or not we know
+  which two spaces it joins. The missing partition costs exactly one clause, "leads to \<room\>",
+  and its most useful case is already answered from the other end by `world.unexplored`.
+  - ⚠ **It RE-LISTS `world.connectors` and `objects.interact` on purpose, and that is allowed
+    here because the QUESTION differs** — "how do I change floor" and "how do I get out of here"
+    are not the same question, and a way out that lives only in a ring you must STEP to is one you
+    find by accident or never. Same reasoning as `AddEvac` riding `markers`. The ⛔ one-key-one-
+    entry rule is about a SINGLE ring holding a key twice (`InsertByDistance`), never about two
+    rings naming one thing.
+  - ⛔ **The two rings share CONTRIBUTORS, not just wording.** Ramps and ladders come from
+    `AddConnectors` verbatim rather than a second sweep, and a door keeps the state `ObjectID`
+    `objects.interact` keys it by — so the same door is the same ENTRY in both rings. This is the
+    shared-oracle rule turned on our own two answers.
+  - ⛔ **Only `XComInteractiveLevelActor` thresholds are listed; a plain `XComDestructibleActor`
+    is DROPPED, and the reason is WORDS.** A destructible carries no localized name of any kind,
+    and script cannot ask what TRAVERSAL an arbitrary edge would take (`MaybeModifyTraversalForWindow`
+    is cpptext, `XComWorldData.uc:510`; `TraversalStarts` names neighbours without naming their
+    kind). So a window, a fence and a parked car are indistinguishable and the only honest label
+    left would be one bare English word on all three. The count dropped goes to the log, not to
+    speech.
+    The consequence is in the empty text — *"No doors, ramps or ladders nearby"* — because this
+    ring lists the exits it can NAME, and **a smashable wall is a way out that is knowingly not in
+    it**.
+  - The edge query is `GetPathObjectFromTraversalToNeighbor`, which is the thing RT never had: it
+    answers per EDGE, so a doorway with a door in it simply IS that door — no proximity guess, no
+    double-listing, and **a closed door is still an edge** (RT's exit cycle missed doors entirely
+    because a closed one cut its grid at build time).
+  - Sweep is `+X`/`+Y` edges only, at the origin's Z, radius 12. Every edge is shared by two
+    tiles, so asking once per edge halves the sweep AND makes double-listing impossible by
+    construction rather than by a dedup pass.
 
 - **NO REGISTRY.** RT needs a ticked `WorldModel` because Unity entities are mutable
   references; XCOM's `ObjectID` is a stable int over a versioned history, so the list

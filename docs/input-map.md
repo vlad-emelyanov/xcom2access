@@ -60,14 +60,23 @@ vanilla actions), and all of those vacate onto Ctrl+letter for free. ⛔ Still d
 runtime edit shows up in the Controls screen and is baked into the player's profile permanently the
 moment they press Save and Exit there.
 
-**Three bare letters are taken on that argument**, all by the object scanner and all gated on
+**Four bare letters are taken on that argument**, all by the object scanner and all gated on
 `TileReader::IsActive()`, so they stand down the moment world mode does: `B` next marker, `O`
-re-announce the selection, `J` next cover position (`Shift`+each for the previous one). Each
+re-announce the selection, `J` next cover position, `V` next exit (`Shift`+each for the previous
+one). Each
 displaces a generic `X_Key_Press | onrelease X_Key_Release` forwarder — push-to-talk, the Chosen
-Info screen, and one of the ability hotkey slots — and each of those stays reachable at
+Info screen, and two of the ability hotkey slots — and each of those stays reachable at
 `Ctrl`+the same letter, which is the whole leniency bargain above. ⚠ `J` is bound in **both**
 `[Engine.PlayerInput]` (`:183`) and `[XComGame.XComTacticalInput]` (`:306`); a grep of one section
 would have reported it half-free, which is the `U` trap below in a different disguise.
+
+⛔ **`V` is the Interact ability's default hotkey** (`AddInteractAbility` sets `DefaultKeyBinding =
+FXS_KEY_V`; `XComTacticalController:2628` routes `Key_V` → `ActivateAbilityByHotKey`), so it is
+`J`'s case exactly and is taken on identical terms — Interact stays at `Ctrl+V` and is on the
+ability bar besides, which the tactical recipe already reads. ⚠ `rooms-recon.md` §6 called `V`
+"the first vanilla binding the mod DISPLACES"; that was wrong when written — `B`, `O` and `J`
+preceded it on the same argument — and the recon is corrected in place. **Displacing an ability
+hotkey has been the rule here since the cover ring, not an exception being made for exits.**
 
 ⚠ **The one thing leniency does NOT hand us is a free `Shift` — so we take it.** `LeftShift` is bound
 in `[XComGame.XComTacticalInput]` and `Key_Left_Shift`'s RELEASE calls `PrevUnit()` UNCONDITIONALLY

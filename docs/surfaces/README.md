@@ -17,7 +17,7 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Save / load | `game_ui_shell.cpp` | `X2AccessSaveReader.uc`, save/load recipe | shell.md | `save-load-recon.md` |
 | Text-entry dialog | `text_input.cpp` | — (observer, no recipe) | shell.md | `save-load-recon.md` §7.1 |
 | Tactical tile cursor | `tile_reader.cpp`, `mouse_gate.cpp` | `X2AccessTileReader.uc` | tactical.md | `concealment-recon.md` (detection readout) |
-| Object scanner | `object_scanner.cpp` | `X2AccessObjectScanner.uc` | tactical.md | `object-scanner-recon.md` |
+| Object scanner | `object_scanner.cpp` | `X2AccessObjectScanner.uc` | tactical.md | `object-scanner-recon.md`, `rooms-recon.md` (the `world.exits` ring) |
 | Targeting / shot HUD | `tactical_hud.cpp` | `X2AccessTacticalReader.uc` | tactical.md | — |
 | Free aim / AoE | `free_aim.cpp` | `X2AccessTacticalReader.uc` | tactical.md | `free-aim-recon.md` |
 | Selected unit | `unit_info.cpp` | `X2AccessUnitReader.uc` | tactical.md | — |

@@ -38,6 +38,37 @@ confirmed the cursor half by ear. Three things remain unheard:
    clause a wasted word. Listen on a map where the fog edge is close before deciding it earns its
    place.
 
+**The `world.exits` ring on `V`** (2026-09-16, `X2AccessObjectScanner.AddExits` / `AddThresholdEdge`
+/ `CAT_EXITS`; the `V` and `Shift+V` claims in `object_scanner.cpp`; rules in `surfaces/tactical.md`
+under the object scanner, recon in `rooms-recon.md` §4/§9). Both halves compile clean; **never
+heard**. What to listen for, in order of what would be most embarrassing to ship:
+
+1. ⚠ **Is the ring FULL OF DOORS?** The sweep is 12 tiles in every direction and a building
+   interior can hold a dozen. `EXIT_MAX` caps at 12 and the cap is distance-sorted, so the failure
+   is not a wrong answer but a USELESS one — "Door, 1 of 12" twelve times with no way to tell them
+   apart, because `InteractiveLabel` gives every plain door the same words. If that is what it
+   sounds like, the fix is a tighter radius or a same-room filter, and the same-room filter is the
+   partition — i.e. it would put §8.6 back on the critical path after all.
+2. **The dropped count.** `grep 'exits sweep dropped' Launch.log` after a run. This is the number
+   that decides whether unnameable destructible thresholds (windows, fences, cars — indistinguishable
+   from each other, see item 13) are worth a generic word or are correctly silent. A count near
+   zero means the question is moot; a count in the dozens means the ring is hiding most of what is
+   in the walls around you.
+3. **Do the ramps and ladders agree with `world.connectors`?** They come from `AddConnectors`
+   verbatim, so they must be the SAME tiles at the SAME bearings. Step `V` and then the ring to
+   `Level connectors` and compare — a disagreement means the shared-contributor claim is false and
+   something re-sweeps.
+4. **A door that `objects.interact` does NOT list** (already open, or with no live interaction) —
+   this is the ring's genuinely new content and the reason it is not just two old rings joined. If
+   every `V` entry also appears under `Objects`, the ring has earned nothing but a sort order.
+5. `/` on an exit must plant the cursor ON the near side of the door, not through it — the spoken
+   tile is the nearer end of the edge, and getting that backwards would send Backspace walking to
+   the far room.
+6. ⚠ **Cost, unmeasured.** ~625 `TileSeen` + ~1250 `GetPathObjectFromTraversalToNeighbor` per
+   press, on top of `AddConnectors`' ~1900. The path-object query is the unknown — it is the only
+   one of the three that is not a flag lookup, and nothing has ever called it 1250 times in a
+   frame. If `V` is audibly slower than `J`, this is why.
+
 **Supply Extraction crates in the markers ring** (2026-09-16, `X2AccessObjectScanner.AddObjectiveMarkers`
 re-fetching each owner by ObjectID / `InteractiveMarkWords`; the `MissionIcon_` counter table in
 `objective_reader.cpp`; rules in `surfaces/tactical.md` under the object scanner and the objectives
@@ -912,6 +943,9 @@ a repeating announcement.
 13. **Rooms and exits** — the WH40KRTAccess `RoomMap` / `V`-exit-cycle port. **Scoped AND measured
    in `docs/rooms-recon.md`** (2026-09-16: source scope, then a live run through
    `X2AccessTileProbe`). Five of the seven measurements are answered and the design SURVIVED them.
+   **The EXITS half shipped 2026-09-16** as `world.exits` on `V` (live-run debt above) — §8.6 now
+   gates only the ROOM half, the "leads to \<room\>" clause and the room readout. What is left
+   here is the partition.
    - ✅ The bits the design rests on are LIVE. `COVER_ClimbOver_*` / `ClimbOnto_*` are populated —
      6/6 against the object scanner's own cover ring, every low edge climbable, no high edge. So
      the preferred predicate (`blocked && cover && !climb`) stands.
@@ -935,6 +969,11 @@ a repeating announcement.
    - The per-room "{pct}% unexplored" half of `rt-unexplored-frontier` waits for this; the frontier
      half shipped on its own as `world.unexplored` — and was **heard working live 2026-09-16**
      (live-run debt above).
+   - ⚠ **§4's exit table was source-derived and two of its six kinds did not survive.** Windows and
+     drop-downs cannot be listed at all: script cannot ask an arbitrary edge what traversal it
+     would take, and a destructible has no localized name, so a window, a fence and a parked car
+     are one unnameable thing. If the room partition ever lands, it does NOT bring them with it —
+     that would need a native read of the pathing traversal data, which is its own job.
    - ⛔ `X2AccessTileProbe` is recon instrumentation living in a shipping package. DELETE IT once
      §8.6/§8.7 are answered, or promote the parts that earned their place.
 14. **Regenerate the SDK dump under the Highlander BETA.** The machine switched from the stable
