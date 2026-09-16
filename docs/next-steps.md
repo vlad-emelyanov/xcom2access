@@ -14,6 +14,27 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**Supply Extraction crates in the markers ring** (2026-09-16, `X2AccessObjectScanner.InteractiveGone`
+/ `InteractiveMarkWords`; the `MissionIcon_` counter table in `objective_reader.cpp`; rules in
+`surfaces/tactical.md` under the object scanner and the objectives list) — built from the mission's
+cooked Kismet and one logged run, compiled clean, **never heard after a pickup**. Any Supply
+Extraction mission exercises it. What to listen for:
+
+1. `B` before anyone has marked anything: every crate reads `Objective: Advent Supply Crate` with
+   NO detail word. A `marked by ADVENT` on turn one means ADVENT's opening marks are real and the
+   material read works; a `marked` on an untouched crate means the material name test is matching
+   the crate's DEFAULT material and must be narrowed.
+2. Mark a crate: its entry gains `marked` on the next `B` press.
+3. After `Firebrand has picked up the crate`: the entry is GONE from the ring and the total drops by
+   one. If it stays, log which half failed — `bHidden`/`HiddenGame` false AND the actor still on its
+   tile means the matinee flies a prop, not the crate, and the real actor is left in place; in that
+   case check with a sighted look whether the crate is still visibly there (if it is, the ring is
+   right and the game is the one showing a ghost).
+4. `Ctrl+X`: the counter row reads `crates, 1 picked up, 11 available, 0 destroyed.` with no
+   `CounterLabel` and no `MissionIcon` in it. A crate ADVENT's transport takes: watch which slot
+   moves — if the lost slot's icon changes to `MissionIcon_Advent`, that token needs a table entry
+   (`taken by ADVENT`).
+
 **The pod reveal and the reinforcement drop** (2026-09-16, `X2AccessTacticalEvents.OnScamperBegin` /
 `OnSpawnReinforcementsComplete`, builders `BuildRevealLine` / `BuildReinforcementLine`, the replay
 branches `NarrateReveal` / `NarrateReinforcements`; rules in `surfaces/tactical.md` under "Tactical

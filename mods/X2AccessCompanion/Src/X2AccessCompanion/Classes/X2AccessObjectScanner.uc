@@ -911,12 +911,13 @@ private function AddObjectiveMarkers(TTile Origin, out array<AccessMarker> Marke
 			Info.FindComponentObject(class'XComGameState_InteractiveObject', true));
 		if (ObjInteract != none)
 		{
-			if (ObjInteract.bRemovedFromPlay)
+			// bRemovedFromPlay is not the whole story — see InteractiveGone.
+			if (ObjInteract.bRemovedFromPlay || InteractiveGone(ObjInteract))
 				continue;
 			M.Key = ObjInteract.ObjectID;
 			M.Tile = ObjInteract.TileLocation;
 			M.bIsDestination = true;
-			M.Detail = "";
+			M.Detail = InteractiveMarkWords(ObjInteract);
 			M.Label = "Objective:" @ InteractiveLabel(ObjInteract);
 			InsertByDistance(Origin, M, Markers);
 			continue;
@@ -934,6 +935,86 @@ private function AddObjectiveMarkers(TTile Origin, out array<AccessMarker> Marke
 			InsertByDistance(Origin, M, Markers);
 		}
 	}
+}
+
+// A used-up objective object whose visualizer has LEFT THE SCREEN while its state stayed in play.
+//
+// Supply Extraction earned this (2026-09-16). Its Kismet (Obj_SupplyExtraction, read out of the
+// cooked package) calls SeqAct_RemoveInteractiveObjectFromLevel only on the ADVENT-transport path
+// and at mission end; a crate the Skyranger picks up is flown off by a matinee
+// (XCOMCrateRecover01-06) and its XComGameState_InteractiveObject stays exactly as marking left
+// it — InteractionCount 1, not removed, ObjectiveInfo still attached. So the STATE cannot tell
+// "marked, waiting for pickup" from "picked up", and the ring kept saying 12 crates after the
+// message that Firebrand had taken one. A sighted player can tell, because the crate is gone —
+// so read what they read: the actor is hidden, or no longer standing on its tile.
+//
+// Gated on InteractionCount because the fog is not our business here: an objective marker is
+// deliberately not fog-gated (see AddObjectiveMarkers), and this test must never learn to drop an
+// untouched crate for whatever the engine does to an unseen actor. A crate has to be marked
+// before anything can take it, so the gate costs nothing on the case it exists for.
+private static function bool InteractiveGone(XComGameState_InteractiveObject Obj)
+{
+	local XComInteractiveLevelActor VisActor;
+	local vector TileCenter;
+
+	if (Obj.InteractionCount <= 0)
+		return false;
+
+	VisActor = XComInteractiveLevelActor(`XCOMHISTORY.GetVisualizer(Obj.ObjectID));
+	if (VisActor == none)
+		return false; // not spawned yet is not gone
+	if (VisActor.bHidden)
+		return true;
+	if (VisActor.SkeletalMeshComponent != none && VisActor.SkeletalMeshComponent.HiddenGame)
+		return true;
+
+	// Two tiles of slack: an interaction animation can shift a prop within its footprint, a
+	// matinee carries it hundreds of units away.
+	TileCenter = `XWORLD.GetPositionFromTileCoordinates(Obj.TileLocation);
+	return VSize(VisActor.Location - TileCenter) > 2 * class'XComWorldData'.const.WORLD_StepSize;
+}
+
+// "marked" / "marked by ADVENT" for a Supply Extraction crate, read off the crate's own COLOUR.
+//
+// Marking is what recolours the crate: the mission's Kismet runs SeqAct_SetMaterialGameState with
+// SupplyExtractionCrate_XCOM or SupplyExtractionCrate_ADVENT (a _Premium_ variant of each), and
+// that material on the mesh is exactly how a sighted player tells an untouched crate from one
+// side's claim — ADVENT marks crates too, and can only be beaten to them. The swap component's
+// list is private to its class, so the mesh is asked instead, which is the thing on screen
+// anyway. The material is applied by the visualization, so it appears when the sighted player
+// sees it appear, not a frame before.
+//
+// The fallback for a marking that changed no material names the ability the row would have
+// offered — "marked" only where the interaction WAS Interact_MarkSupplyCrate, "used" otherwise —
+// so a hacked objective workstation never claims to have been marked for pickup.
+private static function string InteractiveMarkWords(XComGameState_InteractiveObject Obj)
+{
+	local XComInteractiveLevelActor VisActor;
+	local MaterialInterface Mat;
+	local string MatName;
+	local int i;
+
+	VisActor = XComInteractiveLevelActor(`XCOMHISTORY.GetVisualizer(Obj.ObjectID));
+	if (VisActor != none && VisActor.SkeletalMeshComponent != none)
+	{
+		for (i = 0; i < VisActor.SkeletalMeshComponent.GetNumElements(); i++)
+		{
+			Mat = VisActor.SkeletalMeshComponent.GetMaterial(i);
+			if (Mat == none)
+				continue;
+			MatName = string(Mat.Name);
+			if (InStr(MatName, "_ADVENT") != INDEX_NONE)
+				return "marked by ADVENT";
+			if (InStr(MatName, "_XCOM") != INDEX_NONE)
+				return "marked";
+		}
+	}
+
+	if (Obj.InteractionCount <= 0)
+		return "";
+	if (VisActor != none && VisActor.InteractionAbilityTemplateName == 'Interact_MarkSupplyCrate')
+		return "marked";
+	return "used";
 }
 
 // The evac zone, as a RECTANGLE rather than a point.

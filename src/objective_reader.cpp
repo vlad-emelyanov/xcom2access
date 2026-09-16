@@ -70,6 +70,31 @@ void CounterWords(const std::string& token, std::string* noun, std::string* stat
     if (leaf.compare(0, sizeof(kPrefix) - 1, kPrefix) == 0)
         leaf.erase(0, sizeof(kPrefix) - 1);
 
+    // The expansion's counters do not follow that shape. Supply Extraction's row is drawn from
+    // UILibrary_XPACK_StrategyImages.MissionIcon_SupplyPickup / _SupplyDrop / _SupplyDestroyed
+    // (measured live 2026-09-16), which the split below read as noun "MissionIcon", state
+    // "SupplyPickup". Keyed by the token's leaf so a missing entry degrades to the leaf's own tail
+    // — "12 SupplyDrop" — rather than shifting anything or inventing a noun. The states are the
+    // counter's three slots in SeqAct_DisplayMissionCounter's own words: Current, Available, Lost.
+    struct CounterToken { const char* leaf; const char* noun; const char* state; };
+    static constexpr CounterToken kMissionIconTokens[] = {
+        {"MissionIcon_SupplyPickup", "crates", "picked up"},
+        {"MissionIcon_SupplyDrop", "crates", "available"},
+        {"MissionIcon_SupplyDestroyed", "crates", "destroyed"},
+    };
+    constexpr const char kMissionIcon[] = "MissionIcon_";
+    if (leaf.compare(0, sizeof(kMissionIcon) - 1, kMissionIcon) == 0) {
+        for (const CounterToken& t : kMissionIconTokens) {
+            if (leaf == t.leaf) {
+                *noun = t.noun;
+                *state = t.state;
+                return;
+            }
+        }
+        *state = leaf.substr(sizeof(kMissionIcon) - 1);
+        return;
+    }
+
     size_t split = leaf.find_last_of('_');
     if (split == std::string::npos) {
         *noun = leaf;
@@ -78,6 +103,12 @@ void CounterWords(const std::string& token, std::string* noun, std::string* stat
     *noun = leaf.substr(0, split);
     *state = leaf.substr(split + 1);
 }
+
+// The counter row's DisplayLabel is the game's own placeholder, not words: XComGameState_
+// ObjectivesList.CounterDisplayLabel = "CounterLabel" exists because "the counter does not have
+// text" and the list needs a key to find the row by. Speaking it read "CounterLabel" in front of
+// every crate count.
+constexpr const char kCounterPlaceholderLabel[] = "CounterLabel";
 
 // "civilian, 1 rescued of 2, 3 available, 4 dead" — every part whose amount the game did not set
 // is left out, and an amount of -1 is exactly that "not set" (the struct's own default).
@@ -132,7 +163,8 @@ std::string DescribeLine(const GameUI::ObjectiveLine& line)
     if (line.warning)
         AppendPhrase(out, "warning");
 
-    AppendPhrase(out, line.label);
+    if (line.label != kCounterPlaceholderLabel)
+        AppendPhrase(out, line.label);
 
     if (line.haveAmount >= 0)
         AppendPhrase(out, DescribeCounter(line));

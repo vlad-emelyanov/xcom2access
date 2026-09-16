@@ -347,6 +347,25 @@ category appended after it takes 11 and shifts nothing.
   `ObjectiveInfo` component to keep the flag visible). Bearings come from
   `X2AccessTileReader.OffsetWords`, static and shared, so there is exactly ONE calibration
   of `NORTH_DX`/`EAST_DX`.
+- ⛔ **`bRemovedFromPlay` is not "gone" — an objective object can leave the SCREEN with its state
+  untouched.** Supply Extraction (2026-09-16): the ring kept saying twelve crates after the game
+  announced Firebrand had taken one. The mission's Kismet (`Obj_SupplyExtraction`, read out of the
+  cooked package) calls `SeqAct_RemoveInteractiveObjectFromLevel` only on the ADVENT-transport path
+  and at mission end; the Skyranger pickup is a matinee (`XCOMCrateRecover01-06`) that flies the
+  crate off and leaves its `XComGameState_InteractiveObject` exactly as marking left it —
+  `InteractionCount` 1, `ObjectiveInfo` attached, not removed. The state cannot separate "marked,
+  waiting" from "picked up"; the sighted player can, because the crate is gone. So
+  `InteractiveGone` reads what they read — the visualizer hidden (`bHidden` /
+  `SkeletalMeshComponent.HiddenGame`) or standing more than two tiles from its `TileLocation` — and
+  is gated on `InteractionCount > 0` so it can never learn to drop an unseen, untouched crate for
+  whatever the engine does to an actor in fog (objective markers are NOT fog-gated, above).
+  **Marked-ness is read off the crate's COLOUR, not the count**: marking runs
+  `SeqAct_SetMaterialGameState` with `SupplyExtractionCrate_XCOM` / `_ADVENT` (plus `_Premium_`
+  variants), and since `XComGameState_MaterialSwaps.MaterialSwaps` is `private`, the mesh's own
+  `GetMaterial(i)` names are asked — "marked" / "marked by ADVENT" — which is the material on
+  screen anyway. ADVENT marks crates too and XCOM can convert one, so the two words are parity, not
+  a hint. ⚠ The hidden/displaced half is built from the package and the ring's log, never yet
+  heard after a live pickup (`next-steps.md`).
 - ⛔ **Every ring that walks `IterateByClassType(XComGameState_Unit)` must refuse
   `bIsCosmetic`.** The squad ring did not, and a Specialist's GREMLIN — a live `eTeam_XCom`
   unit standing on its owner's own tile — entered it as a NAMELESS entry: *"1 of 1 health,
@@ -555,6 +574,16 @@ panel draws it, with completed/failed state and any timer or counter. Native end
   for a counter row, which draws three icons and three numbers: the noun is parsed out of the
   asset token (`...objectives_civilian_rescued` → "civilian" / "rescued") rather than tabled, so
   a counter we have never seen still gets a real word.
+  - ⛔ **The expansion's counters do not follow that shape, and the counter row's label is a
+    PLACEHOLDER.** Supply Extraction's row draws
+    `UILibrary_XPACK_StrategyImages.MissionIcon_SupplyPickup` / `_SupplyDrop` / `_SupplyDestroyed`
+    — the split read *"MissionIcon, 0 SupplyPickup, 12 SupplyDrop, 0 SupplyDestroyed"* — and its
+    `DisplayLabel` is the literal `"CounterLabel"`, `XComGameState_ObjectivesList.CounterDisplayLabel`,
+    a key the list finds the row by because *"the counter does not have text"*. The `MissionIcon_`
+    family is a small table keyed by the token's LEAF (the vocabulary rule: a missing entry degrades
+    to the leaf's own tail, never shifts a slot), the states being the counter's three slots in
+    `SeqAct_DisplayMissionCounter`'s own words — Current, Available, Lost — and the placeholder label
+    is not spoken.
 - `Data.Timer` and the four counter amounts are **-1 when unset** (the struct's own
   `structdefaultproperties`), and `0` is a real value — a timer of 0 means this is the last turn.
   Test `>= 0`, never truthiness.
