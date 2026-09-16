@@ -126,6 +126,12 @@ rules** below instead — that is the test for which file a new rule goes in.
   (CHEventListenerTemplate, XComLWTuple events) for turn changes, ability results, damage, mission
   state. Resolution through `XCOMHISTORY` and localized strings is script-natural; never
   reimplement it via C++ reflection.
+  - ⛔ **A state reached through another state is that state's version, not the present.**
+    `FindComponentObject` and the component/owner walks resolve in the frame the object you hold
+    lives in, and an `ObjectiveInfo` is written once, so the crate it hands back never ages —
+    `bRemovedFromPlay` stayed false through twelve pickups. Re-fetch by ObjectID through
+    `GetGameStateForObjectID` before reading anything off it (`docs/surfaces/tactical.md`, object
+    scanner).
 - **Description helpers**: `X2AccessHelper.uc` static functions (cover, hazards, units on tile),
   shared by listeners and the tile reader. `X2AccessTileReader.uc` is the worked example of the
   native-callable pattern: functions invoked on the CDO with simple params, result written to its

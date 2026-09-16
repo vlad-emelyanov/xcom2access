@@ -885,6 +885,13 @@ private function AddObjectiveMarkers(TTile Origin, out array<AccessMarker> Marke
 	if (MissionMgr != none)
 		MissionType = MissionMgr.ActiveMission.sType;
 
+	// FindComponentObject answers in the COMPONENT'S frame, not the present. Measured live
+	// 2026-09-16 on Supply Extraction with all twelve crates picked up: every ObjectiveInfo still
+	// lives in the frame that spawned its crate (HistoryIndex 102039..102298), and the crate the
+	// walk hands back is that frame's version — InteractionCount 0, bRemovedFromPlay false — while
+	// the crate's LATEST version, one pickup later, has bRemovedFromPlay TRUE. The objective
+	// component is written once and never again, so nothing read off the object it returns can
+	// ever change. Hence every owner below is re-fetched by ObjectID before anything is read.
 	foreach History.IterateByClassType(class'XComGameState_ObjectiveInfo', Info)
 	{
 		// An objective spawned for a different mission type is inert scenery here.
@@ -894,7 +901,8 @@ private function AddObjectiveMarkers(TTile Origin, out array<AccessMarker> Marke
 		ObjUnit = XComGameState_Unit(Info.FindComponentObject(class'XComGameState_Unit', true));
 		if (ObjUnit != none)
 		{
-			if (ObjUnit.IsDead())
+			ObjUnit = XComGameState_Unit(History.GetGameStateForObjectID(ObjUnit.ObjectID));
+			if (ObjUnit == none || ObjUnit.IsDead())
 				continue;
 			M.Key = ObjUnit.ObjectID;
 			M.Tile = ObjUnit.TileLocation;
@@ -911,8 +919,12 @@ private function AddObjectiveMarkers(TTile Origin, out array<AccessMarker> Marke
 			Info.FindComponentObject(class'XComGameState_InteractiveObject', true));
 		if (ObjInteract != none)
 		{
-			// bRemovedFromPlay is not the whole story — see InteractiveGone.
-			if (ObjInteract.bRemovedFromPlay || InteractiveGone(ObjInteract))
+			// The Skyranger pickup, the ADVENT transport and the mission-end sweep all land here:
+			// each sets bRemovedFromPlay on the crate's next version (measured, twelve of twelve),
+			// and SyncVisualizer takes the actor off the map on the same flag.
+			ObjInteract = XComGameState_InteractiveObject(
+				History.GetGameStateForObjectID(ObjInteract.ObjectID));
+			if (ObjInteract == none || ObjInteract.bRemovedFromPlay)
 				continue;
 			M.Key = ObjInteract.ObjectID;
 			M.Tile = ObjInteract.TileLocation;
@@ -927,6 +939,9 @@ private function AddObjectiveMarkers(TTile Origin, out array<AccessMarker> Marke
 			Info.FindComponentObject(class'XComGameState_Destructible', true));
 		if (ObjDest != none)
 		{
+			ObjDest = XComGameState_Destructible(History.GetGameStateForObjectID(ObjDest.ObjectID));
+			if (ObjDest == none)
+				continue;
 			M.Key = ObjDest.ObjectID;
 			M.Tile = ObjDest.TileLocation;
 			M.bIsDestination = true;
@@ -935,49 +950,6 @@ private function AddObjectiveMarkers(TTile Origin, out array<AccessMarker> Marke
 			InsertByDistance(Origin, M, Markers);
 		}
 	}
-}
-
-// A used-up objective object whose visualizer has LEFT THE SCREEN while its state stayed in play.
-//
-// Supply Extraction earned this (2026-09-16). Its Kismet (Obj_SupplyExtraction, read out of the
-// cooked package) calls SeqAct_RemoveInteractiveObjectFromLevel only on the ADVENT-transport path
-// and at mission end; a crate the Skyranger picks up is flown off by a matinee
-// (XCOMCrateRecover01-06) and its XComGameState_InteractiveObject stays exactly as marking left
-// it — InteractionCount 1, not removed, ObjectiveInfo still attached. So the STATE cannot tell
-// "marked, waiting for pickup" from "picked up", and the ring kept saying 12 crates after the
-// message that Firebrand had taken one. A sighted player can tell, because the crate is gone —
-// so read what they read: the actor is hidden, or no longer standing on its tile.
-//
-// Gated on InteractionCount because the fog is not our business here: an objective marker is
-// deliberately not fog-gated (see AddObjectiveMarkers), and this test must never learn to drop an
-// untouched crate for whatever the engine does to an unseen actor. A crate has to be marked
-// before anything can take it, so the gate costs nothing on the case it exists for.
-private static function bool InteractiveGone(XComGameState_InteractiveObject Obj)
-{
-	local XComInteractiveLevelActor VisActor;
-	local vector TileCenter;
-
-	if (Obj.InteractionCount <= 0)
-		return false;
-
-	// Measured live 2026-09-16, three crates after three pickups: the pickup does not hide the
-	// actor, it takes the VISUALIZER AWAY — GetVisualizer answers none for a state that is
-	// still in play, which is why those three entries had fallen through InteractiveLabel to
-	// "Objective: object". A used object once had an actor (something was interacted with), so
-	// no actor now is the clearest "gone" there is. The InteractionCount gate above is what
-	// keeps this from reading a not-yet-spawned crate the same way.
-	VisActor = XComInteractiveLevelActor(`XCOMHISTORY.GetVisualizer(Obj.ObjectID));
-	if (VisActor == none)
-		return true;
-	if (VisActor.bHidden)
-		return true;
-	if (VisActor.SkeletalMeshComponent != none && VisActor.SkeletalMeshComponent.HiddenGame)
-		return true;
-
-	// Two tiles of slack: an interaction animation can shift a prop within its footprint, a
-	// matinee carries it hundreds of units away.
-	TileCenter = `XWORLD.GetPositionFromTileCoordinates(Obj.TileLocation);
-	return VSize(VisActor.Location - TileCenter) > 2 * class'XComWorldData'.const.WORLD_StepSize;
 }
 
 // "marked" / "marked by ADVENT" for a Supply Extraction crate, read off the crate's own COLOUR.

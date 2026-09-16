@@ -14,11 +14,13 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
-**Supply Extraction crates in the markers ring** (2026-09-16, `X2AccessObjectScanner.InteractiveGone`
-/ `InteractiveMarkWords`; the `MissionIcon_` counter table in `objective_reader.cpp`; rules in
-`surfaces/tactical.md` under the object scanner and the objectives list) — built from the mission's
-cooked Kismet and one logged run, compiled clean, **never heard after a pickup**. Any Supply
-Extraction mission exercises it. What to listen for:
+**Supply Extraction crates in the markers ring** (2026-09-16, `X2AccessObjectScanner.AddObjectiveMarkers`
+re-fetching each owner by ObjectID / `InteractiveMarkWords`; the `MissionIcon_` counter table in
+`objective_reader.cpp`; rules in `surfaces/tactical.md` under the object scanner and the objectives
+list). Third build. The first two were built on a theory about the crate's state and heard wrong
+twice (04:00 with three pickups, 11:02 with twelve: every crate still in the ring); the third is
+built on the harness measurement of the state itself — see the `FindComponentObject` rule — and is
+**unheard**. Any Supply Extraction mission exercises it. What to listen for:
 
 1. `B` before anyone has marked anything: every crate reads `Objective: Advent Supply Crate` with
    NO detail word. A `marked by ADVENT` on turn one means ADVENT's opening marks are real and the
@@ -26,14 +28,14 @@ Extraction mission exercises it. What to listen for:
    the crate's DEFAULT material and must be narrowed.
 2. Mark a crate: its entry gains `marked` on the next `B` press.
 3. After `Firebrand has picked up the crate`: the entry is GONE from the ring and the total drops by
-   one. Heard 2026-09-16 04:00 on a save with three pickups: the first build kept all three as
-   `Objective: object` (the pickup removes the visualizer rather than hiding it, and the first
-   build read "no actor" as "not spawned yet"); fixed the same night, the fix itself unheard.
-4. `Ctrl+X`: the counter row reads `crates, 3 picked up, 9 available, 0 destroyed.` with no
-   `CounterLabel` and no `MissionIcon` in it. Heard 04:00 as `crates, 3, picked up, 9, available`
-   — the comma between number and word is fixed, unheard. A crate ADVENT's transport takes: watch which slot
-   moves — if the lost slot's icon changes to `MissionIcon_Advent`, that token needs a table entry
-   (`taken by ADVENT`).
+   one. On the 11:02 save (twelve picked up, objective complete) the ring must hold ONE entry — the
+   non-crate objective object 62771 that read `Objective: object, … 1 up` — not thirteen.
+4. `Ctrl+X`: the counter row reads `crates, 12 picked up, 0 available, 0 destroyed` with no
+   `CounterLabel` and no `MissionIcon` in it — heard exactly so at 11:13, this item is done. A crate
+   ADVENT's transport takes: watch which slot moves — if the lost slot's icon changes to
+   `MissionIcon_Advent`, that token needs a table entry (`taken by ADVENT`).
+5. A dead objective VIP (the unit branch had the same stale read): after the VIP dies, its entry
+   leaves the ring.
 
 **The pod reveal and the reinforcement drop** (2026-09-16, `X2AccessTacticalEvents.OnScamperBegin` /
 `OnSpawnReinforcementsComplete`, builders `BuildRevealLine` / `BuildReinforcementLine`, the replay
@@ -70,19 +72,18 @@ What the run settled and what it left:
    building, floor 3 of 4` on the recenter, nothing extra on the steps inside. The reader's
    floor agreed with `IndoorInfo.iCachedCurrentFloorNumber` (3) and its building with
    `CurrentBuildingVolume`.
-2. ⛔ **The count is one too many on a modular block, and the fix is owed.** The soldier stood
-   in a walled third-storey room (screenshot) that the reader called `floor 3 of 4`. The
-   block is an `XComMegaBuildingVolume` (`pcp_16_AbandonedP_MegaBlock`), whose `Floors` are
-   three 256-unit storey bands (extent 128) plus a FOURTH band of extent 1096 spanning
-   784..2976 — the roof and the sky above it, `FloorNumber 4` on four `eFloor_Default`
-   volumes with no designer flag telling them from a storey (`m_bIsEmptyFloor`,
-   `m_bUseForBuildingReveal`, `m_FloorCursorUpperZFactor` all identical). A plain
-   `XComBuildingVolume` two-storey shop on the same plot has NO such band (two bands,
-   0..512), so it counts right. The engine's `IsOnRoof` is exactly "top band of a
-   multi-band building". What to build: treat a LAST band taller than two storeys
-   (`fExtent > CursorFloorHeight`, 256) as the roof — subtract it from the count and speak
-   `On roof` as its own state, so the cursor rising onto the block's roof says that instead
-   of `floor 4 of 4`, and stepping off it says `Outside`.
+2. **The roof band — fixed, unheard.** The soldier stood in a walled third-storey room
+   (screenshot) that the reader called `floor 3 of 4`. The block is an
+   `XComMegaBuildingVolume` (`pcp_16_AbandonedP_MegaBlock`), whose `Floors` are three
+   256-unit storey bands (extent 128) plus a FOURTH band of extent 1096 spanning 784..2976 —
+   the roof and the sky above it, `FloorNumber 4` on four `eFloor_Default` volumes with no
+   designer flag telling them from a storey. A plain `XComBuildingVolume` two-storey shop on
+   the same plot has no such band. The reader now drops a last band taller than two storeys
+   from the count and speaks it as `On roof` (rule in `surfaces/tactical.md`), and walks
+   floor volumes first because the block's modular pieces list orphan floor volumes of their
+   own. What to listen for: the same room says `floor 3 of 3`; the cursor climbing onto the
+   block's roof says `On roof` once; stepping off the roof edge says `Outside`; coming back
+   down the stairs says `Inside building, floor 3 of 3`.
 3. Still unheard: whether `EncompassesPoint` at the tile CENTER lands inside a GROUND-floor
    volume. The ground band starts 16 units up (`fCenterZ 144`, extent 128) and the tile
    centre sits about 32 up, so it should; a silent doorway would say otherwise.
@@ -652,7 +653,14 @@ the soldier switch put it), `Ctrl+,` on open ground should speak `Floor N of M` 
 cursor, and a marker jump onto a roof from the ground should speak the new level and then be
 movable with Backspace. Shape-count the ring for `Up N`/`Down N` afterwards: stairs should show
 `N=1`, roofs `N=4`, and a distribution with nothing but one value is the audit rule from
-`CLAUDE.md` firing.
+`CLAUDE.md` firing. First heard 2026-09-16 in the Abandoned warehouse: the model itself held
+(the pawn's destination was the floor beside the crate, the ceiling clamp never fired), and what
+it exposed was the older *enterable is not standable* gap — a crate top spoken as *"Dash"*
+(`surfaces/tactical.md`, the tile cursor). Fixed the same morning, **unheard**: on that crate
+top expect *"Up 1. Cannot stand here"* and, on Backspace, *"Cannot stand there. Nearest 1 west,
+1 down"* (or whichever floor tile the puck chose); on a tile past the move range, *"Out of range.
+Nearest …"*. The cursor still lands on the crate top — the mouse cursor slides off one, but its
+puck is what a sighted player watches, and *Nearest* is that puck.
 
 The tile cursor's **detection readout on a hacked tower** — the one branch of the concealment
 work a normal Gatecrasher sweep does not produce. "Tower detection" is confirmed; what nobody
@@ -820,10 +828,14 @@ a repeating announcement.
    - ⛔ Before the first LW offset is transcribed, settle §8: `sdk_layout_checks.cpp` pins against a
      generated SDK that contains no LW classes, so the static-assert net stops at the vanilla
      boundary.
-12. Debts created by the tolerant-matching pass itself (2026-09-16, built in the detached worktree
-   `XCOM2-wt/subclass-match`, **never run against the game** — no LWOTC, robojumper or CPS install
-   was exercised and every hierarchy claim comes from the SDK's `SrcOrig`, not from a
-   Highlander-derived dump). Four screens are deliberately left on `ClassMatch::Exact` because
+12. Debts created by the tolerant-matching pass itself (2026-09-16, merged to main as `af4725b`).
+   One vanilla run exists and it proved the change INERT there: zero `matched subclass` lines in
+   nineteen minutes of menu and tactical play, meaning no finder resolved to anything but an exact
+   class, so vanilla behaviour is identical to before by evidence rather than by argument.
+   ⚠ **Still never run against any mod that renames a screen** — no LWOTC, robojumper or CPS
+   install has been exercised, so every claim about what tolerance BUYS remains unmeasured, and
+   every hierarchy claim comes from the SDK's `SrcOrig`, not from a Highlander-derived dump.
+   Four screens are deliberately left on `ClassMatch::Exact` because
    finding them is not the same as reading them, and each one is owed the read before it can be
    tolerated:
    - `UISquadSelect` — `robojumper_UISquadSelect` spawns its own `robojumper_UIList_SquadEditor
@@ -852,15 +864,24 @@ a repeating announcement.
      `FindArmoryMenuScreen`). Both drive the same inherited widgets their bases do, so an empty
      read is unlikely — but nobody has exercised either, and a short read there costs the player
      the game's own key handling too.
-   - Cost was reasoned about, never profiled. The `Derived` path adds a bounded pointer walk where
-     `Exact` did one compare, and three things keep that off the tick: BOTH GObjects scans
-     (`ScanInstanceRaw` and `ScanInstancesRaw`) carry a per-call class memo, so a pass does one
-     chain walk per distinct CLASS rather than one per (object × entry) — which matters most for
-     the single-class one, since sixteen of the seventeen `ScreenFinder`s are Derived, each owns a
-     full pass, and a `gScanEpoch` bump fires all of them in the same tick — at a screen change,
-     which is exactly when the player is waiting to be told what appeared;
-     `ResolveBaseClassCached` backs a miss
-     off from 1 s to 60 s so an unresolvable name cannot cost a full scan every second forever;
-     and both it and `NoteOverrideRaw` use flat strcmp arrays rather than `unordered_*<std::string>`,
-     which allocated a key on every call including the hits. ⚠ **None of it has been measured on a
-     running game** — the numbers in the review that drove these fixes were estimates too.
+   - Cost, MEASURED on the 2026-09-16 vanilla run. The whole price is paid once, at the first menu
+     attach: **61 base classes resolved in 131 ms (~2.1 ms each)**, in a single navigator probe
+     pass between `found UIScreenStack instance` and `attached to main menu` — call it eight
+     dropped frames on the main menu, where nothing is time-critical. Nothing re-resolves
+     afterwards: **63 names resolved, none of them twice**, and the remaining two resolved lazily
+     when their screen first appeared (`UISpecialMissionHUD` at mission start,
+     `UILoadScreenAnimation` at a load screen). The log carries no tick markers, so "one pass" is
+     inferred from that bracketing rather than proven.
+   - What keeps it off the steady-state tick, now that sixteen of the seventeen `ScreenFinder`s are
+     Derived and each owns a full GObjects pass: BOTH scans (`ScanInstanceRaw` and
+     `ScanInstancesRaw`) carry a per-call class memo, so a pass does one chain walk per distinct
+     CLASS rather than one per (object × entry) — which matters most for the single-class one,
+     since a `gScanEpoch` bump fires all sixteen in the same tick, at a screen change, exactly when
+     the player is waiting to be told what appeared. `ResolveBaseClassCached` backs a miss off from
+     1 s to 60 s so an unresolvable name cannot cost a full scan every second forever; both it and
+     `NoteOverrideRaw` use flat strcmp arrays rather than `unordered_*<std::string>`, which
+     allocated a key on every call including the hits. The same run recorded **0 pump faults across
+     2,470,300 pump calls**, so the SEH-guarded chain walks never faulted.
+     ⚠ The steady-state claims are still UNMEASURED: on vanilla no `Derived` entry ever matched a
+     subclass, so the scan-heavy path this reasoning is about was never actually taken. Only the
+     resolver cost above has a number against it.

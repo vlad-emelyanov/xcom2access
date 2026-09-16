@@ -22,7 +22,22 @@ only the pathing pawn's destination is) and commits through
 `LastDestinationTile` EQUALS the cursor tile, so a move can never land anywhere
 other than the tile just spoken. Readout is fog-gated (`GetTileFOWValue`:
 NeverSeen → "unexplored"; HaveSeen → static layout; Seen → full) and the
-reachability clause is gated on the tile being enterable. Claims stand down while
+reachability clause is gated on the tile being STANDABLE, not merely enterable — the
+game's own pair from `XGAIBehavior:3439`, the same one the object scanner's cover ring
+asks. `CanUnitsEnterTile` is "can a unit pass through" and is TRUE for the top of a
+full-cover crate a soldier climbs over; `IsFloorTileAndValidDestination` is "can a unit
+stop here" and is false for it. `GetPathCostToTile` prices every tile on the path graph,
+climb-overs included, so gating on enterable alone read a crate top as *"Dash"*, and
+Backspace then said *"Out of range"* for a tile the pawn had merely declined to stop on
+(measured live 2026-09-16: cursor (17,32,10), pawn destination (16,33,9), the floor
+beside it; the building's ceiling clamp allowed Z 12 and played no part). A sighted
+player never meets this because the mouse pick keeps, within a floor band, a
+valid-destination hit over a non-valid one, so the ray slides off the crate onto the
+floor behind it; our column model cannot follow a ray, so the tile reads *"Cannot stand
+here"* instead, and the move key's refusal names its reason — *"Cannot stand there"*,
+*"Out of range"* (negative path cost), or *"Cannot stop there"* (the ceiling clamp) —
+followed by *"Nearest …"*, the puck's actual tile as an offset, which is the one thing
+the sighted player reads off the screen there. Claims stand down while
 the shot HUD is raised, while a recipe is attached, or when `UITacticalHUD` loses
 focus.
 
@@ -84,11 +99,22 @@ focus.
   touched, and a volume with `IsInside` off (a tunnel plot's whole-level volume) is not a
   building. ⛔ Do not read the cursor pawn's own `IndoorInfo` for this: it is fed by Touch
   events that land the frame AFTER `CursorSetLocation`, so it answers about the previous
-  tile. The reader walks `XComBuildingVolume` → `Floors[].FloorVolumes` with
-  `EncompassesPoint` at the tile just adopted instead. Spoken on the crossing only
-  ("Inside building, floor 2 of 3" / "Building floor 3 of 3" / "Outside"), forced on the
-  verbose re-read; the count is the building's own `Floors.Length`, a different number from
-  the plot-wide band count `FloorWord` speaks, hence the different phrasing.
+  tile. The reader walks `XComFloorVolume` with `EncompassesPoint` at the tile just adopted
+  and takes the building from the volume's `CachedBuildingVolume`, the tracker's own
+  resolution. ⛔ Not building-first: a modular block's `XComModularBuildingVolume` pieces
+  still list floor volumes of their own, with no cached building and zero band heights, and
+  a walk that started from buildings could credit one of them instead of the merged
+  `XComMegaBuildingVolume` the game credits. Spoken on the crossing only ("Inside building,
+  floor 2 of 3" / "Building floor 3 of 3" / "On roof" / "Outside"), forced on the verbose
+  re-read; the count is the building's own `Floors.Length`, a different number from the
+  plot-wide band count `FloorWord` speaks, hence the different phrasing.
+  - **The roof is a band recognized by its HEIGHT.** A mega block's last `Floors` band is
+    the space over its roof — measured live as 784..2976 over three 256-unit storeys — with
+    nothing on its volumes to tell it from a storey, while a plain two-storey shop has no
+    such band. The game's `IsOnRoof` ("top band of a multi-band building") would call the
+    shop's upper storey a roof, so the reader instead drops a last band taller than two
+    storeys (`fExtent > XCom3DCursor.CursorFloorHeight`) from the count and speaks it as
+    "On roof".
 - ⛔ **Per-edge cover: `COVER_<dir>` is PRESENCE, `COVER_<dir>Low` is a HEIGHT
   MODIFIER on it — never an alternative.** A low-cover edge carries BOTH bits, so
   `if (dir) … else if (dirLow)` reports every covered edge as high. The engine's
@@ -347,29 +373,29 @@ category appended after it takes 11 and shifts nothing.
   `ObjectiveInfo` component to keep the flag visible). Bearings come from
   `X2AccessTileReader.OffsetWords`, static and shared, so there is exactly ONE calibration
   of `NORTH_DX`/`EAST_DX`.
-- ⛔ **`bRemovedFromPlay` is not "gone" — an objective object can leave the SCREEN with its state
-  untouched.** Supply Extraction (2026-09-16): the ring kept saying twelve crates after the game
-  announced Firebrand had taken one. The mission's Kismet (`Obj_SupplyExtraction`, read out of the
-  cooked package) calls `SeqAct_RemoveInteractiveObjectFromLevel` only on the ADVENT-transport path
-  and at mission end; the Skyranger pickup is a matinee (`XCOMCrateRecover01-06`) that flies the
-  crate off and leaves its `XComGameState_InteractiveObject` exactly as marking left it —
-  `InteractionCount` 1, `ObjectiveInfo` attached, not removed. The state cannot separate "marked,
-  waiting" from "picked up"; the sighted player can, because the crate is gone. So
-  `InteractiveGone` reads what they read. **Measured live the same night, three crates after three
-  pickups: the pickup takes the VISUALIZER away** — `History.GetVisualizer` answers none for a
-  state still in play — so a used object with no actor is gone (those three had been falling
-  through `InteractiveLabel` to *"Objective: object"*, which is the tell to watch for). A hidden
-  actor (`bHidden` / `SkeletalMeshComponent.HiddenGame`) or one standing more than two tiles from
-  its `TileLocation` counts too. Gated on `InteractionCount > 0` so it can never learn to drop an
-  unseen, untouched crate for whatever the engine does to an actor in fog or before it spawns
-  (objective markers are NOT fog-gated, above).
+- ⛔ **`FindComponentObject` answers in the COMPONENT'S frame, never the present — re-fetch the
+  owner by ObjectID before reading anything off it.** Supply Extraction (2026-09-16): the ring kept
+  all twelve crates after the counter said twelve picked up, and two rewrites of a "has the crate
+  left the screen" test changed nothing. Measured through the harness (`obj dump` on every crate
+  version, ordered by the frame's `HistoryIndex`, with `True`/`False` printing as the localized
+  `Да`/`Нет`): each crate has a spawn version (`InteractionCount` 0), three marking versions
+  (count 1), and one pickup version with **`bRemovedFromPlay` TRUE** — the Skyranger pickup, the
+  ADVENT transport and the mission-end sweep all set it, whatever the cooked Kismet's links
+  suggested. The ring never saw it because every `XComGameState_ObjectiveInfo` still lives in the
+  frame that spawned its crate (indices 102039..102298), and the crate the component walk returned
+  was that frame's version, pristine forever. The old `bRemovedFromPlay` test had been correct and
+  dead since the day it was written; the visualizer test that followed it was diagnosing the wrong
+  object. The tell was *"Objective: object"*: `SyncVisualizer` clears the visualizer on the same
+  flag, so a removed crate has no actor to name. A dead objective VIP was the same bug on the unit
+  branch. ⛔ A theory about what a Kismet path does to a state is not a measurement of the state;
+  the harness could have answered this in one pass on the first night.
   **Marked-ness is read off the crate's COLOUR, not the count**: marking runs
   `SeqAct_SetMaterialGameState` with `SupplyExtractionCrate_XCOM` / `_ADVENT` (plus `_Premium_`
   variants), and since `XComGameState_MaterialSwaps.MaterialSwaps` is `private`, the mesh's own
   `GetMaterial(i)` names are asked — "marked" / "marked by ADVENT" — which is the material on
   screen anyway. ADVENT marks crates too and XCOM can convert one, so the two words are parity, not
-  a hint. ⚠ The hidden/displaced half is built from the package and the ring's log, never yet
-  heard after a live pickup (`next-steps.md`).
+  a hint. ⚠ The fallback words for a marking that changed no material ("marked" / "used") now see
+  the crate's real `InteractionCount`; before the re-fetch they always saw 0.
 - ⛔ **Every ring that walks `IterateByClassType(XComGameState_Unit)` must refuse
   `bIsCosmetic`.** The squad ring did not, and a Specialist's GREMLIN — a live `eTeam_XCom`
   unit standing on its owner's own tile — entered it as a NAMELESS entry: *"1 of 1 health,
