@@ -66,8 +66,8 @@ var int LastSpokenFloor;
 
 // What the player last heard about buildings — DescribeIndoor's change detector, so "Inside
 // building" and "Outside" are spoken on the crossing and never on every step. 0 = nothing heard
-// yet (reset with every plant), 1 = outside, 2 = inside. The building is remembered by its
-// LOCATION, a value: the CDO rule forbids holding the volume itself.
+// yet (reset with every plant), 1 = outside, 2 = inside, 3 = on a roof. The building is
+// remembered by its LOCATION, a value: the CDO rule forbids holding the volume itself.
 var int LastIndoorState;
 var int LastIndoorFloor;
 var int LastIndoorFloorCount;
@@ -1242,30 +1242,43 @@ private function string FloorWord(XCom3DCursor Cursor)
 }
 
 // Where the cursor stands relative to buildings — "Inside building, floor 2 of 3" on entering,
-// "Building floor 3 of 3" on changing floor within it, "Outside" on leaving — spoken on the
-// crossing and otherwise "", the way the game's own cutaway redraws only when the cursor passes
-// a wall. bForce says the current state unconditionally (the verbose re-read). The first
-// observation after a plant speaks only when inside: outside is what a player assumes.
+// "Building floor 3 of 3" on changing floor within it, "On roof" on climbing onto it, "Outside"
+// on leaving — spoken on the crossing and otherwise "", the way the game's own cutaway redraws
+// only when the cursor passes a wall. bForce says the current state unconditionally (the verbose
+// re-read). The first observation after a plant speaks only when inside: outside is what a
+// player assumes.
 //
-// The oracle is the game's own, XComPawnIndoorOutdoorInfo: inside means "in a FLOOR volume" (a
-// building volume alone is outside — its comment says so), a building nested inside another wins
+// The oracle is the game's own, XComPawnIndoorOutdoorInfo.CheckForFloorVolumeEvents: inside
+// means "in a FLOOR volume" (a building volume alone is outside — its comment says so), the
+// building is the floor volume's CachedBuildingVolume, a building nested inside another wins
 // over the outer one, and the floor is the HIGHEST floor number among the floor volumes touched.
 // That object is maintained by the cursor pawn's Touch events, which land on the frame AFTER a
 // push, so reading it here would trail one step behind. The same rule is asked of the same
 // volumes with EncompassesPoint at the tile just adopted — synchronous, and state-first like the
-// rest of this class. The walk goes building volume first: each encloses its own floor volumes,
-// so the map's actor list prunes to the buildings around the point. A volume whose author turned
-// IsInside off (the whole-level volume of a tunnel plot) is not a building, as the native
-// IsInside() also holds. The floor count is the building's own Floors array, NOT the plot-wide
-// band count FloorWord speaks — the two number different things, hence the different phrasing.
+// rest of this class. The walk goes floor volume first, exactly as the tracker does, because a
+// modular block's sub-volumes (XComModularBuildingVolume) still list floor volumes of their own
+// with no cached building and no cached band heights: walking buildings first could land on one
+// of those and count its floors instead of the merged XComMegaBuildingVolume the game credits.
+// A cached building whose author turned IsInside off (the whole-level volume of a tunnel plot)
+// is not a building, as the native IsInside() also holds. The floor count is the building's own
+// Floors array, NOT the plot-wide band count FloorWord speaks — the two number different things,
+// hence the different phrasing.
+//
+// The roof: a modular block's LAST band is not a storey but the space over its roof — measured
+// on the Abandoned mega block as a 784..2976 band over three 256-unit storeys, its volumes flagged
+// no differently from a storey's (next-steps, "Inside / outside on the tile cursor"). The game's
+// own IsOnRoof is "top band of a multi-band building", which a plain two-storey shop, whose two
+// bands are both storeys, would fail. So the roof is recognized by HEIGHT: a last band taller
+// than two storeys (fExtent is a half-height; CursorFloorHeight is one storey) is dropped from
+// the count and spoken as its own state.
 private function string DescribeIndoor(XComWorldData WorldData, TTile Tile, bool bForce)
 {
 	local WorldInfo WI;
 	local XComBuildingVolume BV, Found;
 	local XComFloorVolume FV;
-	local vector Pos;
-	local int i, j, Highest, FloorNum, Count, Here;
-	local bool bChanged, bNewBuilding;
+	local vector Pos, BuildingPos;
+	local int FloorNum, OrphanFloor, Count, Here, Last;
+	local bool bChanged, bNewBuilding, bRoofBand;
 	local string Result;
 	local FOWTileStatus FOW;
 	local byte GameplayFlags;
@@ -1280,45 +1293,59 @@ private function string DescribeIndoor(XComWorldData WorldData, TTile Tile, bool
 
 	Pos = WorldData.GetPositionFromTileCoordinates(Tile);
 	WI = class'WorldInfo'.static.GetWorldInfo();
-	foreach WI.AllActors(class'XComBuildingVolume', BV)
+	foreach WI.AllActors(class'XComFloorVolume', FV)
 	{
-		if (!BV.IsInside || !BV.EncompassesPoint(Pos))
+		if (!FV.EncompassesPoint(Pos))
 			continue;
-		// An outer building loses to the one nested inside it, as the game resolves it.
-		if (Found != none && Found.m_bIsInternalBuilding && !BV.m_bIsInternalBuilding)
-			continue;
-		Highest = 0;
-		for (i = 0; i < BV.Floors.Length; i++)
+		BV = FV.CachedBuildingVolume;
+		if (BV == none)
 		{
-			for (j = 0; j < BV.Floors[i].FloorVolumes.Length; j++)
-			{
-				FV = BV.Floors[i].FloorVolumes[j];
-				if (FV != none && FV.EncompassesPoint(Pos) && FV.FloorNumber > Highest)
-					Highest = FV.FloorNumber;
-			}
+			// A floor with no building behind it: inside, of something the map does not name.
+			if (FV.FloorNumber > OrphanFloor)
+				OrphanFloor = FV.FloorNumber;
+			continue;
 		}
-		if (Highest == 0)
-			continue; // within the building's bounds but on none of its floors: outside
+		if (!BV.IsInside)
+			continue;
+		// One building at a time, the nested one winning over the outer, as the game resolves it.
 		if (Found == none || (BV.m_bIsInternalBuilding && !Found.m_bIsInternalBuilding))
 		{
 			Found = BV;
-			FloorNum = Highest;
+			FloorNum = FV.FloorNumber;
 		}
+		else if (BV == Found && FV.FloorNumber > FloorNum)
+			FloorNum = FV.FloorNumber;
 	}
 
-	if (Found == none)
-	{
-		Here = 1;
-		Count = 0;
-		FloorNum = 0;
-	}
-	else
+	if (Found != none)
 	{
 		Here = 2;
 		Count = Found.Floors.Length;
+		BuildingPos = Found.Location;
+		Last = Found.Floors.Length - 1;
+		bRoofBand = Last > 0
+			&& Found.Floors[Last].fExtent > class'XCom3DCursor'.default.CursorFloorHeight;
+		if (bRoofBand)
+		{
+			Count--;
+			if (FloorNum > Count)
+				Here = 3;
+		}
+	}
+	else if (OrphanFloor > 0)
+	{
+		Here = 2;
+		FloorNum = OrphanFloor;
+		Count = 0;
+	}
+	else
+	{
+		Here = 1;
+		FloorNum = 0;
+		Count = 0;
 	}
 
-	bNewBuilding = Here == 2 && (LastIndoorState != 2 || Found.Location != LastIndoorBuildingPos);
+	bNewBuilding = Here >= 2 && (LastIndoorState != Here || BuildingPos != LastIndoorBuildingPos);
 	bChanged = Here != LastIndoorState || bNewBuilding
 		|| (Here == 2 && (FloorNum != LastIndoorFloor || Count != LastIndoorFloorCount));
 	if (LastIndoorState == 0 && Here == 1 && !bForce)
@@ -1328,25 +1355,32 @@ private function string DescribeIndoor(XComWorldData WorldData, TTile Tile, bool
 	{
 		if (Here == 1)
 			Result = "Outside";
+		else if (Here == 3)
+			Result = "On roof";
 		else if (bForce || bNewBuilding)
 		{
-			if (Found.IsUfo)
+			if (Found != none && Found.IsUfo)
 				Result = "Inside UFO";
-			else if (Found.IsDropShip)
+			else if (Found != none && Found.IsDropShip)
 				Result = "Inside dropship";
 			else
 				Result = "Inside building";
-			Result $= ", floor" @ string(FloorNum) @ "of" @ string(Count);
+			Result $= ", floor" @ string(FloorNum);
+			if (Count > 0)
+				Result @= "of" @ string(Count);
 		}
 		else
-			Result = "Building floor" @ string(FloorNum) @ "of" @ string(Count);
+		{
+			Result = "Building floor" @ string(FloorNum);
+			if (Count > 0)
+				Result @= "of" @ string(Count);
+		}
 	}
 
 	LastIndoorState = Here;
 	LastIndoorFloor = FloorNum;
 	LastIndoorFloorCount = Count;
-	if (Found != none)
-		LastIndoorBuildingPos = Found.Location;
+	LastIndoorBuildingPos = BuildingPos;
 	return Result;
 }
 
