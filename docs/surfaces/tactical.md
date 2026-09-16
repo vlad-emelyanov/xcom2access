@@ -355,10 +355,14 @@ category appended after it takes 11 and shifts nothing.
   crate off and leaves its `XComGameState_InteractiveObject` exactly as marking left it —
   `InteractionCount` 1, `ObjectiveInfo` attached, not removed. The state cannot separate "marked,
   waiting" from "picked up"; the sighted player can, because the crate is gone. So
-  `InteractiveGone` reads what they read — the visualizer hidden (`bHidden` /
-  `SkeletalMeshComponent.HiddenGame`) or standing more than two tiles from its `TileLocation` — and
-  is gated on `InteractionCount > 0` so it can never learn to drop an unseen, untouched crate for
-  whatever the engine does to an actor in fog (objective markers are NOT fog-gated, above).
+  `InteractiveGone` reads what they read. **Measured live the same night, three crates after three
+  pickups: the pickup takes the VISUALIZER away** — `History.GetVisualizer` answers none for a
+  state still in play — so a used object with no actor is gone (those three had been falling
+  through `InteractiveLabel` to *"Objective: object"*, which is the tell to watch for). A hidden
+  actor (`bHidden` / `SkeletalMeshComponent.HiddenGame`) or one standing more than two tiles from
+  its `TileLocation` counts too. Gated on `InteractionCount > 0` so it can never learn to drop an
+  unseen, untouched crate for whatever the engine does to an actor in fog or before it spawns
+  (objective markers are NOT fog-gated, above).
   **Marked-ness is read off the crate's COLOUR, not the count**: marking runs
   `SeqAct_SetMaterialGameState` with `SupplyExtractionCrate_XCOM` / `_ADVENT` (plus `_Premium_`
   variants), and since `XComGameState_MaterialSwaps.MaterialSwaps` is `private`, the mesh's own

@@ -960,9 +960,15 @@ private static function bool InteractiveGone(XComGameState_InteractiveObject Obj
 	if (Obj.InteractionCount <= 0)
 		return false;
 
+	// Measured live 2026-09-16, three crates after three pickups: the pickup does not hide the
+	// actor, it takes the VISUALIZER AWAY — GetVisualizer answers none for a state that is
+	// still in play, which is why those three entries had fallen through InteractiveLabel to
+	// "Objective: object". A used object once had an actor (something was interacted with), so
+	// no actor now is the clearest "gone" there is. The InteractionCount gate above is what
+	// keeps this from reading a not-yet-spawned crate the same way.
 	VisActor = XComInteractiveLevelActor(`XCOMHISTORY.GetVisualizer(Obj.ObjectID));
 	if (VisActor == none)
-		return false; // not spawned yet is not gone
+		return true;
 	if (VisActor.bHidden)
 		return true;
 	if (VisActor.SkeletalMeshComponent != none && VisActor.SkeletalMeshComponent.HiddenGame)

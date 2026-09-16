@@ -26,12 +26,12 @@ Extraction mission exercises it. What to listen for:
    the crate's DEFAULT material and must be narrowed.
 2. Mark a crate: its entry gains `marked` on the next `B` press.
 3. After `Firebrand has picked up the crate`: the entry is GONE from the ring and the total drops by
-   one. If it stays, log which half failed — `bHidden`/`HiddenGame` false AND the actor still on its
-   tile means the matinee flies a prop, not the crate, and the real actor is left in place; in that
-   case check with a sighted look whether the crate is still visibly there (if it is, the ring is
-   right and the game is the one showing a ghost).
-4. `Ctrl+X`: the counter row reads `crates, 1 picked up, 11 available, 0 destroyed.` with no
-   `CounterLabel` and no `MissionIcon` in it. A crate ADVENT's transport takes: watch which slot
+   one. Heard 2026-09-16 04:00 on a save with three pickups: the first build kept all three as
+   `Objective: object` (the pickup removes the visualizer rather than hiding it, and the first
+   build read "no actor" as "not spawned yet"); fixed the same night, the fix itself unheard.
+4. `Ctrl+X`: the counter row reads `crates, 3 picked up, 9 available, 0 destroyed.` with no
+   `CounterLabel` and no `MissionIcon` in it. Heard 04:00 as `crates, 3, picked up, 9, available`
+   — the comma between number and word is fixed, unheard. A crate ADVENT's transport takes: watch which slot
    moves — if the lost slot's icon changes to `MissionIcon_Advent`, that token needs a table entry
    (`taken by ADVENT`).
 

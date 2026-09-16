@@ -125,25 +125,27 @@ std::string DescribeCounter(const GameUI::ObjectiveLine& line)
     const std::string& noun = !haveNoun.empty() ? haveNoun : (!availNoun.empty() ? availNoun : lostNoun);
     AppendPhrase(out, noun);
 
+    // A number and its state word are ONE phrase ("3 picked up"), joined with a space, never
+    // through AppendPhrase — that joins with a comma, and "3, picked up" offers the number as a
+    // separate fact (heard live 2026-09-16). Same rule the stage counter's sub-label follows.
+    auto counted = [](int amount, const std::string& state) {
+        std::string s = std::to_string(amount);
+        if (!state.empty())
+            s += " " + state;
+        return s;
+    };
     if (line.haveAmount >= 0) {
-        std::string part = std::to_string(line.haveAmount);
-        AppendPhrase(part, haveState);
+        std::string part = counted(line.haveAmount, haveState);
         // CounterHaveMin is the target ("1 of 2 recovered"), and it is -1 when there is no target
         // to reach — a count that is simply a count.
         if (line.haveMin > 0)
             part += " of " + std::to_string(line.haveMin);
         AppendPhrase(out, part);
     }
-    if (line.availableAmount >= 0) {
-        std::string part = std::to_string(line.availableAmount);
-        AppendPhrase(part, availState);
-        AppendPhrase(out, part);
-    }
-    if (line.lostAmount >= 0) {
-        std::string part = std::to_string(line.lostAmount);
-        AppendPhrase(part, lostState);
-        AppendPhrase(out, part);
-    }
+    if (line.availableAmount >= 0)
+        AppendPhrase(out, counted(line.availableAmount, availState));
+    if (line.lostAmount >= 0)
+        AppendPhrase(out, counted(line.lostAmount, lostState));
     return out;
 }
 
