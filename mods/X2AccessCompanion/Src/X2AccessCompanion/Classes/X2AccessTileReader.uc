@@ -111,11 +111,12 @@ function CursorStep(int Cardinal)
 
 	// Land where the mouse would: the highest surface of the target column at or below the
 	// current floor level (LandingTile). Off a roof edge that is the ground, four tiles down;
-	// up a slope it is the next tile up. The height change is spoken, since a sighted player
-	// watches the cursor take it.
+	// up a slope it is the next tile up. The height change is spoken where a sighted player
+	// watches the cursor take it — which inside the fog is not everywhere (VerticalDrawn).
 	Target = LandingTile(Cursor, WorldData, Target.X, Target.Y, Cursor.m_iRequestedFloor);
 
-	NativeResult = HeightWord(CurZ, Target.Z);
+	if (VerticalDrawn(WorldData, Target))
+		NativeResult = HeightWord(CurZ, Target.Z);
 	SetCursorTile(Cursor, WorldData, Target);
 	AppendPart(NativeResult, DescribeIndoor(WorldData, Target, false));
 	AppendPart(NativeResult, DescribeTile(Target, false));
@@ -165,7 +166,8 @@ function CursorFloor(int Delta)
 
 	Target = LandingTile(Cursor, WorldData, CurX, CurY, Cursor.m_iRequestedFloor);
 	NativeResult = FloorWord(Cursor) $ ".";
-	AppendPart(NativeResult, HeightWord(CurZ, Target.Z));
+	if (VerticalDrawn(WorldData, Target))
+		AppendPart(NativeResult, HeightWord(CurZ, Target.Z));
 	SetCursorTile(Cursor, WorldData, Target);
 	AppendPart(NativeResult, DescribeIndoor(WorldData, Target, false));
 	AppendPart(NativeResult, DescribeTile(Target, false));
@@ -199,7 +201,8 @@ function CursorFloorPoll()
 	bMovePending = false;
 	Target = LandingTile(Cursor, WorldData, CurX, CurY, Cursor.m_iRequestedFloor);
 	NativeResult = FloorWord(Cursor) $ ".";
-	AppendPart(NativeResult, HeightWord(CurZ, Target.Z));
+	if (VerticalDrawn(WorldData, Target))
+		AppendPart(NativeResult, HeightWord(CurZ, Target.Z));
 	SetCursorTile(Cursor, WorldData, Target);
 	AppendPart(NativeResult, DescribeIndoor(WorldData, Target, false));
 	AppendPart(NativeResult, DescribeTile(Target, false));
@@ -964,21 +967,30 @@ private function string DescribeOffset(TTile Tile)
 	// Bose") said the same fact in different words — and on a recenter, the third time in one line.
 	if (SameTile(Tile, UnitState.TileLocation))
 		return "";
-	return OffsetWords(UnitState.TileLocation, Tile);
+	// The UP/DOWN leg is a terrain fact and takes the same gate the step's own height word takes:
+	// the unit's tile is known, so "2 up" states the cursor's absolute Z. The bearing itself is
+	// never gated — the player drives the cursor, so where they put it is theirs to know
+	// (WH40KRTAccess, rt-visual-parity). The gate lives HERE rather than at the two call sites
+	// so a third one cannot be added without it.
+	return OffsetWords(UnitState.TileLocation, Tile, !VerticalDrawn(`XWORLD, Tile));
 }
 
 // The compass words for one tile relative to another ("3 north, 2 east, 1 up"); empty when the
 // two are the same tile. Public and static because the object scanner speaks the same bearings
 // about the same world — sharing this keeps ONE calibration of NORTH_DX/EAST_DX (see the header),
 // so the two surfaces can never drift into disagreeing about which way north is.
-static function string OffsetWords(TTile FromTile, TTile ToTile)
+//
+// bOmitVertical drops the up/down leg only — the caller's answer to "does the game draw this
+// tile's elevation" (VerticalDrawn). It is a parameter rather than a second function for the same
+// reason the whole thing is shared: the vertical clause is composed in exactly one place.
+static function string OffsetWords(TTile FromTile, TTile ToTile, optional bool bOmitVertical)
 {
 	local int DX, DY, DZ, NDX, NDY, EDX, EDY, NorthAmt, EastAmt;
 	local string Result;
 
 	DX = ToTile.X - FromTile.X;
 	DY = ToTile.Y - FromTile.Y;
-	DZ = ToTile.Z - FromTile.Z;
+	DZ = bOmitVertical ? 0 : ToTile.Z - FromTile.Z;
 	if (DX == 0 && DY == 0 && DZ == 0)
 		return "";
 
@@ -1260,10 +1272,64 @@ private function TTile LandingTile(XCom3DCursor Cursor, XComWorldData WorldData,
 	return T;
 }
 
+// Does the GAME draw this tile's elevation? The fog gate for every vertical word this class
+// speaks — the step's height change and the up/down leg of an offset.
+//
+// A never-seen tile is painted FogColor (R=5,G=5,B=25,A=255) OPAQUE — measured on the live
+// XComFOWEffect, whose voxel grid is exactly one voxel per tile, and confirmed in pixels against
+// a screenshot (surfaces/tactical.md, the fog proof). Its geometry is invisible, so the height
+// our LandingTile reads out of the column is a fact the game shows nobody — except that the fog
+// has a deliberate hole in it, and the hole is the exact shape of this test.
+//
+// Firaxis added bTranslucentIgnoreFOW to PrimitiveComponent (Engine/PrimitiveComponent.uc:248,
+// marked FIRAXIS ADDITION) and set it on precisely the primitives that must stay visible over
+// unexplored ground: XComPathingPawn's destination puck, its circle, the melee puck, the
+// out-of-range puck and the path ribbon (:1721 .. :1918), plus XComMovementGridComponent:114,
+// the move-range border. So a sighted player who drops the puck on a never-seen tile DOES see
+// its elevation — the puck sits on the hidden surface and the ribbon climbs to it.
+//
+// The hole ends where the puck does. XComPathingPawn clamps its destination to the reachable
+// area, and the marker it draws at the CURSOR instead is controller-only (:1228 gates it on the
+// ISCONTROLLERACTIVE macro): on mouse and keyboard a cursor past the unit's reach is marked by
+// nothing at all. Hence the two conditions, which are the same pair CursorMoveTo already asks
+// before it will issue a move — can a unit STOP here, and is it priced by the reachable cache.
+// The pawn's own LastDestinationTile is NOT asked: it is rebuilt on the pawn's Tick, one frame
+// behind our push, so at step time it still answers about the previous tile (the same lag
+// DescribeIndoor documents for XComPawnIndoorOutdoorInfo).
+//
+// ⚠ The answer therefore depends on WHO is selected: the same fogged tile speaks its height for
+// a soldier who can reach it and goes quiet for one out of moves. That is what the screen does —
+// the border and the puck are drawn for the active unit or not at all — but it reads like a bug
+// in a speech ring, so a shape-count over a run will show the same tile both ways.
+private function bool VerticalDrawn(XComWorldData WorldData, TTile Tile)
+{
+	local XComGameState_Unit UnitState;
+	local XGUnit ActiveUnit;
+	local FOWTileStatus FOW;
+	local byte GameplayFlags;
+
+	if (WorldData == none)
+		return false;
+	WorldData.GetTileFOWValue(Tile, FOW, GameplayFlags);
+	if (FOW != eFOWTileStatus_NeverSeen)
+		return true;   // explored ground is drawn, tinted 50% grey — its shape included
+
+	UnitState = ActiveUnitState();
+	if (UnitState == none)
+		return false;
+	if (!WorldData.IsFloorTileAndValidDestination(Tile, UnitState))
+		return false;
+	ActiveUnit = ActiveUnitVisualizer(UnitState);
+	if (ActiveUnit == none || ActiveUnit.m_kReachableTilesCache == none)
+		return false;
+	return ActiveUnit.m_kReachableTilesCache.GetPathCostToTile(Tile) >= 0;
+}
+
 // The height change a step or a floor key made the cursor take, in tiles — "Up 1" for a stair,
 // "Down 4" off a roof onto the ground, "" for none. A sighted player watches the cursor drop; a
 // blind one hears it, and this is the whole cue that an edge was crossed now that the cursor
-// follows the ground instead of hanging over the drop.
+// follows the ground instead of hanging over the drop. ⛔ Every caller gates on VerticalDrawn:
+// inside the fog this cue is not always one the game gives.
 private static function string HeightWord(int FromZ, int ToZ)
 {
 	if (ToZ > FromZ)

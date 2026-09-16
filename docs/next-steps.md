@@ -14,6 +14,36 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**The fog gate on the cursor's vertical words and the `world.unexplored` ring** (2026-09-16,
+`X2AccessTileReader.VerticalDrawn` / `DescribeOffset` / the three `HeightWord` sites, and
+`X2AccessObjectScanner.AddFrontier` / `CAT_UNEXPLORED`; rules in `surfaces/tactical.md` under the
+tile cursor and the object scanner) — compiled clean, **never run**. Both were built off `SrcOrig`
+and a dead game; the map that motivated them is `Plot_CSH_Stronghold_Short_04`, a Chosen Stronghold
+whose fog boundary runs along a wall at X=37..38. What to listen for:
+
+1. Step the cursor into never-seen ground with a soldier who has moves left, onto a tile the puck
+   can reach: `Up 1` / `Down 4` MUST still be spoken, and the offset MUST still carry its `N up`.
+   That half is parity (the puck and the path ribbon are `bTranslucentIgnoreFOW`), and losing it
+   would mean `VerticalDrawn`'s reachable branch is answering false — check
+   `IsFloorTileAndValidDestination` first, since a never-seen tile is exactly where it is untested.
+2. The same step onto a never-seen tile the puck CANNOT reach: the line must be `Unexplored` plus a
+   bearing with NO vertical leg and NO height word. Before this change that read `Up 1. Unexplored.
+   6 south, 11 west, 1 up`.
+3. ⚠ Then re-do 1 with a soldier out of moves: the SAME tile must go quiet. That is correct — the
+   border and the puck are drawn for the active unit or not at all — but it is the single most
+   bug-looking consequence of the gate, so confirm it deliberately rather than meeting it by
+   surprise. A shape-count over the run will show the same tile both ways.
+4. `Ctrl+PageDown` to `Unexplored` on that map: one entry along the wall, roughly `Unexplored
+   space, 40-odd tiles across, 1 west`. Many small entries instead means `FRONTIER_MIN = 2` is too
+   low for XCOM's tile size, or the 8-way fill is being broken by something.
+5. ⚠ The MAP EDGE is the untested case. Never-seen tiles on the outermost ring of the grid are
+   frontier cells like any other the moment explored ground touches them, so a squad spawning near
+   the map border may hear an "opening" that is just the edge of the level volume. If it happens,
+   the fix is a `TileDataIsBorderTile*` test, not a radius.
+6. COST: `AddFrontier` does `NumX × NumY` `GetTileFOWValue` calls per rebuild (3,136 on that map,
+   ~6,400 on an 80×80). Unmeasured. `Ctrl+PageDown` through the whole ring builds it once; if a
+   press is audibly slow, that is where to look first.
+
 **Supply Extraction crates in the markers ring** (2026-09-16, `X2AccessObjectScanner.AddObjectiveMarkers`
 re-fetching each owner by ObjectID / `InteractiveMarkWords`; the `MissionIcon_` counter table in
 `objective_reader.cpp`; rules in `surfaces/tactical.md` under the object scanner and the objectives
@@ -885,3 +915,49 @@ a repeating announcement.
      ⚠ The steady-state claims are still UNMEASURED: on vanilla no `Derived` entry ever matched a
      subclass, so the scan-heavy path this reasoning is about was never actually taken. Only the
      resolver cost above has a number against it.
+13. **Rooms and exits** — RECON FIRST, no code until `docs/rooms-recon.md` reads clean. The
+   WH40KRTAccess `RoomMap` port (`rt-room-classifier`, `rt-exit-cycle-rework`), scoped 2026-09-16
+   off the SDK with the game down. What the survey already settled:
+   - **XCOM 2 has no tactical room concept.** Every `*Room*` class in the SDK is the Avenger
+     (`XComGameState_HeadquartersRoom`, `UIRoom`) or a doll-room artifact. Same starting position
+     as RT: rooms are mod-invented.
+   - **RT's law 1 ports onto a BETTER oracle, and its law 2 does not port at all.** Passability
+     still comes from the engine's own per-edge bit, never from geometry — but here that bit is
+     first-class: `XComWorldData.uc:405` (cpptext `TileStaticFlags`) bakes
+     `TileDataBlocksPathingXNeg/XPos/YNeg/YPos/ZNeg/ZPos` (1<<1..1<<6) and the matching
+     `BlocksVisibility` six (1<<7..1<<12) per tile, reachable from script via
+     `GetTileData(Tile, Data).StaticFlags`, with `IsAdjacentTileBlocked` (`:792`) as the direct
+     edge query. The companion reads NONE of this today. Because walls are explicit, a room is a
+     connected component under "no blocking bit between them" — a plain flood fill. RT's whole
+     clearance watershed (`src/Access.Core/Rooms/RoomSegmenter.cs`, `PersistCells`,
+     `MergeWideOpenings`, furniture-island bridging) solves a problem that does not exist here.
+   - ⚠ **The XCOM-specific over-segmentation problem, and the thing recon must settle.** Chest-high
+     cover is boundary geometry here: a sandbag line sets the same directional pathing bit a wall
+     does (you climb over it, `eTraversal_ClimbOver`), so flood-filling on pathing bits alone would
+     cut an open street into "rooms" at every sandbag. HYPOTHESIS, unmeasured: the VISIBILITY bits
+     are the discriminator — a full wall blocks sight, a sandbag does not — which is also the
+     sighted fact. Settle it by rastering a map and rendering the partition; the scripts exist
+     (`scan2.ps1` / `render.ps1`, written for the 2026-09-16 recon).
+     ⛔ The `TileStaticFlags` constants are C++-only, so they must be hand-transcribed into
+     UnrealScript with no `static_assert` net. `GetTileDebugString_StaticFlags` (`:823`) is the
+     live cross-check.
+   - **Exits get two things RT never had**: `TileData.TraversalStarts` (`:187`) lists the
+     traversals out of a tile, and `GetPathObjectFromTraversalToNeighbor` (`:806`) hands back the
+     ACTOR at the threshold — so a doorway names its door, a window is `eTraversal_BreakWindow`, a
+     ladder `eTraversal_ClimbLadder`. That is RT's "a doorway with a door cycles as the DOOR"
+     merge, done by the engine instead of a proximity probe.
+   - **`V` is the exits key** (player decision 2026-09-16): the game binds it to the Interact
+     ability (`AddInteractAbility` sets `DefaultKeyBinding = FXS_KEY_V`), so this DISPLACES a
+     vanilla binding rather than taking a free key — the first time the mod does that. ⛔ Read
+     `docs/input-map.md` on lenient modifier matching before claiming it: the vanilla action must
+     stay reachable, and a bare claim leaves it at `Ctrl+V` for free.
+   - ⛔ **Parity: a room map is a floor plan.** Build it over `HaveSeen`/`Seen` tiles only, and an
+     exit into the fog reads "leads to unexplored" (RT's own rule, `rt-visual-parity`). This binds
+     harder here than in RT — never-seen tiles are painted opaque, proven in
+     `surfaces/tactical.md`.
+   - ⛔ **We already have a coarse room notion and it is the game's own.**
+     `X2AccessTileReader.DescribeIndoor` resolves `XComFloorVolume` → `CachedBuildingVolume` and
+     speaks "Inside building, floor 2 of 3". A segmenter must AGREE with it or two surfaces will
+     answer one question differently — the shared-oracle rule.
+   - The per-room "{pct}% unexplored" half of `rt-unexplored-frontier` waits for this; the frontier
+     half shipped on its own as `world.unexplored` (live-run debt above).

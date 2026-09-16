@@ -4,7 +4,7 @@
 // thread, from the tick drain) and reads NativeResult back through reflection right after the call
 // returns. Nothing here runs on its own — no listeners, no timers, no polling.
 //
-// Eleven categories. Four carry a dedicated cycle key on the native side; the rest are reached
+// Twelve categories. Four carry a dedicated cycle key on the native side; the rest are reached
 // through the ring. Each keeps its own remembered position:
 //   markers               — the world-space things the game points the player AT. Three
 //                           contributors in one ring: the tutorial's required-action marker
@@ -45,11 +45,17 @@
 //                           WH40KRTAccess's J cycle (src/RTAccess/Exploration/CoverModel.cs),
 //                           where the same verb answers the same question. Like the connectors it
 //                           is local rather than map-wide, and its empty text names that scope.
+//   world.unexplored      — the FOG FRONTIER: where explored ground meets never-seen ground, one
+//                           entry per opening. The WH40KRTAccess FrontierModel port, and the only
+//                           category that names an ABSENCE rather than a thing. It is also the
+//                           only one that is map-wide in X and Y, because a fog edge is a
+//                           large-scale fact and a radius would truncate the very thing it names.
 //
-// The last two exist because they are where the gap is WIDEST: the game gives a sighted player a
-// countdown (a number on the HUD counter, a number on the loot waypoint) and a persistent glowing
-// mark on the ground, and gives a blind player nothing at all. Every entry in both is gated on the
-// game's own rule for drawing that mark, so the ring can never name something the screen does not.
+// The connectors and the cover ring exist because they are where the gap is WIDEST: the game gives
+// a sighted player a countdown (a number on the HUD counter, a number on the loot waypoint) and a
+// persistent glowing mark on the ground, and gives a blind player nothing at all. Every entry in
+// both is gated on the game's own rule for drawing that mark, so the ring can never name something
+// the screen does not.
 //
 // NO REGISTRY (and this is a deliberate departure from the RT scanner it ports). RT needs a ticked
 // WorldModel because Unity entities are mutable references; XCOM's ObjectID is a stable int over a
@@ -90,6 +96,9 @@ const KEY_CONNECTOR = -300000000;
 // key built from the nearest member would not. The 100-million gap below KEY_CONNECTOR is the
 // collision budget: the two ranges cannot meet until a map has 100 million tiles.
 const KEY_COVER = -400000000;
+// And again for the fog-frontier blobs, minus the lowest linear tile index in the blob, for the
+// same reason and with the same 100-million budget below KEY_COVER.
+const KEY_FRONTIER = -500000000;
 
 // Categories. Each has its own remembered position, so checking an enemy and then checking a
 // marker does not lose your place in either.
@@ -100,7 +109,8 @@ const KEY_COVER = -400000000;
 // renumbering at 3..9 is free — as removing CAT_EVAC was — and renumbering any of the mirrored
 // four is a two-file change or a silent wrong-ring bug. Change both halves or neither.
 // ⚠ CAT_COVER sits at the END rather than beside the other keyed rings precisely to keep that
-// free range contiguous: a new category appended after it would take 11 and shift nothing.
+// free range contiguous: a new category appended after it would take 11 and shift nothing — which
+// is exactly what CAT_UNEXPLORED did, native untouched.
 const CAT_MARKERS = 0;
 const CAT_ENEMIES = 1;
 const CAT_SQUAD = 2;
@@ -112,7 +122,8 @@ const CAT_INTERACT = 7;
 const CAT_TOWERS = 8;
 const CAT_CONNECTORS = 9;
 const CAT_COVER = 10;
-const CAT_COUNT = 11;       // how many are REAL — what the category ring wraps around
+const CAT_UNEXPLORED = 11;
+const CAT_COUNT = 12;       // how many are REAL — what the category ring wraps around
 const NUM_CATEGORIES = 16;  // headroom for the rest; a static array, so the slack costs nothing
 
 // Hazard types, in the order HazardWord/HazardClass/TileHasHazard agree on.
@@ -380,6 +391,9 @@ private function BuildCategory(int Category, TTile Origin, out array<AccessMarke
 	case CAT_COVER:
 		AddCover(Origin, Entries);
 		break;
+	case CAT_UNEXPLORED:
+		AddFrontier(Origin, Entries);
+		break;
 	}
 }
 
@@ -409,6 +423,10 @@ private function string EmptyText(int Category)
 	// Same rule, and it carries the FLOOR too: the sweep is one Z band around the origin, so a
 	// player standing in an open yard below a walled roof must not hear "this map has no cover".
 	case CAT_COVER: return "No cover nearby on this floor";
+	// Map-wide in X and Y, so unlike the two above it may honestly say "none" — but only for THIS
+	// level, which is the one scope this sweep does narrow. Said rather than left silent because
+	// "the whole floor is explored" is a real and useful answer.
+	case CAT_UNEXPLORED: return "Nothing unexplored on this floor";
 	}
 	return "Nothing here";
 }
@@ -429,6 +447,7 @@ private function string CategoryName(int Category)
 	case CAT_TOWERS: return "Towers";
 	case CAT_CONNECTORS: return "Level connectors";
 	case CAT_COVER: return "Cover";
+	case CAT_UNEXPLORED: return "Unexplored";
 	}
 	return "Category" @ string(Category);
 }
@@ -1656,6 +1675,208 @@ private function ClaimCoverCell(out array<int> Sig, int Side, int X, int Y, int 
 	if (Sig[Idx] != Mine)
 		return;
 	Sig[Idx] = 0;
+	Stack.AddItem(Idx);
+}
+
+
+// ---------------------------------------------------------------------------
+// Unexplored space (the fog frontier)
+// ---------------------------------------------------------------------------
+//
+// The WH40KRTAccess FrontierModel port (src/RTAccess/Exploration/FrontierModel.cs). A frontier
+// tile is a NEVER-SEEN tile touching explored ground; touching runs of them are one "opening", and
+// each opening is one entry. It is the answer to the failure that produced this category: on
+// Plot_CSH_Stronghold_Short_04 the fog boundary ran along a wall and EVERY other ring went silent
+// at once — no ramps, no cover on this floor, seven doors all behind the squad — because
+// everything past it was never-seen, while a sighted player was looking at the largest, hardest
+// edged shape on the screen. A ring that goes quiet exactly where the map stops being known is a
+// ring that fails when it is needed.
+//
+// PARITY. This is the strongest case in the scanner, not the weakest. The fog is not a subtlety a
+// sighted player has to infer: XComFOWEffect paints never-seen voxels FogColor (R=5,G=5,B=25) at
+// A=255 — flat, opaque, one voxel per tile — and a colour match against a screenshot of this map
+// found 4.1% of the frame within tolerance of it, as one contiguous hard-edged blob
+// (surfaces/tactical.md, the fog proof). Naming that shape delivers nothing from BEHIND it.
+//
+// ⛔ AND THAT IS ONLY TRUE BECAUSE NOT ONE QUESTION IS ASKED OF THE GROUND. No IsFloorTile, no
+// CanUnitsEnterTile, no cover, no height — a blob is defined by FOG STATE ALONE. RT's own
+// FrontierModel requires its cells to be WALKABLE, which is safe there (its navmesh is loaded
+// whole and the fog is an overlay on top of it) and would be a leak here: asking whether hidden
+// ground is standable is reading terrain through the fog, the exact thing
+// X2AccessTileReader.VerticalDrawn was written to stop. The consequence is accepted on purpose —
+// a blob may sit against a sealed wall and lead nowhere, which is precisely what a sighted player
+// cannot tell either.
+//
+// SCOPE is one Z LEVEL, the origin's, and map-wide in X and Y. Map-wide because a fog edge is a
+// large-scale fact — the one on that map ran forty tiles — and a 12-tile window like the
+// connectors' would have cut it into fragments and named none of them usefully. One level because
+// fog is per-tile in 3D and a player asks this question about the floor they are on; the empty
+// text says so.
+const FRONTIER_MIN = 2;    // tiles; a lone speck is noise, a one-door opening's ribbon is not
+const FRONTIER_MAX = 12;   // entries; a ring longer than this is a list, not a cue
+
+private function AddFrontier(TTile Origin, out array<AccessMarker> Entries)
+{
+	local XComWorldData WorldData;
+	local array<int> Fog, Front, Stack, Members;
+	local array<AccessMarker> Raw;
+	local AccessMarker M;
+	local TTile T, Best, MinT, MaxT;
+	local FOWTileStatus FOW;
+	local byte GameplayFlags;
+	local int W, H, X, Y, DX, DY, Idx, Start, Cell, i;
+	local int Lowest, Linear, BestDist, Dist, Span;
+
+	WorldData = `XWORLD;
+	if (WorldData == none)
+		return;
+	W = WorldData.NumX;
+	H = WorldData.NumY;
+	if (W <= 0 || H <= 0)
+		return;
+
+	T.Z = Origin.Z;
+	Fog.Length = W * H;    // growing a dynamic array zero-fills
+	Front.Length = W * H;
+
+	// Pass 1: the fog state of every column at this level, cached so pass 2 can look at the eight
+	// neighbours of every cell without paying eight more native calls for each.
+	for (Y = 0; Y < H; Y++)
+	{
+		T.Y = Y;
+		for (X = 0; X < W; X++)
+		{
+			T.X = X;
+			WorldData.GetTileFOWValue(T, FOW, GameplayFlags);
+			if (FOW == eFOWTileStatus_NeverSeen)
+				Fog[Y * W + X] = 1;
+		}
+	}
+
+	// Pass 2: a frontier cell is fogged and touches a cell that is not. Eight-way, as RT's is —
+	// a diagonal seam is still a place the fog gives way, and treating it as a wall would split
+	// one opening in two. Sealed pockets fall out by construction: fog with no explored neighbour
+	// is never a frontier, so the far side of the map is not listed as an "opening" the player
+	// could walk to.
+	for (Y = 0; Y < H; Y++)
+	{
+		for (X = 0; X < W; X++)
+		{
+			Idx = Y * W + X;
+			if (Fog[Idx] == 0)
+				continue;
+			for (DY = -1; DY <= 1 && Front[Idx] == 0; DY++)
+			{
+				for (DX = -1; DX <= 1; DX++)
+				{
+					if (X + DX < 0 || Y + DY < 0 || X + DX >= W || Y + DY >= H)
+						continue;
+					if (Fog[(Y + DY) * W + (X + DX)] == 0)
+					{
+						Front[Idx] = 1;
+						break;
+					}
+				}
+			}
+		}
+	}
+
+	// Pass 3: flood-fill touching frontier cells into openings, the way AddCover fills cover
+	// clusters — Front doubles as the visited mask, a claimed cell is zeroed.
+	for (Start = 0; Start < Front.Length; Start++)
+	{
+		if (Front[Start] == 0)
+			continue;
+
+		Members.Length = 0;
+		Stack.Length = 0;
+		Front[Start] = 0;
+		Stack.AddItem(Start);
+		while (Stack.Length > 0)
+		{
+			Cell = Stack[Stack.Length - 1];
+			Stack.Remove(Stack.Length - 1, 1);
+			Members.AddItem(Cell);
+			for (DY = -1; DY <= 1; DY++)
+				for (DX = -1; DX <= 1; DX++)
+					ClaimFrontierCell(Front, W, H, (Cell % W) + DX, (Cell / W) + DY, Stack);
+		}
+
+		if (Members.Length < FRONTIER_MIN)
+			continue;
+
+		// The KEY is the lowest linear tile index in the opening and the spoken TILE is the member
+		// nearest the origin — the same two answers to two different questions AddCover spells
+		// out: canonical identity so the selection survives a rebuild, and the tile you would
+		// actually walk to, which is the one `/` plants on.
+		Lowest = MaxInt;
+		BestDist = MaxInt;
+		MinT.X = W;
+		MinT.Y = H;
+		MaxT.X = -1;
+		MaxT.Y = -1;
+		for (i = 0; i < Members.Length; i++)
+		{
+			T.X = Members[i] % W;
+			T.Y = Members[i] / W;
+
+			Linear = (T.Z * H + T.Y) * W + T.X;
+			if (Linear < Lowest)
+				Lowest = Linear;
+			Dist = TileDistance(Origin, T);
+			if (Dist < BestDist)
+			{
+				BestDist = Dist;
+				Best = T;
+			}
+			if (T.X < MinT.X)
+				MinT.X = T.X;
+			if (T.Y < MinT.Y)
+				MinT.Y = T.Y;
+			if (T.X > MaxT.X)
+				MaxT.X = T.X;
+			if (T.Y > MaxT.Y)
+				MaxT.Y = T.Y;
+		}
+
+		// The bounding-box extent, not the cell count — the same measure AddHazards speaks about
+		// the same kind of shape. An opening's count and its width are the same number only while
+		// it is a one-cell ribbon, and a blob that wraps around the squad would report a count
+		// that means nothing a player can picture.
+		Span = Max(MaxT.X - MinT.X, MaxT.Y - MinT.Y) + 1;
+
+		M.Key = KEY_FRONTIER - Lowest;
+		M.Tile = Best;
+		M.Label = "Unexplored space";
+		M.Detail = (Span > 1) ? (string(Span) @ "tiles across") : "";
+		// Somewhere you WALK to, so the reach clause earns its place — and it is a drawn fact
+		// even here: XComMovementGridComponent carries bTranslucentIgnoreFOW, so the move-range
+		// border is one of the few things the fog does not cover (X2AccessTileReader.VerticalDrawn
+		// has the full list). "Can I reach the edge of the dark this turn" is exactly the question
+		// a player looking at that border is answering.
+		M.bIsDestination = true;
+		InsertByDistance(Origin, M, Raw);
+	}
+
+	// Cap LAST, over the already-distance-sorted list, so the openings that survive are the
+	// nearest ones rather than whichever the scan reached first — as the cover ring does.
+	for (i = 0; i < Raw.Length && i < FRONTIER_MAX; i++)
+		Entries.AddItem(Raw[i]);
+}
+
+// Claim a neighbouring frontier cell into the current opening. No signature to match, unlike the
+// cover fill: a frontier cell has no kind, only a position.
+private function ClaimFrontierCell(out array<int> Front, int W, int H, int X, int Y,
+	out array<int> Stack)
+{
+	local int Idx;
+
+	if (X < 0 || Y < 0 || X >= W || Y >= H)
+		return;
+	Idx = Y * W + X;
+	if (Front[Idx] == 0)
+		return;
+	Front[Idx] = 0;
 	Stack.AddItem(Idx);
 }
 

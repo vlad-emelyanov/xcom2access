@@ -58,7 +58,8 @@ focus.
   is a separate binding and plays no part. `X2AccessTileReader.LandingTile` transcribes that
   rule per column (highest floor tile whose band is at or below the level, else the lowest
   above, else hang), every step and floor key lands through it, and the step speaks the height
-  it took (`HeightWord`, "Down 4" off a roof) because a sighted player watches the cursor drop.
+  it took (`HeightWord`, "Down 4" off a roof) wherever a sighted player watches the cursor drop —
+  which inside the fog is not everywhere (`VerticalDrawn`, below).
   The previous design pinned the level to the landed tile and stepped with a one-tile-down
   search, so a step off a roof hung in the air, a step back under it hit the wall, and a
   one-tile rise was never found — a sniper on a roof could not point at the ground without a
@@ -92,6 +93,46 @@ focus.
   - ⚠ Targeting mode's aim cursor (`X2AccessTacticalReader.ResolveAimFloor`) still steps with
     the old one-tile search; whether the level means anything to a targeting method is the
     open question in `docs/next-steps.md`.
+- ⛔ **A NEVER-SEEN TILE IS OPAQUE ON SCREEN, and the cursor's VERTICAL words are the one part of
+  its readout that has to be gated for it (`X2AccessTileReader.VerticalDrawn`).** The fog is not a
+  tint over visible terrain: `XComFOWEffect` paints never-seen voxels `FogColor` (R=5, G=5, B=25)
+  at **A=255**, and `HaveSeen` at `HaveSeenTintColor` (128,128,128). Measured on the live instance
+  for `Plot_CSH_Stronghold_Short_04` (2026-09-16): `VoxelSizeUVW` = 1/56, 1/56, 1/9 against a
+  56×56×9 `XComWorldData` — exactly one voxel per tile — `LevelVolumeDimensions` the reciprocal of
+  the map's world extent, `bHiding` and `bShowFOW` both true. Confirmed in pixels: 4.1% of a
+  screenshot fell within ±14 of that exact colour as one contiguous hard-edged blob, and the blob
+  halved and dispersed (4.4% → 2.2%) when only the floor cut changed, which a solid object cannot
+  do. So the three-state readout above is a faithful mirror of the shader, not a parity loss, and
+  "un-gate the static layer" is a REFUSED idea, not a queued one.
+  - The hole in the fog, and it is deliberate: Firaxis added `bTranslucentIgnoreFOW` to
+    `PrimitiveComponent:248` (marked `//FIRAXIS ADDITION`) and set it on `XComPathingPawn`'s
+    destination puck, circle, melee puck, out-of-range puck and path ribbon (`:1721`..`:1918`) and
+    on `XComMovementGridComponent:114`, the move-range border. **A sighted player who puts the
+    puck on a never-seen tile sees its elevation** — the puck sits on the hidden surface and the
+    ribbon climbs to it. `LandingTile` reading a true height through fog is therefore parity
+    THERE, and only there.
+  - Where the hole ends: the pawn clamps its destination to the reachable area, and the marker it
+    draws at the CURSOR instead is **controller-only** (`XComPathingPawn:1228` gates it on
+    `` `ISCONTROLLERACTIVE ``). On mouse and keyboard a cursor past the unit's reach is marked by
+    nothing at all. So `VerticalDrawn` is a conjunction — *not never-seen*, **or** *standable and
+    priced by the reachable cache* — the same pair `CursorMoveTo` already asks before it will
+    issue a move. It gates `HeightWord` at all three call sites and the up/down leg of
+    `OffsetWords` (via `DescribeOffset`, where the gate lives so a third caller cannot skip it).
+    Before this the scan of that map was full of `"Up 1. Unexplored."` — the elevation of tiles
+    the game shows nobody.
+  - ⛔ Gate the WORDS, never the LANDING. `LandingTile` mirrors the game's own cursor snap and
+    four consumers depend on the cursor agreeing with it (the bullet above); a cursor that refused
+    to follow hidden ground would break the move key, not protect anything.
+  - ⚠ The answer depends on WHO is selected — the same fogged tile speaks its height for a
+    soldier who can reach it and goes quiet for one out of moves, because the puck and the border
+    are drawn for the active unit or not at all. Correct, and it will look like a bug in a speech
+    ring: a shape-count over a run will show the same tile both ways.
+  - NOT gated, and each for a reason the game states: the BEARING (`3 north, 2 east`) — the player
+    drives the cursor, so where they put it is theirs to know (WH40KRTAccess, `rt-visual-parity`);
+    the floor LEVEL spoken by `FloorWord`/`AdoptFloor` — that is the player's own camera band, the
+    wheel's readout; and the object scanner's MARKER offsets, because objective flags are drawn
+    through fog by the game's own exception (`UIUnitFlag:1568`, `UISimpleFlag:387` — a flag is
+    screen-projected, so its height is on screen with it).
 - **Inside / outside is the game's floor-volume rule, asked synchronously
   (`X2AccessTileReader.DescribeIndoor`).** `XComPawnIndoorOutdoorInfo` defines inside as
   "in an `XComFloorVolume`" — a building volume alone is outside, a nested
@@ -192,13 +233,13 @@ focus.
 
 ## Object scanner
 
-The RT `Scanner.cs` port, a PULL surface next to the tile cursor's push. ELEVEN
+The RT `Scanner.cs` port, a PULL surface next to the tile cursor's push. TWELVE
 categories: `markers` (tutorial required-action marker + objective-carrying objects
 + the evac zone — one group, because a waypoint, an objective glint and a
 destination are the same thing to a player working out where to go),
 `units.enemies`, `units.squad`, `ground.loot`, `ground.reinforcements`,
 `units.civilians`, `hazards`, `objects.interact`, `objects.towers`,
-`world.connectors`, `ground.cover`. Each keeps its OWN remembered position; the
+`world.connectors`, `ground.cover`, `world.unexplored`. Each keeps its OWN remembered position; the
 `CAT_*` ids are the one thing the two halves share as a NUMBER rather than a name.
 The ring is what makes a further category cost one `case` label instead of a key.
 
@@ -213,7 +254,37 @@ prev-soldier the Shift swallow would otherwise cost.
 ⛔ **Four `CAT_*` ids are mirrored in native, not three** — 0, 1, 2 and **10**
 (`kCatCover`). `CAT_COVER` sits at the END of the enum rather than beside its keyed
 siblings precisely so the free-to-renumber range stays contiguous at 3..9; a new
-category appended after it takes 11 and shifts nothing.
+category appended after it takes 11 and shifts nothing — which is what
+`CAT_UNEXPLORED` did (2026-09-16), companion-only, native untouched.
+
+- **`world.unexplored` names the FOG FRONTIER** — never-seen tiles touching explored
+  ground, flood-filled 8-way into one entry per opening ("Unexplored space, 43 tiles
+  across, 2 tiles, 1 west, 1 action"). The WH40KRTAccess `FrontierModel` port
+  (`src/RTAccess/Exploration/FrontierModel.cs`), and the only category that names an
+  ABSENCE. It exists because of a measured failure: on `Plot_CSH_Stronghold_Short_04`
+  the fog boundary ran along a wall and EVERY other ring went silent at once — no
+  ramps, no cover on this floor, seven doors all behind the squad — while a sighted
+  player was looking at the largest, hardest-edged shape on the screen. Parity is the
+  strongest in the scanner, not the weakest: the opaque fog proof is in the tile-cursor
+  section above.
+  - ⛔ **NOT ONE QUESTION IS ASKED OF THE GROUND.** No `IsFloorTile`, no
+    `CanUnitsEnterTile`, no cover, no height — a blob is defined by FOG STATE ALONE.
+    RT's own `FrontierModel` requires its cells to be WALKABLE, which is safe there (its
+    navmesh loads whole and the fog is an overlay) and would be a leak here: asking
+    whether hidden ground is standable is reading terrain through the fog, exactly what
+    `VerticalDrawn` exists to stop. The consequence is accepted — a blob may sit against
+    a sealed wall and lead nowhere, which is what a sighted player cannot tell either.
+    The reach clause is the one exception and it is drawn: `XComMovementGridComponent`
+    carries `bTranslucentIgnoreFOW`.
+  - Scope is ONE Z LEVEL, the origin's, and **map-wide in X and Y** — the only category
+    that is. A fog edge is a large-scale fact (the one on that map ran forty tiles) and a
+    12-tile window like the connectors' would have cut it into fragments and named none
+    usefully. The empty text names the level scope, as the connectors' and cover's name
+    theirs.
+  - Key is `KEY_FRONTIER` minus the LOWEST linear tile index in the blob, spoken tile is
+    the member NEAREST the origin — the two different answers `AddCover` spells out.
+    Extent is the bounding box (`AddHazards`' measure for the same kind of shape), not the
+    cell count, which means nothing a player can picture once a blob wraps around them.
 
 - **NO REGISTRY.** RT needs a ticked `WorldModel` because Unity entities are mutable
   references; XCOM's `ObjectID` is a stable int over a versioned history, so the list
