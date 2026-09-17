@@ -1001,13 +1001,26 @@ a repeating announcement.
    - ⚠ `IsAdjacentTileBlocked` is DIRECTED, not an edge predicate: it folds in the destination
      tile's own occupancy. Correct behaviour, and the resulting asymmetry is a TELL that marks
      obstacle tiles. Barriers on EDGES are recorded symmetrically on both sides.
-   - ❌ **Still owed: §8.6** (the predicate, over three maps of different character) and **§8.7**
-     (agree with `DescribeIndoor`). ✅ **The INSTRUMENT is built and compiles** (2026-09-16,
-     `X2AccessTileProbe.ProbeRooms` / `ProbeRoomRow`, plus the visibility character `ProbeRow` was
-     missing): §8.6's "judge by eye" is replaced by a scored partition — room count, size median,
-     largest, tiny-room count and the wall/open edge census, per predicate, in one line. **It needs
-     no map load and no special plot: any live mission is a sample.** So §8.6 is now three presses
-     on three missions rather than a project.
+   - ⚠️ **§8.6 is 1 of 3 maps** (run 2026-09-17, ADVENT city centre — the OPEN URBAN sample; recon
+     §8.6 run 1). ✅ The instrument works end to end. ⛔ **The result is that the predicate contest
+     is EMPTY**: ten positions × three predicates produced bit-identical room and wall counts, and
+     over 864 sampled edges every blocked edge carried high cover and none was climbable, because
+     `IsAdjacentTileBlocked` has already excluded the vaultables (a sandbag reads `.LO-`, not `B`).
+     §3's founding fear — the sandbag cutting the street into rooms — is measured false here.
+     **Map 2 falsifies this cheaply: one `BL` or `BO`/`BN` edge and the gate earns its place; none
+     and the predicate is just `IsAdjacentTileBlocked`.**
+   - ⛔ **The real blocker found by run 1 is DOORWAYS, not the predicate.** The flood returned ONE
+     room at every position: boundaries on that plot are obstacle TILES (which standability already
+     stops at), and a doorway between two standable tiles is an open edge to all three candidates —
+     it has to be, or nobody could walk through. So every §3 candidate merges a building interior
+     with the street. **`AddExits` is therefore an INGREDIENT of rooms, not the fallback for them**,
+     and the boundary set to run map 2 against is (obstacle tiles) ∪ (wall edges) ∪ (door threshold
+     edges from `GetPathObjectFromTraversalToNeighbor`).
+   - ⚠ Unexplained from run 1: 4 edges read `.--V` — walkable, opaque, no cover either side. Nothing
+     in recon §2 predicts one. Harmless to the flood; it would make predicate (b) call a walkable
+     edge a wall if it ever appeared in quantity.
+   - ❌ **Still owed: maps 2 and 3 for §8.6** (interior-heavy, open wilderness) and **§8.7**
+     (agree with `DescribeIndoor`).
    - ⛔ §8.7 should become the SCORING function rather than a checkbox: a room must never straddle
      an `XComFloorVolume` boundary and every door edge must fall on a room boundary. That is
      measurable, and it is the same rule that keeps the segmenter agreeing with `DescribeIndoor`
@@ -1018,8 +1031,10 @@ a repeating announcement.
      constants agree on everything visible and still have no `static_assert` net.
    - `V` is the exits key (player decision 2026-09-16) and is the first vanilla binding the mod
      DISPLACES — §6, and read `docs/input-map.md` first.
-   - Fallback if the partition renders badly at §8.6: **ship EXITS without ROOMS**. Most of the
-     value is there and it needs no partition at all (§9).
+   - ~~Fallback if the partition renders badly at §8.6: ship EXITS without ROOMS.~~ **Taken
+     2026-09-16, and run 1 of §8.6 then INVERTED the relationship**: exits is not the consolation
+     prize for a partition that fails, it is the per-edge door query the partition needs to work at
+     all (§9, recon §8.6 run 1). There is no fallback left — rooms now depends on exits.
    - The per-room "{pct}% unexplored" half of `rt-unexplored-frontier` waits for this; the frontier
      half shipped on its own as `world.unexplored` — and was **heard working live 2026-09-16**
      (live-run debt above).

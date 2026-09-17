@@ -333,7 +333,7 @@ ever seen — one question per call, and where a line must carry both an oracle 
 | 8.3 | Is `IsAdjacentTileBlocked` a symmetric edge predicate? | ⚠️ **Directed, not symmetric** — and that is correct, not a trap (§2.3, §2.3.1). |
 | 8.4 | What is in `TraversalStarts`? | ✅ **Live**: 13–16 neighbour tiles per tile, at X/Y offsets −1..+1, with duplicates where one pair carries two traversal types. |
 | 8.5 | Does our `TileStaticFlags` transcription match the engine's? | ✅ on every bit visible before the cap — cover word exact on 4 tiles, pathing faces agree. ⚠ PARTIAL, see below. |
-| 8.6 | Render the predicates over whole maps | ❌ **Outstanding.** |
+| 8.6 | Render the predicates over whole maps | ⚠️ **1 of 3 maps.** The three predicates are BIT-IDENTICAL on every edge of the first one — see below. |
 | 8.7 | Does a room map agree with `DescribeIndoor`? | ❌ **Outstanding.** |
 
 **On 8.4.** `TraversalStarts` is an adjacency LIST, and a useful one: an open floor tile carried 16
@@ -416,6 +416,74 @@ So `B--V` is a wall, `BLO-` / `BLN-` is a vaultable obstacle, `..--` is open flo
 `B--V` is what a room boundary is made of. A `!` pair marks an obstacle tile between them. The
 fourth character is what makes predicate (b) readable off a cross-section at all.
 
+### 8.6, run 1 of 3 — 2026-09-17, ADVENT city centre (VIP extraction)
+
+Map 1 of the three §3 demands, and it is the **open urban** one: a city-centre plaza, squad outdoors,
+large ADVENT shells around it. Method: cursor at `(34,20,5)`; a Z sweep of the whole column found
+`Z=5` the only floor with geometry (`Z=1` had 304 cells and ZERO wall edges, everything else under
+10 cells); then a 6×6 coarse grid at radius 12 to find the map's extent (X 8..85, Y 8..68), ten
+positions × three predicates, and 36 `ProbeRow` cross-sections — **864 edges**.
+
+⛔ **THE PREDICATE CONTEST IS EMPTY, and that is this run's result.** Ten positions, three
+predicates, and not one edge differs anywhere:
+
+```
+x=8  y=24 : p0 rooms=1 walls=39   p1 rooms=1 walls=39   p2 rooms=1 walls=39
+x=24 y=24 : p0 rooms=3 walls=48   p1 rooms=3 walls=48   p2 rooms=3 walls=48
+x=56 y=56 : p0 rooms=2 walls=5    p1 rooms=2 walls=5    p2 rooms=2 walls=5
+                                    ... ten of these, all identical
+```
+
+The distribution says why. Over 864 sampled edges:
+
+| pattern | n | what it is |
+|---|---|---|
+| `.---` | 629 | open floor |
+| `..` | 132 | out of range |
+| `.LN-` `.LO-` `.LOV` `.L--` `.LNV` | **53** | **low cover and NOT blocked** — sandbags, planters, benches |
+| `!H--` `!H-V` `!---` `!--V` | 37 | asymmetric — edges into obstacle TILES (§2.3.1) |
+| `BH-V` `BH--` | **9** | blocked, high cover, non-climbable — real walls |
+| `.--V` | 4 | walkable but opaque; see below |
+
+**Every `B` edge in the sample carries `H`, and not one carries `O` or `N`.** There is no blocked
+edge with low cover and no blocked edge that can be climbed — so the clause that distinguishes the
+three predicates never has anything to reject. `IsAdjacentTileBlocked` has *already* excluded the
+vaultables, because a sandbag you can vault is not blocked: it reads `.LO-`, not `B`.
+
+⛔ So **§3's founding fear is measured FALSE here** — the naive "blocked" predicate does not cut the
+street into a dozen rooms, because the street furniture never reaches the predicate at all. The
+three gating clauses were designed against a population that does not exist. §3 must not be read as
+settled until maps 2 and 3 agree, but the prediction is now sharp and cheap to falsify: **if map 2
+shows a single `BL` or `BO`/`BN` edge, the gate earns its place; if it does not, the gate is dead
+code and the predicate is just `IsAdjacentTileBlocked`.**
+
+Two smaller readings from the same run:
+
+- ✅ **§8.3 confirmed live and confirmed HARMLESS.** 37 of 864 edges answer differently forward and
+  reverse — `(31,30,5)` reads `0/1!` on all four cardinals, the signature of a tile nothing can
+  enter. Every asymmetric edge in the sample was an edge into a non-standable tile, which the flood
+  refuses anyway on `IsFloorTileAndValidDestination`. The directedness is real and it does not leak.
+- ⚠ **`.--V` exists**: 4 edges walkable but opaque, with no cover either way. Nothing in §2 predicts
+  an edge that blocks sight without blocking movement or granting cover. Unexplained; harmless to
+  the flood, fatal to predicate (b) if it ever appeared in quantity, since (b) would call it a wall
+  you can walk through.
+
+**The flood found ONE room at every position on the map.** On a plaza that is the right answer, and
+`rooms=3` / `rooms=2` at two positions were 2-cell slivers pinched off by the box edge, not rooms.
+But the raster shows the mechanism, and it is not the predicate's doing: room boundaries on this
+plot are **obstacle TILE regions**, not blocked edges, and the flood already stops at those through
+standability. Only 9 of 864 edges were walls at all.
+
+⛔ **WHICH MAKES DOORWAYS THE REAL QUESTION, not the predicate.** A doorway between two standable
+tiles is an OPEN edge to all three predicates — it has to be, or nobody could walk through it — so a
+flood over wall edges alone puts a building's interior and the street outside it in the same room,
+however the predicate is written. Every candidate in §3 shares this blindness. The per-edge
+threshold query `GetPathObjectFromTraversalToNeighbor` (§2.4) is what sees a doorway, and
+`world.exits` already runs it over a radius and gets answers (§9, and the run that read eight
+ladders). **So `AddExits` is not the FALLBACK for rooms that §9 called it — it is an INGREDIENT of
+rooms**, and the boundary set the segmenter needs is (obstacle tiles) ∪ (wall edges) ∪ (door
+threshold edges). That union is what map 2 should be run against.
+
 ## 9. What could sink this
 
 - ~~**ClimbOver dead**~~ — retired 2026-09-16, §8.1 answered it. The fallback below stands on its
@@ -446,6 +514,12 @@ fourth character is what makes predicate (b) readable off a cross-section at all
     evidence FOR the partition rather than against it: a door 43 tiles away is not "the way out of
     this room", and only a partition knows the difference. Cost is not the obstacle — the sweep
     measured indistinguishable from the cheapest category in the scanner (`next-steps.md`).
+  - ⛔ **AND THEN THE DEPENDENCY REVERSED, 2026-09-17** (§8.6 run 1). This section had exits as the
+    consolation prize for a partition that fails. It is the opposite: every §3 predicate is blind to
+    a doorway — a doorway between two standable tiles MUST be an open edge or nobody could walk
+    through it — so a wall-edge flood merges a building's interior with the street no matter which
+    predicate wins. The per-edge threshold query this ring is built on is the only thing that sees a
+    door. **Rooms now depends on exits, and there is no fallback left to take.**
 - **Cost.** A per-level partition per keypress on an 80×80×12 map, on top of the frontier sweep.
 - **Procedural parcels.** XCOM 2 assembles maps from parcels at runtime; a "room" that straddles a
   parcel seam may be shaped in ways a hand-authored level never would be. Unknown until §8.6.
