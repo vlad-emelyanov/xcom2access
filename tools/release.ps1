@@ -333,6 +333,16 @@ try {
         Copy-Item $src $StageDir
     }
 
+    # The install check ships at the root beside the README it complements: it verifies that the
+    # pieces above landed, names what is missing, and enables the companion and the Highlander in
+    # the user config the way the launcher does. A tester whose mod "does not work" runs it before
+    # sending logs — the first field report was exactly the companion silently not loading.
+    foreach ($tool in 'X2Access-Check.ps1', 'X2Access-Check.cmd') {
+        $src = Join-Path $SrcDir "tools/dist/$tool"
+        if (-not (Test-Path $src)) { throw "No tools/dist/$tool in $SrcDir; refusing to package a build without the install check." }
+        Copy-Item $src $StageDir
+    }
+
     $zip = Join-Path $OutDir "X2Access-dev-$shaShort.zip"
     if (Test-Path $zip) { Remove-Item $zip -Force }
     Write-Step "Packing $zip"
@@ -399,14 +409,21 @@ holding ``Binaries`` and ``XComGame`` (under ``steamapps\common\XCOM 2``). It co
 
 ``````
 README.md, LICENSE                  (at the root — the README lists the keys)
+X2Access-Check.cmd, .ps1            (at the root — the install check, see below)
 Binaries/Win64/scripts/             X2Access.asi, X2Access.pdb
 XComGame/Mods/X2AccessCompanion/    the companion mod (.XComMod, Config, Localization, Script)
 ``````
 
 Both halves must land. The ASI reads screens; the companion supplies the words for combat and for
 every screen whose text the game keeps only in Flash — one without the other is a mod that goes
-quiet in places, not a mod that fails. Then, in the game's launcher (or the Alternative Mod
-Launcher), enable **X2AccessCompanion** and the **Community Highlander**.
+quiet in places, not a mod that fails.
+
+Then, with the game closed, run ``X2Access-Check.cmd`` from the game folder. It checks that every
+piece above is in place, names anything missing and how to fix it, and enables
+**X2AccessCompanion** and the **Community Highlander** in the game's mod settings the way the
+launcher does. Its output is plain text, one finding per line, each starting with OK, FIXED,
+PROBLEM or NOTE. If you launch through the Alternative Mod Launcher, tick both mods there as
+well: it rewrites that list from its own selection on every launch.
 
 Launch through Steam or the mod launcher as usual. If you start ``XCom2.exe`` directly instead, add
 ``-review`` to its arguments: the launchers pass it for you, and without it the game boots its
@@ -419,7 +436,9 @@ notice, and screens that already work may break as neighbouring ones land. **Bac
 
 ### Reporting
 
-Say what you were doing, what was spoken, and what you expected instead. Quote the commit above.
+Say what you were doing, what was spoken, and what you expected instead. Quote the commit above,
+and paste the output of ``X2Access-Check.cmd`` — most "it does not work" reports so far were the
+companion mod not loading, and that output settles it in one line.
 
 Attach the mod's own log, ``Binaries\Win64\scripts\X2Access.log`` — the previous three sessions are
 kept beside it as ``X2Access.1.log`` to ``X2Access.3.log``, so a relaunch does not destroy the

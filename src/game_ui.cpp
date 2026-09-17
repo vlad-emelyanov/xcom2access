@@ -2663,6 +2663,44 @@ bool ObjectStillNamedRaw(void* obj, const char* objName)
 
 } // namespace
 
+namespace {
+
+// The companion's whole script package, by the object that IS it: the UPackage named after the
+// mod, class "Package" so a stray object sharing the name cannot answer for it. Every companion
+// class lives in this one package, so its absence answers for all of them at once.
+bool CompanionPackagePresentRaw()
+{
+    void* pkg = ScanForObjectNamedRaw("X2AccessCompanion");
+    if (!pkg)
+        return false;
+    char cls[64];
+    return ObjClassNameAnsiRaw(pkg, cls, sizeof(cls)) && strcmp(cls, "Package") == 0;
+}
+
+// How long a "package not loaded" answer stands before it is re-checked. The retry exists so a
+// wrong answer cannot stick forever, not because the package is expected to appear.
+constexpr uint64_t kCompanionAbsentRetryMs = 30000;
+uint64_t sCompanionAbsentUntilMs = 0;
+uint64_t sCompanionNotYetLoggedUntilMs = 0;
+
+// ⛔ An absence is only an ANSWER once the package has had its chance to load, and that is
+// later than it looks: DLC enumeration logs its "Checking DLC installation" lines four seconds
+// in, but the companion's script package is not in GObjects at ten seconds, and IS by the time
+// the main menu attaches. The first live run of the negative cache proved it the expensive way:
+// a healthy install was declared "NOT LOADED" during loading, and every companion lookup then
+// answered null for 30 s — until twenty seconds AFTER the main menu, with the load-menu save
+// names silent the whole while. So nothing is cached as absent before the settle moment, which
+// is `CompanionPackageLoaded()` — the navigator asks it once, at the first main-menu attach.
+bool sCompanionSettled = false;
+
+} // namespace
+
+bool CompanionPackageLoaded()
+{
+    sCompanionSettled = true;
+    return CompanionPackagePresentRaw();
+}
+
 void* FindCompanionCDO(const char* className)
 {
     static std::unordered_map<std::string, void*> sCache;
@@ -2678,20 +2716,51 @@ void* FindCompanionCDO(const char* className)
     }
 
     uint64_t now = GetTickCount64();
+    // The package is known absent: no scan and no log until the retry comes round. Before this
+    // gate existed a session without the companion paid a full GObjects scan and a WARN line
+    // once a second for as long as any surface polled — the tester's first log was one warning
+    // per second for two minutes, and the one line that mattered was buried in them.
+    if (now < sCompanionAbsentUntilMs)
+        return nullptr;
     if (now - sLastScanMs < 1000)
         return nullptr;
     sLastScanMs = now;
 
     void* found = ScanForObjectNamedRaw(expected.c_str());
-    // A missing companion CDO means the script mod is not loaded — every feature riding this
-    // call is silently dead, so say it loudly (once a second at worst, and only while used).
-    if (found)
+    if (found) {
         LOG_INFO("GameUI: companion CDO %s at 0x%p", expected.c_str(), found);
-    else
-        LOG_WARN("GameUI: companion CDO %s NOT FOUND (companion mod not loaded?)",
+        sCache[expected] = found;
+        return found;
+    }
+    // Before the settle moment a miss means nothing yet — the package loads with the shell —
+    // so keep scanning once a second, say so at most once per interval, and cache nothing.
+    if (!sCompanionSettled) {
+        if (now >= sCompanionNotYetLoggedUntilMs) {
+            sCompanionNotYetLoggedUntilMs = now + kCompanionAbsentRetryMs;
+            LOG_INFO("GameUI: companion CDO %s not found yet — mod packages load with the "
+                     "shell, so this is expected before the main menu",
+                expected.c_str());
+        }
+        return nullptr;
+    }
+    // After it, a miss is one of two things, and the log has to say which: the whole package
+    // is not loaded (an install problem — ActiveMods, ModRootDirs, the Mods folder), or the
+    // package is there and this one class is not (a companion build older than the ASI). One
+    // more scan tells them apart; the first answer is cached for the retry interval so it is
+    // said ONCE.
+    if (!CompanionPackagePresentRaw()) {
+        sCompanionAbsentUntilMs = now + kCompanionAbsentRetryMs;
+        LOG_WARN("GameUI: companion mod NOT LOADED — the X2AccessCompanion package is not in "
+                 "GObjects, so %s and every other companion class is missing (first asked for by "
+                 "%s); next check in %llu s",
+            expected.c_str(), className,
+            static_cast<unsigned long long>(kCompanionAbsentRetryMs / 1000));
+    } else {
+        LOG_WARN("GameUI: companion CDO %s NOT FOUND although the companion package is loaded "
+                 "(companion build older than the ASI?)",
             expected.c_str());
-    sCache[expected] = found;
-    return found;
+    }
+    return nullptr;
 }
 
 bool CallScriptFunction(void* obj, const char* funcName, void* params)

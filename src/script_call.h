@@ -24,8 +24,18 @@ namespace GameUI {
 
 /// The class default object of a script class, found by its "Default__<ClassName>" object
 /// name. Cached; revalidated by re-reading the object's name each call; a full GObjects scan
-/// runs at most once a second while the object is genuinely missing. Game thread only.
+/// runs at most once a second while the object is genuinely missing — and NOT AT ALL while the
+/// companion package is known absent: a miss is followed by one package check, logged once, and
+/// every caller answers null quietly for the next 30 s. Game thread only.
 void* FindCompanionCDO(const char* className);
+
+/// Whether the companion's script package (the UPackage named X2AccessCompanion) is loaded at
+/// all — a fresh GObjects scan each call, so ask once, at a moment that settles the question:
+/// the first main-menu attach. The package loads with the shell, later than DLC enumeration, so
+/// this call is ALSO the settle moment for FindCompanionCDO: before it a miss is "not yet" and
+/// nothing is cached; after it a miss is an absence, cached for 30 s. This is the startup
+/// announcement's question; readers keep asking FindCompanionCDO. Game thread only.
+bool CompanionPackageLoaded();
 
 /// Resolve `funcName` on the object's class chain (cached per class) and ProcessEvent it.
 /// `params` must match the UFunction's parameter layout. Game thread only.

@@ -15,6 +15,14 @@ namespace Vocab {
 
 inline constexpr const char* ScreenMainMenu = "Main menu";
 inline constexpr const char* ScreenOptionsFallback = "Settings";
+// Mod Config Menu (docs/mod-config-menu-recon.md). The screen carries its own localized title
+// (m_strTitle, read by name off the mod class) and reaches the first only when that read is
+// empty. The second is OURS, for a state the screen shows with no words: the right-hand page is
+// EMPTY until a tab is clicked (SelectedPageID starts at -1), and a sighted player sees a blank
+// panel where a blind one would hear a stop with nothing in it — indistinguishable from a page
+// we failed to read — so the stop says what the blank means.
+inline constexpr const char* ScreenModConfigFallback = "Mod settings";
+inline constexpr const char* ModConfigNoPage = "No page selected";
 inline constexpr const char* RoleButton = "button";
 inline constexpr const char* RoleTicker = "news ticker";
 inline constexpr const char* RoleTab = "tab";
@@ -57,6 +65,41 @@ inline constexpr const char* ScreenIronManFallback = "Ironman";
 inline constexpr const char* ScreenNarrativeFallback = "Optional narrative content";
 inline constexpr const char* ScreenSoundtrackFallback = "Soundtrack";
 inline constexpr const char* ScreenDialog = "Dialog";
+// The Tactical Legacy Pack hub carries its own localized title; this names it only when that
+// read came back empty.
+inline constexpr const char* ScreenTLEHubFallback = "Tactical Legacy Pack";
+// The Legacy Operations menu, its difficulty page and the soldier loadout popup carry their own
+// localized titles (the difficulty page's through the companion); these name them only when the
+// read came back empty.
+inline constexpr const char* ScreenLadderMenuFallback = "Legacy operations";
+inline constexpr const char* ScreenLadderDifficultyFallback = "Operation difficulty";
+inline constexpr const char* ScreenUnitStatsFallback = "Soldier loadout";
+// A ladder row whose name neither the companion nor the widget supplied.
+inline std::string LadderRowFallback(int n) { return "Operation " + std::to_string(n); }
+// A medal threshold on the ladder panel the score has reached (the game lights the icon).
+inline constexpr const char* MedalEarned = "earned";
+// A gear slot the loadout popup draws with nothing in it.
+inline constexpr const char* EmptySlot = "empty";
+// The loadout popup's PCS slot has an icon and no caption.
+inline constexpr const char* PCSLabel = "PCS";
+// The Challenge Archives menu carries its own localized title; this names it only when the
+// read came back empty.
+inline constexpr const char* ScreenChallengeArchiveFallback = "Challenge archives";
+// The Skirmish Mode menu carries its own title and START GAME word; fallbacks for empty reads.
+inline constexpr const char* ScreenSkirmishFallback = "Skirmish mode";
+inline constexpr const char* SkirmishStartFallback = "Start game";
+// The Legacy Pack's mission-side screens (recipe_tle_mission.cpp): each carries its own
+// localized header; these name them only when the read came back empty.
+inline constexpr const char* ScreenScoringFallback = "Mission scoring";
+inline constexpr const char* ScreenLadderUpgradeFallback = "Choose upgrade";
+inline constexpr const char* ScreenLadderSquadFallback = "Squad progress";
+inline constexpr const char* ScreenLadderMedalFallback = "Medal";
+inline constexpr const char* ScreenMedalProgressFallback = "Medal progress";
+inline constexpr const char* ScreenLadderEndFallback = "Operation complete";
+inline constexpr const char* ScreenChallengePostFallback = "Challenge result";
+inline constexpr const char* ScreenChallengeEventFallback = "Challenge event";
+// The medal screen's rewards block, drawn dim when a previous run already earned them.
+inline constexpr const char* RewardAlreadyUnlocked = "already unlocked";
 
 // The modal popup family (docs/popup-inventory.md). The popup's own title and message ride in
 // the graph, so the screen name only announces that a modal has appeared.
@@ -781,6 +824,15 @@ inline std::string SurfaceUnavailable(const char* surface)
 {
     return std::string(surface) + " unavailable.";
 }
+
+// Said ONCE per session, at the first main-menu attach, when the companion package is not in
+// GObjects at all — the moment the question is settled (DLC enumeration has run) and the player
+// is listening. English by necessity, not oversight: the localized vocabulary lives ON the
+// companion, and this line exists precisely because the companion is absent. It names the
+// install check the archive ships, which is the fix nine times in ten.
+inline constexpr const char* CompanionNotLoaded
+    = "X2Access companion mod is not loaded. Menus will read, but combat and most game screens "
+      "will stay silent. Close the game and run X2Access-Check from the game folder.";
 
 inline std::string Position(int index, int count)
 {

@@ -394,6 +394,23 @@ void Attach()
     // player hears it when they ask for it (Tab → AnnounceEntry).
     if (gFocused)
         AnnounceEntry();
+
+    // ONE announcement per session about the companion, and this is its moment: the first
+    // main-menu attach is after DLC enumeration (so the package is loaded or never will be)
+    // and the first time the player is listening to a screen. The greeting at hooks-init is
+    // too early — mods enumerate a second after it — and a per-surface "unavailable" only comes
+    // on a pressed key, deep in a mission, long after the player concluded the mod was broken.
+    // Queued behind the menu's own announcement, never in place of it.
+    static bool sCompanionChecked = false;
+    if (!sCompanionChecked && gActive == &kMainMenuRecipe) {
+        sCompanionChecked = true;
+        if (!GameUI::CompanionPackageLoaded()) {
+            LOG_WARN("MenuNavigator: companion package not loaded at the first main-menu attach"
+                     " — announcing it once");
+            TTS::Speak(Vocab::CompanionNotLoaded);
+        }
+    }
+
     if (gDetachMs) {
         LOG_INFO("MenuNavigator: attached to %s%s (%zu focus targets) — %llu ms after detach",
             gActive->logName, gFocused ? "" : " (ambient, unfocused)", gFocus.size(),
@@ -516,6 +533,10 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     // chain, sequential with the deck and never stacked with it.
     &kResearchUnlockedRecipe, &kRewardsRecapRecipe,
     &kNarrativeRecipe, &kIronManRecipe,
+    // Mod Config Menu: pushed OVER the settings screen by the button it injects there, so
+    // topmost-first puts it ahead of settings (the soundtrack picker on the next line never
+    // shares a stack with it, so sitting ahead of that too costs nothing).
+    &kModConfigRecipe,
     &kSoundtrackRecipe, &kOptionsRecipe, &kDifficultyRecipe, &kSaveLoadRecipe, &kPauseMenuRecipe,
     // The recruit list: pushed over the Armory room, raising only its own dialog (listed first).
     &kRecruitsRecipe,
@@ -587,6 +608,15 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     // HUD, raising only the pause menu (listed earlier), and never on the stack with each other or
     // with the bookends.
     &kLootRecipe, &kCharInfoRecipe,
+    // The Tactical Legacy Pack's mission-side modals: the same band, for the same reason — each is
+    // pushed over the HUD and popped before the next (docs/tle-mission-recon.md §1). The squad
+    // review pushes the soldier loadout popup over itself, so that recipe leads the band; it is
+    // also the popup the Legacy Operations menu opens, and the shell band below needs no second
+    // entry for it (a probe answers by class, wherever it is listed).
+    &kUnitStatsRecipe,
+    &kScoringDialogRecipe, &kLadderUpgradeRecipe, &kLadderSoldiersRecipe,
+    &kLadderMedalProgressRecipe, &kLadderMedalRecipe, &kLadderEndRecipe,
+    &kChallengePostRecipe, &kChallengeEventRecipe,
     // The ambient Avenger recipe — the ant farm's Tab layer. Below every screen that stacks over
     // the grid (dialogs, popups, the pickers, the rooms, the geoscape — all of which make the
     // grid not-current, which is its probe's whole test), and it can never contend with the
@@ -599,7 +629,19 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchRepor
     // The character pool's import / export picker is pushed over the pool, and the pool over the
     // shell; both raise only dialogs, the text-entry dialog and the customization family (all
     // listed above).
-    &kPoolFilesRecipe, &kCharacterPoolRecipe, &kMainMenuRecipe};
+    &kPoolFilesRecipe, &kCharacterPoolRecipe,
+    // The Tactical Legacy Pack's Legacy Operations branch, topmost first: the difficulty page
+    // is pushed over the Legacy Operations menu (and pushes nothing but dialogs, listed first);
+    // the menu is pushed over the hub; the hub over the shell. The soldier loadout popup the
+    // menu opens is listed in the mission band above.
+    &kLadderDifficultyRecipe, &kLadderMenuRecipe,
+    // The Challenge Archives: pushed over the hub, raising only the LOADING progress dialog
+    // above itself (the popup recipe's, listed first); Enter runs the map command directly.
+    &kChallengeMenuRecipe,
+    // Skirmish Mode: one screen for all its states, pushed over the hub, raising only its
+    // three confirm dialogs above itself; Enter on its base menu opens the map directly.
+    &kSkirmishRecipe,
+    &kTLEHubRecipe, &kMainMenuRecipe};
 static_assert(sizeof(kRecipes) / sizeof(kRecipes[0]) == Recipes::kRecipeCount,
     "a recipe was declared in recipes.h and not listed above — it would never be probed");
 

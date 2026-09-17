@@ -57,6 +57,15 @@ rules extracted from all this — the mandatory `-review` launch flag, the `/MT`
   and the literal name stored in the package never matches; the writer refuses them. ⚠ The
   first build after a WAV changes is slow: X2ModBuildCommon keys its shader-precompile step on
   Content timestamps, which is why the writer leaves an up-to-date package untouched.
+  - **A WAV's file name carries its build TAGS** between the stem and the extension
+    (`X2Access_Wall_East.loop.right.wav` → cue `X2Access_Wall_East`), so the file says how it is
+    built and no manifest can drift from it. `loop` puts a `SoundNodeLooping` between the cue and
+    the wave, for a bed script holds in an `AudioComponent` and steers with `AdjustVolume` — never
+    for `PlaySoundEvent`, which could not stop it. `left` / `right` / `center` BAKE the pan into the
+    samples (mono-summed, then one channel of a silent stereo pair, or mono): a cue played
+    unspatialised keeps its channels, and that is the only way a tone gets a world-absolute
+    placement, since spatialisation pans relative to the camera, which rotates. The wall tones
+    (`X2AccessWallTones`) are the worked example of both.
 - Kernel tests (no game needed): `ctest --test-dir build -C Release` (`just test`).
 - Loading: Ultimate ASI Loader sits in `Binaries/Win64/` under one of the several host DLL names it
   can impersonate, and **which name it uses differs per machine** — so never test for a
@@ -79,8 +88,25 @@ on every push of main.
   SHA and every bug report has to quote it — the tag alone never identifies a build.
 - **One archive, both halves.** `X2Access-dev-<sha>.zip` extracts at the WOTC game folder:
   `Binaries/Win64/scripts/X2Access.asi` + `.pdb`, `XComGame/Mods/X2AccessCompanion/` (the SDK's
-  compiled staging copy minus `.scripts/`), `README.md` and `LICENSE` at the root. The Ultimate ASI
-  Loader and the workshop Highlander are requirements the notes point at, not bundled.
+  compiled staging copy minus `.scripts/`), `README.md`, `LICENSE` and the install check
+  `X2Access-Check.cmd` + `.ps1` (from `tools/dist/`) at the root. The Ultimate ASI Loader and the
+  workshop Highlander are requirements the notes point at, not bundled.
+- **The install check is the tester's first step, not ours.** `tools/dist/X2Access-Check.ps1`
+  (Windows PowerShell 5.1, plain ASCII, one finding per line for a screen reader) probes the
+  loader host list, the ASI, the companion's four must-have pieces and the Highlander's `.XComMod`
+  under every Steam library's workshop folder — by mod NAME, because the release and beta
+  listings share it — then repeats the companion build script's two self-heals on the user
+  config: `ActiveMods` in `XComModOptions.ini` and the local `ModRootDirs` root in
+  `XComEngine.ini`, preserving the file's encoding. It refuses to write while `XCom2.exe` runs
+  (the game rewrites the list on exit) and with `-CheckOnly`. The first field report was the
+  companion silently not loading; its output settles that in one line. The ASI points at it too:
+  at the first main-menu attach `MenuNavigator` asks `GameUI::CompanionPackageLoaded` once and,
+  when the package is absent, speaks `Vocab::CompanionNotLoaded` after the menu's own line —
+  and from that moment on `FindCompanionCDO` caches an absence for 30 s, so a session without
+  the companion logs one warning per interval instead of one per second per polling surface.
+  ⛔ Not before it: the package loads with the shell, later than DLC enumeration, and the first
+  cut cached a "not loaded" seen at ten seconds on a HEALTHY install, muting every companion
+  lookup until twenty seconds after the main menu.
 - **Built from a parked worktree, never the live tree.** Several sessions work this tree at once,
   so the archive is built from `release-stage/src`, a detached worktree at the published commit
   (submodules `deps/prism` and `deps/X2ModBuildCommon` only — the Highlander and the SDK generator

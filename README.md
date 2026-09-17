@@ -121,6 +121,7 @@ It contains:
 ```
 README.md
 LICENSE
+X2Access-Check.cmd, X2Access-Check.ps1     (the install check: run it after extracting)
 Binaries/Win64/scripts/X2Access.asi        (the native plugin, Prism statically linked)
 Binaries/Win64/scripts/X2Access.pdb        (symbols, so a crash dump can be read)
 XComGame/Mods/X2AccessCompanion/           (the companion mod: .XComMod, Config, Localization, Script)
@@ -139,8 +140,16 @@ Then:
    `XCom2.exe`. The loader can impersonate several system DLL names;
    `version.dll` is the one its x64 package ships as, and any of the others
    works too.
-2. In the game's launcher — or the Alternative Mod Launcher — enable
-   **X2AccessCompanion** and the **Community Highlander**.
+2. With the game closed, run `X2Access-Check.cmd` from the game folder. It
+   checks that the loader, the ASI, the companion and the Highlander are all
+   in place, names anything missing and how to fix it, and enables
+   **X2AccessCompanion** and the **Community Highlander** in the game's mod
+   settings the way the launcher does (`Documents\My Games\XCOM2 War of the
+   Chosen\XComGame\Config\XComModOptions.ini`). Its output is plain text, one
+   finding per line, each starting with OK, FIXED, PROBLEM or NOTE. If you
+   launch through the Alternative Mod Launcher, tick both mods there as well:
+   it rewrites that list from its own selection on every launch. The script
+   lives at `tools/dist/` in this repository.
 3. Launch through Steam or the mod launcher as usual. If you start
    `XCom2.exe` directly instead, add `-review` to its arguments: the launchers
    pass it for you, and without it the game boots its developer shell instead
