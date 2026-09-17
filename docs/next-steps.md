@@ -14,6 +14,35 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**Wall tones** (2026-09-17, `X2AccessWallTones` + `X2AccessTileReader.CueWalls`; the design is
+in `surfaces/tactical.md`, the build tags in `build.md`). Builds clean; the package re-parses with
+the four looping cues (cue → `SoundNodeLooping` → wave, east/west one-channel stereo, north/south
+mono). Never heard. What a first run must settle, in order:
+
+1. **The loop node loads at all** — `just dev-props "instance=XComTacticalSoundManager" SoundCue`
+   lists six cues, and Launch.log carries no warning naming `X2Access_Wall_*` or
+   `SoundNodeLooping`. A cue that loads but plays nothing means the node's serialization is wrong
+   (the writer's docstring has what was assumed: `ChildNodes` as a plain ArrayProperty, no native
+   payload on the node).
+2. **Playing silent, then rising**: on the first cursor landing beside a wall, the matching voice
+   rises over about half a second and, in When-moving mode, glides out a second later; on open
+   ground nothing is heard. If a voice is heard at full volume for a frame on the first landing,
+   `Play()` ran before `AdjustVolume(0, 0)` took — reorder to `FadeIn(0, 0)` or set the target
+   before `Play()`.
+3. **The compass**: a wall to the east sounds in the RIGHT ear, west in the left, whatever the
+   camera's rotation; north and south are centred and distinguishable. Mirrored means the baked pan
+   is right and the cursor's compass is not (`NORTH_DX`/`EAST_DX` are the only flip points).
+4. **The predicate's distribution**, not its lines: walk a corridor, a room's corner, a car, a
+   sandbag line. A car or a crate that swells a voice is the `B--V` test admitting high cover
+   across the edge — `IsAdjacentTileVisible` is documented as "no vis-blocking high cover between
+   two points", so a tall crate may fail it; if so the wall test needs the tile-flag form
+   (`docs/rooms-recon.md` §3). The map's edge and the level volume's edge are deliberately
+   boundaries; listen for whether that reads as a wall or as noise on open maps.
+5. **Volume against the game's own mix**: RT's 25 % is a guess here. `Volume` in
+   `Config/XComGame.ini` is the knob.
+6. **Between missions**: a second mission in the same session spawns a fresh actor (the first died
+   with its map) and the bed works again; Launch.log shows no `Accessed None` naming the class.
+
 **Soldier switching on `E` / `Q` by config, bare `Tab` as the HUD layer key, the Shift swallow
 retired** (2026-09-16, `mods/X2AccessCompanion/Config/XComInput.ini`; `MenuNavigator::OnLayerEnter`;
 the rule is in `CLAUDE.md` and the census in `input-map.md` §Soldier switching). Builds clean.
@@ -1002,23 +1031,33 @@ a repeating announcement.
      tile's own occupancy. Correct behaviour, and the resulting asymmetry is a TELL that marks
      obstacle tiles. Barriers on EDGES are recorded symmetrically on both sides.
    - ⚠️ **§8.6 is 1 of 3 maps** (run 2026-09-17, ADVENT city centre — the OPEN URBAN sample; recon
-     §8.6 run 1). ✅ The instrument works end to end. ⛔ **The result is that the predicate contest
-     is EMPTY**: ten positions × three predicates produced bit-identical room and wall counts, and
-     over 864 sampled edges every blocked edge carried high cover and none was climbable, because
-     `IsAdjacentTileBlocked` has already excluded the vaultables (a sandbag reads `.LO-`, not `B`).
-     §3's founding fear — the sandbag cutting the street into rooms — is measured false here.
-     **Map 2 falsifies this cheaply: one `BL` or `BO`/`BN` edge and the gate earns its place; none
-     and the predicate is just `IsAdjacentTileBlocked`.**
-   - ⛔ **The real blocker found by run 1 is DOORWAYS, not the predicate.** The flood returned ONE
-     room at every position: boundaries on that plot are obstacle TILES (which standability already
-     stops at), and a doorway between two standable tiles is an open edge to all three candidates —
-     it has to be, or nobody could walk through. So every §3 candidate merges a building interior
-     with the street. **`AddExits` is therefore an INGREDIENT of rooms, not the fallback for them**,
-     and the boundary set to run map 2 against is (obstacle tiles) ∪ (wall edges) ∪ (door threshold
-     edges from `GetPathObjectFromTraversalToNeighbor`).
-   - ⚠ Unexplained from run 1: 4 edges read `.--V` — walkable, opaque, no cover either side. Nothing
-     in recon §2 predicts one. Harmless to the flood; it would make predicate (b) call a walkable
-     edge a wall if it ever appeared in quantity.
+     §8.6 run 1). ✅ **(b) sight-gated is ELIMINATED**: on the upper storeys it finds 11 walls where
+     (a) and (c) find 13, and ZERO where they find 4, because it misses `BH--` edges — blocked, full
+     cover, see-through (glass, railings). It lets the flood cross an edge the engine calls blocked,
+     and it drops exactly the walls a blind player most needs called.
+   - ⚠ **(a) vs (c) is still undecided**: over 3720 sampled edges **not one blocked edge was low
+     cover or climbable**, so the climb gate and the height gate have had nothing to disagree about.
+     Map 2's falsifier is one `BL`/`BO`/`BN` edge. §3's sandbag fear IS measured false here — 53
+     low-cover edges, none of them blocked, because a sandbag you can vault is not blocked.
+   - ⛔ **A PARTITION IS A HORIZONTAL SLICE AND A MAP IS NOT FLAT — this cost run 1 its first
+     conclusion.** Sliced at the tile cursor's `Z=5` the map read one room everywhere and the
+     predicates looked indistinguishable; the building with eight rooms in it was at `Z=9`, and a
+     floor the slice misses reads as `#`, identical to solid rock. `ProbeRoomsColumn(X, Y, Radius)`
+     was added for this and is the FIRST call of any §8.6 run.
+   - ⛔ **Instrument bug found and fixed 2026-09-17**: `IsWallEdge` asked `IsAdjacentTileBlocked`
+     forward only, and one-way edges between two STANDABLE tiles are real — `(27,32,9)` could be
+     left and not entered, a unit standing on it. That made the whole partition SCAN-ORDER
+     DEPENDENT. Both the blocked test and the per-face bits now ask from both ends (`FaceIsWall`).
+     ⚠ **Needs `just uscript`** — written while the game was running, so not yet compiled.
+   - ⚠ **Doorways remain the open risk, and run 1 did NOT measure one** — the upper floor's rooms
+     came out separate and the plaza is one room because a plaza is one room. The a-priori argument
+     stands (a doorway must be a passable edge, so no wall predicate sees it), which is why
+     **`AddExits` is better understood as an INGREDIENT of rooms than as the fallback for them**,
+     with the boundary set to try on map 2 being (obstacle tiles) ∪ (wall edges) ∪ (door threshold
+     edges from `GetPathObjectFromTraversalToNeighbor`). Reasoning, not measurement, until map 2.
+   - ⚠ Unexplained from run 1: `.--V` edges — walkable, opaque, no cover either side. 4 on the
+     plaza, 28 on the upper floors. Nothing in recon §2 predicts one. Harmless to the flood; another
+     reason (b) cannot be trusted, since (b) calls a walkable edge a wall.
    - ❌ **Still owed: maps 2 and 3 for §8.6** (interior-heavy, open wilderness) and **§8.7**
      (agree with `DescribeIndoor`).
    - ⛔ §8.7 should become the SCORING function rather than a checkbox: a room must never straddle

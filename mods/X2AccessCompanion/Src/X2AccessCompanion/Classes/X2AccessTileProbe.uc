@@ -399,6 +399,38 @@ function ProbeRooms(int X, int Y, int Z, int Predicate, int Radius)
 		$ " edges w/o=" $ string(Walls) $ "/" $ string(Open);
 }
 
+// ⛔ THE COLUMN FIRST, ALWAYS — a partition is a HORIZONTAL SLICE and a map is not flat. The
+// 2026-09-17 run took Z from the tile cursor, found one room, and concluded the predicates were
+// indistinguishable; the cursor was standing on a plaza, and the building with eight rooms in it
+// was four Z-levels up. A floor the slice misses reads as `#` — identical to solid rock — so a
+// single-Z reading can call a building a wall and never look wrong.
+//
+// One line per call: every Z with standable ground, its cell count and its room count, so the
+// floors announce themselves before anything is concluded from one of them.
+function ProbeRoomsColumn(int X, int Y, int Radius)
+{
+	local array<int> Room;
+	local int Z, W, Count, Cells, Walls, Open;
+	local string R;
+
+	R = string(X) $ "," $ string(Y) $ " r=" $ string(Radius) $ ":";
+	for (Z = 0; Z < 32; Z++)
+	{
+		if (!Partition(X, Y, Z, 0, Radius, Room, W, Count, Cells, Walls, Open))
+			break;
+		if (Cells == 0)
+			continue;
+		R $= " z" $ string(Z) $ "=" $ string(Cells) $ "/" $ string(Count);
+		// The cap is 160 and the tail is the half that would be cut, so stop while it is still ours.
+		if (Len(R) > 140)
+		{
+			R $= " ...";
+			break;
+		}
+	}
+	NativeResult = R;
+}
+
 // One row of the partition, as one character per cell: `a`..`z` cycling per room id, `#` where the
 // ground is not standable. Room ids are assigned in scan order, so two cells sharing a letter in
 // the same neighbourhood really are one room — the cycle only lies across 26 rooms apart, which on
@@ -538,16 +570,34 @@ private function bool Partition(int X0, int Y0, int Z, int Predicate, int Radius
 }
 
 // The one clause the three predicates disagree about. Everything before the switch is shared.
+//
+// ⛔ BOTH ENDS, ALWAYS — asking this forward only was a real bug and it survived a whole live run.
+// IsAdjacentTileBlocked is DIRECTED (§2.3) and ONE-WAY EDGES ARE REAL between two STANDABLE
+// tiles: (27,32,9) on the 2026-09-17 map could be left and not entered, because the query folds in
+// the DESTINATION's own occupancy and a unit was standing there. A forward-only test made the whole
+// partition SCAN-ORDER DEPENDENT — whichever region reached the shared tile first kept it, and
+// reversing the order would have merged two rooms into one. Room counts taken that way are not
+// reproducible, which is the one thing a measuring instrument may not be.
+//
+// The per-face bits get the same treatment for the same reason: §8.3 measured them asymmetric, so a
+// wall recorded on one tile and not its neighbour is the normal case, not the exception.
 private function bool IsWallEdge(XComWorldData WorldData, TTile T, TTile N, int Predicate)
+{
+	if (!WorldData.IsAdjacentTileBlocked(T, N) && !WorldData.IsAdjacentTileBlocked(N, T))
+		return false;
+	return FaceIsWall(WorldData, T, N.X - T.X, N.Y - T.Y, Predicate)
+		|| FaceIsWall(WorldData, N, T.X - N.X, T.Y - N.Y, Predicate);
+}
+
+// One tile's own face, in the direction given. Split out of IsWallEdge so the symmetric test above
+// reads as one line per end rather than as two copies of the switch.
+private function bool FaceIsWall(XComWorldData WorldData, TTile T, int DX, int DY, int Predicate)
 {
 	local TileData Data;
 	local int Side, LowBit, OverBit, OntoBit, VisBit;
 
-	if (!WorldData.IsAdjacentTileBlocked(T, N))
-		return false;
-
 	WorldData.GetTileData(T, Data);
-	EdgeBits(N.X - T.X, N.Y - T.Y, Side, LowBit, OverBit, OntoBit, VisBit);
+	EdgeBits(DX, DY, Side, LowBit, OverBit, OntoBit, VisBit);
 
 	switch (Predicate)
 	{
