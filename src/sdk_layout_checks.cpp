@@ -197,6 +197,177 @@ static_assert(offsetof(AUIShellNarrativeContent, DLCInfos) == 0x510, "narrative 
 static_assert(offsetof(UX2DownloadableContentInfo, NarrativeContentSummary) == 0xB4,
     "DLC narrative summary");
 
+// ---- the Tactical Legacy Pack hub (UITLEHub) ----
+static_assert(offsetof(AUITLEHub, m_strTitle) == 0x418, "TLE hub title");
+static_assert(offsetof(AUITLEHub, m_strSubtitle) == 0x428, "TLE hub subtitle");
+static_assert(offsetof(AUITLEHub, m_LadderTitle) == 0x438, "TLE hub ladder title");
+static_assert(offsetof(AUITLEHub, m_LadderDetails) == 0x448, "TLE hub ladder details");
+static_assert(offsetof(AUITLEHub, m_SkirmishTitle) == 0x458, "TLE hub skirmish title");
+static_assert(offsetof(AUITLEHub, m_SkirmishDetails) == 0x468, "TLE hub skirmish details");
+static_assert(offsetof(AUITLEHub, m_ChallengeTitle) == 0x478, "TLE hub challenge title");
+static_assert(offsetof(AUITLEHub, m_ChallengeDetails) == 0x488, "TLE hub challenge details");
+static_assert(offsetof(AUITLEHub, m_New) == 0x498, "TLE hub NEW badge");
+static_assert(offsetof(AUITLEHub, m_Launch) == 0x4A8, "TLE hub LAUNCH word");
+static_assert(offsetof(AUITLEHub, m_LadderWins) == 0x4B8, "TLE hub ladder wins label");
+static_assert(offsetof(AUITLEHub, m_HighestScore) == 0x4C8, "TLE hub high score label");
+static_assert(offsetof(AUITLEHub, m_UnlockLabel) == 0x4D8, "TLE hub unlock label");
+static_assert(offsetof(AUITLEHub, m_CompletedLabel) == 0x4E8, "TLE hub completed label");
+static_assert(offsetof(AUITLEHub, m_VictoryLabel) == 0x4F8, "TLE hub victories label");
+static_assert(offsetof(AUITLEHub, m_CreatedLabel) == 0x508, "TLE hub created label");
+static_assert(offsetof(AUITLEHub, m_MissionsLabel) == 0x518, "TLE hub missions label");
+static_assert(offsetof(AUITLEHub, ChallengeButton) == 0x548, "TLE hub challenge button");
+static_assert(offsetof(AUITLEHub, LadderButton) == 0x550, "TLE hub ladder button");
+static_assert(offsetof(AUITLEHub, SkirmishButton) == 0x558, "TLE hub skirmish button");
+
+// ---- the Legacy Operations menu (UITLE_LadderModeMenu) and its row ----
+static_assert(offsetof(AUITLE_LadderModeMenu, List) == 0x420, "ladder menu procedural list");
+static_assert(offsetof(AUITLE_LadderModeMenu, NarrativeList) == 0x428, "ladder menu narrative list");
+static_assert(offsetof(AUITLE_LadderModeMenu, ClickedList) == 0x430, "ladder menu clicked list");
+static_assert(offsetof(AUITLE_LadderModeMenu, clickedIndex) == 0x448, "ladder menu clicked index");
+static_assert(offsetof(AUITLE_LadderModeMenu, LadderSoldierInfoButtons) == 0x498,
+    "ladder menu soldier buttons");
+static_assert(offsetof(AUITLE_LadderModeMenu, m_ScreenTitle) == 0x4B0, "ladder menu title");
+static_assert(offsetof(AUITLE_LadderModeMenu, m_strAbandonLadder) == 0x4C0, "ladder menu abandon");
+static_assert(offsetof(AUITLE_LadderModeMenu, m_strDeleteLadder) == 0x4D0, "ladder menu delete");
+static_assert(offsetof(AUITLE_LadderModeMenu, m_strBeginLadder) == 0x4E0, "ladder menu begin");
+static_assert(offsetof(AUITLE_LadderModeMenu, m_strContinueLadder) == 0x4F0, "ladder menu continue");
+static_assert(offsetof(AUITLE_LadderModeMenu, m_Medals) == 0x530, "ladder menu medals label");
+static_assert(offsetof(AUITLE_LadderModeMenu, m_RandomLadderHeader) == 0x5A0,
+    "ladder menu random header");
+static_assert(offsetof(AUITLE_LadderModeMenu, m_NarrativeLaddersHeader) == 0x5C0,
+    "ladder menu narrative header");
+// bDisabled (0x3E0, bit 0) is a bitfield and cannot be offsetof'd; it is bracketed by the state
+// pointer before it and the first localized string after it.
+static_assert(offsetof(AUITLENarrativeLadder_ListItem, m_LadderData) == 0x3D8, "ladder row state");
+static_assert(offsetof(AUITLENarrativeLadder_ListItem, m_LadderInprogress) == 0x3E4,
+    "ladder row in-progress word (bDisabled dword sits at 0x3E0)");
+static_assert(offsetof(AUITLE_LadderModeMenu_execOnSelectedChange_Params, ContainerList) == 0x0
+        && offsetof(AUITLE_LadderModeMenu_execOnSelectedChange_Params, ItemIndex) == 0x8,
+    "ladder menu OnSelectedChange params");
+static_assert(offsetof(AUITLE_LadderModeMenu_execOnLadderClicked_Params, ContainerList) == 0x0
+        && offsetof(AUITLE_LadderModeMenu_execOnLadderClicked_Params, ItemIndex) == 0x8,
+    "ladder menu OnLadderClicked params");
+static_assert(offsetof(AUITLE_LadderModeMenu_execOnClickSoldierInfo_Params, Panel) == 0x0
+        && offsetof(AUITLE_LadderModeMenu_execOnClickSoldierInfo_Params, Cmd) == 0x8,
+    "ladder menu OnClickSoldierInfo params");
+
+// ---- the ladder difficulty page (UITLE_LadderDifficulty) ----
+static_assert(offsetof(AUITLE_LadderDifficulty, m_DifficultyRookieMechaItem) == 0x420,
+    "ladder difficulty rookie row");
+static_assert(offsetof(AUITLE_LadderDifficulty, m_DifficultyLegendMechaItem) == 0x438,
+    "ladder difficulty legend row");
+static_assert(offsetof(AUITLE_LadderDifficulty, m_FirstTimeVOMechaItem) == 0x448,
+    "ladder difficulty narrative row");
+static_assert(offsetof(AUITLE_LadderDifficulty, m_IronmanMechaItem) == 0x450,
+    "ladder difficulty ironman row");
+static_assert(offsetof(AUITLE_LadderDifficulty, m_StartButton) == 0x468, "ladder difficulty start");
+static_assert(offsetof(AUITLE_LadderDifficulty, m_iSelectedDifficulty) == 0x470,
+    "ladder difficulty selected");
+
+// ---- the Legacy Pack's Challenge Archives menu (UITLE_ChallengeModeMenu) ----
+static_assert(offsetof(AUITLE_ChallengeModeMenu, List) == 0x420, "challenge menu list");
+static_assert(offsetof(AUITLE_ChallengeModeMenu, m_ScreenTitle) == 0x44C, "challenge menu title");
+static_assert(offsetof(AUITLE_ChallengeModeMenu, m_strButtonLabels) == 0x500,
+    "challenge menu sort labels");
+static_assert(sizeof(AUITLE_ChallengeModeMenu::m_strButtonLabels) == 0x50,
+    "challenge menu sort labels: five FStrings at 0x10 stride");
+// m_bFlipSort (0x550, bit 0) is a bitfield and cannot be offsetof'd; it is bracketed by the
+// labels array ending at 0x550 and m_eSortType at 0x554.
+static_assert(offsetof(AUITLE_ChallengeModeMenu, m_eSortType) == 0x554, "challenge menu sort type");
+static_assert(offsetof(AUITLEChallenge_ListItem, Data) == 0x3D8, "challenge row data");
+static_assert(offsetof(FChallengeListItemData, ChallengeListDataIndex) == 0x00,
+    "challenge row data index");
+static_assert(offsetof(FChallengeListItemData, MissionName) == 0x04, "challenge row mission");
+static_assert(offsetof(FChallengeListItemData, MissionObjective) == 0x14,
+    "challenge row objective");
+static_assert(offsetof(FChallengeListItemData, MapName) == 0x24, "challenge row map");
+static_assert(offsetof(FChallengeListItemData, Squad) == 0x44, "challenge row squad");
+static_assert(offsetof(FChallengeListItemData, Enemies) == 0x54, "challenge row enemies");
+static_assert(offsetof(AUITLE_ChallengeModeMenu_execOnChallengeClicked_Params, ContainerList) == 0x0,
+    "OnChallengeClicked list");
+static_assert(offsetof(AUITLE_ChallengeModeMenu_execOnChallengeClicked_Params, ListItemIndex) == 0x8,
+    "OnChallengeClicked index");
+
+// ---- the Tactical Legacy Pack's Skirmish Mode menu (UITLE_SkirmishModeMenu) ----
+static_assert(offsetof(AUITLE_SkirmishModeMenu, List) == 0x420, "skirmish list");
+static_assert(offsetof(AUITLE_SkirmishModeMenu, ContinueButton) == 0x428, "skirmish start button");
+static_assert(offsetof(AUITLE_SkirmishModeMenu, m_CurrentState) == 0x48C, "skirmish state");
+static_assert(sizeof(AUITLE_SkirmishModeMenu::m_CurrentState) == 1, "skirmish state is a byte");
+static_assert(offsetof(AUITLE_SkirmishModeMenu, m_arrSubtitles) == 0x540, "skirmish subtitles");
+static_assert(sizeof(AUITLE_SkirmishModeMenu::m_arrSubtitles) == 21 * 0x10,
+    "skirmish subtitles: 21 x FString");
+static_assert(offsetof(AUITLE_SkirmishModeMenu, m_StartGame) == 0x690, "skirmish START GAME word");
+static_assert(offsetof(AUITLE_SkirmishModeMenu, m_ScreenTitle) == 0x710, "skirmish title");
+
+// ---- Tactical Legacy Pack, mission side (game_ui_tle_mission.cpp) ----
+static_assert(offsetof(AUILadderModeScoringDialog, m_ContinueButton) == 0x410, "ladder scoring continue");
+static_assert(offsetof(AUILadderModeScoringDialog, m_TotalLabel) == 0x418, "ladder scoring total");
+static_assert(offsetof(AUILadderModeScoringDialog, m_ScoreDescription1) == 0x4C8, "ladder scoring desc 1");
+static_assert(offsetof(AUILadderModeScoringDialog, m_ScoreDescription2) == 0x4D8, "ladder scoring desc 2");
+static_assert(offsetof(AUILadderModeScoringDialog, m_LadderHeader) == 0x528, "ladder scoring header");
+static_assert(offsetof(AUIChallengeModeScoringDialog, m_ContinueButton) == 0x410, "challenge scoring continue");
+static_assert(offsetof(AUIChallengeModeScoringDialog, m_Header) == 0x418, "challenge scoring header");
+static_assert(offsetof(AUIChallengeModeScoringDialog, m_TotalLabel) == 0x428, "challenge scoring total");
+static_assert(offsetof(AUIChallengeModeScoringDialog, m_ScoreDescription1) == 0x4D8, "challenge scoring desc 1");
+static_assert(offsetof(AUIChallengeModeScoringDialog, m_ScoreDescription2) == 0x4E8, "challenge scoring desc 2");
+static_assert(offsetof(AUILadderUpgradeScreen, Upgrade0Button) == 0x410, "ladder upgrade button 0");
+static_assert(offsetof(AUILadderUpgradeScreen, Upgrade1Button) == 0x418, "ladder upgrade button 1");
+static_assert(offsetof(AUILadderUpgradeScreen, SelectedColumn) == 0x420, "ladder upgrade column");
+static_assert(offsetof(AUILadderUpgradeScreen, m_strChooseUpgrade) == 0x42C, "ladder upgrade choose");
+static_assert(offsetof(AUILadderUpgradeScreen, m_strEquipUpgrade) == 0x43C, "ladder upgrade equip");
+static_assert(offsetof(AUILadderSoldierInfo, m_SoldierStartIndex) == 0x410, "ladder squad start");
+static_assert(offsetof(AUILadderSoldierInfo, m_NumSoldiers) == 0x414, "ladder squad count");
+static_assert(offsetof(AUILadderSoldierInfo, PrevButton) == 0x464, "ladder squad prev");
+static_assert(offsetof(AUILadderSoldierInfo, NextButton) == 0x46C, "ladder squad next");
+static_assert(offsetof(AUILadderSoldierInfo, LadderSoldierInfoButtons) == 0x474, "ladder squad info buttons");
+static_assert(offsetof(AUILadderSoldierInfo, m_NextMission) == 0x49C, "ladder squad next mission");
+static_assert(offsetof(AUILadderSoldierInfo, m_MissionLabel) == 0x4AC, "ladder squad mission label");
+static_assert(offsetof(AUILadderSoldierInfo, m_MissionComplete) == 0x4BC, "ladder squad complete");
+static_assert(offsetof(AUILadderSoldierInfo, m_NewAbilities) == 0x4EC, "ladder squad new abilities");
+static_assert(offsetof(AUILadderSoldierInfo, m_NewItems) == 0x50C, "ladder squad new items");
+static_assert(offsetof(AUILadderSoldierInfo, m_strHelpPrevPage) == 0x51C, "ladder squad help prev");
+static_assert(offsetof(AUILadderSoldierInfo, m_strHelpNextPage) == 0x52C, "ladder squad help next");
+static_assert(offsetof(AUILadderSoldierInfo, m_strHelpSoldierInfo) == 0x53C, "ladder squad help info");
+static_assert(offsetof(AUITLELadderMedalScreen, m_RewardsLabel) == 0x420, "ladder medal rewards");
+static_assert(offsetof(AUITLELadderMedalScreen, m_ScoreLabel) == 0x430, "ladder medal score label");
+static_assert(offsetof(AUITLELadderMedalScreen, m_MedalScoreLabel) == 0x440, "ladder medal threshold label");
+static_assert(offsetof(AUITLELadderMedalScreen, m_MedalUnlockedString) == 0x450, "ladder medal unlocked");
+static_assert(offsetof(AUITLELadderMedalScreen, m_VictoryString) == 0x460, "ladder medal victory");
+static_assert(offsetof(AUITLELadderMedalScreen, m_UnlockedNextLadder) == 0x470, "ladder medal next ladder");
+static_assert(offsetof(AUITLELadderMedalScreen, m_LadderUnlockDescription) == 0x4A0, "ladder medal unlock desc");
+static_assert(offsetof(AUITLELadderEndScreen, m_RunStats) == 0x420, "ladder end stats");
+static_assert(offsetof(AUITLELadderEndScreen, m_Description) == 0x430, "ladder end description");
+static_assert(offsetof(AUIChallengePostScreen, m_Header) == 0x410, "challenge post header");
+static_assert(offsetof(AUIChallengePostScreen, m_HeaderLose) == 0x420, "challenge post header lose");
+static_assert(offsetof(AUIChallengePostScreen, m_ScoreLabel) == 0x430, "challenge post score label");
+static_assert(offsetof(AUIChallengePostScreen, m_RankLabel) == 0x440, "challenge post rank label");
+static_assert(offsetof(AUIChallengePostScreen, m_LeaderboardLabel) == 0x450, "challenge post leaderboard label");
+static_assert(offsetof(AUIChallengePostScreen, m_Description) == 0x460, "challenge post description");
+static_assert(offsetof(AUIChallengePostScreen, m_DescriptionLose) == 0x470, "challenge post description lose");
+// The flags dword at 0x498 (bAllSoldiersDead bit 1, bMissionFailed bit 2) is a bitfield the dump
+// cannot offsetof; the pin on m_ImagePath brackets it.
+static_assert(offsetof(AUIChallengePostScreen, m_ImagePath) == 0x49C, "challenge post flags dword precedes m_ImagePath");
+static_assert(offsetof(AUIChallengePostScreen, m_ContinueButton) == 0x4AC, "challenge post continue");
+static_assert(offsetof(AUIChallengePostScreen, m_LeaderboardButton) == 0x4B4, "challenge post leaderboard");
+static_assert(offsetof(AUIChallengeModeEventNotify, m_TitleHeader) == 0x418, "challenge event header");
+static_assert(offsetof(AUIChallengeModeEventNotify, m_CloseButton) == 0x420, "challenge event close");
+static_assert(offsetof(AUIChallengeModeEventNotify, m_NextButton) == 0x428, "challenge event next");
+static_assert(offsetof(AUIChallengeModeEventNotify, m_PreviousButton) == 0x430, "challenge event previous");
+static_assert(offsetof(AUIChallengeModeEventNotify, m_kDetailText) == 0x438, "challenge event detail");
+static_assert(offsetof(AUIX2PanelHeader, Title) == 0x3D8, "panel header title");
+static_assert(offsetof(AUITextContainer, Text) == 0x3E0, "text container text");
+static_assert(offsetof(AUIText, Text) == 0x3D8, "UIText text");
+static_assert(offsetof(AUIText, HtmlText) == 0x3E8, "UIText html");
+static_assert(offsetof(AUILadderUpgradeScreen_execSelectColumn_Params, iCol) == 0x0,
+    "ladder upgrade SelectColumn params");
+static_assert(offsetof(AUILadderSoldierInfo_execDisplaySoldierInfo_Params, Index) == 0x0,
+    "ladder squad DisplaySoldierInfo params");
+
+// ---- the soldier loadout popup (UITLEUnitStats) ----
+static_assert(offsetof(AUITLEUnitStats, m_UnitArray) == 0x438, "unit stats units");
+static_assert(offsetof(AUITLEUnitStats, m_CurrentIndex) == 0x450, "unit stats index");
+static_assert(offsetof(AUITLEUnitStats, m_ScreenTitle) == 0x454, "unit stats title");
+
 // ---- new game flow: soundtrack picker ----
 static_assert(offsetof(AUIShellSoundtrackPicker, m_List) == 0x410, "soundtrack list");
 static_assert(offsetof(AUIShellSoundtrackPicker, m_StartButton) == 0x418,
@@ -283,6 +454,7 @@ static_assert(offsetof(UUIScreenStack, PRES) == 0x64, "UIScreenStack::PRES");
 // ---- generic UIList / UIPanel traversal ----
 static_assert(offsetof(AUIList, ItemContainer) == 0x3D8, "UIList::ItemContainer");
 static_assert(offsetof(AUIPanel, ChildPanels) == 0x2E8, "UIPanel::ChildPanels");
+static_assert(offsetof(AUIPanel, ParentPanel) == 0x2E0, "UIPanel::ParentPanel");
 
 // ---- row widgets ----
 static_assert(offsetof(AUICheckbox, Text) == 0x3D8, "UICheckbox::Text (bChecked bits follow)");

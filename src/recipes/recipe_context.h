@@ -292,5 +292,11 @@ const WireRecord* FindRecord(const std::vector<WireRecord>& records, const char*
 // a stop that appeared there would hand a blind player figures no sighted player can see.
 bool AddResourceStop(GraphBuilder& b);
 
+// The tactical HUD graph's TRAILING `score` stop on a Legacy Pack ladder or challenge mission:
+// the running score and, in a challenge, the countdown, read the way the score HUD draws them.
+// Adds nothing outside those modes. Defined in recipe_tle_mission.cpp (the score HUDs are
+// narrate-only: no widget a player acts on, so no recipe — docs/tle-mission-recon.md §1).
+bool AddTLEHudStop(GraphBuilder& b);
+
 } // namespace Recipes
 } // namespace MenuNavigator

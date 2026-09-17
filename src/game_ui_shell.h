@@ -396,4 +396,48 @@ bool ActivatePoolFilesRow(const PoolFilesView& view, int index);
 /// follows. Offered by the recipe only on rows the game draws a DELETE button on. Game thread only.
 bool DeletePoolFilesRow(const PoolFilesView& view, int index);
 
+// ---- the Tactical Legacy Pack hub (UITLEHub) — docs/surfaces/shell.md ----
+//
+// The main menu's TACTICAL LEGACY PACK entry: three cards side by side (Legacy Operations,
+// Skirmish, Challenge Archives), each a title, a description, two or three profile statistics and
+// a LAUNCH button. Every WORD on the screen is a `localized` string on the screen instance (the
+// class declares nineteen of them and OnInit pushes them into Flash); every NUMBER comes from the
+// online profile (`XComOnlineProfileSettingsDataBlob.HubStats`), which the screen reads once in
+// OnInit and retains nowhere. So native reads the words and the three buttons, and
+// X2AccessTLEReader.DescribeHub re-derives the numbers from the same profile — the save-reader
+// split. ⛔ The three UIButtons are InitButton'd WITHOUT a label (the LAUNCH word goes to Flash
+// through SetButtonInfo), so ReadButtonField — which treats an empty label as "not a button" —
+// cannot read them; the reader below takes the pointer and the focus bit directly.
+
+/// The screen's three cards in ON-SCREEN order (ladder, skirmish, challenge). Spawn order — and
+/// so the game's own Navigator order — is challenge, ladder, skirmish; the recipe writes focus
+/// back onto the button pointer, so that order never matters to us.
+struct TLEHubCard {
+    void* button = nullptr;  // the card's UIButton — activation and focus write-back
+    bool focused = false;    // the button's own focus bit
+    std::string title;       // m_LadderTitle / m_SkirmishTitle / m_ChallengeTitle
+    std::string details;     // m_*Details — the sentence under the title
+};
+
+struct TLEHubView {
+    std::string title;        // m_strTitle — "TACTICAL LEGACY PACK"
+    std::string subtitle;     // m_strSubtitle — "Choose a Game Mode"
+    TLEHubCard cards[3];      // [0] ladder, [1] skirmish, [2] challenge
+    // The stat labels, screen-wide (one word each, drawn under a number on the cards).
+    std::string newBadge;     // m_New — the NEW tag on a card the profile says is unplayed
+    std::string launch;       // m_Launch — the button's word
+    std::string ladderWins;   // m_LadderWins
+    std::string highScore;    // m_HighestScore
+    std::string unlock;       // m_UnlockLabel — under the bronze-medal "N/4"
+    std::string completed;    // m_CompletedLabel — the challenge card's meter
+    std::string victories;    // m_VictoryLabel
+    std::string created;      // m_CreatedLabel — the skirmish card's large stat, lower line
+    std::string missions;     // m_MissionsLabel — its upper line
+};
+
+/// The focused UITLEHub, or null. Game thread only.
+void* FindTLEHubScreen();
+
+TLEHubView ReadTLEHub(void* screen);
+
 } // namespace GameUI

@@ -14,6 +14,30 @@ and note that a rule with no measurement under it any more is a rule to delete, 
   `src/sdk_globals.cpp` validates them with sanity heuristics before init proceeds.
 - Runtime `FString` is `TArray<wchar_t>` (UTF-16) even though the generated SDK declares `char` —
   `ue3_reflection.cpp` handles the conversion.
+- **The UE3 audio device is alive beside Wwise, and its lifetime rules are Firaxis' own**
+  (decompiled 2026-09-17 for the wall tones: `UAudioDevice::GetSortedActiveWaveInstances` at
+  moduleBase + 0x416AD0, `UAudioComponent::UpdateWaveInstances` at +0x431830, `StopSources` at
+  +0x42E130, the `AudioComponent` natives through the `UAudioComponentexec*` lookup table at
+  +0x1C2EAA0). Per device tick:
+  - Before updating a component it recomputes `SoundCue.Duration` from `FirstNode->GetDuration()`
+    (under a global flag pair, or whenever it reads 0) and **STOPS the component when
+    `PlaybackTime > Duration × 16` unless `Duration ≥ 10000`** — the log line, when the log
+    category is on, is *"Sound stopped due to duration"*. A loop's cue carries `Duration = 10000`
+    for exactly this (`tools/make_sound_upk.py`).
+  - The active set is the priority-sorted wave-instance list from the first entry whose volume is
+    ABOVE 0.0001; everything under it is culled and its source stopped. A culled instance keeps
+    `bIsFinished` clear only if it is `LOOP_Forever` or its component has
+    `bShouldRemainActiveIfDropped`. A source whose instance was not heard (volume above 0.0001)
+    for 60 ticks is stopped too, active or not. ⛔ So a looping bed idles ABOVE the threshold,
+    never at 0 (`X2AccessWallTones.SILENT`).
+  - `AdjustVolume(Duration, Level)` (+0x3F2E00) has no playing guard: with `Duration ≥ 0` it sets
+    `AdjustVolumeStartTime = PlaybackTime`, `AdjustVolumeStopTime = PlaybackTime + Duration` and
+    `AdjustVolumeTargetVolume = Level`, nothing else. The per-tick multiplier (+0x4055D0) lerps
+    from `CurrAdjustVolumeTargetVolume` and writes it back only once `PlaybackTime` passes the
+    stop time — so the current level is the last LANDED level, and it defaults to 1.0. `Play()`
+    (+0x424620) zeroes `PlaybackTime`, resets the fade state and the wave instances, refuses
+    while the cue's `MaxConcurrentPlayCount` is reached, and leaves the adjust state alone;
+    `IsPlaying()` is `bWasPlaying && !bFinished`.
 - **The ProcessEvent hook sees only NATIVE→script dispatch.** A full HUD refresh (Tab switched
   soldier, `m_arrAbilities` 4 → 5, every panel repainted) produces not ONE UI script function — no
   `UpdateAbilitiesArray`, no `SetStats`, no `OnUnrealCommand`, no `RealizeTargets`. What arrives is

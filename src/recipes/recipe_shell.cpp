@@ -1138,6 +1138,146 @@ bool SetPoolFilesListIndex(void* screen, int index)
     return GameUI::SetPoolFilesSelection(GameUI::ReadPoolFiles(screen), index);
 }
 
+// ---- the Tactical Legacy Pack hub (UITLEHub) — docs/surfaces/shell.md ----
+//
+// Three cards in a row, one per game mode, each a button: title, a NEW badge while the profile
+// says the mode is unplayed, the mode's statistics, and LAUNCH. ONE STOP, the arrows walk the
+// cards, Enter launches the game's own delegate for the card. The words come off the screen's
+// localized fields (native); the numbers are the profile's, re-derived by X2AccessTLEReader the
+// way OnInit derived them — the save-reader split, because the screen pushes them into Flash and
+// retains none. The description sentence under each title goes on Space, the same gating every
+// other setup screen's description gets.
+
+constexpr const char* kTLEReaderClass = "X2AccessTLEReader";
+
+// Keyed on the screen alone: the profile's hub statistics change only when a mode is PLAYED,
+// which pops this screen, so one ask per attach is exact.
+WireCache gTLEStats(kTLEReaderClass, "DescribeHub");
+
+// The record for card `index` (its `index=` field), or null.
+const WireRecord* FindTLECard(const std::vector<WireRecord>& records, int index)
+{
+    const std::string want = std::to_string(index);
+    for (const WireRecord& rec : records) {
+        if (RecField(rec, "index") == want)
+            return &rec;
+    }
+    return nullptr;
+}
+
+// "<number> <label>", or nothing when either half is missing — a number with no label is a bare
+// figure, and a label with no number is what the companion being absent looks like.
+std::string TLEStat(const std::string& number, const std::string& label)
+{
+    if (number.empty() || label.empty())
+        return std::string();
+    return number + " " + label;
+}
+
+// The card's statistics as one Value part, in the order OnInit draws them. The meter stats end
+// with the percentage the ring was filled to: the game draws that ring with no figure on it, and
+// a count with no denominator says nothing about progress.
+std::string TLECardStats(const GameUI::TLEHubView& view, int index, const WireRecord* rec)
+{
+    std::string line;
+    if (!rec)
+        return line;
+    const std::string wins = RecField(*rec, "wins");
+    const std::string high = RecField(*rec, "high");
+    const std::string done = RecField(*rec, "done");
+    const std::string pct = RecField(*rec, "pct");
+    switch (index) {
+    case 0: // Legacy Operations
+        AppendPhrase(line, TLEStat(wins, view.ladderWins));
+        AppendPhrase(line, TLEStat(high, view.highScore));
+        AppendPhrase(line, TLEStat(RecField(*rec, "unlock"), view.unlock));
+        AppendPhrase(line, TLEStat(done, RecField(*rec, "meter")));
+        break;
+    case 1: // Skirmish
+        AppendPhrase(line, TLEStat(wins, view.victories));
+        // The large stat draws its upper label, the number, then its lower label.
+        {
+            std::string created = view.missions;
+            AppendPhrase(created, RecField(*rec, "created"), " ");
+            AppendPhrase(created, view.created, " ");
+            AppendPhrase(line, created);
+        }
+        break;
+    case 2: // Challenge Archives
+        AppendPhrase(line, TLEStat(wins, view.victories));
+        AppendPhrase(line, TLEStat(high, view.highScore));
+        AppendPhrase(line, TLEStat(done, view.completed));
+        break;
+    }
+    if (!pct.empty())
+        AppendPhrase(line, Vocab::Percent(atoi(pct.c_str())));
+    return line;
+}
+
+std::unique_ptr<GraphRender> BuildTLEHub()
+{
+    const GameUI::TLEHubView view = GameUI::ReadTLEHub(gScreen);
+    bool anyButton = false;
+    for (const GameUI::TLEHubCard& card : view.cards)
+        anyButton = anyButton || card.button != nullptr;
+    if (!anyButton)
+        return nullptr; // still spawning its buttons
+
+    const std::vector<WireRecord>& records = gTLEStats.Get({gScreen});
+
+    GraphBuilder b;
+    b.BeginStop("modes");
+    b.StartRow();
+    for (int i = 0; i < 3; i++) {
+        const GameUI::TLEHubCard& card = view.cards[i];
+        if (!card.button)
+            continue;
+        const WireRecord* rec = FindTLECard(records, i);
+
+        ControlId id = ControlId::Referenced(card.button, "tle/" + std::to_string(i));
+        gFocus[id.StructuralKey] = FocusTarget{-1, card.button, false};
+
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        // The title names the card; the LAUNCH word is what the button itself says, and it is
+        // the same word on all three, so it rides as the value's tail rather than as the label.
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(
+            card.title.empty() ? std::string(Vocab::ScreenTLEHubFallback) : card.title));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        // The game's own NEW tag (m_New), shown while the profile records no play of the mode —
+        // the same condition OnInit tests, evaluated by the companion over the same numbers.
+        if (rec && !RecFieldAll(*rec, "new").empty()) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(
+                view.newBadge.empty() ? std::string(Vocab::Attention) : view.newBadge));
+            vt.Announcements.back().Kind = kKindAttention;
+        }
+        std::string value = TLECardStats(view, i, rec);
+        AppendPhrase(value, view.launch);
+        if (!value.empty()) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(value));
+            vt.Announcements.back().Kind = AnnouncementKinds::Value;
+        }
+        vt.Announcements.emplace_back(NodeAnnouncement(
+            [focused = card.focused]() {
+                return focused ? std::string(Vocab::Selected) : std::string();
+            },
+            false, AnnouncementKinds::Selected));
+        vt.OnActivate = [handle = card.button]() { GameUI::ClickButton(handle); };
+        vt.OnTooltip = TextAction(card.details);
+        b.AddItem(std::move(id), std::move(vt));
+    }
+    b.EndRow();
+    return b.Build();
+}
+
+std::string TLEHubName()
+{
+    const GameUI::TLEHubView view = GameUI::ReadTLEHub(gScreen);
+    std::string name = view.title.empty() ? std::string(Vocab::ScreenTLEHubFallback) : view.title;
+    AppendPhrase(name, view.subtitle);
+    return name;
+}
+
 } // namespace
 
 // ---- the recipes this file defines ----
@@ -1157,9 +1297,19 @@ const Recipe kIronManRecipe{
 const Recipe kSoundtrackRecipe{
     "soundtrack", ProbeFocused<GameUI::FindSoundtrackScreen>, BuildSoundtrack, SoundtrackName,
     GameUI::SetSoundtrackIndex};
+// ⛔ Focused AND topmost, not ProbeFocused alone: UIOptionsPCScreen.OnLoseFocus skips super, so
+// its focused bit never clears and a screen pushed over Settings (Mod Config Menu, key bindings,
+// credits) left this recipe attached under it — the navigator re-probes only the attached recipe,
+// so the screen on top never got its turn (docs/surfaces/shell.md, Settings).
+void* ProbeOptions()
+{
+    void* screen = GameUI::FindOptionsScreen();
+    return (screen && GameUI::IsScreenFocused(screen) && GameUI::IsTopmostScreen(screen))
+        ? screen
+        : nullptr;
+}
 const Recipe kOptionsRecipe{
-    "settings", ProbeFocused<GameUI::FindOptionsScreen>, BuildOptions, OptionsName,
-    GameUI::SetOptionsListIndex};
+    "settings", ProbeOptions, BuildOptions, OptionsName, GameUI::SetOptionsListIndex};
 // The Second Wave list is the only UIList on the difficulty screen; the rest of its controls
 // hang off plain panels and take the SetSelectedNavigation path instead.
 const Recipe kDifficultyRecipe{
@@ -1183,6 +1333,11 @@ const Recipe kCharacterPoolRecipe{"character pool", ProbeFocused<GameUI::FindCha
     BuildCharacterPool, CharacterPoolName, SetCharacterPoolListIndex};
 const Recipe kPoolFilesRecipe{"pool files", ProbeFocused<GameUI::FindPoolFilesScreen>,
     BuildPoolFiles, PoolFilesName, SetPoolFilesListIndex};
+
+// The Tactical Legacy Pack hub over the shell; the three mode menus it opens are pushed over it
+// and have no recipes yet, so nothing but dialogs contends with it from above.
+const Recipe kTLEHubRecipe{
+    "legacy hub", ProbeFocused<GameUI::FindTLEHubScreen>, BuildTLEHub, TLEHubName};
 
 } // namespace Recipes
 } // namespace MenuNavigator

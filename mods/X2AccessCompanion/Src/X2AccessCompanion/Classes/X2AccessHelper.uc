@@ -320,31 +320,20 @@ static function string ArmoryStatLine(string Label, XComGameState_Unit Unit, XCo
 // Tactical tile description helpers
 // ---------------------------------------------------------------------------
 
-// Return period-separated hazard names for a tile (e.g. "Fire. Poison.").
+// Return period-separated hazard names for a tile (e.g. "Fire. Poison."). The words are the
+// object scanner's hazard ring's, from the shared vocabulary.
 static function string DescribeHazards(XComWorldData WorldData, TTile Tile)
 {
 	local string Result;
 
 	if (WorldData.TileContainsFire(Tile))
-		Result = "Fire";
+		AppendPart(Result, class'X2AccessVocab'.default.Fire);
 	if (WorldData.TileContainsPoison(Tile))
-	{
-		if (Result != "")
-			Result $= ". ";
-		Result $= "Poison";
-	}
+		AppendPart(Result, class'X2AccessVocab'.default.Poison);
 	if (WorldData.TileContainsSmoke(Tile))
-	{
-		if (Result != "")
-			Result $= ". ";
-		Result $= "Smoke";
-	}
+		AppendPart(Result, class'X2AccessVocab'.default.Smoke);
 	if (WorldData.TileContainsAcid(Tile))
-	{
-		if (Result != "")
-			Result $= ". ";
-		Result $= "Acid";
-	}
+		AppendPart(Result, class'X2AccessVocab'.default.Acid);
 
 	return Result;
 }
@@ -390,9 +379,9 @@ static function string DescribeEvacZone(TTile Tile)
 
 	if (!class'X2TargetingMethod_EvacZone'.static.ValidateEvacTile(Tile, IsOnFloor,
 		Evac.bMissionPlaced))
-		return "Evac zone, no clearance";
+		return class'X2AccessVocab'.default.EvacZoneNoClearance;
 
-	return "Evac zone";
+	return class'X2AccessVocab'.default.EvacZone;
 }
 
 // ---------------------------------------------------------------------------
@@ -560,8 +549,8 @@ static function string DescribeDetection(XComGameState_Unit ConcealedUnit, TTile
 	if (!TileBreaksConcealment(ConcealedUnit, Tile, Kind))
 		return "";
 	if ((Kind & 1) != 0)
-		return "Detection zone";
-	return "Tower detection";
+		return class'X2AccessVocab'.default.DetectionZone;
+	return class'X2AccessVocab'.default.TowerDetection;
 }
 
 // Return description of units on a tile (e.g. "Enemy: Sectoid" or "Ally: Sgt. Kelly").
@@ -572,7 +561,6 @@ static function string DescribeUnitsOnTile(TTile Tile)
 	local XComGameState_Unit UnitState;
 	local XComGameStateHistory History;
 	local string Result;
-	local string Prefix;
 	local int i;
 
 	WorldData = `XWORLD;
@@ -587,14 +575,10 @@ static function string DescribeUnitsOnTile(TTile Tile)
 		if (!UnitState.IsAlive())
 			continue;
 
-		if (UnitState.IsFriendlyToLocalPlayer())
-			Prefix = "Ally: ";
-		else
-			Prefix = "Enemy: ";
-
-		if (Result != "")
-			Result $= ". ";
-		Result $= Prefix $ UnitState.GetName(eNameType_Full);
+		AppendPart(Result, class'X2AccessVocab'.static.FillS(
+			UnitState.IsFriendlyToLocalPlayer() ? class'X2AccessVocab'.default.Ally
+				: class'X2AccessVocab'.default.Enemy,
+			UnitState.GetName(eNameType_Full)));
 	}
 
 	return Result;

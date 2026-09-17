@@ -374,6 +374,10 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
         b.PopContext();
     }
 
+    // The Legacy Pack's score (and a challenge's countdown), trailing, only on those missions.
+    if (AddTLEHudStop(b))
+        anyNode = true;
+
     // A HUD with nothing readable yet (the first seconds of a mission, before the first
     // PopulateFlash) is not attachable — the navigator retries on its next poll.
     if (!anyNode)

@@ -336,6 +336,45 @@ OptionsView ReadOptions(void* screen)
         if (item.handle)
             v.buttons.push_back(std::move(item));
     }
+
+    // Buttons OTHER code put on the screen. Mod Config Menu spawns its MOD SETTINGS button as a
+    // plain UIButton child of this screen and keeps it in no class field
+    // (MCM_OptionsMenuListener.InjectModOptionsButton), so the four offsets above never see it —
+    // and a control a sighted player can click that we never offer is exactly the silence the
+    // registry exists to prevent. Every VISIBLE, labelled UIButton child not already collected is
+    // appended after the game's own, in ChildPanels (spawn) order; any other mod's injected button
+    // arrives the same way. Exact class, because the game's own buttons here are all plain
+    // UIButtons too, and the two it spawns outside the four (ExitButton, ResetToDefaultsButton)
+    // are controller- and console-only, so on mouse+keyboard this catches only the injected ones.
+    // Sized from the array (docs/mod-config-menu-recon.md).
+    // ⛔ A screen's ChildPanels is a flat REGISTRY of every panel on it, not its child list
+    // (UIPanel.uc: every panel calls Screen.AddChild(self); the screen inserts itself too), so
+    // the Key Bindings row's embedded UIButton is in this array as well and would become a fifth
+    // bottom button duplicating the row. Only DIRECT children pass: ParentPanel == screen, which
+    // MCM's button is (Spawn(class'UIButton', ParentScreen)) and a row's widget is not.
+    for (void* child :
+        ReadPtrArrayAllRaw("Options: injected buttons", screen, kPanelChildPanelsOffset)) {
+        if (!child || child == screen || !ObjectClassNamedRaw(child, "UIButton"))
+            continue;
+        if (ReadPtrRaw(child, kPanelParentPanelOffset) != screen)
+            continue;
+        bool known = false;
+        for (const MenuItem& have : v.buttons)
+            known = known || have.handle == child;
+        if (known)
+            continue;
+        const uint32_t flags = ReadU32Raw(child, kPanelFlagsOffset);
+        if (!(flags & kPanelVisible))
+            continue;
+        MenuItem item;
+        item.label = CleanText(ReadFStringField(child, kButtonTextOffset));
+        if (item.label.empty())
+            continue;
+        item.handle = child;
+        item.focused = (flags & kPanelFocused) != 0;
+        item.disabled = (ReadU32Raw(child, kButtonFlagsOffset) & kButtonDisabled) != 0;
+        v.buttons.push_back(std::move(item));
+    }
     return v;
 }
 
@@ -991,6 +1030,71 @@ bool DeletePoolFilesRow(const PoolFilesView& view, int index)
         return false;
     SetListIndex(view.list, index);
     return SendScreenCommand(view.screen, kCmdButtonY);
+}
+
+// ---- the Tactical Legacy Pack hub (UITLEHub) — docs/surfaces/shell.md ----
+
+// From the generated SDK's dump comments (UITLEHub, 0x418 onwards — the class holds nineteen
+// localized FStrings in declaration order and then the three buttons); each is pinned in
+// sdk_layout_checks.cpp.
+constexpr int32_t kTLEHubTitleOffset = 0x418;          // m_strTitle
+constexpr int32_t kTLEHubSubtitleOffset = 0x428;       // m_strSubtitle
+constexpr int32_t kTLEHubCardTitleOffsets[3] = {0x438, 0x458, 0x478};   // m_{Ladder,Skirmish,Challenge}Title
+constexpr int32_t kTLEHubCardDetailsOffsets[3] = {0x448, 0x468, 0x488}; // m_{Ladder,Skirmish,Challenge}Details
+constexpr int32_t kTLEHubNewOffset = 0x498;            // m_New
+constexpr int32_t kTLEHubLaunchOffset = 0x4A8;         // m_Launch
+constexpr int32_t kTLEHubLadderWinsOffset = 0x4B8;     // m_LadderWins
+constexpr int32_t kTLEHubHighScoreOffset = 0x4C8;      // m_HighestScore
+constexpr int32_t kTLEHubUnlockOffset = 0x4D8;         // m_UnlockLabel
+constexpr int32_t kTLEHubCompletedOffset = 0x4E8;      // m_CompletedLabel
+constexpr int32_t kTLEHubVictoryOffset = 0x4F8;        // m_VictoryLabel
+constexpr int32_t kTLEHubCreatedOffset = 0x508;        // m_CreatedLabel
+constexpr int32_t kTLEHubMissionsOffset = 0x518;       // m_MissionsLabel
+// In ON-SCREEN order (ladder, skirmish, challenge) — not declaration order, which puts the
+// challenge button first (0x548).
+constexpr int32_t kTLEHubButtonOffsets[3] = {0x550, 0x558, 0x548}; // LadderButton, SkirmishButton, ChallengeButton
+
+void* FindTLEHubScreen()
+{
+    static ScreenFinder sFinder{"UITLEHub"};
+    static bool sReported = false;
+    void* screen = PreferStack("UITLEHub", sFinder, sReported, ClassMatch::Derived);
+    return (screen && IsFocusedRaw(screen)) ? screen : nullptr;
+}
+
+TLEHubView ReadTLEHub(void* screen)
+{
+    TLEHubView v;
+    if (!screen)
+        return v;
+    v.title = CleanText(ReadFStringField(screen, kTLEHubTitleOffset));
+    v.subtitle = CleanText(ReadFStringField(screen, kTLEHubSubtitleOffset));
+    v.newBadge = CleanText(ReadFStringField(screen, kTLEHubNewOffset));
+    v.launch = CleanText(ReadFStringField(screen, kTLEHubLaunchOffset));
+    v.ladderWins = CleanText(ReadFStringField(screen, kTLEHubLadderWinsOffset));
+    v.highScore = CleanText(ReadFStringField(screen, kTLEHubHighScoreOffset));
+    v.unlock = CleanText(ReadFStringField(screen, kTLEHubUnlockOffset));
+    v.completed = CleanText(ReadFStringField(screen, kTLEHubCompletedOffset));
+    v.victories = CleanText(ReadFStringField(screen, kTLEHubVictoryOffset));
+    v.created = CleanText(ReadFStringField(screen, kTLEHubCreatedOffset));
+    v.missions = CleanText(ReadFStringField(screen, kTLEHubMissionsOffset));
+    for (int i = 0; i < 3; i++) {
+        TLEHubCard& card = v.cards[i];
+        card.title = CleanText(ReadFStringField(screen, kTLEHubCardTitleOffsets[i]));
+        card.details = CleanText(ReadFStringField(screen, kTLEHubCardDetailsOffsets[i]));
+        // Not ReadButtonField: these buttons carry no Text (InitButton is handed no label — the
+        // LAUNCH word reaches Flash through SetButtonInfo), and that reader takes an empty label
+        // as "no button here". The pointer and the panel flags are all this screen offers.
+        void* btn = ReadPtrRaw(screen, kTLEHubButtonOffsets[i]);
+        if (!btn)
+            continue;
+        const uint32_t flags = ReadU32Raw(btn, kPanelFlagsOffset);
+        if (!(flags & kPanelVisible))
+            continue;
+        card.button = btn;
+        card.focused = (flags & kPanelFocused) != 0;
+    }
+    return v;
 }
 
 } // namespace GameUI

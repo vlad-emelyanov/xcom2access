@@ -59,7 +59,10 @@ Endpoints:
   state bits and the text it carries.
 - `/props[?filter=<substring>]` — every property the object's class chain declares: **offset, type,
   name and live value**, grouped by declaring class. `?cdo=<Class>` reaches a class default object
-  (`GameUI::FindDefaultObject`), the only way to see the companion subsystems' model.
+  (`GameUI::FindDefaultObject`), the only way to see the companion subsystems' model. ⚠ The value
+  is printed with markup STRIPPED: a localized template's `<XGParam:IntValue0/>` shows as a bare
+  gap (`"Этаж  из"`, vanilla's `m_strLockedDescription` alike), which is the dump, not the loc
+  file. To prove a template loaded whole, `/call` its expander (`fn=Fill1&cdo=X2AccessVocab`).
 - `/call?fn=<Function>` — invoke a script function on the selected object. Built for the recurring
   shape of accessibility bug in this game: not a missing feature but an UNREACHABLE one — the game
   already has the function and only calls it from a branch a mouse+keyboard player never takes

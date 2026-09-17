@@ -152,16 +152,6 @@ var string NativeResult;
 // typed, no allocation — the CDO rule again.
 var int SelKeyByCategory[16];
 
-// The one word of ours in this class. The Chosen Avenger Defense's Mobile Power Generator is an
-// XComInteractiveLevelActor whose FriendlyDisplayName Firaxis copy-pasted from the stronghold's
-// sarcophagus, and the game owns no noun for it anywhere but inside the objective SENTENCE. A mod
-// loc file under the map package's own name does not override the key (tried 2026-09-17, heard
-// unchanged), so the word lives in OUR loc file — INT and RUS shipped, English for every other
-// language, the degradation X2AccessDropshipReader warns about, accepted here because the
-// alternative is "sarcophagus". The turrets on the same map need no word of ours: they are
-// ADVENT turrets, and the AdvTurretM1 character template names one in every language.
-var localized string ChosenADGeneratorName;
-
 // Which ring the un-prefixed keys address. It lives HERE rather than in native because the ring
 // step has to know which categories are empty, and only this side can answer that — so putting the
 // cursor next to that answer keeps one source of truth instead of two that can drift.
@@ -199,7 +189,7 @@ function ScanCategory(int Category, int Delta)
 
 	if (!ScanOrigin(Origin))
 	{
-		NativeResult = "No scan origin";
+		NativeResult = class'X2AccessVocab'.default.NoScanOrigin;
 		return;
 	}
 
@@ -238,7 +228,7 @@ function StepCategory(int Delta)
 
 	if (!ScanOrigin(Origin))
 	{
-		NativeResult = "No scan origin";
+		NativeResult = class'X2AccessVocab'.default.NoScanOrigin;
 		return;
 	}
 
@@ -263,7 +253,7 @@ function StepCategory(int Delta)
 	// Every ring is empty, the one we started in included — so the cursor stays put and says so
 	// rather than silently doing nothing.
 	bSelValid = false;
-	NativeResult = "Nothing to scan";
+	NativeResult = class'X2AccessVocab'.default.NothingToScan;
 }
 
 // Select within a category and render the line, or "" if the category is empty. Shared by the
@@ -385,35 +375,35 @@ private function string EmptyText(int Category)
 {
 	switch (Category)
 	{
-	case CAT_MARKERS: return "No markers";
-	case CAT_ENEMIES: return "No enemies visible";
-	case CAT_SQUAD: return "No squad";
-	case CAT_LOOT: return "No loot";
+	case CAT_MARKERS: return class'X2AccessVocab'.default.EmptyMarkers;
+	case CAT_ENEMIES: return class'X2AccessVocab'.default.EmptyEnemies;
+	case CAT_SQUAD: return class'X2AccessVocab'.default.EmptySquad;
+	case CAT_LOOT: return class'X2AccessVocab'.default.EmptyLoot;
 	// Worth saying out loud rather than staying silent: "none pending" is the answer a player
 	// checks for every turn, and silence would be indistinguishable from a dead key.
-	case CAT_REINFORCEMENTS: return "No reinforcements incoming";
-	case CAT_CIVILIANS: return "No civilians visible";
-	case CAT_HAZARDS: return "No hazards";
-	case CAT_INTERACT: return "Nothing to interact with";
+	case CAT_REINFORCEMENTS: return class'X2AccessVocab'.default.EmptyReinforcements;
+	case CAT_CIVILIANS: return class'X2AccessVocab'.default.EmptyCivilians;
+	case CAT_HAZARDS: return class'X2AccessVocab'.default.EmptyHazards;
+	case CAT_INTERACT: return class'X2AccessVocab'.default.EmptyObjects;
 	// Says WHY it is empty. "No towers" while revealed would read as "this map has none", which is
 	// a different and much more dangerous claim than "the radius does not apply right now".
-	case CAT_TOWERS: return "Towers shown only while concealed";
+	case CAT_TOWERS: return class'X2AccessVocab'.default.EmptyTowers;
 	// Names the SCOPE, not the map: the sweep is deliberately local, so "none" here means none
 	// nearby rather than none at all, and saying so keeps the reading honest.
-	case CAT_CONNECTORS: return "No ramps or ladders nearby";
+	case CAT_CONNECTORS: return class'X2AccessVocab'.default.EmptyConnectors;
 	// Same rule, and it carries the FLOOR too: the sweep is one Z band around the origin, so a
 	// player standing in an open yard below a walled roof must not hear "this map has no cover".
-	case CAT_COVER: return "No cover nearby on this floor";
+	case CAT_COVER: return class'X2AccessVocab'.default.EmptyCover;
 	// Map-wide in X and Y, so unlike the two above it may honestly say "none" — but only for THIS
 	// level, which is the one scope this sweep does narrow. Said rather than left silent because
 	// "the whole floor is explored" is a real and useful answer.
-	case CAT_UNEXPLORED: return "Nothing unexplored on this floor";
+	case CAT_UNEXPLORED: return class'X2AccessVocab'.default.EmptyUnexplored;
 	// Names the SCOPE for the connectors' reason, and carries one more caveat the others do not
 	// need: this ring lists the exits it can NAME, so "none nearby" means no door, ramp or ladder
 	// — never "you are sealed in". A smashable wall is a way out and is deliberately not here.
-	case CAT_EXITS: return "No doors, ramps or ladders nearby";
+	case CAT_EXITS: return class'X2AccessVocab'.default.EmptyExits;
 	}
-	return "Nothing here";
+	return class'X2AccessVocab'.default.EmptyGeneric;
 }
 
 // Spoken by the ring, in front of the entry it landed on.
@@ -421,20 +411,21 @@ private function string CategoryName(int Category)
 {
 	switch (Category)
 	{
-	case CAT_MARKERS: return "Markers";
-	case CAT_ENEMIES: return "Enemies";
-	case CAT_SQUAD: return "Squad";
-	case CAT_LOOT: return "Loot";
-	case CAT_REINFORCEMENTS: return "Reinforcements";
-	case CAT_CIVILIANS: return "Civilians";
-	case CAT_HAZARDS: return "Hazards";
-	case CAT_INTERACT: return "Objects";
-	case CAT_TOWERS: return "Towers";
-	case CAT_CONNECTORS: return "Level connectors";
-	case CAT_COVER: return "Cover";
-	case CAT_UNEXPLORED: return "Unexplored";
-	case CAT_EXITS: return "Exits";
+	case CAT_MARKERS: return class'X2AccessVocab'.default.CatMarkers;
+	case CAT_ENEMIES: return class'X2AccessVocab'.default.CatEnemies;
+	case CAT_SQUAD: return class'X2AccessVocab'.default.CatSquad;
+	case CAT_LOOT: return class'X2AccessVocab'.default.CatLoot;
+	case CAT_REINFORCEMENTS: return class'X2AccessVocab'.default.CatReinforcements;
+	case CAT_CIVILIANS: return class'X2AccessVocab'.default.CatCivilians;
+	case CAT_HAZARDS: return class'X2AccessVocab'.default.CatHazards;
+	case CAT_INTERACT: return class'X2AccessVocab'.default.CatObjects;
+	case CAT_TOWERS: return class'X2AccessVocab'.default.CatTowers;
+	case CAT_CONNECTORS: return class'X2AccessVocab'.default.CatConnectors;
+	case CAT_COVER: return class'X2AccessVocab'.default.CatCover;
+	case CAT_UNEXPLORED: return class'X2AccessVocab'.default.CatUnexplored;
+	case CAT_EXITS: return class'X2AccessVocab'.default.CatExits;
 	}
+	// Unreachable for a real category; a developer's word, not a player's.
 	return "Category" @ string(Category);
 }
 
@@ -517,8 +508,8 @@ private function string SightWords(int TargetID, XComGameState_Unit ActiveUnit,
 	if (MineToSee.Find('ObjectID', TargetID) != INDEX_NONE)
 		return "";
 	if (ViaSquadsight.Find('ObjectID', TargetID) != INDEX_NONE)
-		return "via squadsight";
-	return "spotted by the squad";
+		return class'X2AccessVocab'.default.ViaSquadsight;
+	return class'X2AccessVocab'.default.SpottedBySquad;
 }
 
 // Your own soldiers. Named, unlike the aliens: GetName(eNameType_Full) gives a soldier their real
@@ -573,7 +564,7 @@ private function AddSquad(TTile Origin, out array<AccessMarker> Entries)
 
 		M.Detail = "";
 		if (UnitState.ObjectID == ActiveID)
-			class'X2AccessHelper'.static.AppendComma(M.Detail, "selected");
+			class'X2AccessHelper'.static.AppendComma(M.Detail, class'X2AccessVocab'.default.Selected);
 		class'X2AccessHelper'.static.AppendComma(M.Detail, StatusWords(UnitState));
 
 		// An EMPTY shooter ref on purpose: IsFlanked with no flanker asks "flanked by anything
@@ -673,16 +664,19 @@ private function AddLoot(TTile Origin, out array<AccessMarker> Entries)
 		// source at drop time, whereas GetLootingName re-enters the source object — and for an
 		// interactive-object source that walks into the unguarded GetVisualizer() deref this class
 		// already sidesteps in InteractiveLabel.
-		M.Label = "Loot";
 		if (Drop.LastLootOwnerName != "")
-			M.Label $= ":" @ Drop.LastLootOwnerName;
+			M.Label = class'X2AccessVocab'.static.FillS(class'X2AccessVocab'.default.LootFrom,
+				Drop.LastLootOwnerName);
+		else
+			M.Label = class'X2AccessVocab'.default.Loot;
 
 		// Psi loot gets its own marker mesh on screen, so naming it here is parity, not a hint.
 		M.Detail = "";
 		if (Drop.HasPsiLoot())
-			class'X2AccessHelper'.static.AppendComma(M.Detail, "psi loot");
+			class'X2AccessHelper'.static.AppendComma(M.Detail, class'X2AccessVocab'.default.PsiLoot);
 		class'X2AccessHelper'.static.AppendComma(M.Detail,
-			"expires" @ TurnWords(Drop.LootExpirationTurnsRemaining));
+			class'X2AccessVocab'.static.FillS(class'X2AccessVocab'.default.LootExpires,
+				TurnWords(Drop.LootExpirationTurnsRemaining)));
 
 		InsertByDistance(Origin, M, Entries);
 	}
@@ -746,7 +740,7 @@ private function string ReinforcementsLabel()
 	Body = class'UITacticalHUD_Countdown'.default.m_strReinforcementsBody;
 
 	if (Title == "")
-		return "Reinforcements";
+		return class'X2AccessVocab'.default.Reinforcements;
 	if (Body == "")
 		return Title;
 	return Title @ Body;
@@ -755,7 +749,8 @@ private function string ReinforcementsLabel()
 // Always carries the number, because the number is precisely what the sighted counter shows.
 private function string TurnWords(int Turns)
 {
-	return "in" @ string(Turns) @ (Turns == 1 ? "turn" : "turns");
+	return class'X2AccessVocab'.static.Count(Turns, class'X2AccessVocab'.default.InTurns_One,
+		class'X2AccessVocab'.default.InTurns_Few, class'X2AccessVocab'.default.InTurns_Many);
 }
 
 // The tutorial's required-action marker.
@@ -813,8 +808,14 @@ private function AddTutorialMarker(TTile Origin, out array<AccessMarker> Markers
 		M.Tile = Ctx.InputContext.MovementPaths[0].MovementTiles[
 			Ctx.InputContext.MovementPaths[0].MovementTiles.Length - 1];
 		bHaveTile = true;
+		// The game's own word for a move, in the player's language.
 		if (Verb == "")
-			Verb = "Move";
+		{
+			Template = class'XComGameState_Ability'.static.GetMyTemplateManager()
+				.FindAbilityTemplate('StandardMove');
+			if (Template != none)
+				Verb = Template.LocFriendlyName;
+		}
 	}
 	else if (Ctx.InputContext.PrimaryTarget.ObjectID > 0)
 	{
@@ -844,9 +845,10 @@ private function AddTutorialMarker(TTile Origin, out array<AccessMarker> Markers
 
 	M.Key = KEY_TUTORIAL;
 	M.Detail = "";
-	M.Label = "Tutorial";
 	if (Verb != "")
-		M.Label $= ":" @ Verb;
+		M.Label = class'X2AccessVocab'.static.FillS(class'X2AccessVocab'.default.TutorialVerb, Verb);
+	else
+		M.Label = class'X2AccessVocab'.default.Tutorial;
 	InsertByDistance(Origin, M, Markers);
 }
 
@@ -913,7 +915,8 @@ private function AddObjectiveMarkers(TTile Origin, out array<AccessMarker> Marke
 			M.Tile = ObjUnit.TileLocation;
 			M.bIsDestination = true;
 			M.Detail = "";
-			M.Label = "Objective:" @ ObjUnit.GetName(eNameType_Full);
+			M.Label = class'X2AccessVocab'.static.FillS(class'X2AccessVocab'.default.ObjectiveNamed,
+				ObjUnit.GetName(eNameType_Full));
 			InsertByDistance(Origin, M, Markers);
 			continue;
 		}
@@ -945,7 +948,8 @@ private function AddObjectiveMarkers(TTile Origin, out array<AccessMarker> Marke
 			M.Tile = ObjInteract.TileLocation;
 			M.bIsDestination = true;
 			M.Detail = InteractiveMarkWords(ObjInteract);
-			M.Label = "Objective:" @ InteractiveLabel(ObjInteract);
+			M.Label = class'X2AccessVocab'.static.FillS(class'X2AccessVocab'.default.ObjectiveNamed,
+				InteractiveLabel(ObjInteract));
 			InsertByDistance(Origin, M, Markers);
 			continue;
 		}
@@ -963,7 +967,7 @@ private function AddObjectiveMarkers(TTile Origin, out array<AccessMarker> Marke
 			M.Tile = ObjDest.TileLocation;
 			M.bIsDestination = true;
 			M.Detail = "";
-			M.Label = "Objective";
+			M.Label = class'X2AccessVocab'.default.Objective;
 			InsertByDistance(Origin, M, Markers);
 		}
 	}
@@ -999,17 +1003,17 @@ private static function string InteractiveMarkWords(XComGameState_InteractiveObj
 				continue;
 			MatName = string(Mat.Name);
 			if (InStr(MatName, "_ADVENT") != INDEX_NONE)
-				return "marked by ADVENT";
+				return class'X2AccessVocab'.default.MarkedByAdvent;
 			if (InStr(MatName, "_XCOM") != INDEX_NONE)
-				return "marked";
+				return class'X2AccessVocab'.default.Marked;
 		}
 	}
 
 	if (Obj.InteractionCount <= 0)
 		return "";
 	if (VisActor != none && VisActor.InteractionAbilityTemplateName == 'Interact_MarkSupplyCrate')
-		return "marked";
-	return "used";
+		return class'X2AccessVocab'.default.Marked;
+	return class'X2AccessVocab'.default.Used;
 }
 
 // The evac zone, as a RECTANGLE rather than a point.
@@ -1052,11 +1056,12 @@ private function AddEvac(TTile Origin, out array<AccessMarker> Entries)
 
 	M.Key = Evac.ObjectID;
 	M.bIsDestination = true;
-	M.Label = "Evac zone";
-	M.Detail = string(MaxT.X - MinT.X + 1) @ "by" @ string(MaxT.Y - MinT.Y + 1) @ "tiles";
+	M.Label = class'X2AccessVocab'.default.EvacZone;
+	M.Detail = class'X2AccessVocab'.static.Fill2(class'X2AccessVocab'.default.EvacSize,
+		MaxT.X - MinT.X + 1, MaxT.Y - MinT.Y + 1);
 	if (Total > 0)
 		class'X2AccessHelper'.static.AppendComma(M.Detail,
-			string(Inside) @ "of" @ string(Total) @ "inside");
+			class'X2AccessVocab'.static.Fill2(class'X2AccessVocab'.default.EvacInside, Inside, Total));
 
 	InsertByDistance(Origin, M, Entries);
 }
@@ -1091,7 +1096,7 @@ private function AddCivilians(TTile Origin, out array<AccessMarker> Entries)
 		M.Detail = "";
 		class'X2AccessHelper'.static.AppendComma(M.Detail, StatusWords(UnitState));
 		if (UnitState.CanBeCarried() && (UnitState.IsUnconscious() || UnitState.IsBleedingOut()))
-			class'X2AccessHelper'.static.AppendComma(M.Detail, "can be carried");
+			class'X2AccessHelper'.static.AppendComma(M.Detail, class'X2AccessVocab'.default.CanBeCarried);
 
 		InsertByDistance(Origin, M, Entries);
 	}
@@ -1108,6 +1113,7 @@ private function AddLost(TTile Origin, out array<AccessMarker> Entries)
 	local XComGameState_Unit UnitState;
 	local AccessMarker M;
 	local TTile NearT;
+	local string NearName;
 	local int Count, NearDist, D;
 
 	History = `XCOMHISTORY;
@@ -1123,6 +1129,7 @@ private function AddLost(TTile Origin, out array<AccessMarker> Entries)
 		if (Count == 0 || D < NearDist)
 		{
 			NearT = UnitState.TileLocation;
+			NearName = UnitState.GetName(eNameType_Full);
 			NearDist = D;
 		}
 		Count++;
@@ -1131,11 +1138,13 @@ private function AddLost(TTile Origin, out array<AccessMarker> Entries)
 	if (Count == 0)
 		return;
 
+	// A lone one is named as the game names it; the swarm is the one word here that is ours.
 	M.Key = KEY_LOST_SWARM;
 	M.Tile = NearT;
 	M.bIsDestination = false;
-	M.Label = (Count == 1) ? "Lost" : "Lost swarm";
-	M.Detail = (Count == 1) ? "" : string(Count) @ "visible";
+	M.Label = (Count == 1) ? NearName : class'X2AccessVocab'.default.LostSwarm;
+	M.Detail = (Count == 1) ? ""
+		: class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.CountVisible, Count);
 	InsertByDistance(Origin, M, Entries);
 }
 
@@ -1228,7 +1237,7 @@ private function AddHazardOfType(int TypeIdx, TTile Origin, out array<AccessMark
 	M.Tile = NearT;
 	M.bIsDestination = false;
 	M.Label = HazardWord(TypeIdx);
-	M.Detail = (Span > 1) ? (string(Span) @ "tiles across") : "";
+	M.Detail = (Span > 1) ? SpanWords(Span) : "";
 	InsertByDistance(Origin, M, Entries);
 }
 
@@ -1275,12 +1284,12 @@ private function AddInteractables(TTile Origin, out array<AccessMarker> Entries)
 
 		M.Detail = "";
 		if (Obj.bHasBeenHacked)
-			class'X2AccessHelper'.static.AppendComma(M.Detail, "hacked");
+			class'X2AccessHelper'.static.AppendComma(M.Detail, class'X2AccessVocab'.default.Hacked);
 		else if (Obj.LockStrength > 0)
-			class'X2AccessHelper'.static.AppendComma(M.Detail,
-				"locked, strength" @ string(Obj.LockStrength));
+			class'X2AccessHelper'.static.AppendComma(M.Detail, class'X2AccessVocab'.static.Fill1(
+				class'X2AccessVocab'.default.LockedStrength, Obj.LockStrength));
 		if (Obj.HasLoot())
-			class'X2AccessHelper'.static.AppendComma(M.Detail, "has loot");
+			class'X2AccessHelper'.static.AppendComma(M.Detail, class'X2AccessVocab'.default.HasLoot);
 
 		InsertByDistance(Origin, M, Entries);
 	}
@@ -1320,8 +1329,10 @@ private function AddTowers(TTile Origin, out array<AccessMarker> Entries)
 
 		// DetectionRange is in unreal units; a tile is WORLD_StepSize across.
 		RangeTiles = int(Obj.DetectionRange / class'XComWorldData'.const.WORLD_StepSize);
-		M.Detail = "detects within" @ string(RangeTiles)
-			@ ((RangeTiles == 1) ? "tile" : "tiles");
+		M.Detail = class'X2AccessVocab'.static.Count(RangeTiles,
+			class'X2AccessVocab'.default.DetectsWithin_One,
+			class'X2AccessVocab'.default.DetectsWithin_Few,
+			class'X2AccessVocab'.default.DetectsWithin_Many);
 
 		InsertByDistance(Origin, M, Entries);
 	}
@@ -1388,7 +1399,7 @@ private function AddConnectors(TTile Origin, out array<AccessMarker> Entries)
 	{
 		if (TileDistance(Origin, Ladders[i]) > CONNECTOR_LADDER_MAX)
 			continue;
-		AddConnectorCandidate(WorldData, Origin, Ladders[i], "Ladder", Raw);
+		AddConnectorCandidate(WorldData, Origin, Ladders[i], class'X2AccessVocab'.default.Ladder, Raw);
 	}
 
 	for (DZ = -1; DZ <= 1; DZ++)
@@ -1408,7 +1419,7 @@ private function AddConnectors(TTile Origin, out array<AccessMarker> Entries)
 					continue;
 				if (!WorldData.IsRampTile(T))
 					continue;
-				AddConnectorCandidate(WorldData, Origin, T, "Ramp", Raw);
+				AddConnectorCandidate(WorldData, Origin, T, class'X2AccessVocab'.default.Ramp, Raw);
 			}
 		}
 	}
@@ -1649,7 +1660,9 @@ private function AddCover(TTile Origin, out array<AccessMarker> Entries)
 		M.Label = class'X2AccessTileReader'.static.CoverEdgeWords(Mine);
 		// How far the SAME cover runs — how far you can shuffle along it without changing what
 		// you are behind. Silent at one cell, where "1 tile wide" is a word for nothing.
-		M.Detail = (Members.Length > 1) ? (string(Members.Length) @ "tiles wide") : "";
+		M.Detail = (Members.Length > 1) ? class'X2AccessVocab'.static.Count(Members.Length,
+			class'X2AccessVocab'.default.TilesWide_One, class'X2AccessVocab'.default.TilesWide_Few,
+			class'X2AccessVocab'.default.TilesWide_Many) : "";
 		M.bIsDestination = true;
 		InsertByDistance(Origin, M, Raw);
 	}
@@ -1845,8 +1858,8 @@ private function AddFrontier(TTile Origin, out array<AccessMarker> Entries)
 
 		M.Key = KEY_FRONTIER - Lowest;
 		M.Tile = Best;
-		M.Label = "Unexplored space";
-		M.Detail = (Span > 1) ? (string(Span) @ "tiles across") : "";
+		M.Label = class'X2AccessVocab'.default.UnexploredSpace;
+		M.Detail = (Span > 1) ? SpanWords(Span) : "";
 		// Somewhere you WALK to, so the reach clause earns its place — and it is a drawn fact
 		// even here: XComMovementGridComponent carries bTranslucentIgnoreFOW, so the move-range
 		// border is one of the few things the fog does not cover (X2AccessTileReader.VerticalDrawn
@@ -2031,7 +2044,8 @@ private function AddThresholdEdge(XComWorldData WorldData, TTile Origin, TTile T
 	// (XComInteractiveLevelActor.uc:475), so even the fallback is the game's classification and
 	// not our guess at one.
 	if (M.Label == "")
-		M.Label = Interactive.IsDoor() ? "Door" : "Passage";
+		M.Label = Interactive.IsDoor() ? class'X2AccessVocab'.default.Door
+			: class'X2AccessVocab'.default.Passage;
 
 	// The tile you would WALK to is the nearer end of the edge — the same answer the frontier and
 	// cover rings give to the same question. The KEY above is deliberately NOT this tile: it is
@@ -2083,8 +2097,9 @@ static function string InteractiveLabel(XComGameState_InteractiveObject Obj)
 			}
 			else if (VisActor.ObjectArchetype.Name == 'ARC_IA_ChosenAD_ArtilleryGenerator')
 			{
-				if (default.ChosenADGeneratorName != "")
-					return default.ChosenADGeneratorName;
+				// The one placed actor that takes a word of ours (X2AccessVocab has the why).
+				if (class'X2AccessVocab'.default.ChosenADGeneratorName != "")
+					return class'X2AccessVocab'.default.ChosenADGeneratorName;
 			}
 		}
 
@@ -2107,10 +2122,10 @@ static function string InteractiveLabel(XComGameState_InteractiveObject Obj)
 	}
 
 	if (Obj.IsDoor())
-		return "door";
+		return class'X2AccessVocab'.default.Door;
 	if (Obj.MustBeHacked())
-		return "hackable";
-	return "object";
+		return class'X2AccessVocab'.default.HackableObject;
+	return class'X2AccessVocab'.default.InteractiveObject;
 }
 
 // ---------------------------------------------------------------------------
@@ -2125,12 +2140,15 @@ private function string FormatMarker(AccessMarker M, TTile Origin, int Position,
 
 	Result = M.Label;
 	AppendComma(Result, M.Detail);
-	AppendComma(Result, string(M.Dist) @ (M.Dist == 1 ? "tile" : "tiles"));
+	AppendComma(Result, class'X2AccessVocab'.static.Count(M.Dist,
+		class'X2AccessVocab'.default.Tiles_One, class'X2AccessVocab'.default.Tiles_Few,
+		class'X2AccessVocab'.default.Tiles_Many));
 	AppendComma(Result, class'X2AccessTileReader'.static.OffsetWords(Origin, M.Tile));
 	if (M.bIsDestination)
 		AppendComma(Result, ReachWords(M.Tile));
 	if (Total > 1)
-		AppendComma(Result, string(Position) @ "of" @ string(Total));
+		AppendComma(Result, class'X2AccessVocab'.static.Fill2(
+			class'X2AccessVocab'.default.PositionOf, Position, Total));
 	return Result;
 }
 
@@ -2150,10 +2168,17 @@ private function string ReachWords(TTile Tile)
 		return "";
 	Cost = Unit.m_kReachableTilesCache.GetPathCostToTile(Tile);
 	if (Cost < 0)
-		return "out of range";
+		return class'X2AccessVocab'.default.ReachOutOfRange;
 	if (Cost > Unit.GetMobility())
-		return "dash";
-	return "1 action";
+		return class'X2AccessVocab'.default.ReachDash;
+	return class'X2AccessVocab'.default.ReachOneAction;
+}
+
+// How far a blob runs — the hazard and frontier rings' measure of the same kind of shape.
+private function string SpanWords(int Span)
+{
+	return class'X2AccessVocab'.static.Count(Span, class'X2AccessVocab'.default.TilesAcross_One,
+		class'X2AccessVocab'.default.TilesAcross_Few, class'X2AccessVocab'.default.TilesAcross_Many);
 }
 
 // ---------------------------------------------------------------------------
@@ -2217,12 +2242,12 @@ private function string HazardWord(int TypeIdx)
 {
 	switch (TypeIdx)
 	{
-	case 0: return "Fire";
-	case 1: return "Smoke";
-	case 2: return "Poison";
-	case 3: return "Acid";
+	case 0: return class'X2AccessVocab'.default.Fire;
+	case 1: return class'X2AccessVocab'.default.Smoke;
+	case 2: return class'X2AccessVocab'.default.Poison;
+	case 3: return class'X2AccessVocab'.default.Acid;
 	}
-	return "Hazard";
+	return class'X2AccessVocab'.default.Hazard;
 }
 
 private function bool TileHasHazard(XComWorldData WorldData, int TypeIdx, TTile Tile)

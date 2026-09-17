@@ -24,11 +24,14 @@ mono). Never heard. What a first run must settle, in order:
    `SoundNodeLooping`. A cue that loads but plays nothing means the node's serialization is wrong
    (the writer's docstring has what was assumed: `ChildNodes` as a plain ArrayProperty, no native
    payload on the node).
-2. **Playing silent, then rising**: on the first cursor landing beside a wall, the matching voice
-   rises over about half a second and, in When-moving mode, glides out a second later; on open
-   ground nothing is heard. If a voice is heard at full volume for a frame on the first landing,
-   `Play()` ran before `AdjustVolume(0, 0)` took — reorder to `FadeIn(0, 0)` or set the target
-   before `Play()`.
+2. **Playing silent, then rising** — the first run (2026-09-17) heard ONE landing and then nothing
+   on any map. The decompile found two causes, both fixed unheard: the idle level was 0, which the
+   device culls and stops (`engine-notes.md`, audio), and the current adjust level was never set
+   before the first glide, so that one landing was a burst from full scale. The next run must
+   hear: nothing until the first landing beside a wall, the voice rising over about half a second
+   from silence, gliding out a second later in When-moving mode, and rising AGAIN on the next
+   landing; open ground stays silent. If it still dies, Launch.log's `wall tone voice restarted`
+   lines say the device stopped a voice regardless (`Revive` restarts it) and how often.
 3. **The compass**: a wall to the east sounds in the RIGHT ear, west in the left, whatever the
    camera's rotation; north and south are centred and distinguishable. Mirrored means the baked pan
    is right and the cursor's compass is not (`NORTH_DX`/`EAST_DX` are the only flip points).
@@ -166,6 +169,32 @@ file, so that file IS picked up), and the generic marker (`ARC_IA_GenericObjecti
    presumably completes. Check with the sighted view (`just dev-shot`) whether a disabled turret
    still wears a flag; if it does not, the ring owes the same gate on that flag — and only then,
    because a mission that makes an objective blast-only from the start would lose it.
+
+**Localization migration** (design and contract: `localization.md`; first surface built
+2026-09-17). Every English word of OURS — roughly 400 literals across the companion readers and 250
+across the native TUs, counts inflated by log strings — moves onto the vanilla loc system.
+
+Done: `X2AccessVocab` (the one vocabulary class, 148 keys INT + RUS, `Count`/`Fill*` over
+`XGParamTag`), the tile cursor, the object scanner and the helper's tile words rewired onto it.
+Verified at the shell through the harness: the CDO holds every Russian value, `PluralForm` answers
+1/21/101→One, 22→Few, 5/11/112→Many, `Count(22, …)` → *22 клетки*, `Fill2` → *Этаж 2 из 3*.
+⚠ `/props` strips markup, so a template's `<XGParam:…/>` tags are invisible there — the deployed
+file and a `/call` on `Fill1` are the proof, not the dump.
+
+Owed, in order, each HEARD live before the next starts (the post-run shape count is the audit — a
+Russian line with an English word left in it is the tell):
+
+1. **Hear the tile cursor and the scanner in Russian on a tactical map** — a step, a floor key, a
+   cover tile, the objects ring on a locked door (*заперто, защита N*), the evac ring (*N на M
+   клеток, внутри I из T*), a hazard span, an offset with an up/down leg. Two lines changed shape
+   as well as language: the tile cursor's interactive-object clause now uses the scanner's
+   `InteractiveLabel` and words (a door reads the same on both surfaces), and a lone Lost is named
+   as the game names the unit rather than *Lost*.
+2. `X2AccessTacticalEvents` / `X2AccessReplayNarration` / `X2AccessTacticalReader` (`CoverWords`,
+   `DescribeTargetHealth`, the shot readout's "Blocked, lands …"), then the other readers and the
+   helper's remaining shell words (*Checked*, *percent*, *of N health*).
+3. Native through the CDO bridge, starting with the kernel's dozen structural words (*button*,
+   *Dialog*, *of*, the navigation help) — `localization.md`, Native.
 
 **The pod reveal and the reinforcement drop** (2026-09-16, `X2AccessTacticalEvents.OnScamperBegin` /
 `OnSpawnReinforcementsComplete`, builders `BuildRevealLine` / `BuildReinforcementLine`, the replay
@@ -641,6 +670,74 @@ are cheapest to reach:
   `unavailable` with its timestamp.
 - Then the distribution audit for the hues (every soldier the same hue is the collapse), `grep
   -n '0x'` over the ring for a swatch that escaped `ColourName`, and `grep -P '  '`.
+
+**Tactical Legacy Pack, the shell half** (2026-09-17; rules in `surfaces/shell.md`, recon in
+`tle-skirmish-recon.md` and `tle-challenge-recon.md`). The hub ran live the same evening (the
+cards, the figures, Space, the arrows all read; Enter on a card and the `selected` part are still
+unheard). The five screens under it were built from source with the game closed and have never
+run. In the order a player meets them:
+
+1. **Legacy Operations** (`legacy operations`): the attach names the screen; Up/Down walk four
+   narrative rows under CENTRAL'S ARCHIVES then the procedural rows under RESISTANCE ARCHIVES,
+   each row with its name, status and medal word; the `details` stop follows the selection (a
+   selection change must re-speak under the NEW ladder's name); the `squad` stop lists the
+   soldiers and Enter on one opens the loadout popup; CONTINUE / BEGIN, ABANDON, DELETE appear
+   exactly where the game draws them. On the "[+] generate" row the details stop must be
+   ABSENT, not stale. Enter on a fresh ladder opens the difficulty page; on an in-progress one
+   it loads the save.
+2. **Ladder difficulty** (`ladder difficulty`): the checked difficulty is the landing; the
+   narrative-VO row exists on a narrative ladder only; Ironman reads `unavailable` with its
+   reason; LAUNCH starts the ladder. The title must be UIShellDifficulty's own word, not the
+   fallback.
+3. **Soldier loadout** (`soldier loadout`): Left/Right on the soldier line step the soldier and
+   re-speak it; the stats, gear (an empty pocket says `empty`) and abilities stops read; Space on
+   an ability speaks its description.
+4. **Skirmish** (`skirmish`): `tle-skirmish-recon.md` §6 — the state byte at 0x48C matches the
+   subtitle; START GAME keeps its visible bit in every state; a picker Enter respawns the rows
+   and lands with the new subtitle spoken; the stat sheet reads a heading with each value; the
+   AWC rows do not all read the same text.
+5. **Challenge Archives** (`challenge archive`): `Data` at 0x3D8 reads on all 107 rows and the
+   attach lands on "1 of 107"; the sort stop finds five headers, Enter re-sorts and a second press
+   flips, and the cursor stays on the same challenge across a sort; Enter on a row starts it.
+
+For all five: `grep -P '  '` over the ring (dozens of localized labels are read off instances),
+and the distribution audit on any enumerable field (medal words, difficulty words, gear slots).
+
+**Tactical Legacy Pack, the mission half** (2026-09-17; rules in `surfaces/tactical.md`, recon
+in `tle-mission-recon.md`). Eight recipes and one narrate-only surface, built from source with
+the game closed, never run. In the order a ladder mission meets them:
+
+1. **The tactical layer is alive at all** on a ladder or challenge mission now that the two score
+   HUDs are whitelisted: the tile cursor speaks, the HUD graph attaches, and its trailing `score`
+   stop reads the score (and the countdown in a challenge). Silence here means the whitelist
+   missed a class name.
+2. **The scoring dialog** (`mission scoring`) attaches before turn 1 with its point rows and its
+   Continue starts the mission; `grep -P '  '` there checks the `m_ScoreLabels[]` population,
+   which the loc file keys by enum name.
+3. **The first kill** narrates the banner label with its points, then the total under the SCORE
+   label, in one burst after the banner — and not in a replay.
+4. **After the mission**: the upgrade pick (two cards; Left/Right move the game's highlight with
+   ours; Enter chooses), the squad review (page turns re-ask; a KIA soldier lands on its header
+   word; Enter on a soldier opens the loadout popup), medal progress or the medal, the end
+   screen — each attaching in turn under the MISSION COMPLETE name.
+5. **A challenge loss**: whether the movie shows the loss header the reader chose on
+   `bMissionFailed`; and the leaderboard button hidden offline.
+6. **Left out, on purpose**: `UIChallengeLeaderboards` (networked only, behind the result
+   screen's LEADERBOARD) and `UIChallengeMode_SquadSelect` (the online daily challenge); the
+   challenge timer's colour thresholds (an aid candidate, drawn as colour); the medal screen's
+   never-pushed `m_MedalDescriptions`.
+
+**Mod Config Menu** (2026-09-17; `mod config` recipe in `recipes/recipe_mods.cpp` over
+`game_ui_mods.cpp`, plus the injected-button scan appended to `GameUI::ReadOptions`; recon in
+`mod-config-menu-recon.md`). Built from the mod's own source with the game closed. **First run
+21:16 the same day reached the button and stopped there**: the settings recipe stayed attached under
+the mod screen because Settings never clears its focused bit (`surfaces/shell.md`, Settings —
+fixed with a topmost-of-stack probe, unrun since). It is
+the first screen of the mod-provided family, so the first pass also tests the family's premise:
+that a class absent from the generated SDK can be read by walking its tree and by name, with no
+pinned offset anywhere. The checklist is `mod-config-menu-recon.md` §5 — the fifth Options button,
+the no-page landing, the page-switch rebuild, the slider's own value text, Reset's presence, and
+Escape discarding. Test set: AllSoldiersGainXP, EvacAll_WotC, WOTCIridarAutoReload.
 
 ## Unexercised paths inside surfaces that HAVE run
 

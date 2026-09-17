@@ -117,7 +117,7 @@ function CursorStep(int Cardinal)
 	Target.Z = CurZ;
 	if (Target.X == CurX && Target.Y == CurY)
 	{
-		NativeResult = "Map edge";
+		NativeResult = class'X2AccessVocab'.default.MapEdge;
 		return;
 	}
 
@@ -170,9 +170,9 @@ function CursorFloor(int Delta)
 	if (Cursor.m_iRequestedFloor == OldFloor)
 	{
 		if (Delta > 0)
-			NativeResult = "Top floor";
+			NativeResult = class'X2AccessVocab'.default.TopFloor;
 		else
-			NativeResult = "Bottom floor";
+			NativeResult = class'X2AccessVocab'.default.BottomFloor;
 		return;
 	}
 
@@ -239,7 +239,7 @@ function CursorRecenter()
 	UnitState = ActiveUnitState();
 	if (UnitState == none)
 	{
-		NativeResult = "No unit selected";
+		NativeResult = class'X2AccessVocab'.default.NoUnitSelected;
 		return;
 	}
 	NativeResult = AdoptFloor(Cursor, WorldData, UnitState.TileLocation);
@@ -301,12 +301,12 @@ function CursorMoveTo()
 	PathingPawn = TC.m_kPathingPawn;
 	if (ActiveUnit == none || UnitState == none)
 	{
-		NativeResult = "No unit selected";
+		NativeResult = class'X2AccessVocab'.default.NoUnitSelected;
 		return;
 	}
 	if (PathingPawn == none || PathingPawn.bHidden)
 	{
-		NativeResult = "No move available";
+		NativeResult = class'X2AccessVocab'.default.NoMoveAvailable;
 		bMovePending = false;
 		return;
 	}
@@ -314,7 +314,7 @@ function CursorMoveTo()
 	CursorTile = CurTile();
 	if (SameTile(CursorTile, UnitState.TileLocation))
 	{
-		NativeResult = "Already here";
+		NativeResult = class'X2AccessVocab'.default.AlreadyHere;
 		bMovePending = false;
 		return;
 	}
@@ -331,15 +331,16 @@ function CursorMoveTo()
 	if (!SameTile(Dest, CursorTile))
 	{
 		if (!WorldData.IsFloorTileAndValidDestination(CursorTile, UnitState))
-			NativeResult = "Cannot stand there";
+			NativeResult = class'X2AccessVocab'.default.CannotStandThere;
 		else if (ActiveUnit.m_kReachableTilesCache == none
 			|| ActiveUnit.m_kReachableTilesCache.GetPathCostToTile(CursorTile) < 0)
-			NativeResult = "Out of range";
+			NativeResult = class'X2AccessVocab'.default.ReachOutOfRange;
 		else
-			NativeResult = "Cannot stop there";
+			NativeResult = class'X2AccessVocab'.default.CannotStopThere;
 		Desc = OffsetWords(CursorTile, Dest);
 		if (Desc != "")
-			AppendPart(NativeResult, "Nearest" @ Desc);
+			AppendPart(NativeResult, class'X2AccessVocab'.static.FillS(
+				class'X2AccessVocab'.default.Nearest, Desc));
 		bMovePending = false;
 		return;
 	}
@@ -348,10 +349,12 @@ function CursorMoveTo()
 	{
 		// First press: preview. The path is the one the pathing pawn already built for this
 		// cursor position — exactly what the game would run.
-		Desc = string(Max(PathingPawn.PathTiles.Length - 1, 0)) @ "tiles";
+		Desc = class'X2AccessVocab'.static.Count(Max(PathingPawn.PathTiles.Length - 1, 0),
+			class'X2AccessVocab'.default.Tiles_One, class'X2AccessVocab'.default.Tiles_Few,
+			class'X2AccessVocab'.default.Tiles_Many);
 		Cost = ActiveUnit.m_kReachableTilesCache.GetPathCostToTile(Dest);
 		if (Cost >= 0 && Cost > ActiveUnit.GetMobility())
-			Desc $= ", dash";
+			AppendComma(Desc, class'X2AccessVocab'.default.ReachDash);
 		// The path-marker warnings, BEFORE the commit prompt — a blind player must hear "breaks
 		// concealment" while the second press is still theirs to withhold.
 		class'X2AccessHelper'.static.AppendComma(Desc, DescribePathRisks(PathingPawn, UnitState));
@@ -359,7 +362,7 @@ function CursorMoveTo()
 		// Who would see the soldier there and whether the cover holds — the eye markers and the
 		// red shield the game draws on this very destination while the puck sits on it.
 		AppendPart(Desc, DescribeSight(Dest, WorldData.GetPositionFromTileCoordinates(Dest)));
-		AppendPart(Desc, "Press again to move");
+		AppendPart(Desc, class'X2AccessVocab'.default.PressAgainToMove);
 		NativeResult = Desc;
 		bMovePending = true;
 		PendingMoveTile = Dest;
@@ -371,9 +374,9 @@ function CursorMoveTo()
 	bMovePending = false;
 	TacInput = XComTacticalInput(TC.PlayerInput);
 	if (TacInput != none && TacInput.ClickToPath())
-		NativeResult = "Moving";
+		NativeResult = class'X2AccessVocab'.default.Moving;
 	else
-		NativeResult = "Cannot move there";
+		NativeResult = class'X2AccessVocab'.default.CannotMoveThere;
 }
 
 // Left Alt — the game's target preview, spoken (DescribeTargetPreview has the parity case). The
@@ -406,7 +409,7 @@ function CursorTargetPreview()
 		UnitState = ActiveUnitState();
 		if (UnitState == none)
 		{
-			NativeResult = "No unit selected";
+			NativeResult = class'X2AccessVocab'.default.NoUnitSelected;
 			return;
 		}
 		PathingPawn = TC.m_kPathingPawn;
@@ -440,7 +443,7 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 
 	if (FOW == eFOWTileStatus_NeverSeen)
 	{
-		Result = "Unexplored";
+		Result = class'X2AccessVocab'.default.Unexplored;
 		AppendPart(Result, DescribeOffset(Tile));
 		return Result;
 	}
@@ -472,9 +475,9 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 		&& !WorldData.IsFloorTileAndValidDestination(Tile, ActiveUnitState()));
 	bNoStop = bImpassable || bNoFooting;
 	if (bImpassable)
-		AppendPart(Result, "Impassable");
+		AppendPart(Result, class'X2AccessVocab'.default.Impassable);
 	else if (bNoFooting)
-		AppendPart(Result, "Cannot stand here");
+		AppendPart(Result, class'X2AccessVocab'.default.CannotStandHere);
 	AppendPart(Result, UnitPart);
 
 	AppendPart(Result, DescribeInteractives(Tile));
@@ -503,9 +506,9 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 		AppendPart(Result, class'X2AccessHelper'.static.DescribeHazards(WorldData, Tile));
 
 	if (WorldData.IsWaterTile(Tile))
-		AppendPart(Result, "Water");
+		AppendPart(Result, class'X2AccessVocab'.default.Water);
 	if (WorldData.IsRampTile(Tile))
-		AppendPart(Result, "Ramp");
+		AppendPart(Result, class'X2AccessVocab'.default.Ramp);
 
 	// "Impassable. Out of range." says one thing twice — a tile nobody can stand on has no
 	// reachability to report, and this was the single noisiest line of the 2026-08-21 run
@@ -516,7 +519,8 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 	AppendPart(Result, DescribeOffset(Tile));
 
 	if (bVerbose)
-		AppendPart(Result, "Tile" @ string(Tile.X) $ "," @ string(Tile.Y) $ "," @ string(Tile.Z));
+		AppendPart(Result, class'X2AccessVocab'.static.Fill3(
+			class'X2AccessVocab'.default.TileCoords, Tile.X, Tile.Y, Tile.Z));
 
 	// The game's own Gameplay option "Show Target Preview" keeps the strip up on every hover
 	// instead of only while Alt is held; on, the strip rides every step here too. LAST, because
@@ -525,7 +529,7 @@ private function string DescribeTile(TTile Tile, bool bVerbose)
 		AppendPart(Result, DescribeTargetPreview(Tile, false));
 
 	if (Result == "")
-		Result = "Clear";
+		Result = class'X2AccessVocab'.default.Clear;
 	return Result;
 }
 
@@ -608,9 +612,9 @@ private function string DescribeSight(TTile Tile, vector TilePos)
 
 	if (Count == 0)
 		return "";
-	Result = "Seen by" @ string(Count);
+	Result = class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.SeenBy, Count);
 	if (bFlanked)
-		AppendComma(Result, "flanked");
+		AppendComma(Result, class'X2AccessVocab'.default.Flanked);
 	return Result;
 }
 
@@ -652,7 +656,7 @@ private function string DescribeTargetPreview(TTile Tile, bool bSpeakEmpty)
 
 	UnitState = ActiveUnitState();
 	if (UnitState == none)
-		return bSpeakEmpty ? "No unit selected" : "";
+		return bSpeakEmpty ? class'X2AccessVocab'.default.NoUnitSelected : "";
 
 	Pres = `PRES;
 	if (Pres == none)
@@ -723,13 +727,13 @@ private function string DescribeTargetPreview(TTile Tile, bool bSpeakEmpty)
 
 		j = AffIDs.Find(Targets[i].ObjectID);
 		if (j == INDEX_NONE)
-			AppendComma(Entry, "not targetable");
+			AppendComma(Entry, class'X2AccessVocab'.default.NotTargetable);
 		else
 		{
 			if (AffSquadsight[j] != 0)
-				AppendComma(Entry, "via squadsight");
+				AppendComma(Entry, class'X2AccessVocab'.default.ViaSquadsight);
 			if (AffCover[j] == CT_None)
-				AppendComma(Entry, "flanked");
+				AppendComma(Entry, class'X2AccessVocab'.default.Flanked);
 			else if (AffCover[j] >= 0)
 				AppendComma(Entry, class'X2AccessTacticalReader'.static.CoverWords(ECoverType(AffCover[j])));
 		}
@@ -740,14 +744,14 @@ private function string DescribeTargetPreview(TTile Tile, bool bSpeakEmpty)
 	{
 		if (!bSpeakEmpty)
 			return "";
-		Result = "No targets";
+		Result = class'X2AccessVocab'.default.NoTargets;
 	}
 
 	// The panel's own heading ("TARGET PREVIEW:"), localized by the game. Verified populated: the
 	// class that declares it is the section XComGame.<loc> ships it under.
 	Heading = class'UITacticalHUD_EnemyPreview'.default.Label;
 	if (Heading == "")
-		Heading = "Targets:";
+		Heading = class'X2AccessVocab'.default.TargetsHeading;
 	AppendPart(Heading, Result);
 	return Heading;
 }
@@ -765,12 +769,12 @@ private function string DescribeCoverEdges(vector TilePos, bool bVerbose)
 	if (!WorldData.GetCoverPointAtFloor(TilePos, CP))
 	{
 		if (bVerbose)
-			return "No cover";
+			return class'X2AccessVocab'.default.NoCover;
 		return "";
 	}
 	Result = CoverEdgeWords(CP.Flags);
 	if (Result == "" && bVerbose)
-		Result = "No cover";
+		Result = class'X2AccessVocab'.default.NoCover;
 	return Result;
 }
 
@@ -806,12 +810,32 @@ static function string CoverEdgeWords(int Flags)
 		// shot readout's DescribeTargetCover and the player all say full/half cover — and this
 		// surface and that one describe the same wall. Two vocabularies for one fact is how you
 		// get a player who cannot tell whether the mod is contradicting itself.
-		if ((Flags & (class'XComWorldData'.const.COVER_NLow << Dir)) != 0)
-			class'X2AccessHelper'.static.AppendPart(Result, "Half cover" @ CardinalWord(Dir));
-		else
-			class'X2AccessHelper'.static.AppendPart(Result, "Full cover" @ CardinalWord(Dir));
+		class'X2AccessHelper'.static.AppendPart(Result,
+			CoverEdgeWord((Flags & (class'XComWorldData'.const.COVER_NLow << Dir)) != 0, Dir));
 	}
 	return Result;
+}
+
+// One edge's words. A key per edge and height rather than a template over a direction word, so a
+// translator can decline the direction ("с севера") instead of being handed the nominative.
+private static function string CoverEdgeWord(bool bHalf, int Dir)
+{
+	switch (Dir)
+	{
+	case DIR_NORTH:
+		return bHalf ? class'X2AccessVocab'.default.HalfCoverNorth
+			: class'X2AccessVocab'.default.FullCoverNorth;
+	case DIR_SOUTH:
+		return bHalf ? class'X2AccessVocab'.default.HalfCoverSouth
+			: class'X2AccessVocab'.default.FullCoverSouth;
+	case DIR_EAST:
+		return bHalf ? class'X2AccessVocab'.default.HalfCoverEast
+			: class'X2AccessVocab'.default.FullCoverEast;
+	case DIR_WEST:
+		return bHalf ? class'X2AccessVocab'.default.HalfCoverWest
+			: class'X2AccessVocab'.default.FullCoverWest;
+	}
+	return "";
 }
 
 // The canonical cover SIGNATURE of a tile: every covered edge's presence bit, that edge's low bit
@@ -853,6 +877,11 @@ static function int CoverSignature(int Flags)
 
 // Doors, hackable objectives, loot — the static map features a sighted player recognizes on
 // sight. Interactive objects are few per mission, so the history walk is cheap at key rate.
+//
+// The NAME is the object scanner's InteractiveLabel and the two clauses are the scanner's words,
+// so the tile under the cursor and the same object in the objects ring cannot disagree (the
+// two-surfaces-must-agree rule). Until the vocabulary moved into one place this read "Hackable
+// object" for a door the ring called "Взломать дверь".
 private function string DescribeInteractives(TTile Tile)
 {
 	local XComGameState_InteractiveObject IObj;
@@ -862,16 +891,12 @@ private function string DescribeInteractives(TTile Tile)
 	{
 		if (!SameTile(IObj.TileLocation, Tile))
 			continue;
-		if (IObj.IsDoor())
-			ObjName = "Door";
-		else if (IObj.MustBeHacked())
-			ObjName = "Hackable object";
-		else if (IObj.GetAvailableLoot().Length > 0)
-			ObjName = "Loot";
-		else
-			ObjName = "Interactive object";
+		ObjName = class'X2AccessObjectScanner'.static.InteractiveLabel(IObj);
 		if (IObj.LockStrength > 0)
-			ObjName @= "(locked)";
+			AppendComma(ObjName, class'X2AccessVocab'.static.Fill1(
+				class'X2AccessVocab'.default.LockedStrength, IObj.LockStrength));
+		if (IObj.HasLoot())
+			AppendComma(ObjName, class'X2AccessVocab'.default.HasLoot);
 		AppendPart(Result, ObjName);
 	}
 	return Result;
@@ -893,7 +918,7 @@ private function string DescribeReachability(TTile Tile)
 	if (UnitState == none)
 		return "";
 	if (SameTile(Tile, UnitState.TileLocation))
-		return "Your tile";
+		return class'X2AccessVocab'.default.ReachYourTile;
 	WorldData = `XWORLD;
 	if (WorldData == none || !WorldData.IsFloorTileAndValidDestination(Tile, UnitState))
 		return "";
@@ -902,10 +927,10 @@ private function string DescribeReachability(TTile Tile)
 		return "";
 	Cost = ActiveUnit.m_kReachableTilesCache.GetPathCostToTile(Tile);
 	if (Cost < 0)
-		return "Out of range";
+		return class'X2AccessVocab'.default.ReachOutOfRange;
 	if (Cost > ActiveUnit.GetMobility())
-		return "Dash";
-	return "1 action";
+		return class'X2AccessVocab'.default.ReachDash;
+	return class'X2AccessVocab'.default.ReachOneAction;
 }
 
 // The spoken form of the path preview's warning icons (docs/concealment-recon.md §3): "noise"
@@ -958,9 +983,9 @@ private function string DescribePathRisks(XComPathingPawn PathingPawn, XComGameS
 	}
 
 	if (bBreaks)
-		Result = "breaks concealment";
+		Result = class'X2AccessVocab'.default.BreaksConcealment;
 	if (bNoise)
-		class'X2AccessHelper'.static.AppendComma(Result, "noise");
+		class'X2AccessHelper'.static.AppendComma(Result, class'X2AccessVocab'.default.Noise);
 	return Result;
 }
 
@@ -1013,17 +1038,21 @@ static function string OffsetWords(TTile FromTile, TTile ToTile, optional bool b
 
 	Result = "";
 	if (NorthAmt > 0)
-		Result = string(NorthAmt) @ CardinalWord(DIR_NORTH);
+		Result = class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.OffsetNorth, NorthAmt);
 	else if (NorthAmt < 0)
-		Result = string(-NorthAmt) @ CardinalWord(DIR_SOUTH);
+		Result = class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.OffsetSouth, -NorthAmt);
 	if (EastAmt > 0)
-		AppendComma(Result, string(EastAmt) @ CardinalWord(DIR_EAST));
+		AppendComma(Result, class'X2AccessVocab'.static.Fill1(
+			class'X2AccessVocab'.default.OffsetEast, EastAmt));
 	else if (EastAmt < 0)
-		AppendComma(Result, string(-EastAmt) @ CardinalWord(DIR_WEST));
+		AppendComma(Result, class'X2AccessVocab'.static.Fill1(
+			class'X2AccessVocab'.default.OffsetWest, -EastAmt));
 	if (DZ > 0)
-		AppendComma(Result, string(DZ) @ "up");
+		AppendComma(Result, class'X2AccessVocab'.static.Fill1(
+			class'X2AccessVocab'.default.OffsetUp, DZ));
 	else if (DZ < 0)
-		AppendComma(Result, string(-DZ) @ "down");
+		AppendComma(Result, class'X2AccessVocab'.static.Fill1(
+			class'X2AccessVocab'.default.OffsetDown, -DZ));
 	return Result;
 }
 
@@ -1105,7 +1134,7 @@ private function bool EnsurePlanted(XComTacticalController TC, XCom3DCursor Curs
 	UnitState = ActiveUnitState();
 	if (UnitState == none)
 	{
-		NativeResult = "No unit selected";
+		NativeResult = class'X2AccessVocab'.default.NoUnitSelected;
 		return true; // consumed: spoke the refusal, nothing planted
 	}
 
@@ -1115,7 +1144,7 @@ private function bool EnsurePlanted(XComTacticalController TC, XCom3DCursor Curs
 	LastIndoorState = 0;
 	LastSightState = 0;
 
-	NativeResult = "Cursor on.";
+	NativeResult = class'X2AccessVocab'.default.CursorOn;
 	AppendPart(NativeResult, AdoptFloor(Cursor, WorldData, UnitState.TileLocation));
 	SetCursorTile(Cursor, WorldData, UnitState.TileLocation);
 	AppendPart(NativeResult, DescribeIndoor(WorldData, UnitState.TileLocation, false));
@@ -1145,7 +1174,7 @@ function CursorGoToMarker()
 
 	if (!class'X2AccessObjectScanner'.default.bSelValid)
 	{
-		NativeResult = "No marker selected";
+		NativeResult = class'X2AccessVocab'.default.NoMarkerSelected;
 		return;
 	}
 
@@ -1158,7 +1187,7 @@ function CursorGoToMarker()
 	bMovePending = false;
 	LastIndoorState = 0;
 	LastSightState = 0;
-	NativeResult = "Cursor.";
+	NativeResult = class'X2AccessVocab'.default.CursorJumped;
 	AppendPart(NativeResult, AdoptFloor(Cursor, WorldData, Target));
 	SetCursorTile(Cursor, WorldData, Target);
 	AppendPart(NativeResult, DescribeIndoor(WorldData, Target, false));
@@ -1217,6 +1246,22 @@ private function SetCursorTile(XCom3DCursor Cursor, XComWorldData WorldData, TTi
 	// a step, a floor key, the floor poll, a plant, a recenter, the scanner marker — passes
 	// through this one function, and a crossing missed on any of them is a silent bug.
 	CueSight(WorldData, Tile);
+	CueWalls(WorldData, Tile);
+}
+
+// The wall tones (X2AccessWallTones has the design): every landing re-aims the four looping
+// voices at the walls around the tile. The actor is spawned on the first landing of a mission
+// and found by iteration after — never held here, this being a CDO. Nothing is spawned while
+// the mode is Off, so a player who turned the bed off pays nothing for it.
+private function CueWalls(XComWorldData WorldData, TTile Tile)
+{
+	local X2AccessWallTones Tones;
+
+	if (class'X2AccessWallTones'.default.Mode == 0)
+		return;
+	Tones = class'X2AccessWallTones'.static.Get(true);
+	if (Tones != none)
+		Tones.OnCursorTile(WorldData, Tile);
 }
 
 // The line-of-sight earcon: the cursor crossed OUT of the squad's sight (a short, higher tone)
@@ -1387,9 +1432,9 @@ private function bool VerticalDrawn(XComWorldData WorldData, TTile Tile)
 private static function string HeightWord(int FromZ, int ToZ)
 {
 	if (ToZ > FromZ)
-		return "Up" @ string(ToZ - FromZ);
+		return class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.HeightUp, ToZ - FromZ);
 	if (ToZ < FromZ)
-		return "Down" @ string(FromZ - ToZ);
+		return class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.HeightDown, FromZ - ToZ);
 	return "";
 }
 
@@ -1398,7 +1443,8 @@ private static function string HeightWord(int FromZ, int ToZ)
 // agrees about. Read AFTER SetCursorTile, which re-derives it from the landed tile.
 private function string FloorWord(XCom3DCursor Cursor)
 {
-	return "Floor" @ string(Cursor.m_iRequestedFloor) @ "of" @ string(Cursor.GetMaxFloor());
+	return class'X2AccessVocab'.static.Fill2(class'X2AccessVocab'.default.FloorOf,
+		Cursor.m_iRequestedFloor, Cursor.GetMaxFloor());
 }
 
 // Where the cursor stands relative to buildings — "Inside building, floor 2 of 3" on entering,
@@ -1514,27 +1560,30 @@ private function string DescribeIndoor(XComWorldData WorldData, TTile Tile, bool
 	if (bForce || bChanged)
 	{
 		if (Here == 1)
-			Result = "Outside";
+			Result = class'X2AccessVocab'.default.Outside;
 		else if (Here == 3)
-			Result = "On roof";
+			Result = class'X2AccessVocab'.default.OnRoof;
 		else if (bForce || bNewBuilding)
 		{
 			if (Found != none && Found.IsUfo)
-				Result = "Inside UFO";
+				Result = class'X2AccessVocab'.default.InsideUFO;
 			else if (Found != none && Found.IsDropShip)
-				Result = "Inside dropship";
+				Result = class'X2AccessVocab'.default.InsideDropship;
 			else
-				Result = "Inside building";
-			Result $= ", floor" @ string(FloorNum);
+				Result = class'X2AccessVocab'.default.InsideBuilding;
 			if (Count > 0)
-				Result @= "of" @ string(Count);
+				AppendComma(Result, class'X2AccessVocab'.static.Fill2(
+					class'X2AccessVocab'.default.BuildingFloorOf, FloorNum, Count));
+			else
+				AppendComma(Result, class'X2AccessVocab'.static.Fill1(
+					class'X2AccessVocab'.default.BuildingFloor, FloorNum));
 		}
+		else if (Count > 0)
+			Result = class'X2AccessVocab'.static.Fill2(
+				class'X2AccessVocab'.default.BuildingFloorChangedOf, FloorNum, Count);
 		else
-		{
-			Result = "Building floor" @ string(FloorNum);
-			if (Count > 0)
-				Result @= "of" @ string(Count);
-		}
+			Result = class'X2AccessVocab'.static.Fill1(
+				class'X2AccessVocab'.default.BuildingFloorChanged, FloorNum);
 	}
 
 	LastIndoorState = Here;
@@ -1560,18 +1609,6 @@ static function bool CardinalDelta(int Cardinal, out int DX, out int DY)
 	return false;
 }
 
-static function string CardinalWord(int Cardinal)
-{
-	switch (Cardinal)
-	{
-	case DIR_NORTH: return "north";
-	case DIR_SOUTH: return "south";
-	case DIR_EAST:  return "east";
-	case DIR_WEST:  return "west";
-	}
-	return "";
-}
-
 static function bool SameTile(TTile A, TTile B)
 {
 	return A.X == B.X && A.Y == B.Y && A.Z == B.Z;
@@ -1586,8 +1623,8 @@ private function AppendPart(out string Result, string Part)
 	class'X2AccessHelper'.static.AppendPart(Result, Part);
 }
 
-// private: OffsetWords is the only caller in this class, and anything outside it wants
-// X2AccessHelper.AppendComma directly rather than routing through a surface class.
+// private: anything outside this class wants X2AccessHelper.AppendComma directly rather than
+// routing through a surface class.
 private static function AppendComma(out string Result, string Part)
 {
 	class'X2AccessHelper'.static.AppendComma(Result, Part);

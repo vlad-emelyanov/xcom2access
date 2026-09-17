@@ -122,6 +122,13 @@ add_library(X2Access SHARED
     src/game_ui_popup.cpp
     src/game_ui_avenger.cpp
     src/game_ui_tactical.cpp
+    src/game_ui_tle.cpp
+    src/game_ui_tle_challenge.cpp
+    src/game_ui_tle_skirmish.cpp
+    src/game_ui_tle_mission.cpp
+    # Mod-provided screens (Mod Config Menu first): classes absent from the generated SDK, read by
+    # walking the tree and by name — no offset into a mod class, so no static_assert can cover it.
+    src/game_ui_mods.cpp
     src/menu_navigator.cpp
     # The screen recipes, one TU per surface family — the axis docs/surfaces/*.md already uses.
     # They see the navigator only through src/recipes/recipe_context.h, and their probe ORDER
@@ -134,6 +141,11 @@ add_library(X2Access SHARED
     src/recipes/recipe_strategy.cpp
     src/recipes/recipe_avenger.cpp
     src/recipes/recipe_tactical.cpp
+    src/recipes/recipe_tle.cpp
+    src/recipes/recipe_tle_challenge.cpp
+    src/recipes/recipe_tle_skirmish.cpp
+    src/recipes/recipe_tle_mission.cpp
+    src/recipes/recipe_mods.cpp
     # The companion wire grammar, in its own TU because it is STL-only and the recipes that
     # decode it are not — menu_navigator.cpp includes windows.h, so tests/ cannot compile it.
     src/wire_record.cpp

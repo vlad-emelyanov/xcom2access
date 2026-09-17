@@ -93,6 +93,12 @@ bool MoviePlaying();
 /// test bIsVisible: the game leaves that false on screens it is plainly showing.
 bool IsScreenFocused(void* screen);
 
+/// Screen is the topmost live entry of the game's own screen stack (mouse guards skipped). The
+/// probe test for a screen the game pushes OTHER screens over: UIOptionsPCScreen never clears its
+/// focused bit on losing focus, so IsScreenFocused alone kept the settings recipe attached under
+/// Mod Config Menu. False for screens the stack does not manage (UIDialogueBox).
+bool IsTopmostScreen(void* screen);
+
 /// Is this screen an instance of `baseClass`, or of anything extending it? The ONE way a feature
 /// TU outside the reader layer may ask "is this screen mine", and the one that survives a mod.
 ///

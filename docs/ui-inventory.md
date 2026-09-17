@@ -82,6 +82,7 @@ All ✅ — shell recipes: `UIShellDifficulty`, `UISecondWave`, `UIShellNarrativ
 |---|---|---|
 | `UISaveGame` / `UILoadGame` | save / load | ✅ (save half not yet run live) |
 | `UIOptionsPCScreen` | settings | ✅ |
+| `MCM_OptionsScreen` (Mod Config Menu, Workshop 667104300 — not a shipped class) | mod settings, pushed over `UIOptionsPCScreen` by the MOD SETTINGS button it injects there | ◐ built from source, unrun (`mod-config-menu-recon.md`; the first mod-provided screen, `game_ui_mods.cpp`) |
 | `UIKeybindingsPCScreen` | key bindings — Flash-only, no `UIList` | ✅ legacy listener (`UIScreenListener_KeyBindings`) |
 | `UIPauseMenu` | pause menu (tactical) | ✅ |
 | `UIShellStrategy` | `extends UIPauseMenu` — the **developer** shell's strategy menu, NOT the Avenger's Escape menu | 🚫 dev-only, and the ⚠ it used to carry is answered: `XComPresentationLayerBase.UIPauseMenu()` spawns `class'UIPauseMenu'` LITERALLY for every layer including the HQ's, so the Avenger's Escape menu really is a plain `UIPauseMenu` and the exact-name probe is right. The only caller of `UIStrategyShell()` that runs is `UIShell.uc:357`, which `-review` skips; the HQ layer's copy sits under its own "BEGIN DEPRECATED UI" banner |
@@ -249,13 +250,19 @@ sight. Revisit only on player request.
 
 ## 15. Challenge mode / TLE — later, on demand (20)
 
-`UITLEScreen`, `UITLEHub`, `UITLE_ChallengeModeMenu`, `UITLE_LadderDifficulty`,
-`UITLE_LadderModeMenu`, `UITLE_SkirmishModeMenu`, `UITLELadderEndScreen`,
-`UITLELadderMedalProgressScreen`, `UITLELadderMedalScreen`, `UITLEUnitStats`,
-`UIChallengeModeHUD`, `UIChallengeMode_SquadSelect`, `UIChallengeModeEventNotify`,
-`UIChallengeModeScoringDialog`, `UIChallengePostScreen`, `UIChallengeLeaderboards`,
-`UILadderModeHUD`, `UILadderModeScoringDialog`, `UILadderSoldierInfo`,
-`UILadderUpgradeScreen`. The tactical layer's work transfers; the shells are new recipes.
+The shell half is ✅ (2026-09-17): `UITLEHub` (`legacy hub`), `UITLE_LadderModeMenu` (`legacy
+operations`), `UITLE_LadderDifficulty` (`ladder difficulty`), `UITLEUnitStats` (`soldier
+loadout`), `UITLE_SkirmishModeMenu` (`skirmish`, all 21 states), `UITLE_ChallengeModeMenu`
+(`challenge archive`). `UITLEScreen` is the abstract base. `UIChallengeMode_SquadSelect` and
+`UIChallengeLeaderboards` are the ONLINE daily challenge's (unreachable from the offline
+archive; the leaderboards are reachable from the post screen only) — out of scope with the
+online mode.
+
+The in-mission and post-mission half: `UILadderModeHUD`, `UILadderModeScoringDialog`,
+`UILadderUpgradeScreen`, `UILadderSoldierInfo`, `UITLELadderMedalScreen`,
+`UITLELadderEndScreen`, `UITLELadderMedalProgressScreen`, `UIChallengeModeHUD`,
+`UIChallengeModeScoringDialog`, `UIChallengePostScreen`, `UIChallengeModeEventNotify` — see
+`surfaces/README.md` for which have recipes.
 
 ## 16. Multiplayer — 🚫 deprioritized (30)
 

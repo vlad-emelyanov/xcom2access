@@ -13,7 +13,7 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 
 | Surface | Native | Companion / recipe | Rules | Recon |
 |---|---|---|---|---|
-| Main menu, settings, new-campaign flow, pause menu | `game_ui_shell.cpp` | `recipes/recipe_shell.cpp` | — | — |
+| Main menu, settings, new-campaign flow, pause menu | `game_ui_shell.cpp` | `recipes/recipe_shell.cpp` | shell.md (Settings) | — |
 | Save / load | `game_ui_shell.cpp` | `X2AccessSaveReader.uc`, save/load recipe | shell.md | `save-load-recon.md` |
 | Text-entry dialog | `text_input.cpp` | — (observer, no recipe) | shell.md | `save-load-recon.md` §7.1 |
 | Tactical tile cursor | `tile_reader.cpp`, `mouse_gate.cpp` | `X2AccessTileReader.uc` | tactical.md | `concealment-recon.md` (detection readout) |
@@ -71,4 +71,20 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Manage equipment (`UIManageEquipmentMenu`) | `game_ui_strategy.cpp` | — (no companion), `manage equipment` | strategy.md | `customize-recon.md` §1 |
 | Soldier customization (`UICustomize` + 16 subclasses, the option picker, the colour selector) | `game_ui_strategy.cpp` | `X2AccessCustomizeReader.uc`, `customize` | strategy.md | `customize-recon.md` §2 |
 | Character pool (`UICharacterPool`) + its import / export picker (`UICharacterPool_ListPools`) | `game_ui_shell.cpp` | — (no companion), `character pool` + `pool files` | shell.md | `customize-recon.md` §3 |
+| Tactical Legacy Pack hub (`UITLEHub`) | `game_ui_shell.cpp` | `X2AccessTLEReader.DescribeHub` (the numbers only), `legacy hub` | shell.md | — (built from `SrcOrig`; ran live 2026-09-17) |
+| Legacy Operations menu (`UITLE_LadderModeMenu`) — both ladder lists, the details panel, the squad, CONTINUE / ABANDON / DELETE | `game_ui_tle.cpp` | `X2AccessTLEReader.DescribeLadderMenu`, `legacy operations` | shell.md | — (built from `SrcOrig` + one `dev-props` read of the live screen) |
+| Ladder difficulty page (`UITLE_LadderDifficulty`) | `game_ui_tle.cpp` | `X2AccessTLEReader.DescribeLadderDifficulty` (title + description), `ladder difficulty` | shell.md | — |
+| Soldier loadout popup (`UITLEUnitStats`) — header, stats, gear, PCS, abilities; Left/Right step the soldier | `game_ui_tle.cpp` | `X2AccessTLEReader.DescribeUnitStats`, `soldier loadout` | shell.md | — |
+| Skirmish Mode menu (`UITLE_SkirmishModeMenu`, all 21 of its states — it pushes no sub-screen) | `game_ui_tle_skirmish.cpp` | `X2AccessSkirmishReader.uc` (the right-hand panel), `skirmish` | shell.md | `tle-skirmish-recon.md` |
+| Challenge Archives (`UITLE_ChallengeModeMenu`) — the offline daily-challenge archive; one screen, straight to the map | `game_ui_tle_challenge.cpp` | `X2AccessChallengeReader.uc` (sort headers + profile figures), `challenge archive` | shell.md | `tle-challenge-recon.md` |
+| Ladder / challenge scoring dialog (`UILadderModeScoringDialog`, `UIChallengeModeScoringDialog`) | `game_ui_tle_mission.cpp` | `X2AccessLadderReader.DescribeScoring`, `mission scoring` | tactical.md | `tle-mission-recon.md` |
+| Ladder upgrade pick (`UILadderUpgradeScreen`) | `game_ui_tle_mission.cpp` | `X2AccessLadderReader.DescribeUpgrade`, `ladder upgrade` | tactical.md | `tle-mission-recon.md` |
+| Ladder squad review (`UILadderSoldierInfo`) | `game_ui_tle_mission.cpp` | `X2AccessLadderReader.DescribeSoldierPage`, `ladder squad` | tactical.md | `tle-mission-recon.md` |
+| Ladder medal progress (`UITLELadderMedalProgressScreen`) | `game_ui_tle_mission.cpp` (finder only) | `X2AccessLadderReader.DescribeMedalProgress`, `medal progress` | tactical.md | `tle-mission-recon.md` |
+| Ladder medal (`UITLELadderMedalScreen`) | `game_ui_tle_mission.cpp` | `X2AccessLadderReader.DescribeMedal`, `ladder medal` | tactical.md | `tle-mission-recon.md` |
+| Ladder end (`UITLELadderEndScreen`) | `game_ui_tle_mission.cpp` | `X2AccessLadderReader.DescribeEndStats`, `ladder end` | tactical.md | `tle-mission-recon.md` |
+| Challenge result (`UIChallengePostScreen`) — LEADERBOARD opens `UIChallengeLeaderboards`, not covered (networked only) | `game_ui_tle_mission.cpp` | `X2AccessLadderReader.DescribeChallengePost`, `challenge result` | tactical.md | `tle-mission-recon.md` |
+| Challenge event notice (`UIChallengeModeEventNotify`, networked only) | `game_ui_tle_mission.cpp` | — (no companion), `challenge event` | tactical.md | `tle-mission-recon.md` |
+| Score HUD (`UIChallengeModeHUD`, `UILadderModeHUD`) — narrate-only, no recipe | `game_ui_tactical.cpp` (whitelisted in `kTacticalPassives`; the HUDs retain nothing) | `X2AccessLadderReader` listener on `ChallengeModeScoreChange` (banners + total); `DescribeHudScore` for the HUD graph's trailing `score` stop via `AddTLEHudStop` | tactical.md | `tle-mission-recon.md` §1, §3 |
+| Mod Config Menu (`MCM_OptionsScreen`) + the injected Options button — the first mod-provided screen: no SDK class, read by walking and by name | `game_ui_mods.cpp` + the Options button scan in `game_ui_shell.cpp` | — (no companion), `mod config` | — (built from source; never run) | `mod-config-menu-recon.md` |
 

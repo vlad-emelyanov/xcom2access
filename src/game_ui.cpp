@@ -1017,6 +1017,32 @@ bool StackEntryLiveRaw(void* screen)
     return (flags & kPanelInited) && !(flags & kPanelRemoved);
 }
 
+// Is `screen` the topmost LIVE entry of the stack, looking past the mouse guards the game pushes
+// under every screen that consumes mouse events (UIScreenStack.Push spawns the guard first, so
+// during a push the guard can briefly be on top)?
+//
+// ⛔ This exists because the focused bit can LIE on a screen underneath: UIOptionsPCScreen's
+// OnLoseFocus overrides UIScreen's without calling super, so it Hides and never clears
+// bIsFocused. Anything pushed over Settings (Mod Config Menu, key bindings, credits) left the
+// settings recipe's ProbeFocused passing and the navigator attached to a screen two entries down,
+// which reads to the player as silence on the screen they are actually on. Position in the stack
+// is the game's own answer to "who has the keys" (docs/surfaces/shell.md, Settings).
+bool IsTopStackScreenRaw(void* screen)
+{
+    if (!screen)
+        return false;
+    void* screens[kMaxStackScreens] = {};
+    const int count = WalkStackRaw(screens, kMaxStackScreens);
+    for (int i = 0; i < count; i++) {
+        if (!screens[i] || !StackEntryLiveRaw(screens[i]))
+            continue;
+        if (ObjectClassNamedRaw(screens[i], "UIMouseGuard", ClassMatch::Derived))
+            continue;
+        return screens[i] == screen;
+    }
+    return false;
+}
+
 // The GetCurrentScreen rule, which the current-screen finders share: the TOPMOST non-null entry,
 // and only when it matches and is live. A non-match on top is a REFUSAL, not a reason to keep
 // looking — a screen under another screen has already lost the keys, and answering for it would
@@ -1941,6 +1967,11 @@ bool IsScreenFocused(void* screen)
     if (!screen)
         return false;
     return IsFocusedRaw(screen); // see there for why bIsVisible is not part of this
+}
+
+bool IsTopmostScreen(void* screen)
+{
+    return IsTopStackScreenRaw(screen);
 }
 
 bool IsScreenKindOf(void* screen, const char* baseClass)

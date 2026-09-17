@@ -33,6 +33,28 @@ extern const Recipe kDialogRecipe;
 extern const Recipe kSaveLoadRecipe;
 extern const Recipe kCharacterPoolRecipe; // the main menu's character pool (UICharacterPool)
 extern const Recipe kPoolFilesRecipe;     // its import / export picker (UICharacterPool_ListPools)
+extern const Recipe kTLEHubRecipe;        // the Tactical Legacy Pack hub (UITLEHub)
+
+// ---- Tactical Legacy Pack, shell half (recipe_tle.cpp) ----
+extern const Recipe kLadderMenuRecipe;       // Legacy Operations (UITLE_LadderModeMenu)
+extern const Recipe kLadderDifficultyRecipe; // its difficulty page (UITLE_LadderDifficulty)
+extern const Recipe kUnitStatsRecipe;        // the soldier loadout popup (UITLEUnitStats)
+// ---- Tactical Legacy Pack, the Challenge Archives (recipe_tle_challenge.cpp) ----
+extern const Recipe kChallengeMenuRecipe;    // the offline daily-challenge archive (UITLE_ChallengeModeMenu)
+// ---- Tactical Legacy Pack, Skirmish Mode (recipe_tle_skirmish.cpp) ----
+extern const Recipe kSkirmishRecipe;         // the skirmish builder, all 21 states (UITLE_SkirmishModeMenu)
+// ---- Tactical Legacy Pack, mission half (recipe_tle_mission.cpp) ----
+extern const Recipe kScoringDialogRecipe;       // MISSION / CHALLENGE SCORING before turn 1 (UILadderModeScoringDialog, UIChallengeModeScoringDialog)
+extern const Recipe kLadderUpgradeRecipe;       // the between-missions upgrade pick (UILadderUpgradeScreen)
+extern const Recipe kLadderSoldiersRecipe;      // the squad review (UILadderSoldierInfo)
+extern const Recipe kLadderMedalProgressRecipe; // medal progress between missions (UITLELadderMedalProgressScreen)
+extern const Recipe kLadderMedalRecipe;         // the finished ladder's medal (UITLELadderMedalScreen)
+extern const Recipe kLadderEndRecipe;           // the run's statistics (UITLELadderEndScreen)
+extern const Recipe kChallengePostRecipe;       // the challenge result (UIChallengePostScreen)
+extern const Recipe kChallengeEventRecipe;      // the networked challenge's event notice (UIChallengeModeEventNotify)
+
+// ---- mod-provided screens (recipe_mods.cpp) ----
+extern const Recipe kModConfigRecipe;        // Mod Config Menu (MCM_OptionsScreen), over settings
 
 // ---- strategy (recipe_strategy.cpp) ----
 extern const Recipe kSquadSelectRecipe;
@@ -79,7 +101,7 @@ extern const Recipe kLootRecipe;     // the mid-mission loot receipt (UIInventor
 extern const Recipe kCharInfoRecipe; // the soldier sheet (UITacticalCharInfoScreen)
 
 // How many of the above kRecipes must list. Pinned by a static_assert next to the array.
-constexpr std::size_t kRecipeCount = 49;
+constexpr std::size_t kRecipeCount = 64;
 
 } // namespace Recipes
 } // namespace MenuNavigator

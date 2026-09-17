@@ -147,6 +147,36 @@ focus.
   `NativeResult`. Heard working 2026-09-17, three fog crossings on a live mission, no audio
   error logged; the package's cue table, cue and wave all read back as written (`just dev-props
   "instance=XComTacticalSoundManager" SoundCue` is the check).
+- **Wall tones are a looping BED on a spawned actor (`X2AccessWallTones`), re-aimed on every
+  landing.** WH40KRTAccess's WallTones (WrathAccess's WallToneSystem) on this engine's grid: four
+  looping voices, one per compass cardinal, whose volumes rise on the quadratic proximity curve
+  as a wall nears in that direction from the cursor tile — east baked hard right, west hard left,
+  north and south centred and told apart by timbre (the pan lives in the samples because the
+  listener is the camera, `docs/build.md`, sounds). The aid sonifies the SHAPE of the space, the
+  thing a sighted player takes in at a glance and no per-object readout can carry. A wall is the
+  rooms recon's `B--V`: `IsAdjacentTileBlocked` forward AND not `IsAdjacentTileVisible` across the
+  same face, walked tile by tile at the cursor's height out to `RangeTiles`; the map's edge and
+  the level volume's edge count as boundaries, both drawn. Cover is vaultable or seen over and is
+  therefore not a wall — the cover ring already names it. Fog gate as RT's: a never-seen tile is
+  silent, the ray itself is not fog-checked. Modes are Off / When moving (default: the bed rises
+  on a landing and glides out `HoldSeconds` later, on the actor's own timer) / Continuous, config
+  only for now — no hotkey (player decision 2026-09-17), the controls are in `Config/XComGame.ini`.
+  Why an actor: the voices are `AudioComponent`s, object references a CDO may not hold; the actor
+  is spawned into the tactical world on the first landing, dies with the map, and is found again
+  by `DynamicActors` iteration, never by a stored reference. Volumes move only through
+  `AdjustVolume(GlideSeconds, target)`, and the voices are never stopped between landings — a
+  stopped loop restarts from its head, a silent one resumes where it was. ⛔ **"Silent" is
+  `SILENT` (0.002), never zero.** The device's update drops a wave instance whose final volume
+  is at or under 0.0001 out of the active set and stops its source, and stops any source unheard
+  for 60 ticks, so a voice glided to zero is a stopped voice and the next `AdjustVolume` aims at
+  nothing — the first run heard one landing, then nothing on any map (`docs/engine-notes.md`,
+  audio). Two more facts from the same decompile: `AdjustVolume` has no playing guard and only
+  writes the interpolated level back when a glide lands, so the idle level is set as
+  `CurrAdjustVolumeTargetVolume` BEFORE `Play()` (an `AdjustVolume(0, x)` in the same frame as
+  the first glide leaves the current level at its default 1.0 and that landing bursts from full
+  scale); and `Play()` on a stopped component resets its clock without touching the adjust
+  state, which is why `Revive` can restart a voice the device stopped anyway (the 16×-duration
+  cutoff, a flush) and glide on from where it last landed.
 - **Inside / outside is the game's floor-volume rule, asked synchronously
   (`X2AccessTileReader.DescribeIndoor`).** `XComPawnIndoorOutdoorInfo` defines inside as
   "in an `XComFloorVolume`" — a building volume alone is outside, a nested
@@ -548,9 +578,9 @@ sits.
   works, only that ADDING keys does. So the turret takes the game's own word, the `AdvTurretM1`
   character template's `strCharacterName` (*ADVENT Turret* / *Турель "Адвента"*, every language),
   and the generator — which the game names nowhere outside the objective sentence — takes the
-  companion's own `X2AccessObjectScanner.ChosenADGeneratorName`, shipped INT and RUS
-  (`Localization/X2AccessCompanion.int`/`.rus`; the tracked files are UTF-8, X2ModBuildCommon's
-  `_ConvertLocalization` rewrites them to UTF-16 in staging), English elsewhere — the
+  companion's own `X2AccessVocab.ChosenADGeneratorName`, shipped INT and RUS
+  (`Localization/X2AccessCompanion.int`/`.rus`; the file contract is `docs/localization.md`),
+  English elsewhere — the
   degradation `X2AccessDropshipReader` warns about, accepted because the alternative is a wrong
   word in every language. And the generator's death flips the surviving turrets to
   `OnlyAllowTargetWithEnemiesInTheBlastRadius` (the map's five
@@ -1134,6 +1164,40 @@ with `X2AccessCharInfoReader.OpenCharInfo`. Built 2026-09-03 from source
   `SetText`/`SetTitle` and fill both fields.
 - Nothing activates; scrolling is gamepad-only in vanilla and the graph is the way to read a long
   list. Escape is the game's close, which `Show()`s the HUD again.
+
+## Tactical Legacy Pack, the mission side
+
+The eleven screens the pack pushes over `UITacticalHUD` — `recipe_tle_mission.cpp`,
+`game_ui_tle_mission.cpp`, `X2AccessLadderReader.uc`. Built 2026-09-17 from source with the game
+closed; **none has run**. The measurement and the per-screen decision table are
+`../tle-mission-recon.md`.
+
+- ⛔ **The score HUDs (`UIChallengeModeHUD`, `UILadderModeHUD`) are stack entries above the
+  tactical HUD for the whole mission, and they are in `kTacticalPassives`.** They take no
+  input and hold nothing a player acts on; unlisted, the gate read every ladder and challenge
+  mission as blocked from its first frame — tile cursor, HUD graph and every tactical producer
+  silent. Any future overlay the pack (or a mod) parks above the HUD for a whole mission is the
+  same case, and the match is by exact class name.
+- **The score HUDs are narrate-only, by the destruction test**: nothing on them is walkable, and
+  the arrows are the tile cursor's. The banner per scoring event and the running total are
+  narrated by `X2AccessLadderReader`'s listener on `ChallengeModeScoreChange` at
+  `ELD_OnVisualizationBlockCompleted` — the HUD's own registration window, so the words follow
+  the banner — in the HUD's own labels; the score and, in a challenge, the countdown are one
+  TRAILING stop of the HUD graph (`AddTLEHudStop`), added only on those missions.
+- **Every other screen is a recipe**, each a modal the ruleset's post-mission loop pushes and
+  pops in turn (mission summary → upgrade → squad review → medal progress or medal → end), so
+  no two are ever stacked and their order among themselves is free. The squad review pushes the
+  soldier loadout popup over itself, which is why that recipe leads the band.
+- **Words the widgets keep are read natively; the rest the companion re-derives** from the
+  objects each screen's `OnInit` read: the challenge manager's score table for the scoring
+  dialogs, the ladder's `ProgressionChoices` for the upgrade pick, the squad review's own
+  `PrevStates` / `CurrentStates` diff, the analytics for the end screen. The one localized field
+  in the family that `OnInit` FILLS rather than reads is the medal screen's
+  `m_MedalUnlockedString` (rewritten in place with the medal name), so it is a native read.
+- The upgrade picker's keyboard is complete in vanilla (Left/Right select a column, Enter
+  chooses), so write-back goes through `SelectColumn` and the game's highlight follows ours; the
+  squad review's Prev/Next carry no label and `DisableNavigation()`, so they are read by pointer
+  and visibility (hidden means no page that way) and clicked through `Click()`.
 
 ## Tactical combat narration and the replay path
 

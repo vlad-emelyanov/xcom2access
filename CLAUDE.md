@@ -25,6 +25,7 @@ that earned it lives there, not here. Everything that moves lives in `docs/`:
 | `docs/dev-harness.md` | the loopback server's endpoints and how to drive a live session without eyes or hands |
 | `docs/build.md` | configure, build, deploy, the generator's patches, and what each dependency is pinned to |
 | `docs/graph-kernel.md` | the a11y kernel's sheet design and `AppendPhrase` |
+| `docs/localization.md` | the mod's own words on the vanilla loc system — the vocabulary class, tags for word order, the plural rule, what a mod loc file cannot do |
 | `docs/ui-inventory.md` | the census of every `UIScreen` class in the game |
 
 ## Architecture: division of responsibility
@@ -157,6 +158,12 @@ rules** below instead — that is the test for which file a new rule goes in.
   (`X2AccessHelper.GetInputVocabulary` / `GetResultFlyovers`). ⛔ Our built-in table is English,
   which is wrong the moment the player is not — key any such table by markup token so a missing
   entry degrades to the English word instead of shifting a positional table.
+- ⛔ **No English literal reaches a player from a migrated surface, and every word of OURS is a
+  `localized` var on `X2AccessVocab` — one class, one loc section.** The game's own word is looked
+  for FIRST (a template's `LocFriendlyName`, a unit's name); a number or a name goes into a
+  template through vanilla's `<XGParam:…/>` tags, never concatenated; a counted noun is three keys
+  chosen by `X2AccessVocab.Count`. A mod loc file cannot override a key vanilla ships
+  (`docs/localization.md`).
 - **Earcons are game-native SoundCues, played through the game's sound manager** —
   `` `SOUNDMGR.PlaySoundEvent("<cue>") `` over the Highlander's SoundCue mapping — never WAVs
   played from the ASI: the game's mixer is where the player's volume settings live. The cues are
@@ -164,6 +171,10 @@ rules** below instead — that is the test for which file a new rule goes in.
   build (the SDK editor's drag-and-drop import is the only other way, and it is a sighted one) and
   registered per sound manager in `Config/XComGameData.ini` (`docs/build.md`, sounds). ⛔ A cue
   name must not end in `_<digits>` — FName parsing splits it and the config path never resolves.
+  ⛔ A LOOPING cue is held in an `AudioComponent` on a spawned Actor (`X2AccessWallTones`), never
+  played through `PlaySoundEvent` (nothing could stop it) and never held on a CDO (the GC rule) —
+  and it idles ABOVE the device's cull threshold, never at volume 0: a silent wave instance is a
+  stopped one (`docs/engine-notes.md`, audio).
 - **Legacy screen listeners**: `UIScreenListener_*.uc` polling listeners with the
   `AccessibilityData` bridge. Working system; migrate to native UI reading incrementally, do not
   expand this pattern to new screens without reason.

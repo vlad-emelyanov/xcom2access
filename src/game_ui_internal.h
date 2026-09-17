@@ -54,6 +54,11 @@ constexpr int32_t kListSelectedIndexOffset = 0x404; // UIList::SelectedIndex (in
 // ---- generic UIList / UIPanel traversal ----
 constexpr int32_t kListItemContainerOffset = 0x3D8; // UIList::ItemContainer (UIPanel*)
 constexpr int32_t kPanelChildPanelsOffset = 0x2E8;  // UIPanel::ChildPanels (TArray<UIPanel*>)
+// ⛔ A SCREEN's ChildPanels is not its children: every panel on the screen registers itself there
+// (UIPanel.uc: "Every panel is a child of screen"), so it is a flat registry of the whole tree.
+// Panels BELOW the screen list only their own children. ParentPanel is the link that means the
+// same thing at every level; a walk from a screen that wants direct children filters on it.
+constexpr int32_t kPanelParentPanelOffset = 0x2E0;  // UIPanel::ParentPanel (UIPanel*)
 
 // UIListItemString — the plain text row several families read (room actions, commodity rows,
 // covert-action rows, facility choices).
@@ -257,6 +262,11 @@ int WalkStackRaw(void** out, int max);
 // bIsVisible, and deliberately not bIsFocused either — position in the stack already answers
 // "is it on top". See the definition's comment.
 bool StackEntryLiveRaw(void* screen);
+
+// Is `screen` the topmost live stack entry, mouse guards skipped? For probes of a screen the game
+// pushes other screens OVER: its focused bit may never clear (UIOptionsPCScreen.OnLoseFocus skips
+// super), and only the stack position says who has the keys. See the definition's comment.
+bool IsTopStackScreenRaw(void* screen);
 
 // The GetCurrentScreen rule: the TOPMOST non-null entry, and only when it matches and is live.
 // A non-match on top is a REFUSAL, not a reason to keep looking. `matches` is handed the entry

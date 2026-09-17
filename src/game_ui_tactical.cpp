@@ -557,6 +557,12 @@ const char* const kTacticalPassives[] = {
     "UISpecialMissionHUD",
     "UITurnOverlay",
     "UIMouseGuard",
+    // The Tactical Legacy Pack's score HUDs: pushed above UITacticalHUD for the whole of a
+    // ladder or challenge mission with eInputState_None and nothing a player acts on. Unlisted,
+    // the gate read every such mission as blocked from frame one — tile cursor, HUD graph and
+    // every tactical producer silent (docs/tle-mission-recon.md §1).
+    "UIChallengeModeHUD",
+    "UILadderModeHUD",
 };
 
 bool IsTacticalPassive(const char* name)
