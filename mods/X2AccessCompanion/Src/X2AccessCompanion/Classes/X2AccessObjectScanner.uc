@@ -152,6 +152,16 @@ var string NativeResult;
 // typed, no allocation — the CDO rule again.
 var int SelKeyByCategory[16];
 
+// The one word of ours in this class. The Chosen Avenger Defense's Mobile Power Generator is an
+// XComInteractiveLevelActor whose FriendlyDisplayName Firaxis copy-pasted from the stronghold's
+// sarcophagus, and the game owns no noun for it anywhere but inside the objective SENTENCE. A mod
+// loc file under the map package's own name does not override the key (tried 2026-09-17, heard
+// unchanged), so the word lives in OUR loc file — INT and RUS shipped, English for every other
+// language, the degradation X2AccessDropshipReader warns about, accepted here because the
+// alternative is "sarcophagus". The turrets on the same map need no word of ours: they are
+// ADVENT turrets, and the AdvTurretM1 character template names one in every language.
+var localized string ChosenADGeneratorName;
+
 // Which ring the un-prefixed keys address. It lives HERE rather than in native because the ring
 // step has to know which categories are empty, and only this side can answer that — so putting the
 // cursor next to that answer keeps one source of truth instead of two that can drift.
@@ -917,9 +927,19 @@ private function AddObjectiveMarkers(TTile Origin, out array<AccessMarker> Marke
 			// The Skyranger pickup, the ADVENT transport and the mission-end sweep all land here:
 			// each sets bRemovedFromPlay on the crate's next version (measured, twelve of twelve),
 			// and SyncVisualizer takes the actor off the map on the same flag.
+			//
+			// DESTRUCTION is a different exit and sets no flag at all. A destroyed interactive
+			// objective keeps its ObjectiveInfo, keeps bRemovedFromPlay false and keeps a wreck on
+			// the map; the only state fact is Health reaching 0, which is exactly what
+			// XComGameState_Destructible.ApplyDamage tests before it fires 'ObjectDestroyed'.
+			// Measured 2026-09-17 on the Chosen Avenger Defense: the four turrets (Health 18) and
+			// the power generator (48) are Kismet-made objectives and the map has no
+			// RemoveInteractiveObjectFromLevel, so a shot-out turret stayed in the ring — six of
+			// six after Central had already called one down. -1 is "indestructible or not yet
+			// initialised", so the test is equality with 0, never "not positive".
 			ObjInteract = XComGameState_InteractiveObject(
 				History.GetGameStateForObjectID(ObjInteract.ObjectID));
-			if (ObjInteract == none || ObjInteract.bRemovedFromPlay)
+			if (ObjInteract == none || ObjInteract.bRemovedFromPlay || ObjInteract.Health == 0)
 				continue;
 			M.Key = ObjInteract.ObjectID;
 			M.Tile = ObjInteract.TileLocation;
@@ -934,8 +954,10 @@ private function AddObjectiveMarkers(TTile Origin, out array<AccessMarker> Marke
 			Info.FindComponentObject(class'XComGameState_Destructible', true));
 		if (ObjDest != none)
 		{
+			// Same exit as above: a plain destructible objective announces its destruction only
+			// through Health 0.
 			ObjDest = XComGameState_Destructible(History.GetGameStateForObjectID(ObjDest.ObjectID));
-			if (ObjDest == none)
+			if (ObjDest == none || ObjDest.Health == 0)
 				continue;
 			M.Key = ObjDest.ObjectID;
 			M.Tile = ObjDest.TileLocation;
@@ -2038,10 +2060,34 @@ static function string InteractiveLabel(XComGameState_InteractiveObject Obj)
 {
 	local XComInteractiveLevelActor VisActor;
 	local X2AbilityTemplate InteractTemplate;
+	local X2CharacterTemplate CharTemplate;
 
 	VisActor = XComInteractiveLevelActor(`XCOMHISTORY.GetVisualizer(Obj.ObjectID));
 	if (VisActor != none)
 	{
+		// Two placed actors whose authored words are WRONG: the Chosen Avenger Defense turrets and
+		// power generator read "Chosen Sarcophagus" in every language (sm_ChosenBulwark_0*,
+		// md_ChosenArtillery_01, SiegeCannon — a copy-paste in Firaxis' loc), so five ring
+		// entries sounded alike. The archetype is what tells them apart (measured live
+		// 2026-09-17 through Frida: four ARC_IA_ChosenAD_BulwarkACV at 18 health, one
+		// ARC_IA_ChosenAD_ArtilleryGenerator at 48), and it is asked BEFORE the display name.
+		if (VisActor.ObjectArchetype != none)
+		{
+			if (VisActor.ObjectArchetype.Name == 'ARC_IA_ChosenAD_BulwarkACV')
+			{
+				// The game's own word for an ADVENT turret, in the player's language.
+				CharTemplate = class'X2CharacterTemplateManager'.static.GetCharacterTemplateManager()
+					.FindCharacterTemplate('AdvTurretM1');
+				if (CharTemplate != none && CharTemplate.strCharacterName != "")
+					return CharTemplate.strCharacterName;
+			}
+			else if (VisActor.ObjectArchetype.Name == 'ARC_IA_ChosenAD_ArtilleryGenerator')
+			{
+				if (default.ChosenADGeneratorName != "")
+					return default.ChosenADGeneratorName;
+			}
+		}
+
 		// Authored words win when a level designer supplied them. Measured live 2026-08-20:
 		// often EMPTY (the tutorial's own objective read blank), so it cannot be the only source
 		// — which answers docs/object-scanner-recon.md §6.1.

@@ -148,6 +148,25 @@ each needing a mission state this save never reached:
 3. A dead objective VIP (the unit branch had the same stale read): after the VIP dies, its entry
    leaves the ring.
 
+**Destroyed objectives in the markers ring** (2026-09-17, `X2AccessObjectScanner.AddObjectiveMarkers`
+skipping `Health == 0` on the interactive and destructible branches; rule in `surfaces/tactical.md`
+under the object scanner). Found on the Chosen Avenger Defense: a shot-out turret stayed in the ring,
+six of six. **Heard working 2026-09-17 18:36**: with all four turrets down the ring read
+*"Objective: Мобильная электростанция"* then *"Objective: object"*, `1 of 2` / `2 of 2` — destroyed
+turrets gone, the generator named through the companion's own `.rus` (its first non-English loc
+file, so that file IS picked up), and the generic marker (`ARC_IA_GenericObjectiveMarker`, Health
+-1) still listed, the proof that -1 is not treated as 0. Still unheard:
+
+1. The turret word. Every turret in that save was already destroyed, so *"Objective: Турель
+   "Адвента""* (`AdvTurretM1`'s character name, keyed on `ARC_IA_ChosenAD_BulwarkACV` in
+   `InteractiveLabel`) has not been spoken yet; the shot HUD's target line shares the function, so
+   targeting a live turret is the cheaper check.
+2. Destroy the Mobile Power Generator while turrets stand. The map's Kismet flips the survivors to
+   blast-only targeting (`OnlyAllowTargetWithEnemiesInTheBlastRadius`), and the defense objective
+   presumably completes. Check with the sighted view (`just dev-shot`) whether a disabled turret
+   still wears a flag; if it does not, the ring owes the same gate on that flag — and only then,
+   because a mission that makes an objective blast-only from the start would lose it.
+
 **The pod reveal and the reinforcement drop** (2026-09-16, `X2AccessTacticalEvents.OnScamperBegin` /
 `OnSpawnReinforcementsComplete`, builders `BuildRevealLine` / `BuildReinforcementLine`, the replay
 branches `NarrateReveal` / `NarrateReinforcements`; rules in `surfaces/tactical.md` under "Tactical

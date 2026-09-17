@@ -521,6 +521,41 @@ sits.
   screen anyway. ADVENT marks crates too and XCOM can convert one, so the two words are parity, not
   a hint. ⚠ The fallback words for a marking that changed no material ("marked" / "used") now see
   the crate's real `InteractionCount`; before the re-fetch they always saw 0.
+- ⛔ **An objective can leave play by DESTRUCTION, and destruction sets no flag — the only state
+  fact is `Health == 0`.** Chosen Avenger Defense (2026-09-17): the four turrets and the Mobile
+  Power Generator are `XComInteractiveLevelActor`s that `SeqAct_MakeObjective` flags (Health 18
+  and 48 at turn 1, read through Frida off every live `XComGameState_ObjectiveInfo` and the LATEST
+  version of its owner), and the cooked Kismet holds no `SeqAct_RemoveInteractiveObjectFromLevel`
+  and no `SeqAct_SetObjectiveShaderEnabled`, so a shot-out turret keeps its component, keeps
+  `bRemovedFromPlay` false and keeps a wreck on the tile — the ring read six of six after Central
+  had called one turret down. `XComGameState_Destructible.ApplyDamage` fires `ObjectDestroyed`
+  on exactly the `OldHealth > 0 && Health == 0` edge, so that is the test, on the interactive AND
+  the plain-destructible branch. ⚠ `-1` means indestructible OR not yet initialised (the generic
+  objective marker on this map reads -1 for the whole mission), so the test is equality with 0,
+  never `<= 0`. Two things this map also teaches. **The turrets and the generator are NAMED
+  *"Chosen Sarcophagus"* in every language**: `FriendlyDisplayName` is a `localized` var resolved
+  at load from the MAP PACKAGE's loc file, and Firaxis' `sm_ChosenBulwark_01/02` (two turret
+  actors each, archetype `ARC_IA_ChosenAD_BulwarkACV`), `md_ChosenArtillery_01` and `SiegeCannon`
+  (the generator, `ARC_IA_ChosenAD_ArtilleryGenerator`, actor `_5` in both variants) all carry
+  the stronghold's string — which is why five ring entries read alike, and why the shot HUD shows
+  a sighted player the same word. Nothing in the state gives a localized word instead; the
+  ARCHETYPE (`XComInteractiveLevelActor.ObjectArchetype.Name`) is what tells the two apart, and
+  `InteractiveLabel` asks it BEFORE the display name. ⛔ **A mod loc file under a MAP PACKAGE's
+  name does not override that package's existing key.** Tried 2026-09-17 — ten files,
+  `sm_ChosenBulwark_01.int`/`.rus` and the rest, UTF-16 in staging, deployed, game restarted —
+  and the ring still said sarcophagus; and of forty workshop mods shipping an `XComGame.int`,
+  not one redefines a key vanilla already has, so there was never evidence that overriding
+  works, only that ADDING keys does. So the turret takes the game's own word, the `AdvTurretM1`
+  character template's `strCharacterName` (*ADVENT Turret* / *Турель "Адвента"*, every language),
+  and the generator — which the game names nowhere outside the objective sentence — takes the
+  companion's own `X2AccessObjectScanner.ChosenADGeneratorName`, shipped INT and RUS
+  (`Localization/X2AccessCompanion.int`/`.rus`; the tracked files are UTF-8, X2ModBuildCommon's
+  `_ConvertLocalization` rewrites them to UTF-16 in staging), English elsewhere — the
+  degradation `X2AccessDropshipReader` warns about, accepted because the alternative is a wrong
+  word in every language. And the generator's death flips the surviving turrets to
+  `OnlyAllowTargetWithEnemiesInTheBlastRadius` (the map's five
+  `SeqAct_ToggleInteractiveActorBlastTargeting` ops) — whether a turret DISABLED that way still
+  wears an objective flag is unmeasured (`next-steps.md`), so the ring does not gate on it.
 - ⛔ **Every ring that walks `IterateByClassType(XComGameState_Unit)` must refuse
   `bIsCosmetic`.** The squad ring did not, and a Specialist's GREMLIN — a live `eTeam_XCom`
   unit standing on its owner's own tile — entered it as a NAMELESS entry: *"1 of 1 health,

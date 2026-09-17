@@ -1,1 +1,7 @@
 ; X2AccessCompanion localization
+
+; The Chosen Avenger Defense's power generator. Its map actor is mislabelled "Chosen Sarcophagus"
+; by Firaxis' own loc, and the game holds no noun for it outside the objective sentence
+; ("Destroy the Mobile Power Generator"). Every other language falls back to this line.
+[X2AccessObjectScanner]
+ChosenADGeneratorName="Mobile Power Generator"
