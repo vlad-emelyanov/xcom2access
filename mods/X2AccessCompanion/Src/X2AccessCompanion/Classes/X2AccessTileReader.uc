@@ -73,6 +73,18 @@ var int LastIndoorFloor;
 var int LastIndoorFloorCount;
 var vector LastIndoorBuildingPos;
 
+// Whether the tile the player last landed on was in the squad's sight — the change detector
+// behind the line-of-sight earcons (CueSight). 0 = nothing heard yet (reset with every plant),
+// 1 = in sight, 2 = out of sight. Edge-triggered like DescribeIndoor: the cue marks the CROSSING,
+// never the state, so a walk across open ground stays silent.
+var int LastSightState;
+
+// The cue keys, as XComSoundManager.PlaySoundEvent resolves them: the SoundCue object names in
+// mods/X2AccessCompanion/Content/X2AccessSounds.upk (built by tools/make_sound_upk.py from the
+// WAVs under Sounds/), registered under +SoundCuePaths in Config/XComGameData.ini.
+const CUE_SIGHT_LOST = "X2Access_LOS_Lost";
+const CUE_SIGHT_GAINED = "X2Access_LOS_Gained";
+
 // ---------------------------------------------------------------------------
 // Entry points (called from native)
 // ---------------------------------------------------------------------------
@@ -1101,6 +1113,7 @@ private function bool EnsurePlanted(XComTacticalController TC, XCom3DCursor Curs
 	PlantedMissionID = MissionID;
 	bMovePending = false;
 	LastIndoorState = 0;
+	LastSightState = 0;
 
 	NativeResult = "Cursor on.";
 	AppendPart(NativeResult, AdoptFloor(Cursor, WorldData, UnitState.TileLocation));
@@ -1144,6 +1157,7 @@ function CursorGoToMarker()
 	PlantedMissionID = CurrentMissionID();
 	bMovePending = false;
 	LastIndoorState = 0;
+	LastSightState = 0;
 	NativeResult = "Cursor.";
 	AppendPart(NativeResult, AdoptFloor(Cursor, WorldData, Target));
 	SetCursorTile(Cursor, WorldData, Target);
@@ -1199,6 +1213,46 @@ private function SetCursorTile(XCom3DCursor Cursor, XComWorldData WorldData, TTi
 	Cursor.CursorSnapToFloor(Cursor.m_iRequestedFloor, eCursorSearch_ExactFloor);
 	LastSpokenFloor = Cursor.m_iRequestedFloor;
 	Cursor.CursorSetLocation(Pos, false, false);
+	// Here rather than beside each DescribeIndoor call: every way the cursor lands on a tile —
+	// a step, a floor key, the floor poll, a plant, a recenter, the scanner marker — passes
+	// through this one function, and a crossing missed on any of them is a silent bug.
+	CueSight(WorldData, Tile);
+}
+
+// The line-of-sight earcon: the cursor crossed OUT of the squad's sight (a short, higher tone)
+// or back INTO it (a longer, lower one) — WH40KRTAccess's fog cue, on the same two sounds.
+// Sighted parity: this is the fog-of-war overlay itself, drawn on every tile at every moment,
+// so the crossing is exactly what the eye sees when the cursor slides under the fog. "In
+// sight" is eFOWTileStatus_Seen, the same status DescribeTile gates live units on, so the tone
+// and the words can never disagree about a tile.
+//
+// Played through the game's own sound manager (the Highlander's SoundCue mapping, Issue #10),
+// not through the screen reader: an earcon is not speech, and the game's mixer is where a
+// player's volume settings live. Fired BEFORE the step's words are spoken — the call returns
+// immediately and native speaks NativeResult after — which is the order RT plays it in.
+//
+// Silent when no sound manager is up (the sound managers are spawned per world; between
+// worlds there is nothing to ask) and on the first tile after a plant, which adopts the
+// state without a tone: the planted tile is the player's own soldier, always in sight, and a
+// tone there would announce nothing.
+private function CueSight(XComWorldData WorldData, TTile Tile)
+{
+	local FOWTileStatus FOW;
+	local byte GameplayFlags;
+	local XComSoundManager SoundMgr;
+	local int Here;
+
+	WorldData.GetTileFOWValue(Tile, FOW, GameplayFlags);
+	Here = (FOW == eFOWTileStatus_Seen) ? 1 : 2;
+	if (LastSightState != 0 && Here != LastSightState)
+	{
+		SoundMgr = `SOUNDMGR;
+		if (SoundMgr != none)
+			SoundMgr.PlaySoundEvent(Here == 2 ? CUE_SIGHT_LOST : CUE_SIGHT_GAINED);
+		else
+			`log("X2Access: sight cue skipped, no sound manager", , 'X2Access');
+	}
+	LastSightState = Here;
 }
 
 // An explicit jump — plant, recenter, the scanner marker — adopts the target tile's own floor

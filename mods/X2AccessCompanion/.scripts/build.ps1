@@ -209,4 +209,24 @@ switch ($config)
     default { ThrowFailure "Unknown build configuration $config" }
 }
 
+# The sound package. Content/X2AccessSounds.upk is a BUILD PRODUCT (gitignored), generated from
+# the tracked Sounds/*.wav by tools/make_sound_upk.py — the editor's Content Browser is the only
+# other way to make one, and it is a sighted workflow. Generated here, before the build, because
+# X2ModBuildCommon robocopies the whole mod root into staging, and because tools/release.ps1
+# compiles the companion through this same script from a parked worktree. The generator skips
+# itself when the package is newer than every WAV, which matters: X2ModBuildCommon keys its
+# shader-precompile step on Content timestamps, and a package rewritten on every build would
+# make every build pay for a precompile. ffmpeg on PATH is required (Vorbis encode).
+$soundsDir = Join-Path $ScriptDirectory "..\Sounds"
+$soundWavs = @(Get-ChildItem -LiteralPath $soundsDir -Filter *.wav -File -ErrorAction Ignore | Sort-Object Name)
+if ($soundWavs.Count -gt 0) {
+    $soundTool = Resolve-Path (Join-Path $ScriptDirectory "..\..\..\tools\make_sound_upk.py")
+    $soundUpk = Join-Path $ScriptDirectory "..\Content\X2AccessSounds.upk"
+    Write-Host ("Sound package: {0} WAV(s) -> {1}" -f $soundWavs.Count, $soundUpk)
+    & python $soundTool $soundUpk @($soundWavs | ForEach-Object { $_.FullName })
+    if ($LASTEXITCODE -ne 0) {
+        ThrowFailure "make_sound_upk.py failed - the companion's earcons would be missing, refusing to build."
+    }
+}
+
 $builder.InvokeBuild()

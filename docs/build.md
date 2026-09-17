@@ -38,6 +38,25 @@ rules extracted from all this — the mandatory `-review` launch flag, the `/MT`
   the SDK-side artifact: if `<SDK>/XComGame/Script/X2AccessCompanion.u` is FRESH while the copy under
   the game's `Mods/` is not, the compile succeeded and only the deploy is stuck. `just kill` first.
   The `.asi` is locked by the running game too, but that half FAILS FAST.
+- **Sounds (earcons) are game-native SoundCues, and the package that carries them is a BUILD
+  PRODUCT.** The companion's `build.ps1` runs `tools/make_sound_upk.py` over the tracked
+  `mods/X2AccessCompanion/Sounds/*.wav` and writes `Content/X2AccessSounds.upk` (gitignored) before
+  X2ModBuildCommon stages the mod; `tools/release.ps1` inherits the step because it compiles the
+  companion through the same script. ffmpeg must be on PATH — it normalises each WAV to 16-bit PCM
+  and encodes the Ogg Vorbis copy the PC audio device actually plays. Each `Foo.wav` becomes
+  SoundCue `X2AccessSounds.Foo`, registered under `+SoundCuePaths` in `Config/XComGameData.ini` for
+  the sound manager of the layer that plays it, and script plays it as
+  `` `SOUNDMGR.PlaySoundEvent("Foo") `` through the Community Highlander's SoundCue mapping (Issue
+  #10). Why a writer and not the editor: the SDK's only documented import path is the Content
+  Browser's drag-and-drop dialog (`Documentation/Content/XCOM2Mods_Audio.pdf`), a mouse workflow
+  with no commandlet behind it, so the package format was decoded from an editor-saved reference
+  (MusicModdingSystem's `SoundDropshipIntroCues.upk`) and the writer's docstring is the record of
+  it — every constant, the five bulk-data blocks a wave carries, and the `PackageSource`
+  checksum (`appStrCrcCaps` of the package name, verified against two packages). ⛔ Cue names
+  must not end in `_<digits>`: FName parsing splits such a string when the config path is resolved,
+  and the literal name stored in the package never matches; the writer refuses them. ⚠ The
+  first build after a WAV changes is slow: X2ModBuildCommon keys its shader-precompile step on
+  Content timestamps, which is why the writer leaves an up-to-date package untouched.
 - Kernel tests (no game needed): `ctest --test-dir build -C Release` (`just test`).
 - Loading: Ultimate ASI Loader sits in `Binaries/Win64/` under one of the several host DLL names it
   can impersonate, and **which name it uses differs per machine** — so never test for a

@@ -10,6 +10,9 @@ Desktop.ini
 .DS_Store
 build_output.txt
 __pycache__/
+# The companion's sound package is generated from the tracked Sounds/*.wav by
+# tools/make_sound_upk.py on every companion build (mods/X2AccessCompanion/.scripts/build.ps1).
+/mods/X2AccessCompanion/Content/
 # Per-machine game/SDK paths for the justfile. Template: env.example
 .env
 # Local secrets: the Forgejo PAT the release script reads (tools/release.ps1). ⛔ Separate from

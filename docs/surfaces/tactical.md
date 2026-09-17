@@ -134,6 +134,19 @@ focus.
     wheel's readout; and the object scanner's MARKER offsets, because objective flags are drawn
     through fog by the game's own exception (`UIUnitFlag:1568`, `UISimpleFlag:387` — a flag is
     screen-projected, so its height is on screen with it).
+- **Line of sight is an EARCON, played on the crossing (`X2AccessTileReader.CueSight`).** The
+  first earcon in the mod: the cursor stepping from a tile the squad sees (`eFOWTileStatus_Seen`)
+  onto one it does not plays `X2Access_LOS_Lost` (WH40KRTAccess's `fog_enter`, a short higher
+  tone), and the reverse plays `X2Access_LOS_Gained` (`fog_exit`, longer and lower). Parity is the
+  fog overlay itself, drawn on every tile at every moment. Edge-triggered through `LastSightState`
+  exactly as `DescribeIndoor` is (reset with every plant, the planted tile adopted silently), and
+  fired from `SetCursorTile` rather than beside each `DescribeIndoor` call, because every landing —
+  step, floor key, floor poll, plant, recenter, scanner marker — passes through that one function.
+  The tone goes through the game's own sound manager (`docs/build.md`, sounds), not the screen
+  reader, and precedes the step's words because the call returns before native speaks
+  `NativeResult`. Heard working 2026-09-17, three fog crossings on a live mission, no audio
+  error logged; the package's cue table, cue and wave all read back as written (`just dev-props
+  "instance=XComTacticalSoundManager" SoundCue` is the check).
 - **Inside / outside is the game's floor-volume rule, asked synchronously
   (`X2AccessTileReader.DescribeIndoor`).** `XComPawnIndoorOutdoorInfo` defines inside as
   "in an `XComFloorVolume`" — a building volume alone is outside, a nested

@@ -825,6 +825,15 @@ a repeating announcement.
 
 ## Queued work
 
+0. **More earcons**, now that the pipeline exists (drop a WAV in `Sounds/`, register it, play it
+   by name). Candidates from the RT palette and this mod's own gaps, in value order: the enemy
+   side of sight — "Seen by N" on the move preview is already spoken, and a tone under it would
+   let a player hear exposure while walking the cursor without a word per step; the two-press
+   move-to's "press again" prompt; the HUD-layer enter/leave; the boundary thud on `Map edge` and
+   `Top floor` / `Bottom floor`; and a speech-free "input is yours again" (`layered-narrating-kestrel`).
+   Each one is a parity question first (the LOS cue passed because the fog overlay is on screen).
+   A settings toggle per cue is owed once there are more than two: RT's fog cue ships default-on
+   with its own switch.
 1. `Narrator::Say` adoption: the menu navigator — `menu_navigator.cpp` plus the recipe TUs under
    `src/recipes/` — is the last surface still calling `TTS` directly,
    and since 2026-09-16 it is a plain swap: every channel queues in order with no clear and no

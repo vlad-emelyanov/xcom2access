@@ -157,6 +157,13 @@ rules** below instead — that is the test for which file a new rule goes in.
   (`X2AccessHelper.GetInputVocabulary` / `GetResultFlyovers`). ⛔ Our built-in table is English,
   which is wrong the moment the player is not — key any such table by markup token so a missing
   entry degrades to the English word instead of shifting a positional table.
+- **Earcons are game-native SoundCues, played through the game's sound manager** —
+  `` `SOUNDMGR.PlaySoundEvent("<cue>") `` over the Highlander's SoundCue mapping — never WAVs
+  played from the ASI: the game's mixer is where the player's volume settings live. The cues are
+  built from `mods/X2AccessCompanion/Sounds/*.wav` by `tools/make_sound_upk.py` at every companion
+  build (the SDK editor's drag-and-drop import is the only other way, and it is a sighted one) and
+  registered per sound manager in `Config/XComGameData.ini` (`docs/build.md`, sounds). ⛔ A cue
+  name must not end in `_<digits>` — FName parsing splits it and the config path never resolves.
 - **Legacy screen listeners**: `UIScreenListener_*.uc` polling listeners with the
   `AccessibilityData` bridge. Working system; migrate to native UI reading incrementally, do not
   expand this pattern to new screens without reason.
