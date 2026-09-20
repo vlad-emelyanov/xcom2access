@@ -94,11 +94,33 @@ on every push of main.
 - **The install check is the tester's first step, not ours.** `tools/dist/X2Access-Check.ps1`
   (Windows PowerShell 5.1, plain ASCII, one finding per line for a screen reader) probes the
   loader host list, the ASI, the companion's four must-have pieces and the Highlander's `.XComMod`
-  under every Steam library's workshop folder — by mod NAME, because the release and beta
-  listings share it — then repeats the companion build script's two self-heals on the user
+  under every mod root — by mod NAME, because the release and beta listings share it — then
+  repeats the companion build script's two self-heals on the user
   config: `ActiveMods` in `XComModOptions.ini` and the local `ModRootDirs` root in
   `XComEngine.ini`, preserving the file's encoding. It refuses to write while `XCom2.exe` runs
-  (the game rewrites the list on exit) and with `-CheckOnly`. The first field report was the
+  (the game rewrites the list on exit) and with `-CheckOnly`.
+  - **A mod is known to the game by the NAME OF ITS `.XComMod` FILE, and a mod root is read
+    exactly ONE level down.** The exe carries the literal `/*.XComMod` — a glob run inside a
+    candidate folder, which is why the FILE name and not the folder's is the mod's name
+    (`ActiveMods=ModConfigMenu` against a workshop folder called `667104300`, whose `Title=` is
+    the unrelated "Mod Config Menu"). A workshop folder is a numeric id and a hand-installed one
+    keeps whatever name its zip had, so `Find-ModDir` searches every root for the file; a copy
+    found two levels down is REPORTED, not accepted, because unzipping an archive that carries
+    its own top folder is how a hand install goes quiet. The roots are the local `Mods` folder, every
+    Steam library's workshop folder, and every `ModRootDirs` entry in the user `XComEngine.ini`
+    and the shipped `DefaultEngine.ini` (which spells it `+ModRootDirs`, and relative to
+    `Binaries\Win64`).
+  - **Nothing in the check is Steam-specific except where a subscribed mod sits.** The game
+    folder is found from the script's own location first, then Steam's libraries, then the GOG
+    registry and the Epic manifests; the config path comes from Windows' Documents folder either
+    way. A copy from any store installs the mod the same.
+  - **The Highlander's DLC plugin is a two-way check.** `DLC2CommunityHighlander` is required
+    when Alien Hunters is installed (`XComGame\DLC\DLC_2`, which the store sells as the Alien
+    Rulers: the DLC's script package is built against the unmodified game the Highlander
+    replaces) and its authors call it gamebreaking without that DLC — so the check enables it
+    with the Highlander in the first case and reports it as a problem when it is switched on in
+    the second. It never switches a mod OFF: the list is the player's. `$DlcHighlanders` is the
+    table to extend if a second DLC ever gets a plugin; today that one is the only one. The first field report was the
   companion silently not loading; its output settles that in one line. The ASI points at it too:
   at the first main-menu attach `MenuNavigator` asks `GameUI::CompanionPackageLoaded` once and,
   when the package is absent, speaks `Vocab::CompanionNotLoaded` after the menu's own line —

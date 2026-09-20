@@ -10,13 +10,18 @@
 
     What it does, in order:
 
-      1. Finds the game folder (this script's own folder, or the Steam library).
+      1. Finds the game folder (this script's own folder, or a Steam, GOG or Epic
+         install; the mod does not care which store the copy came from).
       2. Checks the pieces the mod needs: the Ultimate ASI Loader host DLL,
-         X2Access.asi, the companion mod's files, and the Community Highlander.
-      3. Enables X2AccessCompanion and the Highlander in the game's user config
-         (XComModOptions.ini under Documents), exactly the way the game's launcher
-         does when you tick a mod, and restores the local Mods root in XComEngine.ini
-         if something removed it.
+         X2Access.asi, the companion mod's files, and the Community Highlander --
+         subscribed or hand-installed, either counts.
+      3. Checks the DLC that needs a Highlander plugin of its own: with Alien
+         Hunters (the Alien Rulers) installed, DLC2CommunityHighlander has to be
+         there too, and without that DLC it has to stay off.
+      4. Enables X2AccessCompanion, the Highlander and any DLC plugin it needs in
+         the game's user config (XComModOptions.ini under Documents), exactly the
+         way the game's launcher does when you tick a mod, and restores the local
+         Mods root in XComEngine.ini if something removed it.
 
     Every line of output starts with one of four words:
       OK       the check passed
@@ -48,8 +53,19 @@ $ErrorActionPreference = 'Stop'
 $ModName             = 'X2AccessCompanion'
 $HighlanderName      = 'X2WOTCCommunityHighlander'
 $HighlanderUrl       = 'https://steamcommunity.com/workshop/filedetails/?id=1134256495'
+$HighlanderGitUrl    = 'https://github.com/X2CommunityCore/X2WOTCCommunityHighlander/releases'
 $AsiLoaderUrl        = 'https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases'
 $XcomAppId           = '268500'
+# The Highlander replaces the game's script packages, and a DLC that ships one of its own needs
+# the matching plugin or that DLC misbehaves with the Highlander on. Exactly one exists today:
+# Alien Hunters (the Alien Rulers), which the game installs as XComGame\DLC\DLC_2. Its plugin is
+# required WITH that DLC and harmful without it, so both directions are checked.
+$DlcHighlanders = @(
+    @{ Dlc = 'DLC_2'
+       Title = 'Alien Hunters'
+       Mod = 'DLC2CommunityHighlander'
+       Url = 'https://steamcommunity.com/sharedfiles/filedetails/?id=2534737016' }
+)
 # Ultimate ASI Loader impersonates one of these; which one differs per machine, so a missing
 # version.dll is not a broken install. Probe the whole list and say which one was found.
 $LoaderHosts = @('version.dll', 'version-x64.dll', 'dinput8.dll', 'winmm.dll', 'dsound.dll',
@@ -98,6 +114,89 @@ function Get-SteamLibraries {
     return @($libs | Select-Object -Unique)
 }
 
+# Where a non-Steam copy lives: the launchers that keep a registry key or a manifest are asked
+# where their games are, and every answer still goes through Test-GameFolder, so a wrong guess
+# costs nothing. Both the folder itself and its XCom2-WarOfTheChosen subfolder are offered,
+# because a store may install the two campaigns side by side the way Steam does.
+function Get-OtherGameFolders {
+    $paths = @()
+    foreach ($key in 'HKLM:\SOFTWARE\WOW6432Node\GOG.com\Games', 'HKLM:\SOFTWARE\GOG.com\Games') {
+        try {
+            foreach ($entry in (Get-ChildItem -Path $key -ErrorAction Stop)) {
+                $p = (Get-ItemProperty -Path $entry.PSPath -ErrorAction SilentlyContinue).path
+                if ($p) { $paths += [string]$p }
+            }
+        } catch { }
+    }
+    $manifests = Join-Path $env:ProgramData 'Epic\EpicGamesLauncher\Data\Manifests'
+    if (Test-Path -LiteralPath $manifests) {
+        foreach ($f in (Get-ChildItem -LiteralPath $manifests -Filter '*.item' -ErrorAction SilentlyContinue)) {
+            try { $text = Get-Content -Raw -LiteralPath $f.FullName } catch { continue }
+            foreach ($m in [regex]::Matches($text, '"InstallLocation"\s*:\s*"([^"]+)"')) {
+                $paths += ($m.Groups[1].Value -replace '\\\\', '\')
+            }
+        }
+    }
+    $out = @()
+    foreach ($p in $paths) { $out += $p; $out += (Join-Path $p 'XCom2-WarOfTheChosen') }
+    return @($out | Select-Object -Unique)
+}
+
+# Every folder the game looks in for mods: the local Mods folder the archive installs into, the
+# Steam workshop folder of every library on this machine, and each ModRootDirs entry the config
+# names -- the shipped default with a '+', whatever a launcher rewrote it to, and whatever a hand
+# install added. A relative root is resolved the way the game resolves it: against Binaries\Win64,
+# its working folder.
+function Get-ModRoots ([string]$LocalMods, [string]$Win64Dir, [string]$GameDir, [string[]]$ConfigFiles) {
+    $roots = @($LocalMods)
+    # The game's own library may not be the one the registry names first, so take the workshop
+    # folder that sits beside the install as well as the ones the registry knows about. A game
+    # folder too near the root of a drive to have a steamapps above it is not an error: an
+    # install from any other store looks exactly like that.
+    try {
+        $steamappsOfGame = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $GameDir))
+        if ($steamappsOfGame) { $roots += (Join-Path $steamappsOfGame "workshop\content\$XcomAppId") }
+    } catch { }
+    foreach ($lib in Get-SteamLibraries) {
+        $roots += (Join-Path $lib "steamapps\workshop\content\$XcomAppId")
+    }
+    foreach ($ini in $ConfigFiles) {
+        if (-not $ini -or -not (Test-Path -LiteralPath $ini)) { continue }
+        try { $text = (Read-ConfigText $ini).Text } catch { continue }
+        foreach ($m in [regex]::Matches($text, '(?m)^\s*[+.]?ModRootDirs=(.+?)\s*$')) {
+            $p = $m.Groups[1].Value
+            if ($p -notmatch '^([A-Za-z]:|\\\\)') { $p = Join-Path $Win64Dir $p }
+            try { $roots += [System.IO.Path]::GetFullPath($p) } catch { }
+        }
+    }
+    return @($roots | Where-Object { $_ } | Select-Object -Unique)
+}
+
+# Finds the folder holding <ModId>.XComMod under any of the given roots, and says whether the
+# game can actually load it from there. A mod is known to the game by the NAME OF ITS .XComMod
+# FILE, never by the folder around it: a workshop folder is a numeric id and a hand-installed one
+# keeps whatever name its zip had, so the file is what gets searched for. The game reads exactly
+# one level down from a mod root, so a copy found deeper is reported, not accepted -- unzipping
+# an archive that carries its own top folder is the usual way a hand install goes quiet.
+function Find-ModDir ([string]$ModId, [string[]]$Roots) {
+    $file = "$ModId.XComMod"
+    $nested = $null
+    foreach ($root in $Roots) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        foreach ($d in (Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)) {
+            if (Test-Path -LiteralPath (Join-Path $d.FullName $file)) {
+                return [pscustomobject]@{ Path = $d.FullName; Loadable = $true }
+            }
+            if ($nested) { continue }
+            foreach ($s in (Get-ChildItem -LiteralPath $d.FullName -Directory -ErrorAction SilentlyContinue)) {
+                if (Test-Path -LiteralPath (Join-Path $s.FullName $file)) { $nested = $s.FullName; break }
+            }
+        }
+    }
+    if ($nested) { return [pscustomobject]@{ Path = $nested; Loadable = $false } }
+    return $null
+}
+
 # Reads a config file keeping track of its encoding, so the write-back does not silently
 # convert a UTF-16 file the game wrote into ANSI or the other way round.
 function Read-ConfigText ([string]$Path) {
@@ -144,13 +243,27 @@ if (-not $game) {
     }
 }
 if (-not $game) {
-    Write-Problem 'Could not find the War of the Chosen game folder. Extract the archive at XCom2-WarOfTheChosen (the folder holding Binaries and XComGame, under steamapps\common\XCOM 2) and run this script from there, or pass -GamePath.'
+    # Nothing here is Steam-specific: the mod works the same on a copy from any store.
+    foreach ($candidate in Get-OtherGameFolders) {
+        if (Test-GameFolder $candidate) { $game = $candidate; break }
+    }
+}
+if (-not $game) {
+    Write-Problem 'Could not find the War of the Chosen game folder. Extract the archive at XCom2-WarOfTheChosen (the folder holding Binaries and XComGame; on Steam it is under steamapps\common\XCOM 2) and run this script from there, or pass -GamePath.'
     exit 2
 }
 Write-Ok "Game folder: $game"
 
 $win64   = Join-Path $game 'Binaries\Win64'
 $modsDir = Join-Path $game 'XComGame\Mods'
+
+# Ask Windows where Documents is; it is not always under the profile and not always spelled
+# in English. The game's own folder name under it is fixed, and is the same whatever store the
+# copy came from.
+$documents      = [Environment]::GetFolderPath('MyDocuments')
+$configDir      = Join-Path $documents 'My Games\XCOM2 War of the Chosen\XComGame\Config'
+$modOptionsPath = Join-Path $configDir 'XComModOptions.ini'
+$engineIniPath  = Join-Path $configDir 'XComEngine.ini'
 
 # ---- 2. is the game running? ------------------------------------------------------------------
 
@@ -201,42 +314,56 @@ if ($companionInstalled) {
 
 # ---- 5. the Community Highlander --------------------------------------------------------------
 
-# Workshop mods live under <any Steam library>\steamapps\workshop\content\268500\<id>\; a
-# hand-installed copy would sit in the local Mods folder instead. Both count. The Highlander
-# has more than one workshop listing (the release and its beta branch) with the SAME mod name,
-# which is the name the game loads it by, so search every workshop folder for the .XComMod
-# rather than trusting one id.
-$hlDir = $null
-$hlCandidates = @((Join-Path $modsDir $HighlanderName))
-# The game's own library may not be the one the registry names first.
-$steamappsOfGame = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $game))
-$workshopRoots = @((Join-Path $steamappsOfGame "workshop\content\$XcomAppId"))
-foreach ($lib in Get-SteamLibraries) {
-    $workshopRoots += (Join-Path $lib "steamapps\workshop\content\$XcomAppId")
+# Subscribed mods live under <any Steam library>\steamapps\workshop\content\268500\<id>\, a
+# hand-installed one under a mod root -- normally the game's own XComGame\Mods. Both count, and
+# on a copy that came from anywhere but Steam the second is the only one there is. The Highlander
+# also has more than one workshop listing (the release and its beta branch) with the SAME mod
+# name, which is the name the game loads it by, so search for the .XComMod file rather than
+# trusting one id or one folder name.
+$modRoots = Get-ModRoots $modsDir $win64 $game @($engineIniPath, (Join-Path $game 'XComGame\Config\DefaultEngine.ini'))
+
+$hl = Find-ModDir $HighlanderName $modRoots
+if ($hl -and $hl.Loadable) {
+    Write-Ok "Community Highlander found at $($hl.Path)"
+} elseif ($hl) {
+    Write-Problem "The Community Highlander is at $($hl.Path), one folder too deep for the game to find it: a mod root is read exactly one level down. Move the folder holding $HighlanderName.XComMod straight into $modsDir, so the .XComMod file ends up two levels under Mods, not three."
+} else {
+    Write-Problem "The X2WOTC Community Highlander is not installed. On Steam, subscribe to it ($HighlanderUrl) and let Steam download it; on any other copy of the game, download it from $HighlanderGitUrl and unzip it into $modsDir so that $HighlanderName.XComMod sits one folder down. Then run this check again. Without it the companion mod does not load: menus still read, but combat narration and every companion-sourced screen stay silent."
 }
-foreach ($root in ($workshopRoots | Select-Object -Unique)) {
-    if (-not (Test-Path -LiteralPath $root)) { continue }
-    foreach ($d in (Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)) {
-        $hlCandidates += $d.FullName
+$highlanderReady = [bool]($hl -and $hl.Loadable)
+
+# ---- 6. the DLC plugins the Highlander needs ---------------------------------------------------
+
+# A DLC is installed when its folder is there -- XComGame\DLC\DLC_2 for Alien Hunters, which the
+# store sells as the Alien Rulers. The plugin goes both ways: with the DLC it is required, and
+# without it the plugin's own authors call it gamebreaking, so an enabled plugin on a copy that
+# has no such DLC is reported too. Enabling one is left to section 7 along with everything else,
+# and only when the Highlander it plugs into is loadable in the first place.
+$dlcPlugins = @()
+$strayPlugins = @()
+foreach ($dlc in $DlcHighlanders) {
+    $dlcDir = Join-Path $game "XComGame\DLC\$($dlc.Dlc)"
+    $installed = (Test-Path -LiteralPath (Join-Path $dlcDir "$($dlc.Dlc).XComDLC")) -or
+                 (Test-Path -LiteralPath (Join-Path $dlcDir "Script\$($dlc.Dlc).u"))
+    $plugin = Find-ModDir $dlc.Mod $modRoots
+    if (-not $installed) {
+        # No DLC and no plugin is the ordinary case and says nothing. A plugin without its DLC is
+        # left to section 7, which knows whether it is switched on: installed is harmless, enabled
+        # is not.
+        if ($plugin) { $strayPlugins += $dlc }
+        continue
+    }
+    if ($plugin -and $plugin.Loadable) {
+        Write-Ok "$($dlc.Title) DLC is installed, and its Highlander plugin $($dlc.Mod) is at $($plugin.Path)"
+        if ($highlanderReady) { $dlcPlugins += $dlc.Mod }
+    } elseif ($plugin) {
+        Write-Problem "$($dlc.Title) DLC is installed and its Highlander plugin is at $($plugin.Path), one folder too deep for the game to find it: a mod root is read exactly one level down. Move the folder holding $($dlc.Mod).XComMod straight into $modsDir."
+    } else {
+        Write-Problem "$($dlc.Title) DLC is installed, so the Community Highlander needs its $($dlc.Title) plugin as well. On Steam, subscribe to $($dlc.Url); on any other copy, download it from $HighlanderGitUrl and unzip it into $modsDir so that $($dlc.Mod).XComMod sits one folder down. The DLC ships a script package built against the unmodified game, which the Highlander has replaced; the plugin is the rebuilt one, and its authors call it required whenever the DLC is there."
     }
 }
-foreach ($c in ($hlCandidates | Select-Object -Unique)) {
-    if (Test-Path -LiteralPath (Join-Path $c "$HighlanderName.XComMod")) { $hlDir = $c; break }
-}
-if ($hlDir) {
-    Write-Ok "Community Highlander found at $hlDir"
-} else {
-    Write-Problem "The X2WOTC Community Highlander is not installed. Subscribe to it on the Steam Workshop ($HighlanderUrl), let Steam download it, then run this check again. Without it the companion mod does not load: menus still read, but combat narration and every companion-sourced screen stay silent."
-}
 
-# ---- 6. the user config: which mods the game loads --------------------------------------------
-
-# Ask Windows where Documents is; it is not always under the profile and not always spelled
-# in English. The game's own folder name under it is fixed.
-$documents = [Environment]::GetFolderPath('MyDocuments')
-$configDir = Join-Path $documents 'My Games\XCOM2 War of the Chosen\XComGame\Config'
-$modOptionsPath = Join-Path $configDir 'XComModOptions.ini'
-$engineIniPath  = Join-Path $configDir 'XComEngine.ini'
+# ---- 7. the user config: which mods the game loads --------------------------------------------
 
 if (-not (Test-Path -LiteralPath $configDir)) {
     if ($mayWrite) {
@@ -248,7 +375,8 @@ if (-not (Test-Path -LiteralPath $configDir)) {
 }
 
 $wanted = @($ModName)
-if ($hlDir) { $wanted += $HighlanderName }
+if ($highlanderReady) { $wanted += $HighlanderName }
+$wanted += $dlcPlugins
 
 if (Test-Path -LiteralPath $modOptionsPath) {
     $cfg = Read-ConfigText $modOptionsPath
@@ -280,11 +408,22 @@ foreach ($mod in $wanted) {
         Write-Problem "$mod is not enabled in $modOptionsPath. Run this script again without -CheckOnly and with the game closed, or tick it in the mod launcher."
     }
 }
+
+# A DLC plugin switched on for a DLC this copy does not have. Only reported, never removed: the
+# list is the player's and their launcher's, and this script switches mods ON, never off.
+foreach ($dlc in $strayPlugins) {
+    if ($optsRaw -match ('(?m)^ActiveMods="?' + [regex]::Escape($dlc.Mod) + '"?\s*$')) {
+        Write-Problem "$($dlc.Mod) is enabled in $modOptionsPath, but the $($dlc.Title) DLC is not installed on this copy of the game. Untick it in your launcher, or delete its ActiveMods line from that file: its authors warn it breaks a game that has no $($dlc.Title)."
+    } else {
+        Write-Note "$($dlc.Mod) is installed but not enabled, which is right: it is the Highlander's $($dlc.Title) plugin and this copy of the game has no $($dlc.Title) DLC."
+    }
+}
+
 if ($optsChanged) {
     Write-ConfigText $modOptionsPath $optsRaw $optsEnc
 }
 
-# ---- 7. the user config: where the game looks for mods ----------------------------------------
+# ---- 8. the user config: where the game looks for mods ----------------------------------------
 
 # ActiveMods is half the rule: a mod loads when it is listed there AND its folder is under a
 # ModRootDirs root. The game ships the local Mods root in DefaultEngine.ini, but the user
@@ -318,10 +457,14 @@ if (Test-Path -LiteralPath $engineIniPath) {
     }
 }
 
-# ---- 8. advice ----------------------------------------------------------------------------------
+# ---- 9. advice ----------------------------------------------------------------------------------
 
-Write-Note 'If you launch through the Alternative Mod Launcher, tick X2AccessCompanion and the Community Highlander there as well: it rewrites this list from its own selection on every launch.'
-Write-Note 'Launch through Steam or a mod launcher. If you start XCom2.exe directly, add -review to its arguments, or the game boots its developer shell where nothing reads.'
+$tickList = @($ModName, 'the Community Highlander') + $dlcPlugins
+$ticks = if ($tickList.Count -gt 1) {
+    ($tickList[0..($tickList.Count - 2)] -join ', ') + ' and ' + $tickList[-1]
+} else { $tickList[0] }
+Write-Note "If you launch through the Alternative Mod Launcher, tick $ticks there as well: it rewrites this list from its own selection on every launch."
+Write-Note 'Launch through your store or a mod launcher. If you start XCom2.exe directly, add -review to its arguments, or the game boots its developer shell where nothing reads.'
 
 # ---- summary --------------------------------------------------------------------------------------
 

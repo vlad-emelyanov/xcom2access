@@ -92,9 +92,12 @@ access the game never had at all.
 
 ## Requirements
 
-- XCOM 2: **War of the Chosen** on PC (Windows), the current Steam build. The
-  base game without the expansion is not supported: the companion is a WOTC
-  mod and the native side is measured against the WOTC executable.
+- XCOM 2: **War of the Chosen** on PC (Windows), the current build. The base
+  game without the expansion is not supported: the companion is a WOTC mod and
+  the native side is measured against the WOTC executable. Which store the copy
+  came from does not matter — everything here is done to the game folder and to
+  the config under Documents, and the only Steam-specific part is where a
+  subscribed mod happens to sit.
 - [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases)
   — the `version-x64.zip` build. This is what loads the mod into the game;
   without it nothing speaks, and nothing in the game changes at all.
@@ -103,7 +106,17 @@ access the game never had at all.
   compiled against it and does not load without it. The native side runs
   either way, so with the Highlander missing the menus still read but
   **combat narration and every screen whose words come from the companion go
-  quiet** — it looks like a partial mod, not a broken one.
+  quiet** — it looks like a partial mod, not a broken one. On a copy of the
+  game that did not come from Steam, its
+  [GitHub releases](https://github.com/X2CommunityCore/X2WOTCCommunityHighlander/releases)
+  are the same mod: unzip it into `XComGame\Mods\` so its `.XComMod` file sits
+  one folder down, which is exactly as deep as the game looks.
+- If you own the **Alien Hunters** DLC (the Alien Rulers), the Highlander's
+  [Alien Hunters plugin](https://steamcommunity.com/sharedfiles/filedetails/?id=2534737016)
+  as well — that DLC ships a script package built against the unmodified game,
+  which the Highlander replaces, and the plugin is the rebuilt one. Without the
+  DLC the plugin has to stay off; its authors warn it breaks a game that has no
+  Alien Hunters. The install check works out which of the two cases you are in.
 - A screen reader (NVDA, JAWS, ZDSR, ZoomText, SenseReader, PC-Talker,
   BoyPCReader), or SAPI / Windows OneCore as the fallback. Prism is linked
   statically, so there is no speech DLL to place beside the game — including
@@ -115,8 +128,8 @@ access the game never had at all.
 Download the archive from the
 [`dev` release](https://git.alex19ep.me/alex19ep/xcom2access/releases) and
 extract it at the **War of the Chosen game folder** — `XCom2-WarOfTheChosen`,
-the one holding `Binaries/` and `XComGame/`, under `steamapps/common/XCOM 2`.
-It contains:
+the one holding `Binaries/` and `XComGame/` (on Steam, under
+`steamapps/common/XCOM 2`). It contains:
 
 ```
 README.md
@@ -142,15 +155,17 @@ Then:
    works too.
 2. With the game closed, run `X2Access-Check.cmd` from the game folder. It
    checks that the loader, the ASI, the companion and the Highlander are all
-   in place, names anything missing and how to fix it, and enables
-   **X2AccessCompanion** and the **Community Highlander** in the game's mod
-   settings the way the launcher does (`Documents\My Games\XCOM2 War of the
-   Chosen\XComGame\Config\XComModOptions.ini`). Its output is plain text, one
-   finding per line, each starting with OK, FIXED, PROBLEM or NOTE. If you
-   launch through the Alternative Mod Launcher, tick both mods there as well:
-   it rewrites that list from its own selection on every launch. The script
-   lives at `tools/dist/` in this repository.
-3. Launch through Steam or the mod launcher as usual. If you start
+   in place — subscribed or hand-installed, either counts — names anything
+   missing and how to fix it, and enables **X2AccessCompanion**, the
+   **Community Highlander** and, if you have the Alien Hunters DLC, its
+   **Alien Hunters plugin** in the game's mod settings the way the launcher
+   does (`XComModOptions.ini`, under `Documents\My Games\XCOM2 War of the
+   Chosen\XComGame\Config`). Its output is plain text, one finding per line, each
+   starting with OK, FIXED, PROBLEM or NOTE. If you launch through the
+   Alternative Mod Launcher, tick those mods there as well: it rewrites that
+   list from its own selection on every launch. The script lives at
+   `tools/dist/` in this repository.
+3. Launch through your store or the mod launcher as usual. If you start
    `XCom2.exe` directly instead, add `-review` to its arguments: the launchers
    pass it for you, and without it the game boots its developer shell instead
    of the retail main menu, where nothing reads.

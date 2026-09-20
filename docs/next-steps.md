@@ -911,6 +911,17 @@ title, body and the dismiss hint, that `I` re-reads it on an ordinary mission, a
 it leaves `TutorialReader: inactive (modal only — not the tutorial mission)` in the log rather than
 a repeating announcement.
 
+The install check's **non-Steam branches** (`tools/dist/X2Access-Check.ps1`, 2026-09-20). Three of
+them have no machine here to run on and were proven against fixtures instead — a temporary tree
+plus the script's own functions lifted out with the PowerShell parser: game discovery through the
+GOG registry and the Epic manifests, a Highlander hand-unzipped into `XComGame\Mods`, and the
+one-folder-too-deep report for a zip that carried its own top folder. What a real non-Steam copy
+would settle is whether the store's own folder shape still puts `Binaries\Win64\XCom2.exe` where
+`Test-GameFolder` looks, and whether `Documents\My Games\XCOM2 War of the Chosen` is still the
+config path there. The Alien Hunters halves DID run live on this machine (DLC present + plugin
+subscribed, and the stray-plugin report by pointing `-GamePath` at a tree with no `DLC_2`); the
+one branch nobody has seen is a real install that owns the DLC and lacks the plugin.
+
 ## Known defects
 
 - ⛔ **An in-engine MATINEE cutscene reads NOTHING, and nothing in the mod currently owns that
