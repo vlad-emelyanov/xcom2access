@@ -213,8 +213,14 @@ rules** below instead — that is the test for which file a new rule goes in.
 ## Engine facts
 
 Heavily modified UE3, 64-bit only, Scaleform GFx UI. No anti-cheat; injection is tolerated.
-ProcessEvent is UObject vtable slot 72 at `moduleBase + 0x143B50`; `src/sdk_globals.cpp` validates
-the GNames/GObjects offsets with sanity heuristics before init proceeds. **The measured record
+ProcessEvent is UObject vtable slot 72 (measured on each build, not carried over);
+`src/sdk_globals.cpp` validates the GNames/GObjects offsets with sanity heuristics before init
+proceeds. ⛔ **There are TWO retail builds — the Steam image and the GOG one, the same source
+relinked — so a module-relative address is per BUILD and belongs in the table in
+`src/game_build.cpp`, never as a constant in the TU that uses it.** An image the table does not
+know falls back to the reference row and says so, because the validation is what decides;
+`tools/derive_offsets.py` adds a row from the two exes, and what confirms each number is
+`docs/engine-notes.md`. **The measured record
 behind every rule below — the dispatch decompilation, the retained-widget censuses, the Flash
 path-API survey, the field maps, screen lifetime — is `docs/engine-notes.md`.** What it obliges:
 

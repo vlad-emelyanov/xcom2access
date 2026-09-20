@@ -107,6 +107,9 @@ add_library(X2Access SHARED
     src/input_arbiter.cpp
     src/log.cpp
     src/hooks.cpp
+    # Which retail build of the exe we are inside, and where its globals are: there is a Steam
+    # image and a GOG one, and every address we pin differs between them (docs/engine-notes.md).
+    src/game_build.cpp
     src/sdk_globals.cpp
     src/sdk_impl.cpp
     src/event_dispatch.cpp

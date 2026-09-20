@@ -17,11 +17,12 @@
 //
 // `FFullScreenMovieBink` is not a UObject. It has no class, no properties, no reflection and no
 // script surface, so the mod's two usual doors — the widget tree and the companion — are both
-// shut. The ONE address hard-coded here is the engine global that holds it; everything else is
+// shut. The ONE address this surface needs is the engine global that holds it — pinned per build
+// in `GameBuild`, since the two retail executables put it in different places; everything else is
 // an offset within an object that global points at.
 //
-// That is a real risk (a game patch moves it, and a stale pointer is a crash rather than a wrong
-// word), so the global is VALIDATED before it is ever dereferenced further: the object's vtable
+// That is a real risk (another build puts it elsewhere, and a stale pointer is a crash rather
+// than a wrong word), so the global is VALIDATED before it is ever dereferenced further: the object's vtable
 // pointer must be the one FFullScreenMovieBink's constructor writes. A mismatch disables the
 // whole surface permanently with one log line. Same discipline as sdk_globals.cpp's GNames /
 // GObjects heuristics, and for the same reason — a wrong global must fail loudly at the door
@@ -41,6 +42,7 @@
 
 #include "movie_subtitles.h"
 
+#include "game_build.h"
 #include "log.h"
 #include "narrator.h"
 #include "script_call.h"
@@ -56,10 +58,12 @@ namespace MovieSubtitles {
 
 namespace {
 
-// ---- the one hard-coded pair ----
-
-constexpr uintptr_t kMoviePlayerGlobalRva = 0x1DB8900; // GFullScreenMovie
-constexpr uintptr_t kMoviePlayerVtableRva = 0x13E9B28; // FFullScreenMovieBink's own vtable
+// ---- the one hard-coded pair: GFullScreenMovie and FFullScreenMovieBink's vtable ----
+//
+// Both live in `GameBuild`'s per-build table rather than here, because the GOG image puts them
+// somewhere else (docs/engine-notes.md). The vtable check in FindPlayer is what pins them either
+// way — it is the only thing standing between this surface and a wild read, which is exactly why
+// it has to compare against the RIGHT build's vtable.
 
 // ---- FFullScreenMovieBink (0x140 bytes) ----
 
@@ -227,25 +231,28 @@ void* FindPlayer()
     if (!base)
         return nullptr;
 
-    void* player = ReadPtr(reinterpret_cast<const void*>(base + kMoviePlayerGlobalRva), 0);
+    const GameBuild::Build& build = GameBuild::Current();
+    void* player = ReadPtr(reinterpret_cast<const void*>(base + build.moviePlayerGlobal), 0);
     if (!player)
         return nullptr; // created lazily on the first movie — not an error, just not yet
 
     if (!gChecked) {
         gChecked = true;
         const void* vtable = ReadPtr(player, 0);
-        const void* expected = reinterpret_cast<const void*>(base + kMoviePlayerVtableRva);
+        const void* expected = reinterpret_cast<const void*>(base + build.moviePlayerVtable);
         gUsable = vtable == expected;
         if (gUsable) {
-            LOG_INFO("MovieSubtitles: movie player at 0x%p validated", player);
+            LOG_INFO("MovieSubtitles: movie player at 0x%p validated (%s build)", player,
+                build.name);
         } else {
             // Loud and terminal. The alternative — carrying on against an object that is not
             // what we think it is — reads engine memory at arbitrary offsets, and the offsets
             // here are not `static_assert`able against anything, so this check IS the pin.
             LOG_ERROR("MovieSubtitles: DISABLED — global 0x%llX holds 0x%p whose vtable is 0x%p, "
-                      "expected 0x%p (game patched? re-derive from FUN_14024c630)",
-                static_cast<unsigned long long>(base + kMoviePlayerGlobalRva), player, vtable,
-                expected);
+                      "expected 0x%p for the %s build; this executable is %s "
+                      "(re-derive with tools/derive_offsets.py)",
+                static_cast<unsigned long long>(base + build.moviePlayerGlobal), player, vtable,
+                expected, build.name, GameBuild::Fingerprint());
         }
     }
     return gUsable ? player : nullptr;

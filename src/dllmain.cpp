@@ -1,4 +1,5 @@
 #include "log.h"
+#include "game_build.h"
 #include "dev_server.h"
 #include "tts.h"
 #include "input.h"
@@ -52,6 +53,11 @@ static void InitThread() {
     DWORD pid = GetCurrentProcessId();
     HMODULE exe = GetModuleHandleA(nullptr);
     LOG_INFO("Process PID: %lu, EXE base: 0x%p", pid, exe);
+
+    // Which build of the game this is, said ONCE and early. Every address the mod pins differs
+    // between the retail builds, so the first question any "it does not speak" report has to
+    // answer is which executable it was — and the reporter cannot be expected to know that.
+    LOG_INFO("Game build: %s", GameBuild::Fingerprint());
 
     // 2. TTS (Prism linked statically)
     //

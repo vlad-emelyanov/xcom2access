@@ -12,6 +12,57 @@ and note that a rule with no measurement under it any more is a rule to delete, 
 - ProcessEvent: UObject vtable slot 72, address `moduleBase + 0x143B50` (found via Ghidra +
   `tools/OffsetFinder`). GNames/GObjects offsets live in the generated SDK constants;
   `src/sdk_globals.cpp` validates them with sanity heuristics before init proceeds.
+- ⛔ **Every one of those addresses is per BUILD, and lives in the table in `src/game_build.cpp` —
+  never as a constant in the TU that uses it.** A second retail build of the same game exists.
+  The GOG release (`XCom2.exe`, PE timestamp `0x5B9A17C4` = 2018-09-13, `SizeOfImage` `0x20CA000`,
+  32,008,704 bytes, no `steam_api64.dll` reference) is the same source RELINKED, not a different
+  game: entry points 0x90 apart, 2 KB of file size between them. Everything pinned moved, and
+  before the table existed the mod died on it in `SDK::Init` with *GNames validation failed* —
+  correct behaviour, and total silence, since every word the mod speaks is native. An image the
+  table does not know is NOT refused: it gets the reference row and a named warning, because
+  refusing would break a re-signed copy of a build we do support, and the validation is what
+  actually decides. Measured 2026-09-20 from a tester's copy of the binary, each
+  anchor twice, by methods sharing no assumptions. `tools/derive_offsets.py` is that measurement,
+  re-runnable against any third build: `--reference` the exe whose RVAs are known, `--target` the
+  new one. ⛔ Keep a copy of any non-Steam exe somewhere OUTSIDE this repo (it is 32 MB of someone
+  else's game) — without the file there is nothing to re-derive from.
+
+  | Anchor | Steam (`0x621562FA`, `SizeOfImage 0x20C7000`) | GOG (`0x5B9A17C4`) | delta |
+  |---|---|---|---|
+  | GNames | `0x1DAF450` | `0x1DB2490` | +0x3040 |
+  | GObjects | `0x1DAF4A8` | `0x1DB24E8` | +0x3040 |
+  | ProcessEvent | `0x143B50` | `0x144310` | +0x7C0 |
+  | `GFullScreenMovie` global | `0x1DB8900` | `0x1DBB950` | +0x3050 |
+  | `FFullScreenMovieBink` vtable | `0x13E9B28` | `0x13EA7B8` | +0xC90 |
+
+  **How each was derived, and what confirms it.** A global is reached by RIP-relative operands, so
+  the bytes AROUND a Steam reference are the signature: wildcard the 4-byte displacement, find that
+  shape in the GOG image, read ITS displacement. 105 of 400 sampled sites matched for GNames and
+  166 for GObjects, **unanimously** — no site voted for any other address. A function is matched on
+  its own opening instructions with capstone masking every byte that encodes an address.
+  Confirmations, each independent of the derivation:
+  - **Reference symmetry.** The same global is reached from the same NUMBER of code sites in both
+    images: GObjects 870 and 870, the movie global 2 and 2, GNames 2156 and 2155 (the scan
+    over-approximates on purpose — it counts any 4-byte window that WOULD reach the address, so a
+    site or two of that is noise). A wrong address lands in unrelated data and the counts are not
+    in the same league.
+  - **`GObjects − GNames` is `0x58` in both**, as it must be for two adjacent globals.
+  - **ProcessEvent is pointed at by exactly 1612 stored pointers in each image**, and the vtable
+    index those sit at has the same distribution in both, peaking at **72** — so the slot index the
+    hook patches is measured on the new build, not assumed.
+  - **The two builds' ProcessEvent is the same function**: 246 instructions in lockstep to the
+    `ret`, and **zero** differing structure displacements. Every `[reg+0xNN]` it touches — the
+    UObject and UFunction layout the whole mod is transcribed against — is identical.
+  - The movie vtable, which no code match reached, was ported through its CONTENTS instead:
+    signature-match the 16 functions it points at, find where GOG stores pointers to them, vote on
+    where slot 0 must be. 16 of 16 agreed.
+  ⚠ The one check that FAILED was a test, not a build: looking for an RTTI locator at `vtable[-1]`
+  scored 0% on **both** images, Steam included. Run every new measurement against the build we know
+  works before believing what it says about the one we do not.
+  ⚠ Residual risk not settled by any of this: the GOG install's `.upk` files are a 2018 build's.
+  The Highlander replaces `XComGame`, `Engine` and `Core`, which is where nearly everything we
+  transcribe lives, so those layouts are the Highlander's on both stores — but a package it does
+  not replace has not been compared.
 - Runtime `FString` is `TArray<wchar_t>` (UTF-16) even though the generated SDK declares `char` —
   `ue3_reflection.cpp` handles the conversion.
 - **The UE3 audio device is alive beside Wwise, and its lifetime rules are Firaxis' own**

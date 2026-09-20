@@ -1,5 +1,6 @@
 #include "process_event_hook.h"
 #include "sdk_globals.h"
+#include "game_build.h"
 #include "event_dispatch.h"
 #include "log.h"
 
@@ -15,9 +16,9 @@
 
 namespace ProcessEventHook {
 
+// Slot 72 on both retail builds — measured on each, not carried over: the index was counted
+// across every vtable that stores ProcessEvent in either image (docs/engine-notes.md).
 static constexpr size_t PROCESS_EVENT_VTABLE_INDEX = 72;
-// Known ProcessEvent offset from OffsetFinder + Ghidra
-static constexpr uintptr_t PROCESS_EVENT_OFFSET = 0x143B50;
 
 using ProcessEventFn = void(__fastcall*)(UObject* pThis, UFunction* pFunction, void* pParams);
 
@@ -112,13 +113,14 @@ bool Install() {
         return false;
     }
 
-    // The known ProcessEvent address
+    // The known ProcessEvent address for THIS build of the exe
+    const GameBuild::Build& build = GameBuild::Current();
     uintptr_t moduleBase = SDK::GetModuleBase();
-    uintptr_t expectedPE = moduleBase + PROCESS_EVENT_OFFSET;
+    uintptr_t expectedPE = moduleBase + build.processEvent;
     sOriginalProcessEvent = reinterpret_cast<ProcessEventFn>(expectedPE);
 
-    LOG_INFO("ProcessEventHook: Target ProcessEvent at 0x%llX (module+0x%llX)",
-             expectedPE, PROCESS_EVENT_OFFSET);
+    LOG_INFO("ProcessEventHook: Target ProcessEvent at 0x%llX (module+0x%llX, %s build)",
+             expectedPE, build.processEvent, build.name);
 
     // Scan all objects and find unique vtables that have ProcessEvent at slot 72
     std::unordered_set<void**> seenVtables;
@@ -147,7 +149,11 @@ bool Install() {
     }
 
     if (patchCount == 0) {
-        LOG_ERROR("ProcessEventHook: No vtables found with ProcessEvent at slot %zu", PROCESS_EVENT_VTABLE_INDEX);
+        // Nothing holds that address at slot 72, so the address is wrong for this executable —
+        // which is what an untabulated build looks like once GNames happened to validate anyway.
+        LOG_ERROR("ProcessEventHook: No vtables found with ProcessEvent at slot %zu — the address "
+                  "tried belongs to the %s build and this executable is %s",
+                  PROCESS_EVENT_VTABLE_INDEX, build.name, GameBuild::Fingerprint());
         sOriginalProcessEvent = nullptr;
         return false;
     }

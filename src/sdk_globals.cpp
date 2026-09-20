@@ -1,4 +1,5 @@
 #include "sdk_globals.h"
+#include "game_build.h"
 #include "log.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -14,6 +15,27 @@ namespace SDK {
 static bool sReady = false;
 static uintptr_t sModuleBase = 0;
 static uintptr_t sModuleSize = 0;
+
+// ⛔ The first failures are NORMAL. Init is polled from the tick and the name table is not
+// populated until the game's scripts load — a healthy boot fails twice before it succeeds, so a
+// diagnostic on every failure is a diagnostic on every healthy start. Only a failure that
+// PERSISTS says the addresses are wrong for this executable, which is what a build outside the
+// offset table looks like. Said once, at ten failures (~10 s against a healthy two).
+static int sFailedAttempts = 0;
+static constexpr int kPersistentFailure = 10;
+
+static void NoteFailure(const GameBuild::Build& build) {
+    if (++sFailedAttempts != kPersistentFailure)
+        return;
+    LOG_WARN("SDK: still failing after %d attempts. The addresses tried belong to the %s build; "
+             "this executable is %s.%s",
+        sFailedAttempts, build.name, GameBuild::Fingerprint(),
+        GameBuild::IsKnown()
+            ? " Both are in the offset table, so this is not a build the mod cannot read — look"
+              " for a mod or overlay that moved the game's globals."
+            : " An executable outside the offset table cannot work until a row is added for it —"
+              " send this line and the exe to the mod author.");
+}
 
 bool IsReady() { return sReady; }
 uintptr_t GetModuleBase() { return sModuleBase; }
@@ -86,18 +108,23 @@ bool Init() {
         return false;
     }
 
+    // Which build's addresses to use. On a Steam image this is the generated SDK's own pair; on
+    // the GOG image it is a different one, derived and cross-checked in docs/engine-notes.md.
+    const GameBuild::Build& build = GameBuild::Current();
+
     // Resolve GNames
-    auto* pGNames = reinterpret_cast<TArray<FNameEntry*>*>(sModuleBase + GNames_Offset);
+    auto* pGNames = reinterpret_cast<TArray<FNameEntry*>*>(sModuleBase + build.gnames);
     int32_t nameCount = 0;
     const char* firstName = nullptr;
 
     int result = ValidateGNamesSEH(pGNames, &nameCount, &firstName);
     if (result != 0) {
         if (result == -99) {
-            LOG_ERROR("SDK: Exception validating GNames at 0x%llX", sModuleBase + GNames_Offset);
+            LOG_ERROR("SDK: Exception validating GNames at 0x%llX", sModuleBase + build.gnames);
         } else {
             LOG_WARN("SDK: GNames validation failed (code %d)", result);
         }
+        NoteFailure(build);
         return false;
     }
 
@@ -105,17 +132,18 @@ bool Init() {
     GNames = pGNames;
 
     // Resolve GObjects
-    auto* pGObjects = reinterpret_cast<TArray<UObject*>*>(sModuleBase + GObjects_Offset);
+    auto* pGObjects = reinterpret_cast<TArray<UObject*>*>(sModuleBase + build.gobjects);
     int32_t objCount = 0;
     int32_t firstNameId = -1;
 
     result = ValidateGObjectsSEH(pGObjects, &objCount, &firstNameId);
     if (result != 0) {
         if (result == -99) {
-            LOG_ERROR("SDK: Exception validating GObjects at 0x%llX", sModuleBase + GObjects_Offset);
+            LOG_ERROR("SDK: Exception validating GObjects at 0x%llX", sModuleBase + build.gobjects);
         } else {
             LOG_WARN("SDK: GObjects validation failed (code %d)", result);
         }
+        NoteFailure(build);
         GNames = nullptr;
         return false;
     }

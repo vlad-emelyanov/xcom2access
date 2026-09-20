@@ -94,10 +94,11 @@ access the game never had at all.
 
 - XCOM 2: **War of the Chosen** on PC (Windows), the current build. The base
   game without the expansion is not supported: the companion is a WOTC mod and
-  the native side is measured against the WOTC executable. Which store the copy
-  came from does not matter — everything here is done to the game folder and to
-  the config under Documents, and the only Steam-specific part is where a
-  subscribed mod happens to sit.
+  the native side is measured against the WOTC executable. **Steam and GOG are
+  both supported** — they ship different executables, so the mod carries a set
+  of addresses for each and says which one it recognised in the first lines of
+  its log. An executable it does not recognise is named there too, which is the
+  one thing a report about a silent mod has to contain.
 - [Ultimate ASI Loader](https://github.com/ThirteenAG/Ultimate-ASI-Loader/releases)
   — the `version-x64.zip` build. This is what loads the mod into the game;
   without it nothing speaks, and nothing in the game changes at all.

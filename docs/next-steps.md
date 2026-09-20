@@ -911,6 +911,24 @@ title, body and the dismiss hint, that `I` re-reads it on an ordinary mission, a
 it leaves `TutorialReader: inactive (modal only — not the tutorial mission)` in the log rather than
 a repeating announcement.
 
+**The GOG build, on a GOG machine** (built 2026-09-20, the day the first GOG tester reported).
+`src/game_build.cpp` holds a row per retail build and every module-relative address now comes from
+it; the five GOG RVAs in it are derived and cross-checked but have **never been run against the
+actual game** — nobody here has that copy. The Steam row is confirmed live (`Game build: Steam
+(timestamp 0x621562FA, image 0x20C7000)`, GNames and GObjects validated, 1610 vtables patched, the
+movie player validated), which proves the mechanism, not the GOG numbers. What a tester's
+`X2Access.log` settles, in order: that the first lines say **`Game build: GOG (timestamp
+0x5B9A17C4, image 0x20CA000)`** — if it says UNKNOWN BUILD, their exe is a third build and
+`tools/derive_offsets.py` needs it; that `SDK: GNames validated` follows within a few seconds
+(the two `GNames validation failed (code -1)` lines before it are normal, and the mod says so at
+ten failures, not two); that `ProcessEventHook: Patched N unique vtables` reports a four-figure N;
+and that a cutscene logs `MovieSubtitles: movie player ... validated (GOG build)` rather than the
+DISABLED line, which is the only one of the five addresses a boot does not exercise. ⚠ Still not
+settled by anything: whether a class layout we transcribe differs between the 2018 and 2022
+packages, outside the three the Highlander replaces — so a surface reading wrong on GOG while the
+same surface reads right on Steam is the shape to watch for, and is NOT a recipe bug until that is
+ruled out.
+
 The install check's **non-Steam branches** (`tools/dist/X2Access-Check.ps1`, 2026-09-20). Three of
 them have no machine here to run on and were proven against fixtures instead — a temporary tree
 plus the script's own functions lifted out with the PowerShell parser: game discovery through the
