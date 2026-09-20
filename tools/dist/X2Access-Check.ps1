@@ -50,6 +50,17 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Last line of defence. Stop turns any unguarded cmdlet error into the end of the script, and what
+# a tester then reads out through a screen reader is a page of PowerShell's own error formatting in
+# whatever language Windows is set to. This turns that into three plain sentences and an exit code
+# of its own (3), so a crash in the CHECK is never mistaken for a fault in the install.
+trap {
+    Write-Host "PROBLEM: This check hit an error of its own and stopped: $($_.Exception.Message)"
+    Write-Host "PROBLEM: It happened at line $($_.InvocationInfo.ScriptLineNumber): $(($_.InvocationInfo.Line).Trim())"
+    Write-Host 'Send those two lines to the mod author. Nothing was changed, and your install may well be fine.'
+    exit 3
+}
+
 $ModName             = 'X2AccessCompanion'
 $HighlanderName      = 'X2WOTCCommunityHighlander'
 $HighlanderUrl       = 'https://steamcommunity.com/workshop/filedetails/?id=1134256495'
@@ -80,10 +91,23 @@ function Write-Fixed   ([string]$Message) { $script:Fixed++;  Write-Host "FIXED:
 function Write-Problem ([string]$Message) { $script:Failed++; Write-Host "PROBLEM: $Message" }
 function Write-Note    ([string]$Message) { Write-Host "NOTE: $Message" }
 
+# Join-Path RESOLVES THE PATH PROVIDER, so it fails outright on a drive that does not exist -- and
+# a Steam library list from the registry, a mod root out of a config file or a redirected Documents
+# folder all routinely name a drive that was unplugged, reformatted or never mounted here. With
+# $ErrorActionPreference = 'Stop' that ends the whole check on somebody else's dead drive, which is
+# exactly how it died on the first GOG install it met: a library registered on E:, no E: on the
+# machine. None of these joins needs a provider. They are plain text until Test-Path looks at them,
+# and Test-Path answers False for a missing drive instead of throwing.
+function Join-PathText ([string]$Parent, [string]$Child) {
+    if (-not $Parent) { return $Child }
+    if (-not $Child)  { return $Parent }
+    return ($Parent.TrimEnd('\', '/') + '\' + $Child.TrimStart('\', '/'))
+}
+
 function Test-GameFolder ([string]$Dir) {
     if (-not $Dir) { return $false }
-    return (Test-Path -LiteralPath (Join-Path $Dir 'Binaries\Win64\XCom2.exe')) -and
-           (Test-Path -LiteralPath (Join-Path $Dir 'XComGame'))
+    return (Test-Path -LiteralPath (Join-PathText $Dir 'Binaries\Win64\XCom2.exe')) -and
+           (Test-Path -LiteralPath (Join-PathText $Dir 'XComGame'))
 }
 
 # Every Steam library on this machine: the install folder from the registry, plus every
@@ -104,12 +128,14 @@ function Get-SteamLibraries {
     if (-not $steam) { return @() }
     $steam = $steam -replace '/', '\'
     $libs += $steam
-    $vdf = Join-Path $steam 'steamapps\libraryfolders.vdf'
+    $vdf = Join-PathText $steam 'steamapps\libraryfolders.vdf'
     if (Test-Path -LiteralPath $vdf) {
-        $text = Get-Content -Raw -LiteralPath $vdf
-        foreach ($m in [regex]::Matches($text, '"path"\s+"([^"]+)"')) {
-            $libs += ($m.Groups[1].Value -replace '\\\\', '\')
-        }
+        try {
+            $text = Get-Content -Raw -LiteralPath $vdf
+            foreach ($m in [regex]::Matches($text, '"path"\s+"([^"]+)"')) {
+                $libs += ($m.Groups[1].Value -replace '\\\\', '\')
+            }
+        } catch { }
     }
     return @($libs | Select-Object -Unique)
 }
@@ -128,7 +154,7 @@ function Get-OtherGameFolders {
             }
         } catch { }
     }
-    $manifests = Join-Path $env:ProgramData 'Epic\EpicGamesLauncher\Data\Manifests'
+    $manifests = Join-PathText $env:ProgramData 'Epic\EpicGamesLauncher\Data\Manifests'
     if (Test-Path -LiteralPath $manifests) {
         foreach ($f in (Get-ChildItem -LiteralPath $manifests -Filter '*.item' -ErrorAction SilentlyContinue)) {
             try { $text = Get-Content -Raw -LiteralPath $f.FullName } catch { continue }
@@ -138,7 +164,7 @@ function Get-OtherGameFolders {
         }
     }
     $out = @()
-    foreach ($p in $paths) { $out += $p; $out += (Join-Path $p 'XCom2-WarOfTheChosen') }
+    foreach ($p in $paths) { $out += $p; $out += (Join-PathText $p 'XCom2-WarOfTheChosen') }
     return @($out | Select-Object -Unique)
 }
 
@@ -155,17 +181,17 @@ function Get-ModRoots ([string]$LocalMods, [string]$Win64Dir, [string]$GameDir, 
     # install from any other store looks exactly like that.
     try {
         $steamappsOfGame = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $GameDir))
-        if ($steamappsOfGame) { $roots += (Join-Path $steamappsOfGame "workshop\content\$XcomAppId") }
+        if ($steamappsOfGame) { $roots += (Join-PathText $steamappsOfGame "workshop\content\$XcomAppId") }
     } catch { }
     foreach ($lib in Get-SteamLibraries) {
-        $roots += (Join-Path $lib "steamapps\workshop\content\$XcomAppId")
+        $roots += (Join-PathText $lib "steamapps\workshop\content\$XcomAppId")
     }
     foreach ($ini in $ConfigFiles) {
         if (-not $ini -or -not (Test-Path -LiteralPath $ini)) { continue }
         try { $text = (Read-ConfigText $ini).Text } catch { continue }
         foreach ($m in [regex]::Matches($text, '(?m)^\s*[+.]?ModRootDirs=(.+?)\s*$')) {
             $p = $m.Groups[1].Value
-            if ($p -notmatch '^([A-Za-z]:|\\\\)') { $p = Join-Path $Win64Dir $p }
+            if ($p -notmatch '^([A-Za-z]:|\\\\)') { $p = Join-PathText $Win64Dir $p }
             try { $roots += [System.IO.Path]::GetFullPath($p) } catch { }
         }
     }
@@ -184,12 +210,12 @@ function Find-ModDir ([string]$ModId, [string[]]$Roots) {
     foreach ($root in $Roots) {
         if (-not (Test-Path -LiteralPath $root)) { continue }
         foreach ($d in (Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)) {
-            if (Test-Path -LiteralPath (Join-Path $d.FullName $file)) {
+            if (Test-Path -LiteralPath (Join-PathText $d.FullName $file)) {
                 return [pscustomobject]@{ Path = $d.FullName; Loadable = $true }
             }
             if ($nested) { continue }
             foreach ($s in (Get-ChildItem -LiteralPath $d.FullName -Directory -ErrorAction SilentlyContinue)) {
-                if (Test-Path -LiteralPath (Join-Path $s.FullName $file)) { $nested = $s.FullName; break }
+                if (Test-Path -LiteralPath (Join-PathText $s.FullName $file)) { $nested = $s.FullName; break }
             }
         }
     }
@@ -238,7 +264,7 @@ if (-not $game) {
 }
 if (-not $game) {
     foreach ($lib in Get-SteamLibraries) {
-        $candidate = Join-Path $lib 'steamapps\common\XCOM 2\XCom2-WarOfTheChosen'
+        $candidate = Join-PathText $lib 'steamapps\common\XCOM 2\XCom2-WarOfTheChosen'
         if (Test-GameFolder $candidate) { $game = $candidate; break }
     }
 }
@@ -254,16 +280,20 @@ if (-not $game) {
 }
 Write-Ok "Game folder: $game"
 
-$win64   = Join-Path $game 'Binaries\Win64'
-$modsDir = Join-Path $game 'XComGame\Mods'
+$win64   = Join-PathText $game 'Binaries\Win64'
+$modsDir = Join-PathText $game 'XComGame\Mods'
 
 # Ask Windows where Documents is; it is not always under the profile and not always spelled
 # in English. The game's own folder name under it is fixed, and is the same whatever store the
 # copy came from.
 $documents      = [Environment]::GetFolderPath('MyDocuments')
-$configDir      = Join-Path $documents 'My Games\XCOM2 War of the Chosen\XComGame\Config'
-$modOptionsPath = Join-Path $configDir 'XComModOptions.ini'
-$engineIniPath  = Join-Path $configDir 'XComEngine.ini'
+# An empty answer would make every path below RELATIVE, and a relative config path resolves
+# against wherever this script was started from -- which would quietly write the mod list into
+# the game folder and report OK.
+if (-not $documents) { $documents = Join-PathText $env:USERPROFILE 'Documents' }
+$configDir      = Join-PathText $documents 'My Games\XCOM2 War of the Chosen\XComGame\Config'
+$modOptionsPath = Join-PathText $configDir 'XComModOptions.ini'
+$engineIniPath  = Join-PathText $configDir 'XComEngine.ini'
 
 # ---- 2. is the game running? ------------------------------------------------------------------
 
@@ -279,7 +309,7 @@ $mayWrite = (-not $CheckOnly) -and (-not $gameRunning)
 
 $foundHosts = @()
 foreach ($h in $LoaderHosts) {
-    if (Test-Path -LiteralPath (Join-Path $win64 $h)) { $foundHosts += $h }
+    if (Test-Path -LiteralPath (Join-PathText $win64 $h)) { $foundHosts += $h }
 }
 if ($foundHosts.Count -gt 0) {
     Write-Ok "ASI loader host DLL present in Binaries\Win64: $($foundHosts -join ', ')"
@@ -287,23 +317,23 @@ if ($foundHosts.Count -gt 0) {
     Write-Problem "No Ultimate ASI Loader in $win64. Download version-x64.zip from $AsiLoaderUrl and put its version.dll next to XCom2.exe. Without it the mod never loads and nothing speaks."
 }
 
-$asi = Join-Path $win64 'scripts\X2Access.asi'
+$asi = Join-PathText $win64 'scripts\X2Access.asi'
 if (Test-Path -LiteralPath $asi) {
     $stamp = (Get-Item -LiteralPath $asi).LastWriteTime.ToString('yyyy-MM-dd HH:mm')
     Write-Ok "X2Access.asi present (dated $stamp)"
 } else {
     Write-Problem "X2Access.asi is missing from $win64\scripts. The archive was not extracted at the game folder, or only part of it was."
 }
-if (-not (Test-Path -LiteralPath (Join-Path $win64 'scripts\X2Access.pdb'))) {
+if (-not (Test-Path -LiteralPath (Join-PathText $win64 'scripts\X2Access.pdb'))) {
     Write-Note 'X2Access.pdb is not beside the ASI. The mod runs without it, but a crash dump from this install could not be read; keep the archive you installed from.'
 }
 
 # ---- 4. the companion mod ---------------------------------------------------------------------
 
-$modDir = Join-Path $modsDir $ModName
+$modDir = Join-PathText $modsDir $ModName
 $missing = @()
 foreach ($must in "$ModName.XComMod", "Script\$ModName.u", 'Config', 'Localization') {
-    if (-not (Test-Path -LiteralPath (Join-Path $modDir $must))) { $missing += $must }
+    if (-not (Test-Path -LiteralPath (Join-PathText $modDir $must))) { $missing += $must }
 }
 $companionInstalled = ($missing.Count -eq 0)
 if ($companionInstalled) {
@@ -320,7 +350,7 @@ if ($companionInstalled) {
 # also has more than one workshop listing (the release and its beta branch) with the SAME mod
 # name, which is the name the game loads it by, so search for the .XComMod file rather than
 # trusting one id or one folder name.
-$modRoots = Get-ModRoots $modsDir $win64 $game @($engineIniPath, (Join-Path $game 'XComGame\Config\DefaultEngine.ini'))
+$modRoots = Get-ModRoots $modsDir $win64 $game @($engineIniPath, (Join-PathText $game 'XComGame\Config\DefaultEngine.ini'))
 
 $hl = Find-ModDir $HighlanderName $modRoots
 if ($hl -and $hl.Loadable) {
@@ -342,9 +372,9 @@ $highlanderReady = [bool]($hl -and $hl.Loadable)
 $dlcPlugins = @()
 $strayPlugins = @()
 foreach ($dlc in $DlcHighlanders) {
-    $dlcDir = Join-Path $game "XComGame\DLC\$($dlc.Dlc)"
-    $installed = (Test-Path -LiteralPath (Join-Path $dlcDir "$($dlc.Dlc).XComDLC")) -or
-                 (Test-Path -LiteralPath (Join-Path $dlcDir "Script\$($dlc.Dlc).u"))
+    $dlcDir = Join-PathText $game "XComGame\DLC\$($dlc.Dlc)"
+    $installed = (Test-Path -LiteralPath (Join-PathText $dlcDir "$($dlc.Dlc).XComDLC")) -or
+                 (Test-Path -LiteralPath (Join-PathText $dlcDir "Script\$($dlc.Dlc).u"))
     $plugin = Find-ModDir $dlc.Mod $modRoots
     if (-not $installed) {
         # No DLC and no plugin is the ordinary case and says nothing. A plugin without its DLC is
@@ -367,8 +397,12 @@ foreach ($dlc in $DlcHighlanders) {
 
 if (-not (Test-Path -LiteralPath $configDir)) {
     if ($mayWrite) {
-        New-Item -ItemType Directory -Force -Path $configDir | Out-Null
-        Write-Note "Created $configDir. The game had not been run on this machine yet; it fills the rest in on first launch."
+        try {
+            New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+            Write-Note "Created $configDir. The game had not been run on this machine yet; it fills the rest in on first launch."
+        } catch {
+            Write-Problem "Could not create $configDir ($($_.Exception.Message)). Run the game once so it makes its own config folder, then run this check again."
+        }
     } else {
         Write-Note "$configDir does not exist yet: the game has not been run on this machine. Run the game once, then run this check again."
     }
@@ -378,49 +412,65 @@ $wanted = @($ModName)
 if ($highlanderReady) { $wanted += $HighlanderName }
 $wanted += $dlcPlugins
 
+$optsRaw = $null
+$optsEnc = $null
 if (Test-Path -LiteralPath $modOptionsPath) {
-    $cfg = Read-ConfigText $modOptionsPath
-    $optsRaw = $cfg.Text
-    $optsEnc = $cfg.Encoding
+    # A file we cannot read is a file we must not rewrite: treating an unreadable mod list as an
+    # empty one would switch off every other mod the player has.
+    try {
+        $cfg = Read-ConfigText $modOptionsPath
+        $optsRaw = $cfg.Text
+        $optsEnc = $cfg.Encoding
+    } catch {
+        Write-Problem "Could not read $modOptionsPath ($($_.Exception.Message)). Nothing was changed: rewriting a mod list this script cannot read would throw away every other mod you have enabled."
+    }
 } else {
     $optsRaw = "[Engine.XComModOptions]`r`n`r`n"
     $optsEnc = [System.Text.Encoding]::ASCII
 }
-if ($optsRaw -notmatch '(?m)^\[Engine\.XComModOptions\]') {
-    $optsRaw = "[Engine.XComModOptions]`r`n`r`n" + $optsRaw
-}
-$optsChanged = $false
-foreach ($mod in $wanted) {
-    # The launcher writes ActiveMods=Name; our build tooling writes ActiveMods="Name". Both load.
-    if ($optsRaw -match ('(?m)^ActiveMods="?' + [regex]::Escape($mod) + '"?\s*$')) {
-        Write-Ok "$mod is enabled in $modOptionsPath"
-        continue
+if ($null -ne $optsRaw) {
+    if ($optsRaw -notmatch '(?m)^\[Engine\.XComModOptions\]') {
+        $optsRaw = "[Engine.XComModOptions]`r`n`r`n" + $optsRaw
     }
-    if ($mayWrite) {
-        $optsRaw = [regex]::Replace(
-            $optsRaw,
-            '(?m)^(\[Engine\.XComModOptions\][^\r\n]*\r?\n)',
-            ('${1}ActiveMods=' + $mod + "`r`n"),
-            1)
-        $optsChanged = $true
-        Write-Fixed "$mod was not enabled; added it to ActiveMods in $modOptionsPath"
-    } else {
-        Write-Problem "$mod is not enabled in $modOptionsPath. Run this script again without -CheckOnly and with the game closed, or tick it in the mod launcher."
+    $optsChanged = $false
+    foreach ($mod in $wanted) {
+        # The launcher writes ActiveMods=Name; our build tooling writes ActiveMods="Name". Both load.
+        if ($optsRaw -match ('(?m)^ActiveMods="?' + [regex]::Escape($mod) + '"?\s*$')) {
+            Write-Ok "$mod is enabled in $modOptionsPath"
+            continue
+        }
+        if ($mayWrite) {
+            $optsRaw = [regex]::Replace(
+                $optsRaw,
+                '(?m)^(\[Engine\.XComModOptions\][^\r\n]*\r?\n)',
+                ('${1}ActiveMods=' + $mod + "`r`n"),
+                1)
+            $optsChanged = $true
+            Write-Fixed "$mod was not enabled; added it to ActiveMods in $modOptionsPath"
+        } else {
+            Write-Problem "$mod is not enabled in $modOptionsPath. Run this script again without -CheckOnly and with the game closed, or tick it in the mod launcher."
+        }
     }
-}
 
-# A DLC plugin switched on for a DLC this copy does not have. Only reported, never removed: the
-# list is the player's and their launcher's, and this script switches mods ON, never off.
-foreach ($dlc in $strayPlugins) {
-    if ($optsRaw -match ('(?m)^ActiveMods="?' + [regex]::Escape($dlc.Mod) + '"?\s*$')) {
-        Write-Problem "$($dlc.Mod) is enabled in $modOptionsPath, but the $($dlc.Title) DLC is not installed on this copy of the game. Untick it in your launcher, or delete its ActiveMods line from that file: its authors warn it breaks a game that has no $($dlc.Title)."
-    } else {
-        Write-Note "$($dlc.Mod) is installed but not enabled, which is right: it is the Highlander's $($dlc.Title) plugin and this copy of the game has no $($dlc.Title) DLC."
+    # A DLC plugin switched on for a DLC this copy does not have. Only reported, never removed: the
+    # list is the player's and their launcher's, and this script switches mods ON, never off.
+    foreach ($dlc in $strayPlugins) {
+        if ($optsRaw -match ('(?m)^ActiveMods="?' + [regex]::Escape($dlc.Mod) + '"?\s*$')) {
+            Write-Problem "$($dlc.Mod) is enabled in $modOptionsPath, but the $($dlc.Title) DLC is not installed on this copy of the game. Untick it in your launcher, or delete its ActiveMods line from that file: its authors warn it breaks a game that has no $($dlc.Title)."
+        } else {
+            Write-Note "$($dlc.Mod) is installed but not enabled, which is right: it is the Highlander's $($dlc.Title) plugin and this copy of the game has no $($dlc.Title) DLC."
+        }
     }
-}
 
-if ($optsChanged) {
-    Write-ConfigText $modOptionsPath $optsRaw $optsEnc
+    if ($optsChanged) {
+        # A player who made this file read-only to stop a launcher rewriting it is a real case, so
+        # the failure has to name itself: every FIXED line above was about to become a lie.
+        try {
+            Write-ConfigText $modOptionsPath $optsRaw $optsEnc
+        } catch {
+            Write-Problem "Could not write $modOptionsPath ($($_.Exception.Message)), so the FIXED lines above did not take effect. If you made that file read-only, clear that, or tick the mods in your launcher instead."
+        }
+    }
 }
 
 # ---- 8. the user config: where the game looks for mods ----------------------------------------
@@ -431,8 +481,12 @@ if ($optsChanged) {
 # installed mod (ours) while every workshop mod keeps loading. Repair only an EXISTING file: when
 # the game has never run there is no user file yet, and the one it generates carries the root.
 $modsRoot = '../../XcomGame/Mods/'
+$cfg = $null
 if (Test-Path -LiteralPath $engineIniPath) {
-    $cfg = Read-ConfigText $engineIniPath
+    try { $cfg = Read-ConfigText $engineIniPath }
+    catch { Write-Problem "Could not read $engineIniPath ($($_.Exception.Message)), so this check could not confirm that XComGame\Mods is a mod root. A mod loads only when it is listed in ActiveMods AND sits under one." }
+}
+if ($null -ne $cfg) {
     $engRaw = $cfg.Text
     # Slash direction and casing vary between what the game writes and what it ships, so match
     # on shape; the absolute spelling of the same folder counts too.
@@ -450,8 +504,12 @@ if (Test-Path -LiteralPath $engineIniPath) {
         } else {
             $engRaw = $engRaw.TrimEnd() + "`r`n`r`n[Engine.DownloadableContentEnumerator]`r`nModRootDirs=$modsRoot`r`n"
         }
-        Write-ConfigText $engineIniPath $engRaw $cfg.Encoding
-        Write-Fixed "Restored ModRootDirs=$modsRoot in $engineIniPath; without it the game never looks in XComGame\Mods, whatever ActiveMods says."
+        try {
+            Write-ConfigText $engineIniPath $engRaw $cfg.Encoding
+            Write-Fixed "Restored ModRootDirs=$modsRoot in $engineIniPath; without it the game never looks in XComGame\Mods, whatever ActiveMods says."
+        } catch {
+            Write-Problem "$engineIniPath has no ModRootDirs entry for the local Mods folder and could not be repaired ($($_.Exception.Message)). Without that root the game never looks in XComGame\Mods, whatever ActiveMods says."
+        }
     } else {
         Write-Problem "$engineIniPath has no ModRootDirs entry for the local Mods folder, so the companion cannot load. Run this script again without -CheckOnly and with the game closed."
     }

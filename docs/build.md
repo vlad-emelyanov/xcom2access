@@ -114,6 +114,18 @@ on every push of main.
     folder is found from the script's own location first, then Steam's libraries, then the GOG
     registry and the Epic manifests; the config path comes from Windows' Documents folder either
     way. A copy from any store installs the mod the same.
+  - ⛔ **`Join-Path` resolves the PATH PROVIDER, so it FAILS on a drive that does not exist, and
+    under `$ErrorActionPreference = 'Stop'` that ends the script.** The first GOG install the
+    check met had a Steam library registered on an `E:` that was gone, and the run died mid-way
+    through a Russian-language PowerShell dump — every path this script composes comes from a
+    registry key, a `.vdf`, an `.ini` or a user parameter, so ANY of them can name a dead drive.
+    `Join-PathText` is the pure-string replacement and there is no bare `Join-Path` left in the
+    file. `Test-Path` and `Split-Path` are safe (False, and plain text); `Get-ChildItem
+    -LiteralPath` is NOT, and its failure is a parameter-binding one that `-ErrorAction
+    SilentlyContinue` does not suppress, so every call is behind a `Test-Path` guard. A
+    script-scope `trap` turns whatever gets past all that into three plain sentences and exit
+    code 3, because the reader of this output is using a screen reader and a stack dump is not
+    an error message.
   - **The Highlander's DLC plugin is a two-way check.** `DLC2CommunityHighlander` is required
     when Alien Hunters is installed (`XComGame\DLC\DLC_2`, which the store sells as the Alien
     Rulers: the DLC's script package is built against the unmodified game the Highlander
