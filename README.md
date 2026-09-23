@@ -199,6 +199,11 @@ stand down the moment the shot HUD goes up, and so on.
 | Home / End      | First / last item                                                          |
 | PageUp / PageDn | Previous / next tab (settings)                                             |
 
+Inside Avenger rooms, Tab reaches **Room shortcuts** whenever the game shows that bar.
+Use Left/Right to choose a destination, Enter to open it, and Space to hear its tooltip.
+The bar reports the game's number shortcuts and disabled rooms. On the first tutorial visit
+to Commander's Quarters, choose Research (or press 2); the game blocks Escape at that stage.
+
 **Tactical — moving around the map**
 
 | Key             | Action                                                             |

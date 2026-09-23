@@ -14,6 +14,16 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**Room shortcut bar** (2026-09-23, `recipe_avenger.cpp`). Rooms now reuse the HUD's
+"Room shortcuts" stop after their content and resources, gated on the actual bar visibility.
+The empty-room fallback no longer recommends Escape. Verify the first tutorial visit to
+Commander's Quarters: the shortcut row is reachable, Right reaches Research, and Enter starts
+the normal introduction. Check a fixed room and a staffed facility: Tab reaches the bar,
+Left/Right reads labels, hotkeys, disabled state and attention, Space reads tooltips, and Enter
+changes rooms. Opening a staff picker must remove the bar until the picker closes; vanilla
+debris rooms must keep it absent. The existing grid HUD bar must still work. Build and deployment
+do not establish these live results.
+
 **Tutorial-completion crash: camera bindings on Ctrl+Q / Ctrl+E** (2026-09-23,
 `mods/X2AccessCompanion/Config/XComInput.ini`; dump evidence in `input-map.md`,
 "Tutorial-completion crash"). The config retains Q/E soldier switching, adds real camera

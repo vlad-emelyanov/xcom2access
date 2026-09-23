@@ -226,6 +226,14 @@ retain their words in script, the strip and the date come through the capture.
 
 ## Inside a room
 
+- **The visible HUD shortcut bar belongs in room navigation too.** Reuse `AddShortcutStop`
+  after the room's content and resources; use its child visibility gate, and omit it while a
+  staff picker owns input. Fixed and built rooms show it; vanilla debris rooms hide it.
+- **An empty room submenu does not mean there are no actions, and Escape is not always an
+  exit.** The first tutorial visit locks the Commander's Quarters category while Research
+  remains reachable through the bar; `UIFacility_CIC.OnCancel` refuses Escape until
+  `T0_M1_WelcomeToLabs` completes. Never replace the visible bar with an empty-room hint.
+
 ⛔ **The room SCREEN is not the room's content, and building for its staff strip produces a
 reader that is silent on every room a new player can reach.** All seven FIXED rooms declare
 **zero** `StaffSlotDefs` — CommandersQuarters, CIC, PowerCore (Research), Hangar (Armory),

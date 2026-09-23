@@ -204,7 +204,6 @@ inline constexpr const char* KeyBackspace = "Backspace";
 // bottom-bar button).
 inline constexpr const char* ScreenRoomFallback = "Room";
 inline constexpr const char* RoomNoActions = "Nothing to do here";
-inline constexpr const char* RoomLeaveHint = "Escape to leave the room";
 // A bottom-bar button no shipped facility class declares a label for — i.e. a second button
 // added by a mod. The widget retains no text of its own, so there is nothing else to say.
 inline constexpr const char* RoomFunctionFallback = "Room action";

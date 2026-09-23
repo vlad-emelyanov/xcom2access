@@ -28,6 +28,10 @@ namespace MenuNavigator {
 namespace Recipes {
 namespace {
 
+// The persistent HUD owns this bar on both the grid and room screens. Its child visibility
+// decides whether it belongs in a recipe; staff pickers return before reaching this stop.
+bool AddShortcutStop(GraphBuilder& b);
+
 // ---- inside a room on the Avenger (UIFacility + 22 subclasses) ----
 //
 // A RECIPE rather than a narrate-only reader, and the contrast with the ant farm next door is
@@ -350,24 +354,17 @@ std::unique_ptr<GraphRender> BuildRoom()
     AddRoomFunctions(b, view);
 
     if (view.actions.empty()) {
-        if (view.funcs.empty() && !view.upgrade && view.staffSlots.empty()) {
-            // Now genuinely nothing, and still not a fault: this is also the state while the
-            // submenu is being rebuilt. ⛔ It used to be reached by the Bar and the Living
-            // Quarters as well, whose shortcut category really is -1 — but those rooms DO have a
-            // bottom-bar button, so "nothing to do here" was a lie about a screen with a visible
-            // control on it (reported live 2026-08-21). The empty case has to mean empty — and
-            // the Power Relay, which has no shortcut category, no bar and (until upgraded) no
-            // upgrade button, has two staff slots, so they count too.
+        AddResourceStop(b);
+        const bool shortcuts = AddShortcutStop(b);
+        if (view.funcs.empty() && !view.upgrade && view.staffSlots.empty() && !shortcuts) {
+            // A tutorial-locked room can have no submenu but still offer the shortcut bar.
+            // Do not replace those buttons with an empty-room message, or recommend Escape:
+            // UIFacility_CIC.OnCancel deliberately refuses it during the first visit.
             b.BeginStop("actions");
             b.AddLabel(ControlId::Structural("room/empty"), []() {
-                return std::string(Vocab::RoomNoActions) + ". " + Vocab::RoomLeaveHint;
+                return std::string(Vocab::RoomNoActions);
             });
         }
-        // ⚠ The empty case gets the strip too, and it is the case that needs it most: the Labs,
-        // the Power Generator and Resistance Comms are exactly the rooms whose strip the game
-        // narrows to their ONE relevant resource, and a room with no actions would otherwise
-        // leave the player nothing to move between.
-        AddResourceStop(b);
         return b.Build();
     }
 
@@ -417,6 +414,7 @@ std::unique_ptr<GraphRender> BuildRoom()
         b.AddItem(std::move(id), std::move(vt));
     }
     AddResourceStop(b);
+    AddShortcutStop(b);
     return b.Build();
 }
 
@@ -562,6 +560,9 @@ std::unique_ptr<GraphRender> BuildRoomBuild()
             b.AddItem(std::move(id), std::move(vt));
         }
     }
+    // Vanilla hides the bar on debris screens. Honour its actual visibility for mods that
+    // show it here as well, using the same controls as built rooms and the grid.
+    AddShortcutStop(b);
     return b.Build();
 }
 
@@ -2555,7 +2556,7 @@ bool AddAvengerObjectiveStops(GraphBuilder& b)
 
 // The row of buttons along the bottom: the hologlobe (digit 1) and the category buttons
 // (digits 2-6). Walked with Left/Right, as they are drawn. Each node teaches its digit, because
-// that digit is the game's own keyboard path and works from the grid without this layer.
+// that digit is the game's own keyboard path and works from the grid and inside rooms.
 bool AddShortcutStop(GraphBuilder& b)
 {
     const GameUI::ShortcutBarView bar = GameUI::ReadShortcutBar();
