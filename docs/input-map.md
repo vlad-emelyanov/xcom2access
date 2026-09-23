@@ -94,7 +94,11 @@ hotkey has been the rule here since the cover ring, not an exception being made 
 over `DefaultInput.ini` when the companion loads. It removes the vanilla `Q`, `E`, `Tab` and
 `LeftShift` lines from `[XComGame.XComTacticalInput]` and the `Tab` / `LeftShift` lines from
 `[XComGame.XComHeadquartersInput]`, and adds `E` = the `Tab_Key_Press` command and `Q` = the
-`Left_Shift_Key_Press` command in both. Why that is the whole change:
+`Left_Shift_Key_Press` command in both. In tactical, the soldier bindings carry
+`bIgnoreCtrl=True`, and the original camera commands remain reachable on `Ctrl+Q` / `Ctrl+E`
+with `Control=True`. The previous mod's bare soldier entries are removed before adding their
+Ctrl-excluding replacements, so merging over those saved entries does not retain a duplicate.
+Why the commands and their bindings matter:
 
 - **The game's Controls screen is a key-name-for-command swap over the same array.** The
   rebindable actions are fixed command strings in the exe: "NEXT UNIT / TARGET" is
@@ -111,9 +115,10 @@ over `DefaultInput.ini` when the companion loads. It removes the vanilla `Q`, `E
 - **`Q` / `E` were camera rotation and nothing else** — every tactical state's `Key_Q`/`Key_E`
   is a `YawCamera(±90)` (`XComTacticalInput.uc:636`, `:1243`, `:2373`; the secondary-targeting
   state forwards to the D-pad handlers, which also just yaw). The tile cursor is world-absolute
-  (`X2AccessTileReader.uc`: Up is always north), so yaw changes nothing spoken, and a camera that
-  never turns keeps stereo panning aligned with the compass. In the headquarters section they
-  carried no binding at all.
+  (`X2AccessTileReader.uc`: Up is always north), so rotating the camera does not rotate the
+  cursor's directions. The commands must still have real bindings: the tutorial looks them up
+  even if the player never rotates the camera (the crash below). They now live on `Ctrl+Q` /
+  `Ctrl+E`; in the headquarters section Q/E carried no vanilla binding at all.
 - **`LeftShift` carried the previous-unit command as a key of its own**, and `Key_Left_Shift`'s
   RELEASE calls `PrevUnit()` UNCONDITIONALLY (`XComTacticalInput.uc:2147`, state
   `ActiveUnit_Moving`), so every `Shift+` chord cycled the soldier when the player let go. It
@@ -144,8 +149,9 @@ over `DefaultInput.ini` when the companion loads. It removes the vanilla `Q`, `E
   tactical lines and the two headquarters lines in our file reproduce `DefaultInput.ini`'s
   spacing; reformatting them turns a removal into a no-op (harmless, per the one-binding rule
   above, but the Controls screen then lists the key twice).
-- **Measured 2026-09-16, at the main menu, `just dev-props "cdo=XComTacticalInput" Bindings`
-  and the same for `XComHeadquartersInput`:** all six removals took (no `Tab`, `LeftShift`,
+- **Measured 2026-09-16, before the camera-binding fix**, at the main menu,
+  `just dev-props "cdo=XComTacticalInput" Bindings`
+  and the same for `XComHeadquartersInput`: all six removals took (no `Tab`, `LeftShift`,
   `Q_Key_Press` or `E_Key_Press` entry left in either array), the additions sit at the array
   tail (tactical `[98]`/`[99]` of 100, headquarters `[78]`/`[79]` of 80), and the player's own
   `Documents\...\XComInput.ini` — which carries a Controls-screen save from 2026-08-20 — was not
@@ -160,6 +166,36 @@ that a key claim never could. `E` / `Q` are unclaimed in every mode, HUD mode in
 `RightShift` is not claimed and carries no binding in the tactical section. `Ctrl` remains the
 safe modifier for anything that does NOT want to displace a vanilla key: `Key_Left_Control`
 merely toggles the pathing pawn's waypoint mode on press and untoggles it on release.
+
+### Tutorial-completion crash: camera commands need bindings
+
+Anton's GOG dump from 2026-09-23 pins the failure to an engine warning formatter, after
+`CIN_SP_SkyrangerReturn` finished and `CIN_TP_CommanderAwakens` started. The warning's actual
+format argument was `Failed to find key binding localized for mission narrative text:` followed
+by the Russian camera hint containing literal `%KEY:Q%` and `%KEY:E%`. The engine passed the
+warning itself as a format string to `__stdio_common_vsnwprintf_s`; the percent markup triggered
+`SECURE CRT: Invalid parameter detected`. The GOG engine return RVA above the CRT was `0x1A73CF`.
+
+`X2MissionNarrativeTemplate.GetObjectiveText` maps those tokens to `eTBC_CamRotateLeft` and
+`eTBC_CamRotateRight`. `UIUtilities_Input.FindAbilityKey` tries primary and secondary bindings,
+then the template queues this warning when neither exists. Our earlier config deleted both
+camera commands. A shadowed bare Q/E entry would satisfy the lookup but advertise the wrong
+action; the replacement is a reachable Ctrl chord. `XComKeybindingData.GetKeyString` includes
+the localized modifier label, so the hint can name the chord without our own text substitution.
+
+**Keep camera commands bound when moving their keys.** The shipped fix changes only the
+companion input config, adds the two Ctrl camera chords, and excludes Ctrl from tactical soldier
+switching. Headquarters bindings stay as before. Static merge checks do not prove Controls
+serialization or key-release behavior: test both release orders and Save/restart, then finish
+the tutorial on GOG before calling the crash fixed live (`next-steps.md`).
+
+**Steam transition confirmed 2026-09-23.** The user reported the test working. The matching
+Steam log (`0x621562FA`, image `0x20C7000`) records Skyranger Return finishing at engine time
+1602.91, Commander Awakens at 1806.17, Avenger play, and the next mission loading at 2102.12.
+There was no missing-binding warning or secure-CRT assertion. The native log records two
+Ctrl+Q/E pass-through events; this alone does not establish both release orders or Controls
+Save/restart behavior. Speech audit: 759 lines, 522 digit-normalized shapes, no double spaces
+or unresolved `%KEY:` tokens, and no logged frame-pump faults. Anton's GOG retest is still owed.
 
 **`LeftAlt` is claimed PASS-THROUGH in world mode** — `Claim::passThrough`, a third kind beside
 swallow and observe: the handler runs from the tick like any claim's, and the game receives the key
@@ -253,4 +289,3 @@ the key off the save-name text field, since `UISaveGame` falls to `UpdateResourc
 and hides the strip. Both fall out of the GAME's answer rather than an exclusion list of ours —
 which matters, because an exclusion list is a thing that goes stale. See
 `surfaces/avenger.md` §Resource strip.
-

@@ -211,6 +211,7 @@ stand down the moment the shot HUD goes up, and so on.
 | Alt             | Targets from the cursor tile — the game's target preview, spoken (the game keeps the key too) |
 | ;               | Read the selected soldier in full                                  |
 | E / Q           | Next / previous soldier (the game's own switch, moved here from Tab / Shift; also next / previous target while aiming) |
+| Ctrl+Q / Ctrl+E | Rotate the tactical camera left / right                            |
 
 Every step also says who would see a soldier on that tile ("Seen by 2") and whether its cover
 holds against them ("flanked"), the way the game draws the eye markers and the red cover shield
@@ -300,8 +301,8 @@ camera.
 
 **The one binding change we ship.** The companion mod carries an `XComInput.ini`
 that moves the game's own *next unit* and *previous unit* commands from Tab and
-Left Shift onto **E** and **Q**, in tactical and on the Avenger alike. Q and E
-were camera rotation, which a cursor that always steps north has no use for.
+Left Shift onto **E** and **Q**, in tactical and on the Avenger alike. Tactical
+camera rotation moves to **Ctrl+Q / Ctrl+E**, and the game's camera hints follow.
 Everything the game did on Tab it now does on E — next soldier, next target while
 aiming, next soldier in the Armory — and its own key hints say so. Switching is
 narrated by watching the game rather than by taking the key, which also catches

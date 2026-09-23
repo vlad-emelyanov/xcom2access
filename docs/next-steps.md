@@ -14,6 +14,30 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**Tutorial-completion crash: camera bindings on Ctrl+Q / Ctrl+E** (2026-09-23,
+`mods/X2AccessCompanion/Config/XComInput.ini`; dump evidence in `input-map.md`,
+"Tutorial-completion crash"). The config retains Q/E soldier switching, adds real camera
+bindings, excludes Ctrl from tactical soldier switching, and removes the previous mod's
+unguarded soldier entries. No native or script code changed. **Steam tutorial completion passed
+2026-09-23**: both movies finished, Avenger play and the next mission followed, and the matching
+logs contain no missing-binding warning or CRT assertion (`input-map.md` records the audit).
+The user reported the test working; release-order and Controls persistence checks below are not
+individually confirmed by the logs. Live checks still owed:
+
+1. Read tactical `Bindings` from both the CDO and the active input object: camera commands must
+   have primary Ctrl+Q/E bindings; soldier commands must ignore Ctrl. Check a profile that saved
+   the old bindings through Controls as well as a fresh one.
+2. In a normal mission, Q/E switch soldiers and Ctrl+Q/E rotate without switching. Release Ctrl
+   first and the letter first; neither camera chord may cycle a soldier on release. Confirm
+   next/previous target while aiming and unchanged Q/E behavior in the Armory.
+3. Controls must show Ctrl+Q/E for camera rotation, and the tutorial camera hint must resolve
+   those chords. Save Controls and restart; recheck the input arrays and key behavior.
+4. Finish Anton's GOG tutorial through Skyranger Return and Commander Awakens into strategy.
+   Audit `Launch.log` for the missing-binding warning / CRT assertion, and the speech ring for
+   unresolved markup, double spaces and collapsed value distributions. The local Steam transition
+   passed as noted above; the other supplied Steam dump was a separate base-game graphics startup
+   crash.
+
 **Wall tones** (2026-09-17, `X2AccessWallTones` + `X2AccessTileReader.CueWalls`; the design is
 in `surfaces/tactical.md`, the build tags in `build.md`). Builds clean; the package re-parses with
 the four looping cues (cue → `SoundNodeLooping` → wave, east/west one-channel stereo, north/south
@@ -64,8 +88,8 @@ pressed. What a first run must settle, in order:
    ant farm still enters the Avenger layer. In Squad Select `E` moves to the next slot; check what
    `Q` does there (the screen's previous-slot key is the left bumper, so probably nothing — decide
    whether that earns a claim).
-3. **The Controls screen** shows E / Q under NEXT / PREVIOUS UNIT and no key under the two camera
-   rotations; the tutorial's "press Tab" hint now says E.
+3. **The Controls screen** shows E / Q under NEXT / PREVIOUS UNIT and Ctrl+Q / Ctrl+E under the
+   camera rotations (the 2026-09-23 crash fix above); the tutorial's "press Tab" hint now says E.
 
 **The fog gate on the cursor's vertical words and the `world.unexplored` ring** (2026-09-16,
 `X2AccessTileReader.VerticalDrawn` and `X2AccessObjectScanner.AddFrontier` / `CAT_UNEXPLORED`;
