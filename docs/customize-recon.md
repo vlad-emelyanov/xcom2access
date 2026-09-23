@@ -142,9 +142,14 @@ SelectedIndex)` → the clicked delegate, then `CloseScreen` — before forwardi
 list path then finds a description row with no delegate and consumes. `OnCancel` re-fires the
 delegate with `StartingIndex` first: Escape REVERTS. `List.OnSelectionChanged` is the same
 delegate for most categories, so moving the selection PREVIEWS the option on the pawn — our
-write-back (`SetSelectedIndex`) fires it. The voice picker's rows carry a PREVIEW button
-(`UpdateDataButton`); its `OnUnrealCommand` Enter is reached only through the ROW (the screen's
+write-back (`SetSelectedIndex`) fires it. With the mouse active, the voice picker's rows carry a
+PREVIEW button (`UpdateDataButton`); its Enter is reached only through the ROW (the screen's
 Enter picks and closes first), which the layer sends as the row's secondary action.
+With the mouse inactive, `UICustomize_Info.CustomizeVoice` instead pushes `UICustomize_Voice`.
+Its `UpdateTrait` omits the button arguments when calling the base, retaining the caption in
+`m_strPreviewLabel` (0x5C8) and advertising preview in nav help. `FXS_BUTTON_X` calls
+`PreviewVoice` on the selected index. The 2026-09-23 fix exposes this path on Backspace too,
+announcing the game's preview caption plus the key in both variants. Live confirmation is owed.
 
 ### 2.5 As built
 
@@ -155,7 +160,8 @@ spinner while the companion says `cycle=1` — `CycleCustomizeSoldier` through `
 is its current choice, a swatch its hue, a checkbox its state; greyed rows carry the tooltip
 reason; the picker marks `StartingIndex` selected and lands there; Enter is the screen's, a
 checkbox row's is `SimulateMouseClickOnCheckbox`, a PREVIEW row's Backspace is the row's own
-Enter), and on the info screen the biography. With the selector open the graph is the grid
+Enter or the voice screen's X command), and on the info screen the biography. With the selector
+open the graph is the grid
 instead: a `StartRow("chips")` per grid row (column-preserving Up/Down), each chip *hue, number*
 with `selected` on `InitialSelection`, write-back and Enter through the chip's navigator. The
 resource strip trails where the game shows it. Wire cache keyed on the rows, the screen and the

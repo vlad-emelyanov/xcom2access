@@ -196,6 +196,16 @@ shipped bug — so `X2AccessCommodityReader.ImplantDelta` re-asks the screen's o
 row's meaning, which on this screen is `CanEquipImplant` refusing (a weaker implant of a stat
 already boosted, or a psi implant on a non-psi soldier) rather than the price — `Vocab::
 ImplantCannotEquip`, keyed natively on the screen's class. `UIInventory_Implants.OnItemSelected`
-reads its index but the dialog text reads the selection, so the commodity recipe's
-select-then-Enter is right here too; ⛔ it hard-depends on `UIArmory_MainMenu` being on the
+reads its index but the dialog text reads the selection, so selection must land before
+activation; ⛔ it hard-depends on `UIArmory_MainMenu` being on the
 stack (every unit lookup reaches up to it) and touches PCS slot 0 only.
+
+**2026-09-23 activation correction, source-confirmed, live retest owed:**
+`UIInventory_ListItem.OnUnrealCommand(Enter)` calls `OnClickedConfirmButton`, which emits
+`FXS_L_MOUSE_DOUBLE_UP` to the list and returns handled. The picker binds the corresponding
+`OnItemDoubleClicked` only behind `ISCONTROLLERACTIVE`; keyboard activation therefore consumes
+Enter without installing or opening confirmation. Its unconditional `OnItemClicked` is the
+working mouse route. Native now selects first and sends `UIList.OnChildMouseEvent(row,
+FXS_L_MOUSE_UP)` for implants, preserving any installed delegate chain and the game's
+`CanEquipImplant`/confirmation flow. Other commodity screens keep screen Enter and the existing
+unhandled-input fallback.

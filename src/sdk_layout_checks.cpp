@@ -1147,6 +1147,12 @@ static_assert(offsetof(AUICustomize, ColorSelector) == 0x47C, "UICustomize::Colo
 static_assert(offsetof(AUICustomize_Trait, Data) == 0x514, "UICustomize_Trait::Data");
 static_assert(offsetof(AUICustomize_Trait, StartingIndex) == 0x544,
     "UICustomize_Trait::StartingIndex");
+static_assert(offsetof(AUICustomize_Voice, m_strPreviewLabel) == 0x5C8,
+    "UICustomize_Voice::m_strPreviewLabel");
+static_assert(sizeof(AUIList_execOnChildMouseEvent_Params) == 0x0C
+        && offsetof(AUIList_execOnChildMouseEvent_Params, Control) == 0x00
+        && offsetof(AUIList_execOnChildMouseEvent_Params, Cmd) == 0x08,
+    "UIList.OnChildMouseEvent parameter block (PCS single-click input)");
 static_assert(offsetof(AUIColorSelector, ColorChips) == 0x400, "UIColorSelector::ColorChips");
 static_assert(offsetof(AUIColorSelector, Colors) == 0x410, "UIColorSelector::Colors");
 static_assert(offsetof(AUIColorSelector, InitialSelection) == 0x420,

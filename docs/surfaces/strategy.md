@@ -517,9 +517,11 @@ as the TOPMOST stack entry that `IsKindOf UICustomize`. Built 2026-09-04 from so
 - **The colour grid is an AID**, labelled as one in `Vocab::ColourName`: the game draws a swatch
   and a number, and the hue name is ours — coarse on purpose (eight hues, three lightnesses).
   Distribution audit: every soldier's hair reading the same hue is the collapsed-value failure.
-- **The voice picker's PREVIEW is the row's secondary action** (Backspace): the screen's own
-  Enter picks and closes before the row's button could see it, so vanilla reaches PREVIEW by
-  mouse only.
+- **Voice PREVIEW has two input paths** (both exposed on Backspace): mouse-active
+  `UICustomize_Trait` has row buttons, while mouseless `UICustomize_Voice` removes those buttons
+  and handles `FXS_BUTTON_X` on the screen. Read its retained `m_strPreviewLabel` for the latter;
+  testing only the row widget loses preview on the keyboard path. Enter still picks and closes.
+  Source evidence and live checks: `../customize-recon.md` §2.4, `../next-steps.md`.
 - The soldier cycle is re-provided as a spinner exactly as the armory hub's, behind the same
   gate vanilla puts on Tab / LeftShift — E / Q under our config, and those run natively under the
   graph — (`bInArmory` and a soldier to cycle to); in the character pool's editor there is no

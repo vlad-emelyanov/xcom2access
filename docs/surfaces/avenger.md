@@ -535,6 +535,11 @@ database and post-mission loot. (`UIBlackMarket_Sell` is NOT in the family despi
   `UIScreen.OnUnrealCommand` → `Navigator` → `ListContainer` → `List`, and `UIList` answers Enter
   by calling the SELECTED row's `OnUnrealCommand` first (`:515`) — so the row still gets it, by
   the game's own path, which is why selecting first is the argument rather than a courtesy.
+- **PCS is a single-click exception.** `UIInventory_ListItem` consumes Enter after emitting a
+  double-click, but `UIInventory_Implants` binds `OnItemDoubleClicked` only with a controller.
+  Send the selected row through `UIList.OnChildMouseEvent(FXS_L_MOUSE_UP)` once, preserving
+  `OnItemClicked` wrappers, eligibility and confirmation. A handled Enter does not prove an
+  action ran. Source trace: `../armory-recon.md` §3; live validation remains in `../next-steps.md`.
 - **Three stops**, in the screen's own order: the category strip (Build Items only — the clearest
   small case of *reachable but unspeakable*, since Left/Right already switch tabs while
   `CreateTabButton` calls `DisableNavigation()` on every button and `SetCategory` puts the new name

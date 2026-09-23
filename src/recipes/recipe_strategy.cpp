@@ -1615,9 +1615,12 @@ NodeVtable CustomizeOptionVtable(const GameUI::OptionRow& row, const GameUI::Cus
     vt.Type = &ButtonType();
     vt.Announcements.emplace_back(NodeAnnouncement::Static(row.label));
     vt.Announcements.back().Kind = AnnouncementKinds::Label;
-    if (row.widget == GameUI::OptionWidget::Button && !row.value.empty()) {
+    const std::string preview = view.voice ? view.previewLabel
+        : row.widget == GameUI::OptionWidget::Button ? row.value : std::string{};
+    if (!preview.empty()) {
         // Advertised as well as bound: an unadvertised verb is one nobody presses.
-        vt.Announcements.emplace_back(NodeAnnouncement::Static(row.value));
+        vt.Announcements.emplace_back(
+            NodeAnnouncement::Static(preview + ": " + Vocab::KeyBackspace));
         vt.Announcements.back().Kind = AnnouncementKinds::Value;
     }
     if (row.index == view.startingIndex) {
@@ -1727,9 +1730,9 @@ std::unique_ptr<GraphRender> BuildCustomize()
         // toggled through the screen, which is the one path its read-only box answers.
         vt.OnActivate
             = [index]() { GameUI::ActivateCustomizeRow(GameUI::ReadCustomize(gScreen), index); };
-        if (view.trait && row.widget == GameUI::OptionWidget::Button) {
-            // The PREVIEW button: hear the voice without choosing it. Vanilla reaches it by
-            // mouse only — the screen's own Enter picks and closes before the row sees it.
+        if (view.trait && (view.voice || row.widget == GameUI::OptionWidget::Button)) {
+            // PREVIEW is a row button or the voice screen's X command. Enter picks and closes;
+            // the secondary action previews the selected voice while keeping the picker open.
             vt.OnSecondary
                 = [index]() { GameUI::PressCustomizeRow(GameUI::ReadCustomize(gScreen), index); };
         }

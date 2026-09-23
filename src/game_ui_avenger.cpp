@@ -1215,7 +1215,20 @@ bool ActivateCommodityRow(const CommodityView& view, const CommodityRow& row)
     // A disabled row is passed through deliberately rather than refused — these screens
     // disagree about what disabled MEANS (UIInventory_Implants greys an implant it will still
     // let you inspect), so the refusal stays theirs, where it can be right.
-    SetListIndex(view.list, row.index);
+    if (!SetListIndex(view.list, row.index))
+        return false;
+    if (view.implants) {
+        // Enter in UIInventory_ListItem emits DOUBLE_UP and consumes the key, but the PCS
+        // picker binds OnItemDoubleClicked only for controllers. Use the list's single-click
+        // input path so OnItemClicked (including mod wrappers) and CanEquipImplant still run.
+        // Layout pinned against UIList.OnChildMouseEvent in sdk_layout_checks.cpp.
+        struct {
+            void* control;
+            int32_t cmd;
+        } params{row.handle, 391}; // FXS_L_MOUSE_UP
+        static_assert(sizeof(params) == 0x0C);
+        return CallNamedFunction(view.list, "OnChildMouseEvent", &params);
+    }
     bool handled = false;
     if (!SendRowCommand(view.screen, kCmdEnter, &handled))
         return false;

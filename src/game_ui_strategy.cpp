@@ -2019,6 +2019,7 @@ constexpr uint32_t kCustomizeInArmory = 0x01;            // bInArmory
 constexpr int32_t kCustomizeListOffset = 0x440;          // List (UIList*)
 constexpr int32_t kCustomizeColorSelectorOffset = 0x47C; // ColorSelector (UIColorSelector*)
 constexpr int32_t kTraitStartingIndexOffset = 0x544;     // UICustomize_Trait::StartingIndex
+constexpr int32_t kVoicePreviewLabelOffset = 0x5C8;      // UICustomize_Voice::m_strPreviewLabel
 
 // UIColorSelector and its chips.
 constexpr int32_t kColorSelectorChipsOffset = 0x400;     // ColorChips (TArray<UIColorChip*>)
@@ -2093,6 +2094,9 @@ CustomizeView ReadCustomize(void* screen)
         return v;
     v.screen = screen;
     v.trait = IsKindOfRaw(screen, "UICustomize_Trait");
+    v.voice = IsKindOfRaw(screen, "UICustomize_Voice");
+    if (v.voice)
+        v.previewLabel = CleanText(ReadFStringField(screen, kVoicePreviewLabelOffset));
     v.inArmory = (ReadU32Raw(screen, kCustomizeFlagsOffset) & kCustomizeInArmory) != 0;
     v.unit = ReadPtrRaw(screen, kCustomizeUnitOffset);
     v.unitId = ReadI32Raw(screen, kCustomizeUnitRefOffset);
@@ -2155,12 +2159,17 @@ bool ActivateCustomizeRow(const CustomizeView& view, int index)
 
 bool PressCustomizeRow(const CustomizeView& view, int index)
 {
-    if (!view.list)
+    if (!view.screen || !view.list)
         return false;
-    SetListIndex(view.list, index);
+    if (!SetListIndex(view.list, index))
+        return false;
     for (const OptionRow& row : view.rows) {
-        if (row.index == index)
+        if (row.index == index) {
+            // UICustomize_Voice removes the buttons and handles X at screen level instead.
+            if (view.voice)
+                return SendScreenCommand(view.screen, 302); // FXS_BUTTON_X: PreviewVoice
             return SendRowCommand(row.handle, kCmdEnter);
+        }
     }
     return false;
 }

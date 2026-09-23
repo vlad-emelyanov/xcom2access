@@ -1102,6 +1102,8 @@ struct CustomizeView {
     void* screen = nullptr;
     void* list = nullptr;   // UICustomize::List
     bool trait = false;     // a UICustomize_Trait (or _Voice): the option picker
+    bool voice = false;     // mouseless UICustomize_Voice uses nav help instead of row buttons
+    std::string previewLabel;
     bool inArmory = false;  // bInArmory — the soldier cycle exists only there
     void* unit = nullptr;   // UICustomize::Unit — a wire-cache KEY, compared and never dereferenced
     int unitId = 0;         // UnitRef.ObjectID (0 for a character-pool unit, which is in no history)
@@ -1132,8 +1134,8 @@ bool SetCustomizeSelection(const CustomizeView& view, int index);
 /// row, the screen's SimulateMouseClickOnCheckbox (see the comment above). Game thread only.
 bool ActivateCustomizeRow(const CustomizeView& view, int index);
 
-/// The row's OWN Enter, with the row selected: on a picker row carrying a button (the voice
-/// picker's PREVIEW) that presses the button, and nothing closes. Game thread only.
+/// Preview with the row selected: the voice screen's X command in mouseless mode, otherwise
+/// the row's own Enter to press its PREVIEW button. Neither closes the picker. Game thread only.
 bool PressCustomizeRow(const CustomizeView& view, int index);
 
 /// P11 write-back onto a colour chip: SetSelectedNavigation, i.e. the chip container's

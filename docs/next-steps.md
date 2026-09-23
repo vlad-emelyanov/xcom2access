@@ -14,6 +14,15 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**Soldier voice preview and PCS activation** (2026-09-23, native): verify Backspace previews
+without closing in both `UICustomize_Voice` (mouseless) and the mouse-active trait picker, with
+the localized preview caption and Backspace announced. Enter must accept and Escape must retain
+the game's revert behavior. On `UIInventory_Implants`, Enter on an eligible PCS must reach the
+normal install/replace dialog; confirm it and verify the soldier's equipped PCS. Check a refused
+PCS and the reuse-PCS path without bypassing their game rules. Regression: research/build-item
+Enter and loot-screen continue retain the generic commodity route. Build success is not live
+validation; deployment requires the running game to be closed.
+
 **Room shortcut bar** (2026-09-23, `recipe_avenger.cpp`). Rooms now reuse the HUD's
 "Room shortcuts" stop after their content and resources, gated on the actual bar visibility.
 The empty-room fallback no longer recommends Escape. Verify the first tutorial visit to
