@@ -167,10 +167,10 @@ private function NarrateTurnChange(XComGameStateHistory History, XComGameStateCo
 	switch (PlayerState.GetTeam())
 	{
 	case eTeam_XCom:
-		class'X2AccessNarrator'.static.Alert("Your turn.");
+		class'X2AccessNarrator'.static.Alert(class'UITurnOverlay'.default.m_sXComTurn);
 		break;
 	case eTeam_Alien:
-		class'X2AccessNarrator'.static.Alert("Enemy turn.");
+		class'X2AccessNarrator'.static.Alert(class'UITurnOverlay'.default.m_sAlienTurn);
 		break;
 	}
 }
@@ -262,7 +262,7 @@ private function NarrateConcealment(XComGameStateHistory History, XComGameState 
 
 		PrevPlayer = XComGameState_Player(History.GetGameStateForObjectID(PlayerState.ObjectID, , Frame - 1));
 		if (PrevPlayer != none && PrevPlayer.bSquadIsConcealed)
-			class'X2AccessNarrator'.static.Alert("Squad concealment broken.");
+			class'X2AccessNarrator'.static.Alert(class'X2AccessVocab'.default.SquadConcealmentBroken);
 	}
 }
 

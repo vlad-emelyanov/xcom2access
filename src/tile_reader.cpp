@@ -91,7 +91,7 @@ void Call(const char* funcName, void* params, Narrator::Channel channel, bool ar
 {
     void* cdo = GameUI::FindCompanionCDO(kReaderClass);
     if (!cdo) {
-        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable("Tile reader"));
+        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable(Vocab::SurfaceTileReader));
         return;
     }
     if (!GameUI::CallScriptFunction(cdo, funcName, params)) {

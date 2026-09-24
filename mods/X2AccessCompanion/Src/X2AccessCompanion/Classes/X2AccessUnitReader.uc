@@ -127,7 +127,7 @@ function AnnounceUnit()
 	UnitState = class'X2AccessTileReader'.static.ActiveUnitState();
 	if (UnitState == none)
 	{
-		NativeResult = "No unit selected";
+		NativeResult = class'X2AccessVocab'.default.NoUnitSelected;
 		return;
 	}
 
@@ -244,7 +244,8 @@ private function string DescribeWeapon(XComGameState_Unit UnitState)
 	Result = Weapon.GetMyTemplate().GetItemFriendlyName(Weapon.ObjectID);
 	if (!Weapon.HasInfiniteAmmo())
 		class'X2AccessHelper'.static.AppendComma(Result,
-			"ammo" @ string(Weapon.Ammo) @ "of" @ string(Weapon.GetClipSize()));
+			class'X2AccessVocab'.static.Fill2(class'X2AccessVocab'.default.AmmoOf,
+				Weapon.Ammo, Weapon.GetClipSize()));
 	return Result;
 }
 
@@ -258,7 +259,8 @@ private function string DescribeFocus(XComGameState_Unit UnitState)
 	Tup = class'CHHelpers'.static.GetFocusTuple(UnitState);
 	if (Tup == none || !Tup.Data[0].b)
 		return "";
-	return Tup.Data[6].s @ string(Tup.Data[1].i) @ "of" @ string(Tup.Data[2].i);
+	return Tup.Data[6].s @ class'X2AccessVocab'.static.Fill2(
+		class'X2AccessVocab'.default.PositionOf, Tup.Data[1].i, Tup.Data[2].i);
 }
 
 // The bond icon: level, and who with — the half a sighted player gets from the icon's tooltip.
@@ -274,7 +276,8 @@ private function string DescribeBond(XComGameState_Unit UnitState)
 	if (!UnitState.HasSoldierBond(BondmateRef, BondInfo))
 		return "";
 
-	Result = "Bond" @ string(BondInfo.BondLevel);
+	Result = class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.BondLevel,
+		BondInfo.BondLevel);
 	Bondmate = XComGameState_Unit(`XCOMHISTORY.GetGameStateForObjectID(BondmateRef.ObjectID));
 	if (Bondmate != none)
 		class'X2AccessHelper'.static.AppendComma(Result,
@@ -309,11 +312,13 @@ private function AddEffectRecords(out string Recs, XComGameState_Unit UnitState)
 
 	Effects = UnitState.GetUISummary_UnitEffectsByCategory(ePerkBuff_Bonus);
 	for (i = 0; i < Effects.Length; i++)
-		AddFactRecord(Recs, UnitState.ObjectID, "bonus", "Bonus:" @ Effects[i].Name);
+		AddFactRecord(Recs, UnitState.ObjectID, "bonus",
+			class'X2AccessVocab'.default.BonusLabel @ Effects[i].Name);
 
 	Effects = UnitState.GetUISummary_UnitEffectsByCategory(ePerkBuff_Penalty);
 	for (i = 0; i < Effects.Length; i++)
-		AddFactRecord(Recs, UnitState.ObjectID, "penalty", "Penalty:" @ Effects[i].Name);
+		AddFactRecord(Recs, UnitState.ObjectID, "penalty",
+			class'X2AccessVocab'.default.PenaltyLabel @ Effects[i].Name);
 }
 
 // ---------------------------------------------------------------------------
@@ -389,15 +394,16 @@ private function string DescribeActions(XComGameState_Unit UnitState)
 
 	Points = UnitState.NumAllActionPoints();
 	if (Points <= 0)
-		Result = "No actions left";
-	else if (Points == 1)
-		Result = "1 action";
+		Result = class'X2AccessVocab'.default.NoActionsLeft;
 	else
-		Result = string(Points) @ "actions";
+		Result = class'X2AccessVocab'.static.Count(Points,
+			class'X2AccessVocab'.default.Actions_One,
+			class'X2AccessVocab'.default.Actions_Few,
+			class'X2AccessVocab'.default.Actions_Many);
 
 	// The flag's own test (AS_SetOverwatchIcon), not a guess at what a reserve point means.
 	if (UnitState.ReserveActionPoints.Find('Overwatch') > -1)
-		class'X2AccessHelper'.static.AppendComma(Result, "overwatch");
+		class'X2AccessHelper'.static.AppendComma(Result, class'X2AccessVocab'.default.Overwatch);
 
 	return Result;
 }
@@ -405,7 +411,7 @@ private function string DescribeActions(XComGameState_Unit UnitState)
 private function string DescribeConcealment(XComGameState_Unit UnitState)
 {
 	if (UnitState.IsConcealed())
-		return "Concealed";
+		return class'UITacticalHUD'.default.m_strConcealed;
 	return "";
 }
 
@@ -435,11 +441,11 @@ private function string DescribeEffects(XComGameState_Unit UnitState)
 
 	Bonuses = EffectNames(UnitState, ePerkBuff_Bonus);
 	if (Bonuses != "")
-		Result = "Bonuses:" @ Bonuses;
+		Result = class'X2AccessVocab'.default.BonusesLabel @ Bonuses;
 
 	Penalties = EffectNames(UnitState, ePerkBuff_Penalty);
 	if (Penalties != "")
-		AppendPart(Result, "Penalties:" @ Penalties);
+		AppendPart(Result, class'X2AccessVocab'.default.PenaltiesLabel @ Penalties);
 
 	return Result;
 }

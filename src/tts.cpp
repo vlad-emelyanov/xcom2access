@@ -1,6 +1,7 @@
 #include "tts.h"
 #include "dev_server.h"
 #include "log.h"
+#include "vocab.h"
 
 #include <prism.h>
 
@@ -236,27 +237,27 @@ std::string GetEngineName() {
     std::lock_guard<std::mutex> lock(sMutex);
     // Copied rather than handed out straight from Prism: the backend owns that string and a
     // re-bind frees it.
-    if (!sAvailable || !sBackend) return "None";
+    if (!sAvailable || !sBackend) return Vocab::EngineNone;
     return prism_backend_name(sBackend);
 }
 
 std::string GetEngineInfo() {
     std::lock_guard<std::mutex> lock(sMutex);
-    if (!sAvailable) return "TTS not available";
-    if (!sBackend) return "No speech backend — start a screen reader";
+    if (!sAvailable) return Vocab::EngineTtsUnavailable;
+    if (!sBackend) return Vocab::EngineBackendUnavailable;
 
-    std::string info = "Engine: ";
+    std::string info = Vocab::EngineLabel;
     info += prism_backend_name(sBackend);
-    info += ". Features:";
+    info += std::string(Vocab::EngineFeatures);
 
     // Only the four SRAL used to report, in the same words — this string is SPOKEN (F-key engine
     // info), and Prism's other twenty-odd bits are voice-enumeration and PCM plumbing a player has
     // no use for.
     const uint64_t features = prism_backend_get_features(sBackend);
-    if (features & PRISM_BACKEND_SUPPORTS_SPEAK)      info += " Speech";
-    if (features & PRISM_BACKEND_SUPPORTS_BRAILLE)    info += " Braille";
-    if (features & PRISM_BACKEND_SUPPORTS_SET_RATE)   info += " Rate";
-    if (features & PRISM_BACKEND_SUPPORTS_SET_VOLUME) info += " Volume";
+    if (features & PRISM_BACKEND_SUPPORTS_SPEAK)      info += std::string(Vocab::EngineSpeech);
+    if (features & PRISM_BACKEND_SUPPORTS_BRAILLE)    info += std::string(Vocab::EngineBraille);
+    if (features & PRISM_BACKEND_SUPPORTS_SET_RATE)   info += std::string(Vocab::EngineRate);
+    if (features & PRISM_BACKEND_SUPPORTS_SET_VOLUME) info += std::string(Vocab::EngineVolume);
 
     return info;
 }

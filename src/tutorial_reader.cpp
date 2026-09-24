@@ -92,23 +92,23 @@ void ResetReplayState()
 
 struct IconName {
     const char* src;
-    const char* spoken;
+    const Vocab::Word* spoken;
 };
 
 // UIUtilities_Input's ICON_PC_* constants — the complete keyboard-and-mouse set. Gamepad glyphs
 // are deliberately absent: they are spliced only while a controller is active, which is not a
 // configuration this mod supports, and naming one we never see would be a guess.
 constexpr IconName kIconNames[] = {
-    {"lmb_icon", Vocab::IconLeftMouse},
-    {"rmb_icon", Vocab::IconRightMouse},
-    {"PC_mouseWheelClick", Vocab::IconMouseWheelClick},
-    {"PC_mouseWheelScroll", Vocab::IconMouseWheelScroll},
-    {"PC_mouseLeft4", Vocab::IconMouseButton4},
-    {"PC_mouseLeft5", Vocab::IconMouseButton5},
-    {"PC_arrowLEFT", Vocab::IconArrowLeft},
-    {"PC_arrowRIGHT", Vocab::IconArrowRight},
-    {"PC_arrowUP", Vocab::IconArrowUp},
-    {"PC_arrowDOWN", Vocab::IconArrowDown},
+    {"lmb_icon", &Vocab::IconLeftMouse},
+    {"rmb_icon", &Vocab::IconRightMouse},
+    {"PC_mouseWheelClick", &Vocab::IconMouseWheelClick},
+    {"PC_mouseWheelScroll", &Vocab::IconMouseWheelScroll},
+    {"PC_mouseLeft4", &Vocab::IconMouseButton4},
+    {"PC_mouseLeft5", &Vocab::IconMouseButton5},
+    {"PC_arrowLEFT", &Vocab::IconArrowLeft},
+    {"PC_arrowRIGHT", &Vocab::IconArrowRight},
+    {"PC_arrowUP", &Vocab::IconArrowUp},
+    {"PC_arrowDOWN", &Vocab::IconArrowDown},
 };
 
 // ---- the game's own words -------------------------------------------------------------------
@@ -227,7 +227,7 @@ std::string TranslateMarkup(const std::string& text)
         const char* builtin = nullptr;
         for (const IconName& icon : kIconNames) {
             if (_stricmp(icon.src, src.c_str()) == 0) {
-                builtin = icon.spoken;
+                builtin = icon.spoken->c_str();
                 break;
             }
         }

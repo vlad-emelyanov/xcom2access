@@ -17,6 +17,7 @@
 // See the comment there before adding a recipe.
 
 #include "game_ui.h"
+#include "vocab.h"
 #include "wire_record.hpp"
 
 #include "Graph/GraphAnnouncer.hpp"
@@ -75,7 +76,7 @@ struct Recipe {
     // gameplay layer underneath — what the arrows drive from then on ("Map" for the tile cursor,
     // "Rooms" for the ant farm). Named per recipe because two ambient layers now exist and the
     // player has to hear which one they fell back into. Null degrades to the tactical word.
-    const char* ambientExitName = nullptr;
+    const Vocab::Word* ambientExitName = nullptr;
 };
 
 // Where the game's focus should follow ours (P11 write-back), per node.
@@ -242,7 +243,7 @@ void* ProbeFocused()
 // The screen-name shape the wire-backed recipes share: the header record's title, its subtitle
 // joined on by the kernel's phrase rule, and the recipe's own fallback when the companion had
 // nothing (not loaded, or the screen mid-build).
-std::string NameFromHeader(const std::vector<WireRecord>& records, const char* fallback);
+std::string NameFromHeader(const std::vector<WireRecord>& records, const std::string& fallback);
 
 // One companion verb carrying a single int, then the cache dropped — the pair every
 // companion-owned verb needs together: the verbs repopulate the screen's rows, and a fresh

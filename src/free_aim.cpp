@@ -40,7 +40,7 @@ void Call(const char* funcName, void* params)
 {
     void* cdo = GameUI::FindCompanionCDO(kReaderClass);
     if (!cdo) {
-        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable("Aim reader"));
+        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable(Vocab::SurfaceAimReader));
         return;
     }
     if (!GameUI::CallScriptFunction(cdo, funcName, params)) {

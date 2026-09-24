@@ -126,7 +126,7 @@ function AnnounceRoom()
 	Grid = GetGrid();
 	if (Grid == none)
 	{
-		NativeResult = "Not on the Avenger grid";
+		NativeResult = class'X2AccessVocab'.default.NotOnAvengerGrid;
 		return;
 	}
 
@@ -135,7 +135,7 @@ function AnnounceRoom()
 	LastAnnouncedIndex = Grid.Navigator.SelectedIndex;
 	NativeResult = DescribeSelection(Grid, LastAnnouncedIndex);
 	if (NativeResult == "")
-		NativeResult = "No room selected";
+		NativeResult = class'X2AccessVocab'.default.NoRoomSelected;
 }
 
 // ---------------------------------------------------------------------------
@@ -265,7 +265,7 @@ private function string DescribeCondition(UIFacilityGrid_FacilityOverlay Overlay
 	// "РАСЧИСТКА ИНОПЛАНЕТНЫХ ОБЛОМКОВ" and repeating it would be noise. The fallback covers the
 	// one case that leaves no title: a cleared flag with the project already gone.
 	if (Overlay.m_bClearing)
-		return Overlay.Label != "" ? "" : "being cleared";
+		return Overlay.Label != "" ? "" : class'X2AccessVocab'.default.BeingCleared;
 
 	// The orange border. On a built or core facility eUIState_Warning means exactly
 	// Facility.NeedsAttention() (UpdateFacility / UpdateCoreFacility), and unlike the room's
@@ -277,7 +277,7 @@ private function string DescribeCondition(UIFacilityGrid_FacilityOverlay Overlay
 	// staff phrasing below. Those are the words a companion-side vocabulary would own, which is
 	// a decision rather than a fix; the two above needed neither.
 	if (Overlay.BGColor == class'UIUtilities_Colors'.static.GetHexColorFromState(eUIState_Warning))
-		return "needs attention";
+		return class'X2AccessVocab'.default.NeedsAttention;
 
 	return "";
 }
@@ -331,27 +331,29 @@ private function string DescribeStaffIcons(UIFacilityGrid_FacilityOverlay Overla
 	// every time. Filled > 0 leaves the two cases where the ratio earns its place: fully staffed
 	// (no empties clause at all) and partly staffed (where the split is the point).
 	if (Filled > 0)
-		Result = string(Filled) $ " of " $ string(Total) $ " staff slots filled";
+		Result = class'X2AccessVocab'.static.Fill2(
+			class'X2AccessVocab'.default.StaffSlotsFilled, Filled, Total);
 
-	AppendComma(Empties, CountedSlots(FreeScience, "scientist"));
-	AppendComma(Empties, CountedSlots(FreeEngineer, "engineer"));
-	AppendComma(Empties, CountedSlots(FreeSoldier, "soldier"));
-	AppendComma(Empties, CountedSlots(FreePsi, "psi soldier"));
-	AppendComma(Empties, CountedSlots(FreeGeneric, "staff"));
+	AppendComma(Empties, CountedSlots(FreeScience, class'X2AccessVocab'.default.ScientistSlotsFree));
+	AppendComma(Empties, CountedSlots(FreeEngineer, class'X2AccessVocab'.default.EngineerSlotsFree));
+	AppendComma(Empties, CountedSlots(FreeSoldier, class'X2AccessVocab'.default.SoldierSlotsFree));
+	AppendComma(Empties, CountedSlots(FreePsi, class'X2AccessVocab'.default.PsiSlotsFree));
+	AppendComma(Empties, CountedSlots(FreeGeneric, class'X2AccessVocab'.default.StaffSlotsFree));
 	if (Empties != "")
-		AppendPart(Result, Empties $ " free");
+		AppendPart(Result, Empties);
 
 	if (Upgrades > 0)
-		AppendPart(Result, string(Upgrades) $ " upgrade slot" $ (Upgrades == 1 ? "" : "s"));
+		AppendPart(Result, class'X2AccessVocab'.static.Fill1(
+			class'X2AccessVocab'.default.UpgradeSlots, Upgrades));
 
 	return Result;
 }
 
-private function string CountedSlots(int Count, string Kind)
+private function string CountedSlots(int Count, string Template)
 {
 	if (Count <= 0)
 		return "";
-	return string(Count) @ Kind @ "slot" $ (Count == 1 ? "" : "s");
+	return class'X2AccessVocab'.static.Fill1(Template, Count);
 }
 
 // Where the highlight box is, in words.
@@ -386,18 +388,19 @@ private function string PositionWords(int Index)
 	{
 		Row = (Index - CORE_FIRST) / CORE_COLUMNS + 1;
 		Column = (Index - CORE_FIRST) % CORE_COLUMNS + 1;
-		return "row " $ string(Row) $ ", column " $ string(Column);
+		return class'X2AccessVocab'.static.Fill2(class'X2AccessVocab'.default.GridRowColumn,
+			Row, Column);
 	}
 
 	switch (Index)
 	{
-	case 0:  return "top left";
-	case 15: return "top middle";
-	case 2:  return "top right";
-	case 16: return "upper left";
-	case 1:  return "far left";
-	case 18: return "middle right";
-	case 17: return "lower right";
+	case 0:  return class'X2AccessVocab'.default.GridTopLeft;
+	case 15: return class'X2AccessVocab'.default.GridTopMiddle;
+	case 2:  return class'X2AccessVocab'.default.GridTopRight;
+	case 16: return class'X2AccessVocab'.default.GridUpperLeft;
+	case 1:  return class'X2AccessVocab'.default.GridFarLeft;
+	case 18: return class'X2AccessVocab'.default.GridMiddleRight;
+	case 17: return class'X2AccessVocab'.default.GridLowerRight;
 	}
 	return "";
 }

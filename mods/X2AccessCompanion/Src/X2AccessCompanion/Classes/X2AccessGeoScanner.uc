@@ -127,7 +127,7 @@ function ScanCategory(int Category, int Delta)
 
 	if (!ResolveOrigin(Origin))
 	{
-		NativeResult = "No geoscape";
+		NativeResult = class'X2AccessVocab'.default.NoGeoscape;
 		return;
 	}
 
@@ -158,7 +158,7 @@ function StepCategory(int Delta)
 
 	if (!ResolveOrigin(Origin))
 	{
-		NativeResult = "No geoscape";
+		NativeResult = class'X2AccessVocab'.default.NoGeoscape;
 		return;
 	}
 
@@ -184,7 +184,7 @@ function StepCategory(int Delta)
 		}
 	}
 
-	NativeResult = "Nothing on the map";
+	NativeResult = class'X2AccessVocab'.default.NothingOnMap;
 }
 
 // Home: make whatever was last announced the point everything sorts from.
@@ -199,7 +199,7 @@ function SetOriginToSelection()
 
 	if (!bLastValid)
 	{
-		NativeResult = "Nothing selected";
+		NativeResult = class'X2AccessVocab'.default.NothingSelected;
 		return;
 	}
 
@@ -211,7 +211,8 @@ function SetOriginToSelection()
 
 	LookAt(LastX, LastY);
 
-	NativeResult = "Sorting from" @ OriginName;
+	NativeResult = class'X2AccessVocab'.static.FillS(class'X2AccessVocab'.default.SortingFrom,
+		OriginName);
 }
 
 // C: origin back to the Avenger, which is also the camera verb the game itself binds to the
@@ -230,7 +231,7 @@ function ResetOrigin()
 		LookAt(XComHQ.Get2DLocation().X, XComHQ.Get2DLocation().Y);
 	}
 
-	NativeResult = "Sorting from the Avenger";
+	NativeResult = class'X2AccessVocab'.default.SortingFromAvenger;
 }
 
 // `/`: take the camera to the last announced entry WITHOUT moving the sort origin. The two are
@@ -242,7 +243,7 @@ function LookAtSelection()
 
 	if (!bLastValid)
 	{
-		NativeResult = "Nothing selected";
+		NativeResult = class'X2AccessVocab'.default.NothingSelected;
 		return;
 	}
 
@@ -623,7 +624,8 @@ private function string FormatEntry(AccessGeoEntry Entry, int Index, int Total)
 	Line = Entry.Label;
 	Line = Join(Line, Entry.Detail);
 	Line = Join(Line, DistanceWords(Entry));
-	Line = Join(Line, string(Index + 1) @ "of" @ string(Total));
+	Line = Join(Line, class'X2AccessVocab'.static.Fill2(
+		class'X2AccessVocab'.default.PositionOf, Index + 1, Total));
 	return Line;
 }
 
@@ -661,9 +663,12 @@ private function string DistanceWords(AccessGeoEntry Entry)
 {
 	if (Entry.Bearing == "")
 	{
-		return "here";
+		return class'X2AccessVocab'.default.GeoHere;
 	}
-	return string(Entry.Miles) @ "miles" @ Entry.Bearing;
+	return class'X2AccessVocab'.static.Count(Entry.Miles,
+		class'X2AccessVocab'.default.Miles_One,
+		class'X2AccessVocab'.default.Miles_Few,
+		class'X2AccessVocab'.default.Miles_Many) @ Entry.Bearing;
 }
 
 private function int IndexOfKey(array<AccessGeoEntry> Entries, int Key)
@@ -706,7 +711,7 @@ private function bool ResolveOrigin(out Vector2D Origin)
 		bOriginIsAvenger = true;
 		OriginKey = 0;
 		OriginName = "";
-		NativeResult = "Origin gone, sorting from the Avenger. ";
+		NativeResult = class'X2AccessVocab'.default.OriginGoneAvenger;
 	}
 
 	XComHQ = `XCOMHQ;
@@ -774,8 +779,10 @@ private function string BearingFrom(Vector2D From, Vector2D To)
 		return "";
 	}
 
-	Vertical = (NorthAmount > 0) ? "north" : "south";
-	Horizontal = (EastAmount > 0) ? "east" : "west";
+	Vertical = (NorthAmount > 0) ? class'X2AccessVocab'.default.GeoNorth
+		: class'X2AccessVocab'.default.GeoSouth;
+	Horizontal = (EastAmount > 0) ? class'X2AccessVocab'.default.GeoEast
+		: class'X2AccessVocab'.default.GeoWest;
 
 	// Only name the minor axis when it is a real component: a site 1,400 miles east and 40 north
 	// is east, and calling it north-east would point the player at a place they cannot reach.
@@ -787,7 +794,11 @@ private function string BearingFrom(Vector2D From, Vector2D To)
 	{
 		return Vertical;
 	}
-	return Vertical $ "-" $ Horizontal;
+	if (NorthAmount > 0)
+		return EastAmount > 0 ? class'X2AccessVocab'.default.GeoNortheast
+			: class'X2AccessVocab'.default.GeoNorthwest;
+	return EastAmount > 0 ? class'X2AccessVocab'.default.GeoSoutheast
+		: class'X2AccessVocab'.default.GeoSouthwest;
 }
 
 // Fill in distance and bearing, then insertion-sort by distance. Sorting LAST, over the completed
@@ -908,7 +919,7 @@ private function string RegionState(XComGameState_WorldRegion Region,
 	switch (Region.ResistanceLevel)
 	{
 	case eResLevel_Outpost:
-		Line = "radio relay built";
+		Line = class'X2AccessVocab'.default.RadioRelayBuilt;
 		break;
 
 	case eResLevel_Contact:
@@ -921,10 +932,10 @@ private function string RegionState(XComGameState_WorldRegion Region,
 		}
 		else
 		{
-			Line = "contact established";
+			Line = class'X2AccessVocab'.default.ContactEstablished;
 			if (bOutpostResearched)
 			{
-				Line = Join(Line, "radio relay available");
+				Line = Join(Line, class'X2AccessVocab'.default.RadioRelayAvailable);
 			}
 		}
 		break;
@@ -936,18 +947,18 @@ private function string RegionState(XComGameState_WorldRegion Region,
 		}
 		else if (bContactResearched)
 		{
-			Line = "contact available";
+			Line = class'X2AccessVocab'.default.ContactAvailable;
 		}
 		else
 		{
 			// No tech, no button, and GenerateTooltip suppresses the whole tooltip before contact
 			// is researched — so a sighted player cannot tell this from a locked region either.
-			Line = "no contact";
+			Line = class'X2AccessVocab'.default.NoContact;
 		}
 		break;
 
 	case eResLevel_Locked:
-		Line = "no contact";
+		Line = class'X2AccessVocab'.default.NoContact;
 		break;
 
 	default:
@@ -960,12 +971,14 @@ private function string RegionState(XComGameState_WorldRegion Region,
 	// scan button is showing the player something better).
 	if (bContactResearched && !(Region.bCanScanForContact || Region.bCanScanForOutpost))
 	{
-		Line = Join(Line, "+" $ string(Region.GetSupplyDropReward(true)) @ "supplies");
+		Line = Join(Line, class'X2AccessVocab'.static.Fill1(
+			class'X2AccessVocab'.default.SuppliesIncome,
+			Region.GetSupplyDropReward(true)));
 	}
 
 	if (Region.HasMissionInRegion())
 	{
-		Line = Join(Line, "mission here");
+		Line = Join(Line, class'X2AccessVocab'.default.MissionHere);
 	}
 
 	return Line;
@@ -1159,8 +1172,10 @@ private function string ContinentProgress(XComGameState_Continent Continent)
 	Contacted = Continent.GetResistanceLevel() - Towers;
 	RegionCount = Continent.GetMaxResistanceLevel() - MaxTowers;
 
-	Line = "regions contacted" @ string(Contacted) @ "of" @ string(RegionCount);
-	return Join(Line, "radio relays" @ string(Towers) @ "of" @ string(MaxTowers));
+	Line = class'X2AccessVocab'.static.Fill2(class'X2AccessVocab'.default.RegionsContacted,
+		Contacted, RegionCount);
+	return Join(Line, class'X2AccessVocab'.static.Fill2(
+		class'X2AccessVocab'.default.RadioRelaysBuilt, Towers, MaxTowers));
 }
 
 // ---------------------------------------------------------------------------
@@ -1171,12 +1186,12 @@ private function string CategoryName(int Category)
 {
 	switch (Category)
 	{
-	case CAT_REGIONS:    return "Regions";
-	case CAT_MISSIONS:   return "Missions";
-	case CAT_SCANSITES:  return "Scan sites";
-	case CAT_FACILITIES: return "Alien facilities";
-	case CAT_FACTIONS:   return "Faction headquarters";
-	case CAT_CONTINENTS: return "Continents";
+	case CAT_REGIONS:    return class'X2AccessVocab'.default.GeoCatRegions;
+	case CAT_MISSIONS:   return class'X2AccessVocab'.default.GeoCatMissions;
+	case CAT_SCANSITES:  return class'X2AccessVocab'.default.GeoCatScanSites;
+	case CAT_FACILITIES: return class'X2AccessVocab'.default.GeoCatFacilities;
+	case CAT_FACTIONS:   return class'X2AccessVocab'.default.GeoCatFactions;
+	case CAT_CONTINENTS: return class'X2AccessVocab'.default.GeoCatContinents;
 	}
 	return "Category" @ string(Category);
 }
@@ -1187,14 +1202,14 @@ private function string EmptyText(int Category)
 {
 	switch (Category)
 	{
-	case CAT_REGIONS:    return "No regions on the map";
-	case CAT_MISSIONS:   return "No missions available";
-	case CAT_SCANSITES:  return "Nothing to scan right now";
-	case CAT_FACILITIES: return "No alien facilities found yet";
-	case CAT_FACTIONS:   return "No factions met yet";
-	case CAT_CONTINENTS: return "No continents on the map";
+	case CAT_REGIONS:    return class'X2AccessVocab'.default.GeoEmptyRegions;
+	case CAT_MISSIONS:   return class'X2AccessVocab'.default.GeoEmptyMissions;
+	case CAT_SCANSITES:  return class'X2AccessVocab'.default.GeoEmptyScanSites;
+	case CAT_FACILITIES: return class'X2AccessVocab'.default.GeoEmptyFacilities;
+	case CAT_FACTIONS:   return class'X2AccessVocab'.default.GeoEmptyFactions;
+	case CAT_CONTINENTS: return class'X2AccessVocab'.default.GeoEmptyContinents;
 	}
-	return "Nothing here";
+	return class'X2AccessVocab'.default.EmptyGeneric;
 }
 
 defaultproperties

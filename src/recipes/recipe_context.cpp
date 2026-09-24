@@ -40,7 +40,7 @@ void InvalidateWireCaches()
     WireCache::InvalidateAll();
 }
 
-std::string NameFromHeader(const std::vector<WireRecord>& records, const char* fallback)
+std::string NameFromHeader(const std::vector<WireRecord>& records, const std::string& fallback)
 {
     std::string name;
     if (const WireRecord* header = FindRecord(records, "header")) {

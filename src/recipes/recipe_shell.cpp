@@ -76,15 +76,15 @@ std::unique_ptr<GraphRender> BuildMainMenu()
         vt.Type = &ButtonType();
         vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::My2KAccount));
         vt.Announcements.back().Kind = AnnouncementKinds::Label;
-        const char* status = nullptr;
+        const Vocab::Word* status = nullptr;
         switch (extras.my2kStatus) {
-        case GameUI::My2KStatus::Offline: status = Vocab::My2KOffline; break;
-        case GameUI::My2KStatus::NotLinked: status = Vocab::My2KNotLinked; break;
-        case GameUI::My2KStatus::Linked: status = Vocab::My2KLinked; break;
+        case GameUI::My2KStatus::Offline: status = &Vocab::My2KOffline; break;
+        case GameUI::My2KStatus::NotLinked: status = &Vocab::My2KNotLinked; break;
+        case GameUI::My2KStatus::Linked: status = &Vocab::My2KLinked; break;
         case GameUI::My2KStatus::Unknown: break; // status query failed — label alone
         }
         if (status) {
-            vt.Announcements.emplace_back(NodeAnnouncement::Static(status));
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(std::string(*status)));
             vt.Announcements.back().Kind = AnnouncementKinds::Value;
         }
         vt.OnActivate = [handle = extras.my2kHandle]() { GameUI::ClickButton(handle); };

@@ -715,13 +715,13 @@ void BuildCommodityTabs(GraphBuilder& b, const std::vector<WireRecord>& records)
 // collect a comma. `word` is OUR caption for a line the game draws as colour alone, and it
 // TRAILS the value the way the row's state words trail its name.
 std::string ComposeCardLine(const WireRecord& card, const char* labelKey, const char* valueKey,
-    const char* word = nullptr)
+    const Vocab::Word* word = nullptr)
 {
     std::string value = RecField(card, valueKey);
     if (value.empty())
         return value;
     if (word) {
-        AppendPhrase(value, word);
+        AppendPhrase(value, std::string(*word));
         return value;
     }
     if (!labelKey)
@@ -739,7 +739,7 @@ void BuildCommodityCard(GraphBuilder& b, const WireRecord& card)
     struct Line {
         const char* label; // the game's own caption, a record field
         const char* value;
-        const char* word = nullptr; // our caption, for a line the game draws as COLOUR
+        const Vocab::Word* word = nullptr; // our caption, for a line the game draws as COLOUR
     };
     // Order is the card's own: the title heads it, the cost block sits under the image, and the
     // description is last because it is the longest and the least decisive.
@@ -750,7 +750,7 @@ void BuildCommodityCard(GraphBuilder& b, const WireRecord& card)
         // one stopping the build, and a colour speech drops. Its own line right after the cost,
         // so the whole cost is still heard as the game lists it and the reason follows; absent
         // whenever nothing is red, which is exactly when the card has no reason to give.
-        {nullptr, "short", Vocab::CommodityShortfall},
+        {nullptr, "short", &Vocab::CommodityShortfall},
         {"timeLabel", "time"},
         {nullptr, "req"},
         {nullptr, "desc"},
@@ -2809,7 +2809,7 @@ std::string AvengerHudName()
 // probe instead). No SetListIndex: the HUD's panels hold no list this layer drives.
 const Recipe kAvengerHudRecipe{"Avenger HUD", ProbeAvengerHud, BuildAvengerHud, AvengerHudName,
     /*SetListIndex*/ nullptr, /*ambient*/ true, /*YieldFocus*/ nullptr,
-    /*ambientExitName*/ Vocab::AvengerRoomsMode};
+    /*ambientExitName*/ &Vocab::AvengerRoomsMode};
 
 } // namespace Recipes
 } // namespace MenuNavigator

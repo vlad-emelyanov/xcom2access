@@ -248,7 +248,8 @@ private function string DescribeSquadSize(UISquadSelect Screen)
 		if (Screen.XComHQ.Squad[i].ObjectID > 0)
 			Filled++;
 	}
-	return string(Filled) @ "of" @ string(Total);
+	return class'X2AccessVocab'.static.Fill2(class'X2AccessVocab'.default.PositionOf,
+		Filled, Total);
 }
 
 // The sit-rep tooltip, rebuilt the way UISquadSelect.UpdateSitRep builds it: one "name: effect"
@@ -320,13 +321,14 @@ private function string DescribeBond(UISquadSelect Screen, XComGameState_Unit Un
 
 	if (Unit.HasSoldierBond(BondmateRef, BondData))
 	{
-		Result = "bond level" @ string(BondData.BondLevel);
+		Result = class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.BondLevel,
+			BondData.BondLevel);
 		// ⛔ NOT Screen.IsUnitOnSquad(): that one starts by rewriting XComHQ through
 		// UpdateState.ModifyStateObject, so a reader calling it would both mutate a pending
 		// state and access none whenever no edit has been started. The question is a plain
 		// lookup in the squad the screen already cached.
 		if (IsOnSquad(Screen, BondmateRef))
-			AppendComma(Result, "bondmate on the squad");
+			AppendComma(Result, class'X2AccessVocab'.default.BondmateOnSquad);
 		return Result;
 	}
 

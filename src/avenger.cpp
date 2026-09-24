@@ -68,7 +68,7 @@ void OnAnnounce(const InputArbiter::KeyEvent& e)
     if (!e.down || e.repeat) // a held key would only stutter the same line over itself
         return;
     if (!GameUI::FindCompanionCDO(kReaderClass)) {
-        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable("Avenger reader"));
+        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable(Vocab::SurfaceAvengerReader));
         return;
     }
     Call("AnnounceRoom", Narrator::Channel::Aid);

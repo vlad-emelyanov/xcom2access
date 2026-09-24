@@ -151,10 +151,10 @@ static function EventListenerReturn OnPlayerTurnBegun(Object EventData, Object E
 	switch (PlayerState.GetTeam())
 	{
 	case eTeam_XCom:
-		class'X2AccessNarrator'.static.Alert("Your turn.");
+		class'X2AccessNarrator'.static.Alert(class'UITurnOverlay'.default.m_sXComTurn);
 		break;
 	case eTeam_Alien:
-		class'X2AccessNarrator'.static.Alert("Enemy turn.");
+		class'X2AccessNarrator'.static.Alert(class'UITurnOverlay'.default.m_sAlienTurn);
 		break;
 	}
 
@@ -230,7 +230,8 @@ static function string BuildAbilityLine(XComGameState_Ability AbilityState, XCom
 	Line = UnitName(SourceUnit) $ ": " $ AbilityName;
 
 	if (TargetUnit != none && TargetUnit.ObjectID != SourceUnit.ObjectID)
-		Line = Line @ "at" @ UnitName(TargetUnit);
+		Line = Line @ class'X2AccessVocab'.static.FillS(
+			class'X2AccessVocab'.default.AbilityAtTarget, UnitName(TargetUnit));
 
 	// Only abilities that actually roll get a result word. Grenades, heals and overwatch use the
 	// DeadEye calc and always "hit"; saying so would be noise a sighted player is not shown either.
@@ -361,18 +362,22 @@ static function string BuildDamageLine(XComGameState_Unit Unit, XComGameStateCon
 	Line = UnitName(Unit);
 
 	if (Damage > 0)
-		Line = Line $ "," @ string(Damage) @ "damage";
+		Line = Line $ "," @ class'X2AccessVocab'.static.Fill1(
+			class'X2AccessVocab'.default.DamageDealt, Damage);
 	if (Shielded > 0)
-		Line = Line $ ", shield absorbs" @ string(Shielded);
+		Line = Line $ "," @ class'X2AccessVocab'.static.Fill1(
+			class'X2AccessVocab'.default.ShieldAbsorbs, Shielded);
 	if (Blocked > 0)
-		Line = Line $ ", armour blocks" @ string(Blocked);
+		Line = Line $ "," @ class'X2AccessVocab'.static.Fill1(
+			class'X2AccessVocab'.default.ArmorBlocks, Blocked);
 
 	// The health tail is what the unit flag shows a sighted player, and it is the number that
 	// decides the next move — without it "5 damage" says nothing about whether the target is dead.
 	if (Unit.IsAlive())
 	{
-		Line = Line $ "," @ string(int(Unit.GetCurrentStat(eStat_HP))) @ "of"
-			@ string(int(Unit.GetMaxStat(eStat_HP))) @ "health";
+		Line = Line $ "," @ class'X2AccessVocab'.static.Fill2(
+			class'X2AccessVocab'.default.TargetHealth,
+			int(Unit.GetCurrentStat(eStat_HP)), int(Unit.GetMaxStat(eStat_HP)));
 	}
 
 	return Line $ ".";
@@ -386,7 +391,8 @@ static function EventListenerReturn OnShieldsExpended(Object EventData, Object E
 	if (!IsNarratable(Unit))
 		return ELR_NoInterrupt;
 
-	class'X2AccessNarrator'.static.Combat(UnitName(Unit) @ "has no shield left.");
+	class'X2AccessNarrator'.static.Combat(class'X2AccessVocab'.static.FillS(
+		class'X2AccessVocab'.default.NoShieldLeft, UnitName(Unit)));
 
 	return ELR_NoInterrupt;
 }
@@ -439,9 +445,11 @@ static function NarrateDeath(XComGameState_Unit Unit, XComGameStateContext Conte
 	// Losing one of your own changes what you can do next, so it is an Alert; an enemy kill is
 	// Combat. Both queue in order behind the damage line that explains them.
 	if (Unit.IsFriendlyToLocalPlayer())
-		class'X2AccessNarrator'.static.Alert(UnitName(Unit) @ "is dead.");
+		class'X2AccessNarrator'.static.Alert(class'X2AccessVocab'.static.FillS(
+			class'XComPresentationLayer'.default.m_strUnitDied, UnitName(Unit)));
 	else
-		class'X2AccessNarrator'.static.Combat(UnitName(Unit) @ "killed.");
+		class'X2AccessNarrator'.static.Combat(class'X2AccessVocab'.static.FillS(
+			class'XComPresentationLayer'.default.m_strUnitDied, UnitName(Unit)));
 }
 
 // ---------------------------------------------------------------------------
@@ -456,7 +464,7 @@ static function EventListenerReturn OnSquadConcealmentBroken(Object EventData, O
 	if (PlayerState == none || PlayerState.GetTeam() != eTeam_XCom)
 		return ELR_NoInterrupt;
 
-	class'X2AccessNarrator'.static.Alert("Squad concealment broken.");
+	class'X2AccessNarrator'.static.Alert(class'X2AccessVocab'.default.SquadConcealmentBroken);
 
 	return ELR_NoInterrupt;
 }
@@ -469,7 +477,8 @@ static function EventListenerReturn OnUnitConcealmentBroken(Object EventData, Ob
 	if (Unit == none || !Unit.IsFriendlyToLocalPlayer())
 		return ELR_NoInterrupt;
 
-	class'X2AccessNarrator'.static.Alert(UnitName(Unit) @ "is revealed.");
+	class'X2AccessNarrator'.static.Alert(class'X2AccessVocab'.static.FillS(
+		class'X2AccessVocab'.default.UnitRevealed, UnitName(Unit)));
 
 	return ELR_NoInterrupt;
 }
@@ -483,9 +492,11 @@ static function EventListenerReturn OnUnitPanicked(Object EventData, Object Even
 		return ELR_NoInterrupt;
 
 	if (Unit.IsFriendlyToLocalPlayer())
-		class'X2AccessNarrator'.static.Alert(UnitName(Unit) @ "panicked.");
+		class'X2AccessNarrator'.static.Alert(class'X2AccessVocab'.static.FillS(
+			class'XComPresentationLayer'.default.m_strUnitPanicked, UnitName(Unit)));
 	else
-		class'X2AccessNarrator'.static.Combat(UnitName(Unit) @ "panicked.");
+		class'X2AccessNarrator'.static.Combat(class'X2AccessVocab'.static.FillS(
+			class'XComPresentationLayer'.default.m_strUnitPanicked, UnitName(Unit)));
 
 	return ELR_NoInterrupt;
 }
@@ -498,7 +509,8 @@ static function EventListenerReturn OnUnitEvacuated(Object EventData, Object Eve
 	if (Unit == none)
 		return ELR_NoInterrupt;
 
-	class'X2AccessNarrator'.static.Combat(UnitName(Unit) @ "evacuated.");
+	class'X2AccessNarrator'.static.Combat(class'X2AccessVocab'.static.FillS(
+		class'X2AccessVocab'.default.UnitEvacuated, UnitName(Unit)));
 
 	return ELR_NoInterrupt;
 }
@@ -598,14 +610,15 @@ static function string BuildRevealLine(XComGameStateContext_RevealAI RevealConte
 	if (Roster == "")
 		return "";
 
-	Line = "Enemy sighted:" @ Roster $ ".";
+	Line = class'X2AccessVocab'.static.FillS(class'X2AccessVocab'.default.EnemySighted, Roster);
 
 	// The game marks the reveal that is this campaign's first look at a type and plays the matinee
 	// on that unit; Central's line follows through the commlink. The template is what the context
 	// stores, so read it there rather than re-asking the HQ, which has already been updated.
 	FirstSeen = RevealContext.FirstEncounterCharacterTemplate;
 	if (FirstSeen != none && FirstSeen.strCharacterName != "")
-		class'X2AccessHelper'.static.AppendPart(Line, "New enemy type:" @ FirstSeen.strCharacterName);
+		class'X2AccessHelper'.static.AppendPart(Line, class'X2AccessVocab'.static.FillS(
+			class'X2AccessVocab'.default.NewEnemyType, FirstSeen.strCharacterName));
 
 	return Line;
 }
@@ -671,14 +684,14 @@ static function string SpawnLabel(name SpawnVisualizationType)
 	switch (SpawnVisualizationType)
 	{
 	case 'ATT':
-		return "Reinforcements by troop transport:";
+		return class'X2AccessVocab'.default.ReinforcementsTransport;
 	case 'PsiGate':
-		return "Reinforcements by psi gate:";
+		return class'X2AccessVocab'.default.ReinforcementsPsiGate;
 	case 'Dropdown':
-		return "Reinforcements dropping in:";
+		return class'X2AccessVocab'.default.ReinforcementsDrop;
 	case 'ChosenSpecialNoReveal':
 	case 'ChosenSpecialTopDownReveal':
-		return "Chosen arrives:";
+		return class'X2AccessVocab'.default.ChosenArrives;
 	}
 
 	return "";

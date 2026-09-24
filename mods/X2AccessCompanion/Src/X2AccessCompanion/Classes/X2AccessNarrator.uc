@@ -100,7 +100,10 @@ function DrainNarration()
 	{
 		if (NativeResult != "")
 			NativeResult = NativeResult $ ENTRY_SEP;
-		NativeResult = NativeResult $ CHANNEL_ALERT $ string(default.DroppedCount) @ "narration lines dropped";
+        NativeResult = NativeResult $ CHANNEL_ALERT $ class'X2AccessVocab'.static.Count(
+            default.DroppedCount, class'X2AccessVocab'.default.NarrationDropped_One,
+            class'X2AccessVocab'.default.NarrationDropped_Few,
+            class'X2AccessVocab'.default.NarrationDropped_Many);
 		default.DroppedCount = 0;
 	}
 

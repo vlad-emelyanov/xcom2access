@@ -21,7 +21,7 @@ whole design is about keeping them apart:
   fails silently (`engine-notes.md`, the double-space tell); one class means one section in the
   file and one place to check. Readers use `class'X2AccessVocab'.default.<Key>`; the generator's
   `ChosenADGeneratorName` moved here from the scanner for exactly this reason.
-- **The `.int` file is the reference.** Every key is in it, in the class's own order, with a
+- **The `.int` file is the reference.** Every key is in it, with a
   comment where the wording has a reason. A key missing from a language file reads as `""`, and
   every reader treats `""` as *say nothing* — so a missing key is a silent gap, not an English
   fallback. (The engine has no per-key fallback to INT for a mod package; the whole-file fallback
@@ -51,6 +51,8 @@ with no tags comes back unchanged.
 
 Where a direction has to be DECLINED rather than inserted (cover: "с севера"), the key is per
 direction — `FullCoverNorth` … `HalfCoverWest` — rather than a template over a compass word.
+The Russian phrases use the game's "Высокое укрытие" / "Низкое укрытие" terminology from
+`XLocalizedData.TargetHighCover` / `TargetLowCover`; the target readout reads those fields directly.
 Bearings (`OffsetNorth` = "<N> north") are templates because the number is the variable part.
 
 ## Plurals: the rule vanilla does not have
@@ -66,27 +68,30 @@ Vanilla has 393 `Singular`/`Plural` key pairs chosen by `== 1` (an English split
   rule — "21 tile" — which is why the rule is a key and not a heuristic on whether Few is filled.
 - **Fallbacks**: an empty form falls to Many; an empty Many falls to One. A half-filled file still
   speaks, wrongly inflected rather than silently.
-- Native will implement the same three-form choice over the same `PluralRule` once the CDO bridge
-  exists (below); the forms travel as the three strings, never a pre-chosen one, so a count native
-  learns late is still inflected right.
+- Native `Vocab::CountForm` uses the same `PluralRule` loaded from the CDO. Number phrases use
+  `{0}` and `{1}` in the native word table; translators may move the placeholders.
 
-## Native (not built yet)
+## Native
 
-Native reads the same values off the `X2AccessVocab` CDO by property name through the reflection
-reader it already has (`UE3Reflect::ReadStringProperty`) — the values are on the CDO the moment the
-package loads, so no ProcessEvent and no timing. Cache the STRINGS, never the CDO pointer. The
-Graph kernel stays STL-only and takes a filled word table from the host adapter; a missing key
-degrades to the English literal (the input-vocabulary rule, `X2AccessHelper.GetInputVocabulary`).
-Native substitutes `{n}` into an already-chosen form. Shape: `tutorial_reader.cpp`'s
-input-vocabulary bridge, minus the call.
+`Vocab::LoadFromGame` reads the same values off the `X2AccessVocab` CDO by property name on the
+game tick, caches the strings and never retains the CDO pointer. `Vocab::Word` resolves the cache
+without reading engine memory, including from UI callbacks. `src/vocab_words.inc` is the list of
+native property names. A missing key falls back to its English literal; this is diagnostic debt,
+not a translated line. The Graph kernel remains STL-only. Startup success is spoken after the
+vocabulary loads; a hook-initialization failure may still use English because the game localization
+system is unavailable at that point.
+
+Run `python tools/check_localization.py` after changing any word. It checks that the class, INT,
+RUS, and native word index agree, that keys are unique, and that Russian templates retain every
+placeholder. The installed game's `XComGame.int/.rus` were checked for exact matching terms;
+screen and template fields are preferred at runtime, while matching translations inform fallbacks.
 
 ## Status
 
 | Surface | Vocabulary | Heard live |
 |---|---|---|
-| Tile cursor (`X2AccessTileReader`) + the helper's tile words | on `X2AccessVocab`, INT + RUS | pending |
-| Object scanner (`X2AccessObjectScanner`) | on `X2AccessVocab`, INT + RUS | pending |
-| Tactical events narration, the other readers, the legacy listeners | English literals | — |
-| Native (kernel words, recipes, game_ui) | English literals | — |
+| Tile cursor, object scanner and tactical narration | game fields + `X2AccessVocab`, INT + RUS | pending |
+| Strategy, Avenger and legacy listener words | game fields + `X2AccessVocab`, INT + RUS | pending |
+| Native recipes, objectives, status and input words | `Vocab::Word` from the same CDO, INT + RUS | pending |
 
-The work list for what remains is `next-steps.md`, "Localization migration".
+The live test list is `next-steps.md`, "Localization hearing pass".

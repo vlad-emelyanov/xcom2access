@@ -130,7 +130,7 @@ function AnnounceHack()
 	HackScreen = GetHackScreen();
 	if (HackScreen == none)
 	{
-		NativeResult = "No hacking screen";
+		NativeResult = class'X2AccessVocab'.default.NoHackingScreen;
 		return;
 	}
 
@@ -139,7 +139,7 @@ function AnnounceHack()
 	NativeResult = DescribeHeader(HackScreen);
 	AppendPart(NativeResult, DescribeCursor(HackScreen));
 	if (HackScreen.m_hackStarted)
-		AppendPart(NativeResult, "Hack in progress");
+		AppendPart(NativeResult, class'X2AccessVocab'.default.HackInProgress);
 }
 
 // Left arrow: step the cursor one card toward the guaranteed slot.
@@ -183,7 +183,7 @@ private function StepCursor(int Delta)
 	HackScreen = GetHackScreen();
 	if (HackScreen == none)
 	{
-		NativeResult = "No hacking screen";
+		NativeResult = class'X2AccessVocab'.default.NoHackingScreen;
 		return;
 	}
 
@@ -192,7 +192,7 @@ private function StepCursor(int Delta)
 	// bWaitingForInput is set), and the selection no longer means anything anyway.
 	if (HackScreen.m_hackStarted)
 	{
-		NativeResult = "Hack in progress";
+		NativeResult = class'X2AccessVocab'.default.HackInProgress;
 		return;
 	}
 
@@ -265,7 +265,7 @@ private function string DescribeHeader(UIHackingScreen HackScreen)
 {
 	local string Result, Target;
 
-	Result = "Hacking";
+	Result = class'X2AccessVocab'.default.Hacking;
 
 	Target = DescribeTarget(HackScreen);
 	if (Target != "")
@@ -344,7 +344,8 @@ private function string DescribeCursor(UIHackingScreen HackScreen)
 	{
 		Selected = SelectedTemplate(HackScreen);
 		if (Selected != none)
-			AppendPart(Result, "Gamble stays on" @ Selected.GetFriendlyName() $ ","
+			AppendPart(Result, class'X2AccessVocab'.static.FillS(
+				class'X2AccessVocab'.default.GambleStaysOn, Selected.GetFriendlyName()) $ ","
 				@ ChanceWords(HackScreen, HackScreen.SelectedHackRewardOption));
 	}
 
@@ -359,13 +360,14 @@ private function string DescribeCard(UIHackingScreen HackScreen, int Index)
 	local string Result;
 
 	if (Index < 0 || Index >= CardCount(HackScreen))
-		return "No reward";
+		return class'X2AccessVocab'.default.NoReward;
 
 	Template = HackScreen.HackRewards[Index];
 	if (Template == none)
-		return "No reward";
+		return class'X2AccessVocab'.default.NoReward;
 
-	Result = string(Index + 1) @ "of" @ string(CardCount(HackScreen));
+	Result = class'X2AccessVocab'.static.Fill2(class'X2AccessVocab'.default.PositionOf,
+		Index + 1, CardCount(HackScreen));
 
 	if (Index == 0)
 		AppendPart(Result, HeaderWordFor(HackScreen, Template) $ ":" @ Template.GetFriendlyName());
@@ -382,7 +384,7 @@ private function string DescribeCard(UIHackingScreen HackScreen, int Index)
 		AppendPart(Result, FailTextFor(HackScreen));
 
 	if (Index == HackScreen.SelectedHackRewardOption)
-		AppendPart(Result, "Selected");
+		AppendPart(Result, class'X2AccessVocab'.default.Selected);
 
 	return Result;
 }
@@ -449,13 +451,13 @@ private function string DescribeResult(UIHackingScreen HackScreen)
 	if (Unlocked != "")
 		Result = HackScreen.strRewardUnlockedLabel $ ":" @ Unlocked;
 	else
-		Result = "Nothing unlocked";
+		Result = class'X2AccessVocab'.default.NothingUnlocked;
 
 	// Naming the gamble that did not land, with the card's own failure strip — which is the line
 	// that matters when slot 0 is a bad thing, because then missing does not mean "nothing".
 	if (!bWon && Gamble != none)
 	{
-		AppendPart(Result, "Missed:" @ Gamble.GetFriendlyName());
+		AppendPart(Result, class'X2AccessVocab'.default.MissedLabel @ Gamble.GetFriendlyName());
 		AppendPart(Result, FailTextFor(HackScreen));
 
 		// And when it is a bad thing, say WHAT it cost — the strip announces that there is a
@@ -477,11 +479,11 @@ private function string DescribeControls(UIHackingScreen HackScreen)
 	local string Result;
 
 	if (CardCount(HackScreen) > 1)
-		Result = "Left and right to choose";
+		Result = class'X2AccessVocab'.default.LeftRightChoose;
 
-	AppendComma(Result, "Enter to hack");
+	AppendComma(Result, class'X2AccessVocab'.default.EnterToHack);
 	if (HackScreen.CanCancel())
-		AppendComma(Result, "Escape to cancel");
+		AppendComma(Result, class'X2AccessVocab'.default.EscapeToCancel);
 
 	return Result;
 }
@@ -525,7 +527,8 @@ private function string ChanceWords(UIHackingScreen HackScreen, int Index)
 	if (Index < 0 || Index >= CardCount(HackScreen))
 		return "";
 
-	return string(int(HackScreen.GetHackChance(Index))) $ " percent";
+	return class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.PercentValue,
+		int(HackScreen.GetHackChance(Index)));
 }
 
 // ---------------------------------------------------------------------------

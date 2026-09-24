@@ -3,6 +3,7 @@
 #include "hooks.h"
 #include "narrator.h"
 #include "log.h"
+#include "vocab.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -66,7 +67,7 @@ void Init()
         // Aid, through the Narrator: an on-demand read, queued in order and labelled as such in
         // the scrollback ring.
         Narrator::Say(Narrator::Channel::Aid,
-            !navHelp.empty() ? navHelp : "No navigation help available.");
+            !navHelp.empty() ? navHelp : std::string(Vocab::NavHelpUnavailable));
     }), "?: navigation help"});
 
     LOG_INFO("Input: hotkey claims registered");

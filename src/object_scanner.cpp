@@ -34,7 +34,7 @@ void Call(const char* funcName, void* params)
     // The missing-companion case is checked FIRST so a pressed key is never silent — the shared
     // helper would log it, but the player deserves the spoken line.
     if (!GameUI::FindCompanionCDO(kScannerClass)) {
-        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable("Object scanner"));
+        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable(Vocab::SurfaceObjectScanner));
         return;
     }
     std::string result;

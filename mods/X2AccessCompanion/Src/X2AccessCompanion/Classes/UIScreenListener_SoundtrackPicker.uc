@@ -29,7 +29,7 @@ event OnInit(UIScreen Screen)
 	if (Title != "")
 		AccessibilityData = Title;
 	else
-		AccessibilityData = "Soundtrack";
+        AccessibilityData = class'X2AccessVocab'.default.ScreenSoundtrackFallback;
 
 	Screen.SetTimer(0.01, false, nameof(X2Access_Speak), self);
 	StartPolling(Screen);

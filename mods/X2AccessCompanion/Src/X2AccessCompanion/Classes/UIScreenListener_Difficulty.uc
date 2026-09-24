@@ -232,7 +232,7 @@ function string BuildAnnouncement(UIShellDifficulty DiffScreen, int FocusedIdx)
 			Label = DiffScreen.m_arrDifficultyTypeStrings[FocusedIdx];
 
 		if (DiffScreen.m_iSelectedDifficulty == FocusedIdx)
-			StatusText = "Selected";
+            StatusText = class'X2AccessVocab'.default.Selected;
 
 		if (Label == "")
 			return "";

@@ -226,7 +226,8 @@ private function string DescribeBond(UIAfterAction Screen, XComGameState_Unit Un
 		if (Bondmate == none || !Bondmate.IsAlive())
 			return "";
 
-		Result = "bond level" @ string(BondData.BondLevel);
+		Result = class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.BondLevel,
+			BondData.BondLevel);
 		if (BondData.bSoldierBondLevelUpAvailable)
 			AppendComma(Result, class'UIAfterAction'.default.m_strBondLevelUpAvailable);
 		return Result;

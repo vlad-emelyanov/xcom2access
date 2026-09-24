@@ -50,7 +50,7 @@ void Announce()
 {
     std::string line;
     if (!Call("AnnounceUnit", &line)) {
-        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable("Unit reader"));
+        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable(Vocab::SurfaceUnitReader));
         return;
     }
     if (!line.empty())

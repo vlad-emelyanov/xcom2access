@@ -22,6 +22,7 @@
 #include "flash_shadow.h"
 #include "ue3_reflection.h"
 #include "tts.h"
+#include "vocab.h"
 #include "log.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -241,7 +242,7 @@ void Init() {
     if (!sdkReady) {
         LOG_ERROR("Hooks: SDK initialization failed after %d attempts — game hooks disabled",
                   SDK_INIT_MAX_ATTEMPTS);
-        TTS::Speak("Warning: game hooks could not initialize. Accessibility features unavailable.");
+        TTS::Speak(std::string(Vocab::StartupSdkFailure));
         return;
     }
 
@@ -252,10 +253,9 @@ void Init() {
     // Install the ProcessEvent vtable hook
     if (ProcessEventHook::Install()) {
         LOG_INFO("Hooks: ProcessEvent hook active — intercepting game events");
-        TTS::Speak("Game hooks active.");
     } else {
         LOG_ERROR("Hooks: ProcessEvent hook installation failed");
-        TTS::Speak("Warning: game hook installation failed.");
+        TTS::Speak(std::string(Vocab::StartupHookFailure));
     }
 }
 

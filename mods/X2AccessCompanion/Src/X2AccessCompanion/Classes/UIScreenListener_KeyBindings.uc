@@ -43,7 +43,7 @@ event OnInit(UIScreen Screen)
 	else if (Title != "")
 		AccessibilityData = Title;
 	else
-		AccessibilityData = "Key Bindings";
+        AccessibilityData = class'X2AccessVocab'.default.KeyBindingsFallback;
 
 	Screen.SetTimer(0.01, false, nameof(X2Access_Speak), self);
 	StartPolling(Screen);
@@ -137,7 +137,8 @@ function PollFocus()
 		LastBoundSlot = SlotIdx;
 		Announcement = GetBindingLabel(KBScreen, SlotIdx);
 		if (Announcement != "")
-			AccessibilityData = "Binding: " $ Announcement $ ". " $ KBScreen.m_strPressKeyLabel;
+            AccessibilityData = class'X2AccessVocab'.static.FillS(
+                class'X2AccessVocab'.default.KeyBindingPrompt, Announcement) $ " " $ KBScreen.m_strPressKeyLabel;
 		else
 			AccessibilityData = KBScreen.m_strPressKeyLabel;
 		Screen.SetTimer(0.01, false, nameof(X2Access_Speak), self);
@@ -145,7 +146,7 @@ function PollFocus()
 	else if (!bNowAwaiting && bWasAwaitingInput)
 	{
 		// Exited binding mode — key was bound or cancelled
-		AccessibilityData = "Key bound";
+        AccessibilityData = class'X2AccessVocab'.default.KeyBound;
 		Screen.SetTimer(0.01, false, nameof(X2Access_Speak), self);
 	}
 

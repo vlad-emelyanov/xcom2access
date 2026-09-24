@@ -133,6 +133,7 @@ add_library(X2Access SHARED
     # walking the tree and by name — no offset into a mod class, so no static_assert can cover it.
     src/game_ui_mods.cpp
     src/menu_navigator.cpp
+    src/vocab.cpp
     # The screen recipes, one TU per surface family — the axis docs/surfaces/*.md already uses.
     # They see the navigator only through src/recipes/recipe_context.h, and their probe ORDER
     # is not theirs to decide: it is the kRecipes literal in menu_navigator.cpp. None of them

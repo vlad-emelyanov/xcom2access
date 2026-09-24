@@ -67,9 +67,7 @@ static void InitThread() {
     // MOD loaded, before any producer can have queued a thing — so the queue has nothing to
     // order it against, and the scrollback ring, which answers "what happened in the game", is
     // not where it belongs. Everything that speaks ABOUT THE GAME goes through Narrator::Say.
-    if (TTS::Init()) {
-        TTS::Speak("X2 Access loaded. XCOM 2 War of the Chosen accessibility mod active.");
-    } else {
+    if (!TTS::Init()) {
         LOG_WARN("TTS unavailable — continuing without speech");
     }
 

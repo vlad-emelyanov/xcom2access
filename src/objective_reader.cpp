@@ -3,6 +3,7 @@
 #include "input_arbiter.h"
 #include "narrator.h"
 #include "log.h"
+#include "vocab.h"
 
 #include "Graph/GraphAnnouncer.hpp"
 
@@ -76,18 +77,18 @@ void CounterWords(const std::string& token, std::string* noun, std::string* stat
     // "SupplyPickup". Keyed by the token's leaf so a missing entry degrades to the leaf's own tail
     // — "12 SupplyDrop" — rather than shifting anything or inventing a noun. The states are the
     // counter's three slots in SeqAct_DisplayMissionCounter's own words: Current, Available, Lost.
-    struct CounterToken { const char* leaf; const char* noun; const char* state; };
+    struct CounterToken { const char* leaf; const Vocab::Word* noun; const Vocab::Word* state; };
     static constexpr CounterToken kMissionIconTokens[] = {
-        {"MissionIcon_SupplyPickup", "crates", "picked up"},
-        {"MissionIcon_SupplyDrop", "crates", "available"},
-        {"MissionIcon_SupplyDestroyed", "crates", "destroyed"},
+        {"MissionIcon_SupplyPickup", &Vocab::ObjectiveCrates, &Vocab::ObjectivePickedUp},
+        {"MissionIcon_SupplyDrop", &Vocab::ObjectiveCrates, &Vocab::ObjectiveAvailable},
+        {"MissionIcon_SupplyDestroyed", &Vocab::ObjectiveCrates, &Vocab::ObjectiveDestroyed},
     };
     constexpr const char kMissionIcon[] = "MissionIcon_";
     if (leaf.compare(0, sizeof(kMissionIcon) - 1, kMissionIcon) == 0) {
         for (const CounterToken& t : kMissionIconTokens) {
             if (leaf == t.leaf) {
-                *noun = t.noun;
-                *state = t.state;
+                *noun = *t.noun;
+                *state = *t.state;
                 return;
             }
         }
@@ -95,6 +96,21 @@ void CounterWords(const std::string& token, std::string* noun, std::string* stat
         return;
     }
 
+    static constexpr CounterToken kObjectiveTokens[] = {
+        {"civilian_available", &Vocab::ObjectiveCivilian, &Vocab::ObjectiveAvailable},
+        {"civilian_dead", &Vocab::ObjectiveCivilian, &Vocab::ObjectiveDead},
+        {"civilian_rescued", &Vocab::ObjectiveCivilian, &Vocab::ObjectiveRescued},
+        {"evidence_available", &Vocab::ObjectiveEvidence, &Vocab::ObjectiveAvailable},
+        {"evidence_destroyed", &Vocab::ObjectiveEvidence, &Vocab::ObjectiveDestroyed},
+        {"evidence_recovered", &Vocab::ObjectiveEvidence, &Vocab::ObjectiveRecovered},
+    };
+    for (const CounterToken& t : kObjectiveTokens) {
+        if (leaf == t.leaf) {
+            *noun = *t.noun;
+            *state = *t.state;
+            return;
+        }
+    }
     size_t split = leaf.find_last_of('_');
     if (split == std::string::npos) {
         *noun = leaf;
@@ -139,7 +155,7 @@ std::string DescribeCounter(const GameUI::ObjectiveLine& line)
         // CounterHaveMin is the target ("1 of 2 recovered"), and it is -1 when there is no target
         // to reach — a count that is simply a count.
         if (line.haveMin > 0)
-            part += " of " + std::to_string(line.haveMin);
+            part = Vocab::Format(Vocab::ObjectiveOfFormat, part, std::to_string(line.haveMin));
         AppendPhrase(out, part);
     }
     if (line.availableAmount >= 0)
@@ -163,7 +179,7 @@ std::string DescribeLine(const GameUI::ObjectiveLine& line)
     // Warning first: it is the reason the row is drawn in an alert style, and it changes how the
     // rest of the row should be heard rather than qualifying it afterwards.
     if (line.warning)
-        AppendPhrase(out, "warning");
+        AppendPhrase(out, std::string(Vocab::ObjectiveWarning));
 
     if (line.label != kCounterPlaceholderLabel)
         AppendPhrase(out, line.label);
@@ -173,15 +189,16 @@ std::string DescribeLine(const GameUI::ObjectiveLine& line)
 
     // Timer is -1 when the row has none; 0 is a real value and means this is the last turn.
     if (line.timer >= 0)
-        AppendPhrase(out, std::to_string(line.timer) + (line.timer == 1 ? " turn" : " turns"));
+        AppendPhrase(out, Vocab::Format(Vocab::CountForm(line.timer, Vocab::ObjectiveTurnsOne,
+            Vocab::ObjectiveTurnsFew, Vocab::ObjectiveTurnsMany), std::to_string(line.timer)));
 
     // Only one of these can be set — SetCheckboxRow and SetTimerRow both branch completed before
     // failed — and neither is set on an objective still in play, which is the common case and
     // correctly says nothing.
     if (line.completed)
-        AppendPhrase(out, "completed");
+        AppendPhrase(out, std::string(Vocab::ObjectiveCompleted));
     else if (line.failed)
-        AppendPhrase(out, "failed");
+        AppendPhrase(out, std::string(Vocab::ObjectiveFailed));
 
     // One objective is one sentence, so the next one is audibly a new item rather than another
     // clause of this one.
@@ -226,7 +243,7 @@ std::string Compose(const GameUI::ObjectiveListView& view)
     if (spoken == 0) {
         // Distinguishable from a broken read: the panel was found and walked, and it genuinely
         // had nothing on it. Between missions and early in the Avenger this is the truth.
-        AppendPhrase(out, "none listed");
+        AppendPhrase(out, std::string(Vocab::ObjectiveNoneListed));
     }
     return out;
 }
@@ -246,15 +263,15 @@ std::string DescribeMissionCounter(const GameUI::MissionCounter& c)
     // Infinity is drawn as a symbol rather than a number, so there is no digit to read and
     // m_sCounter holds whatever was last set. Say the meaning instead.
     if (c.infinity)
-        AppendPhrase(value, "unlimited");
+        AppendPhrase(value, std::string(Vocab::ObjectiveUnlimited));
     else if (!c.counter.empty())
         value += (value.empty() ? "" : " ") + c.counter;
 
     AppendPhrase(out, value);
     if (c.expired)
-        AppendPhrase(out, "expired");
+        AppendPhrase(out, std::string(Vocab::ObjectiveExpired));
     if (c.locked)
-        AppendPhrase(out, "locked");
+        AppendPhrase(out, std::string(Vocab::ObjectiveLocked));
 
     EndSentence(out);
     return out;
@@ -274,7 +291,7 @@ void Announce()
     // still the failure case — with one exception worth taking: if counters ARE showing, the
     // player gets those rather than nothing.
     if (!view.found && counters.empty()) {
-        Narrator::Say(Narrator::Channel::Aid, "Objectives unavailable.");
+        Narrator::Say(Narrator::Channel::Aid, std::string(Vocab::ObjectiveUnavailable));
         return;
     }
 

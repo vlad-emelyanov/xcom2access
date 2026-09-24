@@ -461,8 +461,11 @@ sits.
   always on, so there is no mode to mirror, but the overlay itself is real:
   `XComActionIconManager` pools in-world cover icons around the path destination
   (`UpdateCoverIcons`), drawing `UI_3D.Cover.CoverFull` or `CoverHalf` per covered edge.
-  ✅ **Our two-state vocabulary is therefore the game's own** — "Full cover" / "Half cover"
-  are those two meshes, not a scheme we invented. ⚠ Its scope is
+  ✅ **The two cover states are drawn by the game.** The mesh names are `CoverFull` and
+  `CoverHalf`, but the player-facing shot breakdown names them through
+  `XLocalizedData.TargetHighCover` / `TargetLowCover` ("Высокое укрытие" /
+  "Низкое укрытие" in `XComGame.rus`). Tactical target readouts use those fields;
+  our directional cover phrases use the same Russian nouns. ⚠ Its scope is
   `CoverIconTileRange=2` (`XComGameCore.ini:1221`), i.e. two tiles around the cursor,
   against our twelve — which is a RANGE difference, not a parity breach, and the rule for
   telling those apart is under **Sighted parity** in `CLAUDE.md`: a sighted player sweeps

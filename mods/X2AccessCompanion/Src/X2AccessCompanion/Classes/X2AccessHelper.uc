@@ -125,8 +125,8 @@ static function string GetCheckboxState(UIMechaListItem Item)
 	if (Item != none && Item.Checkbox != none)
 	{
 		if (Item.Checkbox.bChecked)
-			return "Checked";
-		return "Unchecked";
+			return class'X2AccessVocab'.default.Checked;
+		return class'X2AccessVocab'.default.Unchecked;
 	}
 	return "";
 }
@@ -136,7 +136,8 @@ static function string GetCheckboxState(UIMechaListItem Item)
 static function string GetSliderPercent(UIMechaListItem Item)
 {
 	if (Item != none && Item.Slider != none)
-		return string(int(Item.Slider.percent)) $ " percent";
+		return class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.PercentValue,
+			int(Item.Slider.percent));
 	return "";
 }
 
@@ -222,7 +223,7 @@ static function string DescribeSoldierHealth(XComGameState_Unit Unit)
 	if (Max <= 0)
 		return "";
 
-	return string(Cur) @ "of" @ string(Max) @ "health";
+	return class'X2AccessVocab'.static.Fill2(class'X2AccessVocab'.default.TargetHealth, Cur, Max);
 }
 
 // The will bar plus the mental-state label (the persistent form of the walk-up's tired/shaken

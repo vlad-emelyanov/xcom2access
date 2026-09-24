@@ -215,7 +215,8 @@ function string BuildAnnouncement(UIShellNarrativeContent NarrScreen, int Focuse
 	if (FocusedIdx < ItemLabels.Length)
 		Label = ItemLabels[FocusedIdx];
 	if (Label == "")
-		Label = "Item " $ (FocusedIdx + 1);
+        Label = class'X2AccessVocab'.static.Fill1(
+            class'X2AccessVocab'.default.ItemFallback, FocusedIdx + 1);
 
 	// Checkbox state
 	CheckState = class'X2AccessHelper'.static.GetCheckboxState(ListItem);

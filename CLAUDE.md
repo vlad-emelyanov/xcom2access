@@ -164,6 +164,10 @@ rules** below instead — that is the test for which file a new rule goes in.
   template through vanilla's `<XGParam:…/>` tags, never concatenated; a counted noun is three keys
   chosen by `X2AccessVocab.Count`. A mod loc file cannot override a key vanilla ships
   (`docs/localization.md`).
+- ⛔ **Every new or changed player-facing mod string, in C++ or UnrealScript, must be added to
+  `X2AccessVocab` and translated in both `.int` and `.rus`.** First reuse a game-localized word
+  when it has the same meaning; keep developer-only diagnostics out of speech. Check all three
+  key sets with `python tools/check_localization.py` (`docs/localization.md`).
 - **Earcons are game-native SoundCues, played through the game's sound manager** —
   `` `SOUNDMGR.PlaySoundEvent("<cue>") `` over the Highlander's SoundCue mapping — never WAVs
   played from the ASI: the game's mixer is where the player's volume settings live. The cues are

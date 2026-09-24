@@ -80,7 +80,7 @@ bool Call(const char* funcName, Narrator::Channel channel)
 void CallOnDemand(const char* funcName, Narrator::Channel channel)
 {
     if (!GameUI::FindCompanionCDO(kReaderClass)) {
-        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable("Hacking reader"));
+        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable(Vocab::SurfaceHackingReader));
         return;
     }
     Call(funcName, channel);
@@ -137,7 +137,7 @@ void OnTick()
             // sound and nothing else, so this is the whole confirmation they get. gHackStarted
             // still holds the LAST polled state here, which is why it is read before the reset.
             if (!gHackStarted)
-                Narrator::Say(Narrator::Channel::Aid, "Hack cancelled");
+                Narrator::Say(Narrator::Channel::Aid, std::string(Vocab::HackCancelled));
             // Let the companion forget what it announced, so a hack retried on the SAME object
             // after a cancel reads out again rather than opening in silence.
             Call("EndHack", Narrator::Channel::Aid);

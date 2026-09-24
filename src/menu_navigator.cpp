@@ -49,7 +49,7 @@ namespace Recipes {
 const ControlType& ButtonType()
 {
     static const ControlType type{
-        /*Key*/ Vocab::RoleButton,
+        /*Key*/ Vocab::RoleButton.english,
         /*Order*/ {AnnouncementKinds::Label, AnnouncementKinds::Role, AnnouncementKinds::Enabled,
             AnnouncementKinds::Reason, kKindAttention, AnnouncementKinds::Value,
             AnnouncementKinds::Selected},
@@ -67,7 +67,7 @@ const ControlType& ButtonType()
 const ControlType& TickerType()
 {
     static const ControlType type{
-        /*Key*/ Vocab::RoleTicker,
+        /*Key*/ Vocab::RoleTicker.english,
         /*Order*/ {AnnouncementKinds::Label, AnnouncementKinds::Role},
         /*Common*/ []() {
             return std::vector<NodeAnnouncement>{
@@ -81,15 +81,15 @@ const ControlType& TickerType()
 
 // A value-carrying settings control ("checkbox", "slider", …): the value reads right after the
 // role, before any unavailable/reason status. One factory — the types differ only in role word.
-ControlType MakeValueType(const char* roleWord)
+ControlType MakeValueType(const Vocab::Word& roleWord)
 {
     return ControlType{
-        /*Key*/ roleWord,
+        /*Key*/ roleWord.english,
         /*Order*/ {AnnouncementKinds::Label, AnnouncementKinds::Role, AnnouncementKinds::Value,
             AnnouncementKinds::Enabled, AnnouncementKinds::Reason, AnnouncementKinds::Selected},
-        /*Common*/ [roleWord]() {
+        /*Common*/ [role = &roleWord]() {
             return std::vector<NodeAnnouncement>{
-                NodeAnnouncement([roleWord]() { return std::string(roleWord); }, false,
+                NodeAnnouncement([role]() { return std::string(*role); }, false,
                     AnnouncementKinds::Role),
             };
         },
@@ -451,8 +451,8 @@ void ExitAmbientFocus(bool silent)
     // The recipe's own word for what the arrows drive again — two ambient layers exist now, and
     // "Map" said on the Avenger would name the wrong one.
     if (!silent)
-        TTS::Speak((gActive && gActive->ambientExitName) ? gActive->ambientExitName
-                                                                  : Vocab::TacticalWorldMode);
+        TTS::Speak((gActive && gActive->ambientExitName)
+            ? std::string(*gActive->ambientExitName) : std::string(Vocab::TacticalWorldMode));
     LOG_INFO("MenuNavigator: %s unfocused (%s)", gActive ? gActive->logName : "?",
         silent ? "yielded to the game" : "player exit");
 }
@@ -916,6 +916,8 @@ void OnTick()
     gLastPollMs = now;
 
     try {
+        Vocab::LoadFromGame();
+        Vocab::AnnounceStartup();
         // Being on top of the stack is not the same as being reachable. Starting a campaign pops
         // the narrative screen and leaves the difficulty screen underneath inited, focused and
         // topmost for the whole twelve seconds the loading movie plays — so the layer happily

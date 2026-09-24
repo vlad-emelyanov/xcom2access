@@ -102,7 +102,7 @@ bool ReadFreeAimFlag()
 void CallOnDemand(const char* funcName)
 {
     if (!GameUI::FindCompanionCDO(kReaderClass)) {
-        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable("Shot reader"));
+        Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable(Vocab::SurfaceShotReader));
         return;
     }
     Call(funcName, Narrator::Channel::Aid);

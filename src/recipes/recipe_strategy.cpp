@@ -2628,7 +2628,7 @@ std::unique_ptr<GraphRender> BuildSkyrangerArrives()
     }
     if (added == 0) {
         b.AddLabel(ControlId::Structural("skyranger/none"),
-            []() { return Vocab::SurfaceUnavailable("Skyranger reader"); });
+            []() { return Vocab::SurfaceUnavailable(Vocab::SurfaceSkyrangerReader); });
     }
     b.PopContext();
 
@@ -3321,19 +3321,19 @@ NodeVtable PolicyCardNode(const GameUI::PolicyCard& card, const WireRecord* rec,
     // in every case — the game stays the authority on what happens, the caption only covers its
     // silence, and the read-only calendar gate keeps its own voice (UICantChangeOrders through
     // the popup recipe, announced once on the screen name).
-    const char* refusal = nullptr;
+    const Vocab::Word* refusal = nullptr;
     if (holding) {
         if (drop == "0")
-            refusal = Vocab::PolicyCantPlace;
+            refusal = &Vocab::PolicyCantPlace;
     } else if (canPlay) {
         if (card.cardId == 0)
-            refusal = Vocab::PolicyCantPick;
+            refusal = &Vocab::PolicyCantPick;
         else if (card.vital)
-            refusal = Vocab::PolicyCantMove;
+            refusal = &Vocab::PolicyCantMove;
     }
     vt.OnActivate = [column, slot, refusal]() {
         if (refusal)
-            TTS::Speak(refusal);
+            TTS::Speak(std::string(*refusal));
         CallPolicyVerb("SelectPolicyCard", column, slot);
     };
 
@@ -4143,7 +4143,7 @@ std::unique_ptr<GraphRender> BuildChosenInfo()
         // mid-build. Said out loud: the player still has to leave the screen, and the Continue
         // below is how.
         b.AddLabel(ControlId::Structural("chosen/none"),
-            []() { return Vocab::SurfaceUnavailable("Chosen reader"); });
+            []() { return Vocab::SurfaceUnavailable(Vocab::SurfaceChosenReader); });
     }
     b.PopContext();
 
@@ -4491,7 +4491,7 @@ std::unique_ptr<GraphRender> BuildBondConfirm()
         b.PopContext();
     if (added == 0) {
         b.AddLabel(ControlId::Structural("bondconfirm/none"),
-            []() { return Vocab::SurfaceUnavailable("Bond reader"); });
+            []() { return Vocab::SurfaceUnavailable(Vocab::SurfaceBondReader); });
     }
 
     // The buttons: CONFIRM BOND on Enter, cancel on Escape — both through the screen's own
@@ -4575,7 +4575,7 @@ std::unique_ptr<GraphRender> BuildResistanceReport()
     }
     if (added == 0) {
         b.AddLabel(ControlId::Structural("report/none"),
-            []() { return Vocab::SurfaceUnavailable("Report reader"); });
+            []() { return Vocab::SurfaceUnavailable(Vocab::SurfaceReportReader); });
     }
     b.PopContext();
 
@@ -4710,7 +4710,7 @@ std::unique_ptr<GraphRender> BuildChosenEvents()
     if (added == 0) {
         b.BeginStop("column0");
         b.AddLabel(ControlId::Structural("chosenevents/none"),
-            []() { return Vocab::SurfaceUnavailable("Chosen reader"); });
+            []() { return Vocab::SurfaceUnavailable(Vocab::SurfaceChosenReader); });
     }
 
     // No Continue while the warning is up — the companion withholds the record, because the

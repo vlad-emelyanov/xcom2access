@@ -29,9 +29,9 @@ event OnInit(UIScreen Screen)
 	FocusedText = GetFocusedButtonText(Shell);
 
 	if (FocusedText != "")
-		AccessibilityData = "Main Menu. " $ FocusedText;
+        AccessibilityData = class'X2AccessVocab'.default.ScreenMainMenu $ ". " $ FocusedText;
 	else
-		AccessibilityData = "Main Menu";
+        AccessibilityData = class'X2AccessVocab'.default.ScreenMainMenu;
 
 	Screen.SetTimer(0.01, false, nameof(X2Access_Speak), self);
 	StartPolling(Screen);
@@ -52,7 +52,7 @@ event OnReceiveFocus(UIScreen Screen)
 
 	if (FocusedText != "")
 	{
-		AccessibilityData = "Main Menu. " $ FocusedText;
+        AccessibilityData = class'X2AccessVocab'.default.ScreenMainMenu $ ". " $ FocusedText;
 		Screen.SetTimer(0.01, false, nameof(X2Access_Speak), self);
 	}
 

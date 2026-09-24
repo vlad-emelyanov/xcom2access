@@ -148,12 +148,12 @@ function AnnounceShot()
 	HUD = GetTacticalHUD();
 	if (HUD == none || !HUD.m_isMenuRaised)
 	{
-		NativeResult = "Not targeting";
+		NativeResult = class'X2AccessVocab'.default.NotTargeting;
 		return;
 	}
 	if (!ResolveShot(HUD, Action, AbilityState, TargetRef, TargetIndex))
 	{
-		NativeResult = "No ability selected";
+		NativeResult = class'X2AccessVocab'.default.NoAbilitySelected;
 		return;
 	}
 
@@ -197,12 +197,12 @@ function AnnounceBreakdown()
 	HUD = GetTacticalHUD();
 	if (HUD == none || !HUD.m_isMenuRaised)
 	{
-		NativeResult = "Not targeting";
+		NativeResult = class'X2AccessVocab'.default.NotTargeting;
 		return;
 	}
 	if (!ResolveShot(HUD, Action, AbilityState, TargetRef, TargetIndex))
 	{
-		NativeResult = "No ability selected";
+		NativeResult = class'X2AccessVocab'.default.NoAbilitySelected;
 		return;
 	}
 	// A free-aimed ability has no per-target to-hit table to break down, and the game shows none
@@ -210,7 +210,7 @@ function AnnounceBreakdown()
 	// percentage. So this is parity rather than a gap — say so, and give the aim instead.
 	if (CursorMethod(HUD) != none)
 	{
-		Result = "No breakdown while free aiming";
+		Result = class'X2AccessVocab'.default.NoFreeAimBreakdown;
 		AppendPart(Result, DescribeAimNow(HUD, AbilityState, true));
 		NativeResult = Result;
 		return;
@@ -218,13 +218,17 @@ function AnnounceBreakdown()
 
 	if (!GetBreakdown(AbilityState, TargetRef, Breakdown))
 	{
-		NativeResult = "No shot breakdown";
+		NativeResult = class'X2AccessVocab'.default.NoShotBreakdown;
 		return;
 	}
 
-	Result = "Hit" @ string(HitChanceOf(Breakdown)) $ " percent";
+	Result = class'UITacticalHUD_ShotHUD'.default.m_sShotChanceLabel @
+		class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.PercentValue,
+			HitChanceOf(Breakdown));
 	AppendPart(Result, DescribeModifiers(Breakdown, eHit_Success));
-	AppendPart(Result, "Crit" @ string(Breakdown.ResultTable[eHit_Crit]) $ " percent");
+	AppendPart(Result, class'UITacticalHUD_ShotHUD'.default.m_sCritChanceLabel @
+		class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.PercentValue,
+			Breakdown.ResultTable[eHit_Crit]));
 	AppendPart(Result, DescribeModifiers(Breakdown, eHit_Crit));
 	NativeResult = Result;
 }
@@ -342,29 +346,36 @@ private function string DescribeAbility(UITacticalHUD HUD, AvailableAction Actio
 
 	Result = AbilityState.GetMyFriendlyName();
 	if (Action.bFreeAim)
-		Result = "Free aim:" @ Result;
+		Result = class'X2AccessVocab'.default.FreeAimLabel @ Result;
 
 	if (HUD.m_kAbilityHUD != none && HUD.m_kAbilityHUD.m_arrAbilities.Length > 0)
-		Result $= "," @ string(HUD.m_kAbilityHUD.m_iCurrentIndex + 1) @ "of"
-			@ string(HUD.m_kAbilityHUD.m_arrAbilities.Length);
+		Result $= "," @ class'X2AccessVocab'.static.Fill2(
+			class'X2AccessVocab'.default.PositionOf,
+			HUD.m_kAbilityHUD.m_iCurrentIndex + 1, HUD.m_kAbilityHUD.m_arrAbilities.Length);
 
 	if (AbilityState.IsCoolingDown())
 	{
-		AppendComma(Result, "cooldown" @ string(AbilityState.GetCooldownRemaining())
-			@ (AbilityState.GetCooldownRemaining() == 1 ? "turn" : "turns"));
+		AppendComma(Result, class'X2AccessVocab'.static.Count(
+			AbilityState.GetCooldownRemaining(),
+			class'X2AccessVocab'.default.Cooldown_One,
+			class'X2AccessVocab'.default.Cooldown_Few,
+			class'X2AccessVocab'.default.Cooldown_Many));
 	}
 	else
 	{
 		Charges = AbilityState.GetCharges();
 		if (Charges >= 0)
-			AppendComma(Result, string(Charges) @ (Charges == 1 ? "charge" : "charges"));
+			AppendComma(Result, class'X2AccessVocab'.static.Count(Charges,
+				class'X2AccessVocab'.default.Charges_One,
+				class'X2AccessVocab'.default.Charges_Few,
+				class'X2AccessVocab'.default.Charges_Many));
 	}
 
 	Template = AbilityState.GetMyTemplate();
 	BattleData = XComGameState_BattleData(
 		`XCOMHISTORY.GetSingleGameStateObjectForClass(class'XComGameState_BattleData'));
 	if (Template != none && BattleData != none && BattleData.IsAbilityObjectiveHighlighted(Template))
-		AppendComma(Result, "objective");
+		AppendComma(Result, class'X2AccessVocab'.default.AbilityObjective);
 
 	if (Action.AvailableCode != 'AA_Success')
 		AppendPart(Result, class'X2AbilityTemplateManager'.static
@@ -388,7 +399,7 @@ private function string DescribeTarget(UITacticalHUD HUD, AvailableAction Action
 	local string Result;
 
 	if (Action.bFreeAim)
-		return "Free aim, no target";
+		return class'X2AccessVocab'.default.FreeAimNoTarget;
 
 	if (TargetRef.ObjectID <= 0)
 	{
@@ -397,7 +408,7 @@ private function string DescribeTarget(UITacticalHUD HUD, AvailableAction Action
 		// languages — and it was the shape the 2026-08-21 run produced most often at the shot HUD.
 		if (Action.AvailableCode != 'AA_Success')
 			return "";
-		return "No target";
+		return class'X2AccessVocab'.default.NoTarget;
 	}
 
 	// ⛔ A SELF-TARGETED ability has no target worth naming. Overwatch, Reload and Hunker Down
@@ -423,8 +434,9 @@ private function string DescribeTarget(UITacticalHUD HUD, AvailableAction Action
 	// sighted player answers off the reticles and the enemy strip at a glance. Spoken even at 1
 	// of 1: knowing there is nothing else to cycle to is the same fact, and it is the press the
 	// player is spared.
-	AppendComma(Result, string(TargetIndex + 1) @ "of"
-		@ string(Action.AvailableTargets.Length));
+	AppendComma(Result, class'X2AccessVocab'.static.Fill2(
+		class'X2AccessVocab'.default.PositionOf,
+		TargetIndex + 1, Action.AvailableTargets.Length));
 
 	if (GetBreakdown(AbilityState, TargetRef, Breakdown))
 	{
@@ -442,14 +454,16 @@ private function string DescribeTarget(UITacticalHUD HUD, AvailableAction Action
 		// "Сектоид,  60 percent,  60 percent" — the same number twice, meaning two different
 		// things, with the give-away double space where the caption should have been.
 		AppendComma(Result, class'UITacticalHUD_ShotHUD'.default.m_sShotChanceLabel
-			@ string(HitChanceOf(Breakdown)) $ " percent");
+			@ class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.PercentValue,
+				HitChanceOf(Breakdown)));
 		if (Breakdown.ResultTable[eHit_Crit] > 0)
 		{
 			// SpecialCritLabel renames the crit row for abilities where "crit" is the wrong word
 			// (a Reaper's Executioner, for one); the panel prefers it whenever it is set, so we do.
 			AppendComma(Result, (Breakdown.SpecialCritLabel != "" ? Breakdown.SpecialCritLabel
 				: class'UITacticalHUD_ShotHUD'.default.m_sCritChanceLabel)
-				@ string(Breakdown.ResultTable[eHit_Crit]) $ " percent");
+				@ class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.PercentValue,
+					Breakdown.ResultTable[eHit_Crit]));
 		}
 	}
 
@@ -457,10 +471,12 @@ private function string DescribeTarget(UITacticalHUD HUD, AvailableAction Action
 	if (MaxDamage.Damage > 0)
 	{
 		if (MinDamage.Damage == MaxDamage.Damage)
-			AppendComma(Result, "damage" @ string(MinDamage.Damage));
+			AppendComma(Result, class'UITacticalHUD_ShotHUD'.default.m_sDamageRangeLabel
+				@ string(MinDamage.Damage));
 		else
-			AppendComma(Result, "damage" @ string(MinDamage.Damage) @ "to"
-				@ string(MaxDamage.Damage));
+			AppendComma(Result, class'UITacticalHUD_ShotHUD'.default.m_sDamageRangeLabel
+				@ class'X2AccessVocab'.static.Fill2(class'X2AccessVocab'.default.NumberRange,
+					MinDamage.Damage, MaxDamage.Damage));
 	}
 
 	AppendComma(Result, DescribeTargetCover(TargetUnit, AbilityState.OwnerStateObject));
@@ -518,13 +534,13 @@ private function string DescribeTargetBlast(UITacticalHUD HUD, XComGameState_Abi
 	Victims = UnitsInTiles(Tiles, TargetRef.ObjectID);
 	Contents = DescribeVictims(Victims, Shooter, Warning);
 	if (Contents == "")
-		Result = "Blast: nothing";
+		Result = class'X2AccessVocab'.default.BlastEmpty;
 	else
-		Result = "Blast:" @ Contents;
+		Result = class'X2AccessVocab'.default.BlastLabel @ Contents;
 	AppendPart(Result, Warning);
 
 	if (bVerbose)
-		AppendPart(Result, "Blast area" @ BlastExtentWords(Tiles));
+		AppendPart(Result, class'X2AccessVocab'.default.BlastArea @ BlastExtentWords(Tiles));
 
 	return Result;
 }
@@ -644,7 +660,8 @@ private function string BlastExtentWords(const out array<TTile> Tiles)
 		MinY = Min(MinY, Tiles[i].Y);
 		MaxY = Max(MaxY, Tiles[i].Y);
 	}
-	return string(MaxX - MinX + 1) @ "by" @ string(MaxY - MinY + 1) @ "tiles";
+	return class'X2AccessVocab'.static.Fill2(class'X2AccessVocab'.default.BlastSize,
+		MaxX - MinX + 1, MaxY - MinY + 1);
 }
 
 // The cover state the reticle draws over the target: the shield icon, and whether this shooter
@@ -661,7 +678,7 @@ static function string DescribeTargetCover(XComGameState_Unit TargetUnit,
 		return "";
 
 	if (TargetUnit.IsFlanked(ShooterRef))
-		return "flanked";
+		return class'X2AccessVocab'.default.Flanked;
 
 	return CoverWords(TargetUnit.GetCoverTypeFromLocation());
 }
@@ -674,10 +691,10 @@ static function string CoverWords(ECoverType Cover)
 {
 	switch (Cover)
 	{
-	case CT_Standing: return "in full cover";
-	case CT_MidLevel: return "in half cover";
+	case CT_Standing: return class'XLocalizedData'.default.TargetHighCover;
+	case CT_MidLevel: return class'XLocalizedData'.default.TargetLowCover;
 	}
-	return "no cover";
+	return class'X2AccessVocab'.default.NoCover;
 }
 
 // Health, shield and armour — what the target's unit flag shows over its head.
@@ -689,16 +706,18 @@ static function string DescribeTargetHealth(XComGameState_Unit TargetUnit)
 	if (TargetUnit == none)
 		return "";
 
-	Result = string(int(TargetUnit.GetCurrentStat(eStat_HP))) @ "of"
-		@ string(int(TargetUnit.GetMaxStat(eStat_HP))) @ "health";
+	Result = class'X2AccessVocab'.static.Fill2(class'X2AccessVocab'.default.TargetHealth,
+		int(TargetUnit.GetCurrentStat(eStat_HP)), int(TargetUnit.GetMaxStat(eStat_HP)));
 
 	Shield = int(TargetUnit.GetCurrentStat(eStat_ShieldHP));
 	if (Shield > 0)
-		AppendComma(Result, "shield" @ string(Shield));
+		AppendComma(Result, class'X2AccessVocab'.static.Fill1(
+			class'X2AccessVocab'.default.TargetShield, Shield));
 
 	Armor = int(TargetUnit.GetArmorMitigationForUnitFlag());
 	if (Armor > 0)
-		AppendComma(Result, "armour" @ string(Armor));
+		AppendComma(Result, class'X2AccessVocab'.static.Fill1(
+			class'X2AccessVocab'.default.TargetArmor, Armor));
 
 	return Result;
 }
@@ -764,10 +783,11 @@ static function string DescribeVisibleEnemies(XComGameState_Unit UnitState,
 	}
 
 	if (Count == 0)
-		return bSpeakZero ? "No enemies visible" : "";
-	if (Count == 1)
-		return "1 enemy visible";
-	return string(Count) @ "enemies visible";
+		return bSpeakZero ? class'X2AccessVocab'.default.EmptyEnemies : "";
+	return class'X2AccessVocab'.static.Count(Count,
+		class'X2AccessVocab'.default.EnemiesVisible_One,
+		class'X2AccessVocab'.default.EnemiesVisible_Few,
+		class'X2AccessVocab'.default.EnemiesVisible_Many);
 }
 
 // The HUD graph's Targets stop: one wire record per head on the enemy strip
@@ -851,35 +871,39 @@ function BuildEnemyRecords()
 		if (Hit >= 0)
 		{
 			class'X2AccessWire'.static.AddField(Rec, "hit",
-				class'UITacticalHUD_ShotHUD'.default.m_sShotChanceLabel @ string(Hit) $ " percent");
+				class'UITacticalHUD_ShotHUD'.default.m_sShotChanceLabel @
+				class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.PercentValue, Hit));
 		}
 
 		class'X2AccessWire'.static.AddField(Rec, "cover", DescribeTargetCover(TargetUnit, ShooterRef));
 		class'X2AccessWire'.static.AddField(Rec, "health", DescribeTargetHealth(TargetUnit));
 
 		if (Strip.m_arrSSEnemies.Find('ObjectID', Target.ObjectID) != INDEX_NONE)
-			class'X2AccessWire'.static.AddField(Rec, "sight", "via squadsight");
+			class'X2AccessWire'.static.AddField(Rec, "sight", class'X2AccessVocab'.default.ViaSquadsight);
 		if (Strip.m_arrCurrentlyAffectable.Find('ObjectID', Target.ObjectID) == INDEX_NONE)
-			class'X2AccessWire'.static.AddField(Rec, "blocked", "not targetable");
+			class'X2AccessWire'.static.AddField(Rec, "blocked", class'X2AccessVocab'.default.NotTargetable);
 
 		if (TargetUnit != none)
 		{
 			Names = class'X2AccessUnitReader'.static.EffectNames(TargetUnit, ePerkBuff_Bonus);
 			if (Names != "")
-				class'X2AccessWire'.static.AddField(Rec, "bonus", "Bonuses:" @ Names);
+				class'X2AccessWire'.static.AddField(Rec, "bonus", class'X2AccessVocab'.default.BonusesLabel @ Names);
 			Names = class'X2AccessUnitReader'.static.EffectNames(TargetUnit, ePerkBuff_Penalty);
 			if (Names != "")
-				class'X2AccessWire'.static.AddField(Rec, "penalty", "Penalties:" @ Names);
+				class'X2AccessWire'.static.AddField(Rec, "penalty", class'X2AccessVocab'.default.PenaltiesLabel @ Names);
 		}
 
 		if (i == Strip.CurrentTargetIndex)
-			class'X2AccessWire'.static.AddField(Rec, "targeted", "targeted");
+			class'X2AccessWire'.static.AddField(Rec, "targeted", class'X2AccessVocab'.default.Targeted);
 
 		if (TargetUnit != none)
 		{
 			Dist = TileDistance(ActiveUnit.TileLocation, TargetUnit.TileLocation);
 			class'X2AccessWire'.static.AddField(Rec, "dist",
-				string(Dist) @ ((Dist == 1) ? "tile" : "tiles"));
+				class'X2AccessVocab'.static.Count(Dist,
+					class'X2AccessVocab'.default.Tiles_One,
+					class'X2AccessVocab'.default.Tiles_Few,
+					class'X2AccessVocab'.default.Tiles_Many));
 			class'X2AccessWire'.static.AddField(Rec, "bearing",
 				class'X2AccessTileReader'.static.OffsetWords(ActiveUnit.TileLocation,
 					TargetUnit.TileLocation));
@@ -914,7 +938,7 @@ function SelectEnemyHead(int ObjectID)
 	HUD = GetTacticalHUD();
 	if (HUD == none || HUD.m_kEnemyTargets == none)
 	{
-		NativeResult = "Unavailable";
+		NativeResult = class'X2AccessVocab'.default.Unavailable;
 		return;
 	}
 	Strip = HUD.m_kEnemyTargets;
@@ -923,20 +947,20 @@ function SelectEnemyHead(int ObjectID)
 	if (Battle != none && Battle.m_kDesc != none
 		&& Battle.m_kDesc.m_bIsTutorial && Battle.m_kDesc.m_bDisableSoldierChatter)
 	{
-		NativeResult = "Unavailable";
+		NativeResult = class'X2AccessVocab'.default.Unavailable;
 		return;
 	}
 
 	Index = Strip.m_arrTargets.Find('ObjectID', ObjectID);
 	if (Index == INDEX_NONE)
 	{
-		NativeResult = "No longer visible";
+		NativeResult = class'X2AccessVocab'.default.NoLongerVisible;
 		return;
 	}
 
 	Strip.SelectEnemyByIndex(Index);
 	if (!HUD.m_isMenuRaised)
-		NativeResult = "Unavailable";
+		NativeResult = class'X2AccessVocab'.default.Unavailable;
 }
 
 // Targets that are not units: destructible cover, a hackable terminal, a door. Static and public
@@ -960,9 +984,9 @@ static function string DescribeNonUnitTarget(StateObjectReference TargetRef)
 	Destructible = XComGameState_Destructible(
 		`XCOMHISTORY.GetGameStateForObjectID(TargetRef.ObjectID));
 	if (Destructible != none)
-		return "Object";
+		return class'X2AccessVocab'.default.InteractiveObject;
 
-	return "Target";
+	return class'X2AccessVocab'.default.TargetFallback;
 }
 
 // The modifier rows of one column of the shot wings, in the game's own sign convention
@@ -977,10 +1001,13 @@ private function string DescribeModifiers(ShotBreakdown Breakdown, int HitType)
 		if (Breakdown.Modifiers[i].ModType != HitType)
 			continue;
 		if (Breakdown.Modifiers[i].Value >= 0)
-			Value = "plus" @ string(Breakdown.Modifiers[i].Value);
+			Value = class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.PlusValue,
+				Breakdown.Modifiers[i].Value);
 		else
-			Value = "minus" @ string(-Breakdown.Modifiers[i].Value);
-		AppendPart(Result, Breakdown.Modifiers[i].Reason @ Value $ " percent");
+			Value = class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.MinusValue,
+				-Breakdown.Modifiers[i].Value);
+		AppendPart(Result, Breakdown.Modifiers[i].Reason @ Value @
+			class'X2AccessVocab'.default.PercentWord);
 	}
 	return Result;
 }
@@ -1055,7 +1082,7 @@ function FreeAimStep(int Cardinal)
 	Target.Z = AimZ;
 	if (Target.X == AimX && Target.Y == AimY)
 	{
-		NativeResult = "Map edge";
+		NativeResult = class'X2AccessVocab'.default.MapEdge;
 		return;
 	}
 
@@ -1065,7 +1092,7 @@ function FreeAimStep(int Cardinal)
 
 	if (!PushAim(Cursor, WorldData, Target))
 	{
-		NativeResult = "Out of range";
+		NativeResult = class'X2AccessVocab'.default.ReachOutOfRange;
 		return;
 	}
 	NativeResult = DescribeAim(AbilityState, Shooter, Method, AimTile(), false);
@@ -1102,19 +1129,19 @@ function FreeAimFloor(int Delta)
 		{
 			// A floor exists but the chain clamp will not reach it — height counts toward the
 			// ability's cursor range too.
-			NativeResult = "Out of range";
+			NativeResult = class'X2AccessVocab'.default.ReachOutOfRange;
 			return;
 		}
 		if (Delta > 0)
-			NativeResult = "Up." @ DescribeAim(AbilityState, Shooter, Method, AimTile(), false);
+			NativeResult = class'X2AccessVocab'.default.AimUp @ DescribeAim(AbilityState, Shooter, Method, AimTile(), false);
 		else
-			NativeResult = "Down." @ DescribeAim(AbilityState, Shooter, Method, AimTile(), false);
+			NativeResult = class'X2AccessVocab'.default.AimDown @ DescribeAim(AbilityState, Shooter, Method, AimTile(), false);
 		return;
 	}
 	if (Delta > 0)
-		NativeResult = "No floor above";
+		NativeResult = class'X2AccessVocab'.default.NoFloorAbove;
 	else
-		NativeResult = "No floor below";
+		NativeResult = class'X2AccessVocab'.default.NoFloorBelow;
 }
 
 // Aim at the object scanner's current selection — the scanner's action verb while free-aiming,
@@ -1142,7 +1169,7 @@ function FreeAimGoToMarker()
 
 	if (!class'X2AccessObjectScanner'.default.bSelValid)
 	{
-		NativeResult = "No marker selected";
+		NativeResult = class'X2AccessVocab'.default.NoMarkerSelected;
 		return;
 	}
 	Target.X = Clamp(class'X2AccessObjectScanner'.default.SelX, 0, WorldData.NumX - 1);
@@ -1156,7 +1183,7 @@ function FreeAimGoToMarker()
 
 	if (!PushAim(Cursor, WorldData, Target))
 	{
-		NativeResult = "Out of range";
+		NativeResult = class'X2AccessVocab'.default.ReachOutOfRange;
 		return;
 	}
 
@@ -1165,7 +1192,7 @@ function FreeAimGoToMarker()
 	// here rather than snapping back to the shooter's own tile.
 	bAimPlanted = true;
 	AimAbilityID = AbilityState.ObjectID;
-	NativeResult = "Aiming." @ DescribeAim(AbilityState, Shooter, Method, AimTile(), false);
+	NativeResult = class'X2AccessVocab'.default.Aiming @ DescribeAim(AbilityState, Shooter, Method, AimTile(), false);
 }
 
 // ---------------------------------------------------------------------------
@@ -1191,7 +1218,7 @@ private function string PollFreeAim(UITacticalHUD HUD, AvailableAction Action,
 		LastTargetID = 0;
 		ResetAim();
 		Result = DescribeAbility(HUD, Action, AbilityState);
-		AppendPart(Result, "Arrows to aim");
+		AppendPart(Result, class'X2AccessVocab'.default.ArrowsToAim);
 		return Result;
 	}
 
@@ -1231,7 +1258,8 @@ private function string PollFreeAim(UITacticalHUD HUD, AvailableAction Action,
 	LastLandX = Landing.X;
 	LastLandY = Landing.Y;
 	Aim = AimTile();
-	return "Blocked, lands" @ class'X2AccessTileReader'.static.OffsetWords(Aim, Landing);
+	return class'X2AccessVocab'.static.FillS(class'X2AccessVocab'.default.BlockedLands,
+		class'X2AccessTileReader'.static.OffsetWords(Aim, Landing));
 }
 
 // The live targeting method, but only when it is one that resolves its aim point from the 3D
@@ -1275,20 +1303,20 @@ private function bool GetAimContext(out UITacticalHUD HUD, out X2TargetingMethod
 	HUD = GetTacticalHUD();
 	if (HUD == none || !HUD.m_isMenuRaised)
 	{
-		NativeResult = "Not targeting";
+		NativeResult = class'X2AccessVocab'.default.NotTargeting;
 		return false;
 	}
 	Method = CursorMethod(HUD);
 	if (Method == none)
 	{
-		NativeResult = "Not free aiming";
+		NativeResult = class'X2AccessVocab'.default.NotFreeAiming;
 		return false;
 	}
 	// TargetIndex is discarded here on purpose: free aim has no target list to be an index INTO
 	// (bFreeAim leaves AvailableTargets empty), so the aim point is the whole subject.
 	if (!ResolveShot(HUD, Action, AbilityState, TargetRef, TargetIndex))
 	{
-		NativeResult = "No ability selected";
+		NativeResult = class'X2AccessVocab'.default.NoAbilitySelected;
 		return false;
 	}
 
@@ -1299,14 +1327,14 @@ private function bool GetAimContext(out UITacticalHUD HUD, out X2TargetingMethod
 	TC = class'X2AccessTileReader'.static.TacCtrl();
 	if (Shooter == none || TC == none)
 	{
-		NativeResult = "No unit selected";
+		NativeResult = class'X2AccessVocab'.default.NoUnitSelected;
 		return false;
 	}
 	Cursor = TC.GetCursor();
 	WorldData = `XWORLD;
 	if (Cursor == none || WorldData == none)
 	{
-		NativeResult = "No cursor";
+		NativeResult = class'X2AccessVocab'.default.NoCursor;
 		return false;
 	}
 	return true;
@@ -1344,7 +1372,7 @@ private function bool EnsureAimPlanted(XComGameState_Ability AbilityState,
 	Pos = WorldData.GetPositionFromTileCoordinates(Home);
 	Cursor.CursorSetLocation(Pos, false, false);
 
-	NativeResult = "Aiming." @ DescribeAim(AbilityState, Shooter, Method, Home, false);
+	NativeResult = class'X2AccessVocab'.default.Aiming @ DescribeAim(AbilityState, Shooter, Method, Home, false);
 	return true;
 }
 
@@ -1451,9 +1479,12 @@ private function string DescribeAim(XComGameState_Ability AbilityState,
 	Home = Shooter.TileLocation;
 	Bearing = class'X2AccessTileReader'.static.OffsetWords(Home, Tile);
 	if (Bearing == "")
-		Result = "On your own tile";
+		Result = class'X2AccessVocab'.default.OnOwnTile;
 	else
-		Result = Bearing $ "," @ string(TileDistance(Home, Tile)) @ "tiles";
+		Result = Bearing $ "," @ class'X2AccessVocab'.static.Count(TileDistance(Home, Tile),
+			class'X2AccessVocab'.default.Tiles_One,
+			class'X2AccessVocab'.default.Tiles_Few,
+			class'X2AccessVocab'.default.Tiles_Many);
 
 	// Only abilities that actually hit an AREA get a blast clause. An evac zone or a teleport is
 	// cursor-targeted too and hits nobody, and "Blast: nothing" about one of those would read as
@@ -1464,9 +1495,9 @@ private function string DescribeAim(XComGameState_Ability AbilityState,
 	{
 		Contents = BlastContents(AbilityState, Shooter, Tile, Warning);
 		if (Contents == "")
-			AppendPart(Result, "Blast: nothing");
+			AppendPart(Result, class'X2AccessVocab'.default.BlastEmpty);
 		else
-			AppendPart(Result, "Blast:" @ Contents);
+			AppendPart(Result, class'X2AccessVocab'.default.BlastLabel @ Contents);
 		AppendPart(Result, Warning);
 	}
 
@@ -1486,8 +1517,11 @@ private function string DescribeAim(XComGameState_Ability AbilityState,
 	{
 		Radius = AbilityState.GetAbilityRadius();
 		if (Radius > 0)
-			AppendPart(Result, "Blast radius" @ string(int(Radius
-				/ class'XComWorldData'.const.WORLD_StepSize)) @ "tiles");
+			AppendPart(Result, class'X2AccessVocab'.static.Count(
+				int(Radius / class'XComWorldData'.const.WORLD_StepSize),
+				class'X2AccessVocab'.default.BlastRadius_One,
+				class'X2AccessVocab'.default.BlastRadius_Few,
+				class'X2AccessVocab'.default.BlastRadius_Many));
 
 		// The empty target reference is deliberate and is what UITacticalHUD_ShotHUD does for an
 		// ability with no primary target: ONE damage band for the ability, which is all a sighted
@@ -1497,13 +1531,15 @@ private function string DescribeAim(XComGameState_Ability AbilityState,
 		{
 			// Capitalised: AppendPart joins with ". ", so this starts a sentence.
 			if (MinDamage.Damage == MaxDamage.Damage)
-				AppendPart(Result, "Damage" @ string(MinDamage.Damage));
+				AppendPart(Result, class'UITacticalHUD_ShotHUD'.default.m_sDamageRangeLabel
+					@ string(MinDamage.Damage));
 			else
-				AppendPart(Result, "Damage" @ string(MinDamage.Damage) @ "to"
-					@ string(MaxDamage.Damage));
+				AppendPart(Result, class'UITacticalHUD_ShotHUD'.default.m_sDamageRangeLabel
+					@ class'X2AccessVocab'.static.Fill2(class'X2AccessVocab'.default.NumberRange,
+						MinDamage.Damage, MaxDamage.Damage));
 		}
 		if (AbilityState.WillEndTurn())
-			AppendPart(Result, "Will end turn");
+			AppendPart(Result, class'X2AccessVocab'.default.WillEndTurn);
 	}
 
 	return Result;
@@ -1561,7 +1597,7 @@ private function string DescribeVictims(const out array<StateObjectReference> Vi
 			continue;
 
 		if (Victim.ObjectID == Shooter.ObjectID)
-			VictimName = "yourself";
+			VictimName = class'X2AccessVocab'.default.Yourself;
 		else
 			VictimName = class'X2AccessTacticalEvents'.static.UnitName(Victim);
 		AppendComma(Result, VictimName);
@@ -1575,12 +1611,14 @@ private function string DescribeVictims(const out array<StateObjectReference> Vi
 	}
 
 	if (Friends != "")
-		Warning = "WARNING: friendly fire," @ Friends @ "in blast";
+		Warning = class'X2AccessVocab'.static.FillS(
+			class'X2AccessVocab'.default.FriendlyFireWarning, Friends);
 	// Civilians get their own, softer clause rather than sharing that warning: the game turns the
 	// blast sphere amber and raises a modal for our own troops and not for them, so this stays on
 	// the parity side of the line — their unit flag inside the ring is visible either way.
 	if (Civilians != "")
-		AppendPart(Warning, "Civilians in blast:" @ Civilians);
+		AppendPart(Warning, class'X2AccessVocab'.static.FillS(
+			class'X2AccessVocab'.default.CiviliansInBlast, Civilians));
 
 	return Result;
 }
@@ -1600,7 +1638,7 @@ private function string DescribeAimNow(UITacticalHUD HUD, XComGameState_Ability 
 	if (Shooter == none)
 		return "";
 	if (!bAimPlanted || AimAbilityID != AbilityState.ObjectID)
-		return "Not aimed yet. Arrows to aim";
+		return class'X2AccessVocab'.default.NotAimedYet;
 	return DescribeAim(AbilityState, Shooter, CursorMethod(HUD), AimTile(), bVerbose);
 }
 

@@ -213,31 +213,16 @@ file, so that file IS picked up), and the generic marker (`ARC_IA_GenericObjecti
    still wears a flag; if it does not, the ring owes the same gate on that flag — and only then,
    because a mission that makes an objective blast-only from the start would lose it.
 
-**Localization migration** (design and contract: `localization.md`; first surface built
-2026-09-17). Every English word of OURS — roughly 400 literals across the companion readers and 250
-across the native TUs, counts inflated by log strings — moves onto the vanilla loc system.
-
-Done: `X2AccessVocab` (the one vocabulary class, 148 keys INT + RUS, `Count`/`Fill*` over
-`XGParamTag`), the tile cursor, the object scanner and the helper's tile words rewired onto it.
-Verified at the shell through the harness: the CDO holds every Russian value, `PluralForm` answers
-1/21/101→One, 22→Few, 5/11/112→Many, `Count(22, …)` → *22 клетки*, `Fill2` → *Этаж 2 из 3*.
-⚠ `/props` strips markup, so a template's `<XGParam:…/>` tags are invisible there — the deployed
-file and a `/call` on `Fill1` are the proof, not the dump.
-
-Owed, in order, each HEARD live before the next starts (the post-run shape count is the audit — a
-Russian line with an English word left in it is the tell):
-
-1. **Hear the tile cursor and the scanner in Russian on a tactical map** — a step, a floor key, a
-   cover tile, the objects ring on a locked door (*заперто, защита N*), the evac ring (*N на M
-   клеток, внутри I из T*), a hazard span, an offset with an up/down leg. Two lines changed shape
-   as well as language: the tile cursor's interactive-object clause now uses the scanner's
-   `InteractiveLabel` and words (a door reads the same on both surfaces), and a lone Lost is named
-   as the game names the unit rather than *Lost*.
-2. `X2AccessTacticalEvents` / `X2AccessReplayNarration` / `X2AccessTacticalReader` (`CoverWords`,
-   `DescribeTargetHealth`, the shot readout's "Blocked, lands …"), then the other readers and the
-   helper's remaining shell words (*Checked*, *percent*, *of N health*).
-3. Native through the CDO bridge, starting with the kernel's dozen structural words (*button*,
-   *Dialog*, *of*, the navigation help) — `localization.md`, Native.
+**Localization hearing pass** (`localization.md`). English and Russian keys are complete by the
+static audit (`python tools/check_localization.py`), and both companion and native compile. This
+is not a live language test. In a Russian session, hear a tactical tile and its high/low cover,
+target cover, locked door and evac marker; compare cover wording with the game's own
+`XLocalizedData.TargetHighCover`/`TargetLowCover`. Hear combat, replay/tutorial, hacking, Avenger,
+Geoscape, objectives, menus, number plurals (1/2/5/21/22) and native punctuation/color names.
+After the run, shape-count the speech ring and look for English fragments and doubled spaces.
+The CDO has previously been checked in Russian for the first tile/scanner batch, but the expanded
+key set and native cache have not been read live. Hook startup failures before the CDO exists retain
+English fallback; `docs/localization.md` describes that boundary.
 
 **The pod reveal and the reinforcement drop** (2026-09-16, `X2AccessTacticalEvents.OnScamperBegin` /
 `OnSpawnReinforcementsComplete`, builders `BuildRevealLine` / `BuildReinforcementLine`, the replay
@@ -350,7 +335,7 @@ listen for, in the order a single Gatecrasher run settles them:
 2. ⛔ **Shape-count the ring, do not listen to it.** This is the readout the distribution rule was
    written for: the 260-"High cover"/zero-"Low cover" bug lived for two months in well-formed
    lines. `grep -oP 'TTS!?: "\K[^"]*' X2Access.log | sed 's/[0-9]\+/N/g' | sort | uniq -c | sort -rn`
-   must show **both** "Full cover" and "Half cover" leading entries, and a spread of `N tiles wide`
+   must show **both** high and low cover leading entries, and a spread of `N tiles wide`
    values rather than every entry at one width. All-one-value means the signature or the flood fill
    collapsed, whatever the lines sound like.
 3. **Does the clustering match the map?** A sandbag line or a long wall must read as ONE entry with
