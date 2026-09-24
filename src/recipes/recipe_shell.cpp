@@ -523,7 +523,7 @@ std::unique_ptr<GraphRender> BuildIronMan()
 std::string IronManName()
 {
     GameUI::IronManView view = GameUI::ReadIronMan(gScreen);
-    std::string name = view.title.empty() ? Vocab::ScreenIronManFallback : view.title;
+    std::string name = view.title.empty() ? Vocab::ScreenIronManFallback() : view.title;
     AppendPhrase(name, view.body, ". ");
     return name;
 }
@@ -562,7 +562,7 @@ std::unique_ptr<GraphRender> BuildNarrative()
 std::string NarrativeName()
 {
     std::string title = GameUI::ReadNarrative(gScreen).title;
-    return title.empty() ? Vocab::ScreenNarrativeFallback : title;
+    return title.empty() ? Vocab::ScreenNarrativeFallback() : title;
 }
 
 // The soundtrack picker the difficulty screen's soundtrack row opens (Tactical Legacy Pack
@@ -641,7 +641,7 @@ std::unique_ptr<GraphRender> BuildPauseMenu()
 std::string PauseMenuName()
 {
     std::string title = GameUI::ReadPauseMenu(gScreen).title;
-    return title.empty() ? Vocab::ScreenPauseMenuFallback : title;
+    return title.empty() ? Vocab::ScreenPauseMenuFallback() : title;
 }
 
 // ---- the modal dialog recipe (UIDialogueBox) ----
@@ -897,7 +897,7 @@ std::string SaveLoadName()
     GameUI::SaveLoadView view = GameUI::ReadSaveLoad(gScreen);
     std::string name = view.title;
     if (name.empty())
-        name = view.saving ? Vocab::ScreenSaveFallback : Vocab::ScreenLoadFallback;
+        name = view.saving ? Vocab::ScreenSaveFallback() : Vocab::ScreenLoadFallback();
 
     // The delete verb, named ONCE per screen entry, in the row's own localized word. A sighted
     // player reads it off the highlighted row's second button; this layer does not put that
@@ -1242,7 +1242,7 @@ std::unique_ptr<GraphRender> BuildTLEHub()
         // The title names the card; the LAUNCH word is what the button itself says, and it is
         // the same word on all three, so it rides as the value's tail rather than as the label.
         vt.Announcements.emplace_back(NodeAnnouncement::Static(
-            card.title.empty() ? std::string(Vocab::ScreenTLEHubFallback) : card.title));
+            card.title.empty() ? std::string(Vocab::ScreenTLEHubFallback()) : card.title));
         vt.Announcements.back().Kind = AnnouncementKinds::Label;
         // The game's own NEW tag (m_New), shown while the profile records no play of the mode —
         // the same condition OnInit tests, evaluated by the companion over the same numbers.
@@ -1273,7 +1273,7 @@ std::unique_ptr<GraphRender> BuildTLEHub()
 std::string TLEHubName()
 {
     const GameUI::TLEHubView view = GameUI::ReadTLEHub(gScreen);
-    std::string name = view.title.empty() ? std::string(Vocab::ScreenTLEHubFallback) : view.title;
+    std::string name = view.title.empty() ? std::string(Vocab::ScreenTLEHubFallback()) : view.title;
     AppendPhrase(name, view.subtitle);
     return name;
 }

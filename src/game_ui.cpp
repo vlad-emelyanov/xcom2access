@@ -2682,6 +2682,18 @@ void* ScanForObjectNamedRaw(const char* objName)
     return nullptr;
 }
 
+std::string ReadGameDefaultString(const char* className, const char* propertyName)
+{
+    if (!className || !*className || !propertyName || !*propertyName)
+        return {};
+    std::string name = std::string("Default__") + className;
+    void* cdo = ScanForObjectNamedRaw(name.c_str());
+    if (!cdo)
+        return {};
+    return CleanText(UE3Reflect::ReadStringProperty(
+        reinterpret_cast<UObject*>(cdo), propertyName));
+}
+
 namespace {
 
 // SEH-isolated revalidation of a cached CDO pointer (name re-read).

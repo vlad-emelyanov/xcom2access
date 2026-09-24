@@ -348,7 +348,7 @@ std::unique_ptr<GraphRender> BuildSkirmish()
         NodeVtable vt;
         vt.Type = &ButtonType();
         vt.Announcements.emplace_back(NodeAnnouncement::Static(
-            view.startLabel.empty() ? std::string(Vocab::SkirmishStartFallback) : view.startLabel));
+            view.startLabel.empty() ? std::string(Vocab::SkirmishStartFallback()) : view.startLabel));
         vt.Announcements.back().Kind = AnnouncementKinds::Label;
         vt.Announcements.emplace_back(NodeAnnouncement(
             [focused = view.startFocused]() {
@@ -368,7 +368,7 @@ std::unique_ptr<GraphRender> BuildSkirmish()
 std::string SkirmishName()
 {
     const GameUI::SkirmishView view = GameUI::ReadSkirmish(gScreen);
-    std::string name = view.title.empty() ? std::string(Vocab::ScreenSkirmishFallback) : view.title;
+    std::string name = view.title.empty() ? std::string(Vocab::ScreenSkirmishFallback()) : view.title;
     // The base menu's subtitle is empty; every other state names itself and is heard as the
     // list's context, so the attach line carries only what the base shows.
     AppendPhrase(name, view.subtitle);

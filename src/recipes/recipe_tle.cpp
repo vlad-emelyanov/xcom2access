@@ -326,7 +326,7 @@ std::unique_ptr<GraphRender> BuildLadderMenu()
 std::string LadderMenuName()
 {
     const std::string title = GameUI::ReadLadderMenu(gScreen).title;
-    return title.empty() ? std::string(Vocab::ScreenLadderMenuFallback) : title;
+    return title.empty() ? std::string(Vocab::ScreenLadderMenuFallback()) : title;
 }
 
 // ---- the ladder difficulty page (UITLE_LadderDifficulty) ----
@@ -519,7 +519,7 @@ std::unique_ptr<GraphRender> BuildUnitStats()
 std::string UnitStatsName()
 {
     const std::string title = GameUI::ReadUnitStats(gScreen).title;
-    return title.empty() ? std::string(Vocab::ScreenUnitStatsFallback) : title;
+    return title.empty() ? std::string(Vocab::ScreenUnitStatsFallback()) : title;
 }
 
 } // namespace

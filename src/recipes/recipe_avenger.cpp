@@ -1420,7 +1420,7 @@ std::unique_ptr<GraphRender> BuildChooseFacility()
 
 std::string ChooseFacilityName()
 {
-    return NameFromHeader(FetchBuildFacilityWordsLive(), Vocab::ScreenChooseFacilityFallback);
+    return NameFromHeader(FetchBuildFacilityWordsLive(), Vocab::ScreenChooseFacilityFallback());
 }
 
 bool SetChooseFacilityListIndex(void* screen, int index)
@@ -1580,7 +1580,7 @@ std::unique_ptr<GraphRender> BuildResearchReport()
         NodeVtable vt;
         vt.Type = &ButtonType();
         vt.Announcements.emplace_back(NodeAnnouncement::Static(
-            view.fromArchives ? Vocab::ReportBack : Vocab::ReportContinue));
+            view.fromArchives ? Vocab::ReportBack() : Vocab::ReportContinue()));
         vt.Announcements.back().Kind = AnnouncementKinds::Label;
         // gScreen is read AT ACTIVATION rather than captured — the handler runs from the input
         // drain, a frame or more after this render. `fromArchives` is captured, and that is safe
@@ -1602,7 +1602,7 @@ std::string ResearchReportName()
     // with everything else. Not joined with the project name: that is the landing node, and the
     // two would be spoken back to back.
     const GameUI::ResearchReportView view = GameUI::ReadResearchReport(gScreen);
-    return view.header.empty() ? std::string(Vocab::ScreenResearchReport) : view.header;
+    return view.header.empty() ? std::string(Vocab::ScreenResearchReport()) : view.header;
 }
 
 // ---- new research available (UIResearchUnlocked) — docs/research-unlocked-recon.md ----
@@ -1680,7 +1680,7 @@ std::unique_ptr<GraphRender> BuildResearchUnlocked()
     {
         NodeVtable vt;
         vt.Type = &ButtonType();
-        vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::ReportContinue));
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::ReportContinue()));
         vt.Announcements.back().Kind = AnnouncementKinds::Label;
         vt.OnActivate = advance;
         b.AddItem(ControlId::Structural(key + "close"), std::move(vt));
@@ -1823,7 +1823,7 @@ std::unique_ptr<GraphRender> BuildBlackMarket()
 std::string BlackMarketName()
 {
     const GameUI::BlackMarketView view = GameUI::ReadBlackMarket(gScreen);
-    return view.title.empty() ? std::string(Vocab::ScreenBlackMarketFallback) : view.title;
+    return view.title.empty() ? std::string(Vocab::ScreenBlackMarketFallback()) : view.title;
 }
 
 // ---- the trading post ----
@@ -2386,7 +2386,7 @@ std::unique_ptr<GraphRender> BuildRewardsRecap()
     b.BeginStop("actions");
     NodeVtable vt;
     vt.Type = &ButtonType();
-    vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::ReportContinue));
+    vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::ReportContinue()));
     vt.Announcements.back().Kind = AnnouncementKinds::Label;
     vt.OnActivate = []() { GameUI::SendScreenCommand(gScreen, GameUI::kCmdEnter); };
     b.AddItem(ControlId::Structural("recap/continue"), std::move(vt));
@@ -2538,7 +2538,7 @@ bool AddAvengerObjectiveStops(GraphBuilder& b)
     }
     if (!lines.empty()) {
         b.BeginStop("objectives");
-        b.PushContext(!obj.heading.empty() ? obj.heading : std::string(Vocab::StopObjectives));
+        b.PushContext(!obj.heading.empty() ? obj.heading : std::string(Vocab::StopObjectives()));
         for (const auto& [suffix, text] : lines)
             b.AddLabel(ControlId::Structural("ahud/obj/" + suffix), [text = text]() { return text; });
         b.PopContext();
@@ -2546,7 +2546,7 @@ bool AddAvengerObjectiveStops(GraphBuilder& b)
     if (!dark.empty()) {
         b.BeginStop("darkevents");
         b.PushContext(!obj.darkHeading.empty() ? obj.darkHeading
-                                               : std::string(Vocab::StopDarkEventsFallback));
+                                               : std::string(Vocab::StopDarkEventsFallback()));
         for (const auto& [suffix, text] : dark)
             b.AddLabel(ControlId::Structural("ahud/dark/" + suffix), [text = text]() { return text; });
         b.PopContext();
@@ -2571,7 +2571,7 @@ bool AddShortcutStop(GraphBuilder& b)
         NodeVtable vt;
         vt.Type = &ButtonType();
         vt.Announcements.emplace_back(NodeAnnouncement::Static(
-            bar.geoscapeLabel.empty() ? std::string(Vocab::GeoscapeButtonFallback)
+            bar.geoscapeLabel.empty() ? std::string(Vocab::GeoscapeButtonFallback())
                                       : bar.geoscapeLabel));
         vt.Announcements.back().Kind = AnnouncementKinds::Label;
         vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::AbilityHotkey("1")));

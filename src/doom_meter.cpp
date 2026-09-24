@@ -167,7 +167,7 @@ std::string MeterValue(const GameUI::DoomMeterView& view, int max)
 
 std::string MeterTitle(const GameUI::DoomMeterView& view)
 {
-    return view.title.empty() ? std::string(Vocab::DoomTitleFallback) : view.title;
+    return view.title.empty() ? std::string(Vocab::DoomTitleFallback()) : view.title;
 }
 
 std::string MeterLine(const GameUI::DoomMeterView& view, int max)

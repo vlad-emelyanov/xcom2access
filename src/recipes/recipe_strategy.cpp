@@ -638,7 +638,7 @@ std::unique_ptr<GraphRender> BuildAfterAction()
     {
         std::string label = RecField(*missionRec, "continue");
         if (label.empty())
-            label = Vocab::AfterActionContinueFallback;
+            label = Vocab::AfterActionContinueFallback();
         ControlId id = ControlId::Structural("afteraction/continue");
         NodeVtable vt;
         vt.Type = &ButtonType();
@@ -1715,7 +1715,7 @@ std::unique_ptr<GraphRender> BuildCustomize()
     b.BeginStop("options");
     std::string title = view.trait ? view.openerLabel : CustomizeHeaderField(words, "title");
     if (title.empty())
-        title = view.trait ? Vocab::ScreenCustomizeOptionsFallback : Vocab::ScreenCustomizeFallback;
+        title = view.trait ? std::string(Vocab::ScreenCustomizeOptionsFallback) : std::string(Vocab::ScreenCustomizeFallback);
     b.PushContext(title, "", /*positions*/ true);
     ControlId start;
     bool haveStart = false;
@@ -1828,7 +1828,7 @@ std::unique_ptr<GraphRender> BuildManageEquipment()
 std::string ManageEquipmentName()
 {
     const std::string title = GameUI::ReadManageEquipment(gScreen).title;
-    return title.empty() ? std::string(Vocab::ScreenManageEquipmentFallback) : title;
+    return title.empty() ? std::string(Vocab::ScreenManageEquipmentFallback()) : title;
 }
 
 bool SetManageEquipmentListIndex(void* screen, int index)
@@ -1880,7 +1880,7 @@ void* ProbeGeoscape()
 
 std::string GeoscapeName()
 {
-    return Vocab::ScreenGeoscapeFallback;
+    return Vocab::ScreenGeoscapeFallback();
 }
 
 // ---- stop 2: the region pins' two buttons (docs/surfaces/strategy.md, "Region actions") ----
@@ -2054,7 +2054,7 @@ void BuildDoomStop(GraphBuilder& b, void* screen)
             GameUI::DoomMeterView live = GameUI::ReadDoomMeter(gScreen);
             if (live.countdown && !live.counterLabel.empty())
                 return live.counterLabel;
-            return live.title.empty() ? std::string(Vocab::DoomTitleFallback) : live.title;
+            return live.title.empty() ? std::string(Vocab::DoomTitleFallback()) : live.title;
         },
         /*live*/ false, AnnouncementKinds::Label);
 
@@ -2418,7 +2418,7 @@ std::unique_ptr<GraphRender> BuildPopup()
     for (size_t i = 0; i < alertButtons.size(); i++)
         choices.push_back({alertButtons[i], i == 0 ? GameUI::kCmdEnter : GameUI::kCmdEscape});
     if (choices.empty()) {
-        choices.push_back({std::string(Vocab::PopupContinue), GameUI::kCmdEnter});
+        choices.push_back({std::string(Vocab::PopupContinue()), GameUI::kCmdEnter});
         choices.push_back({std::string(Vocab::PopupDismiss), GameUI::kCmdEscape});
     }
 
@@ -2563,7 +2563,7 @@ std::unique_ptr<GraphRender> BuildMissionBlade()
         // blind player cannot leave is worse than one that reads badly.
         NodeVtable accept;
         accept.Type = &ButtonType();
-        accept.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::PopupContinue));
+        accept.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::PopupContinue()));
         accept.Announcements.back().Kind = AnnouncementKinds::Label;
         accept.OnActivate = []() { GameUI::SendScreenCommand(gScreen, GameUI::kCmdEnter); };
         b.AddItem(ControlId::Structural(key + "button/accept"), std::move(accept));
@@ -2651,7 +2651,7 @@ std::unique_ptr<GraphRender> BuildSkyrangerArrives()
             choices.push_back({label, atoi(RecField(rec, "cmd").c_str())});
     }
     if (choices.empty()) {
-        choices.push_back({std::string(Vocab::PopupContinue), GameUI::kCmdEnter});
+        choices.push_back({std::string(Vocab::PopupContinue()), GameUI::kCmdEnter});
         choices.push_back({std::string(Vocab::PopupDismiss), GameUI::kCmdEscape});
     }
     b.BeginStop("buttons");
@@ -3032,7 +3032,7 @@ std::string CovertActionsName()
     const GameUI::CovertActionsView view = GameUI::ReadCovertActions(gScreen);
     const WireRecord* rec = FindRecord(FetchCovertActionWords(view), "screen");
     const std::string header = rec ? RecField(*rec, "header") : std::string();
-    return header.empty() ? std::string(Vocab::ScreenCovertActions) : header;
+    return header.empty() ? std::string(Vocab::ScreenCovertActions()) : header;
 }
 
 // ⛔ Read the destructive-selection note in game_ui.h before touching this. Driving the list is
@@ -3141,7 +3141,7 @@ std::unique_ptr<GraphRender> BuildCovertReport()
     NodeVtable vt;
     vt.Type = &ButtonType();
     vt.Announcements.emplace_back(NodeAnnouncement::Static(
-        view.continueLabel.empty() ? std::string(Vocab::ReportContinue) : view.continueLabel));
+        view.continueLabel.empty() ? std::string(Vocab::ReportContinue()) : view.continueLabel));
     vt.Announcements.back().Kind = AnnouncementKinds::Label;
     // The screen's own input path: OnUnrealCommand answers Enter with OnContinueClicked, which
     // closes, raises the reward popups and deletes the action. Click() on the button reaches the
@@ -3425,7 +3425,7 @@ std::unique_ptr<GraphRender> BuildStrategyPolicy()
         NodeVtable vt;
         vt.Type = &ButtonType();
         vt.Announcements.emplace_back(NodeAnnouncement::Static(
-            screenRec ? RecField(*screenRec, "continue") : std::string(Vocab::PopupContinue)));
+            screenRec ? RecField(*screenRec, "continue") : std::string(Vocab::PopupContinue())));
         vt.Announcements.back().Kind = AnnouncementKinds::Label;
         vt.OnActivate = []() { CallPolicyVerb("ContinuePolicy", 0, 0); };
         // "Backspace puts the held card back" holds on this node too — one rule, whatever is
@@ -3448,7 +3448,7 @@ void* ProbeStrategyPolicy()
 std::string StrategyPolicyName()
 {
     const GameUI::StrategyPolicyView view = GameUI::ReadStrategyPolicy(gScreen);
-    std::string name = Vocab::ScreenPolicy;
+    std::string name = Vocab::ScreenPolicy();
     // Said here and nowhere else: outside the monthly report every card refuses, and repeating
     // that on a dozen cards would be noise where saying it once, on arrival, is the whole answer.
     if (!view.canPlay)
@@ -3994,7 +3994,7 @@ std::function<void()> SpeakAgain(const std::string& text)
 void AddScreenContinue(GraphBuilder& b, const std::string& id, std::string label)
 {
     if (label.empty())
-        label = Vocab::PopupContinue;
+        label = Vocab::PopupContinue();
     b.BeginStop("actions");
     NodeVtable vt;
     vt.Type = &ButtonType();
@@ -4431,7 +4431,7 @@ std::unique_ptr<GraphRender> BuildBondScreen()
 std::string BondScreenName()
 {
     return NameFromHeader(
-        FetchBondWords(GameUI::ReadBondScreen(gScreen)), Vocab::ScreenBondsFallback);
+        FetchBondWords(GameUI::ReadBondScreen(gScreen)), Vocab::ScreenBondsFallback());
 }
 
 bool SetBondListIndex(void* screen, int index)
@@ -4510,7 +4510,7 @@ std::unique_ptr<GraphRender> BuildBondConfirm()
             choices.push_back({label, atoi(RecField(rec, "cmd").c_str())});
     }
     if (choices.empty()) {
-        choices.push_back({std::string(Vocab::PopupContinue), GameUI::kCmdEnter});
+        choices.push_back({std::string(Vocab::PopupContinue()), GameUI::kCmdEnter});
         choices.push_back({std::string(Vocab::PopupDismiss), GameUI::kCmdEscape});
     }
     b.BeginStop("buttons");
@@ -4530,7 +4530,7 @@ std::unique_ptr<GraphRender> BuildBondConfirm()
 
 std::string BondConfirmName()
 {
-    return NameFromHeader(FetchBondConfirmWords(), Vocab::ScreenBondConfirmFallback);
+    return NameFromHeader(FetchBondConfirmWords(), Vocab::ScreenBondConfirmFallback());
 }
 
 // ---- the monthly report (UIResistanceReport) — docs/resistance-report-recon.md ----
@@ -4630,7 +4630,7 @@ std::unique_ptr<GraphRender> BuildChosenEvents()
         // routes Enter to OnPopupButton while bShowChosenWarningPopup is set.
         std::string label = RecField(*warn, "button");
         if (label.empty())
-            label = Vocab::PopupContinue;
+            label = Vocab::PopupContinue();
         NodeVtable vt;
         vt.Type = &ButtonType();
         vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
@@ -4726,7 +4726,7 @@ std::unique_ptr<GraphRender> BuildChosenEvents()
 std::string ChosenEventsName()
 {
     return NameFromHeader(FetchChosenEventsWords(GameUI::ReadChosenEvents(gScreen)),
-        Vocab::ScreenChosenEventsFallback);
+        Vocab::ScreenChosenEventsFallback());
 }
 
 } // namespace

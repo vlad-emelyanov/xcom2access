@@ -107,7 +107,7 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
             vt.Type = &ButtonType();
             std::string label = GameUI::ReadCharInfoHint(gScreen);
             if (label.empty())
-                label = Vocab::SoldierInfoFallback;
+                label = Vocab::SoldierInfoFallback();
             vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
             vt.Announcements.back().Kind = AnnouncementKinds::Label;
             vt.OnActivate = []() {
@@ -124,7 +124,7 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
     if (!bar.entries.empty()) {
         anyNode = true;
         b.BeginStop("abilities");
-        b.PushContext(Vocab::StopAbilities);
+        b.PushContext(Vocab::StopAbilities());
         // The bar is drawn HORIZONTAL — a strip of icons — so it is walked with Left/Right,
         // and the game wraps it to a second row past MAX_NUM_ABILITIES_PER_ROW_BAR (15).
         // Mirror both: rows of 15 sharing one row key, so Up/Down crosses rows
@@ -367,7 +367,7 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
         anyNode = true;
         b.BeginStop("objectives");
         b.PushContext(obj.found && !obj.heading.empty() ? obj.heading
-                                                        : std::string(Vocab::StopObjectives));
+                                                        : std::string(Vocab::StopObjectives()));
         for (const auto& [suffix, text] : lines)
             b.AddLabel(ControlId::Structural("thud/obj/" + suffix),
                 [text = text]() { return text; });
@@ -453,7 +453,7 @@ void AddContinueStop(GraphBuilder& b, const std::string& key, const std::string&
     NodeVtable vt;
     vt.Type = &ButtonType();
     vt.Announcements.emplace_back(
-        NodeAnnouncement::Static(label.empty() ? Vocab::SummaryContinueFallback : label));
+        NodeAnnouncement::Static(label.empty() ? Vocab::SummaryContinueFallback() : label));
     vt.Announcements.back().Kind = AnnouncementKinds::Label;
     // The screen's own INPUT path, not its handler: OnUnrealCommand is where the auto-photo,
     // the camera fade and bWaitingForMissionSummary all sequence from (the hard rule about
@@ -599,7 +599,7 @@ std::unique_ptr<GraphRender> BuildChosenSummary()
 std::string ChosenSummaryName()
 {
     const GameUI::ChosenSummaryView view = GameUI::ReadChosenSummary(gScreen);
-    return view.title.empty() ? std::string(Vocab::ScreenChosenSummaryFallback) : view.title;
+    return view.title.empty() ? std::string(Vocab::ScreenChosenSummaryFallback()) : view.title;
 }
 
 // ---- the loot receipt (UIInventoryTactical) ----
@@ -669,7 +669,7 @@ std::unique_ptr<GraphRender> BuildLoot()
     NodeVtable ok;
     ok.Type = &ButtonType();
     ok.Announcements.emplace_back(NodeAnnouncement::Static(
-        view.okLabel.empty() ? std::string(Vocab::LootOkFallback) : view.okLabel));
+        view.okLabel.empty() ? std::string(Vocab::LootOkFallback()) : view.okLabel));
     ok.Announcements.back().Kind = AnnouncementKinds::Label;
     ok.OnActivate = []() { GameUI::CloseLoot(GameUI::ReadLoot(gScreen)); };
     b.AddItem(ControlId::Structural("loot/ok"), std::move(ok));
@@ -768,7 +768,7 @@ std::string CharInfoName()
 {
     const GameUI::CharInfoView view = GameUI::ReadCharInfo(gScreen);
     const std::string name = JoinPhrases(view.name, view.className);
-    return name.empty() ? std::string(Vocab::ScreenCharInfoFallback) : name;
+    return name.empty() ? std::string(Vocab::ScreenCharInfoFallback()) : name;
 }
 
 } // namespace

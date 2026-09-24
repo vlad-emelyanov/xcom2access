@@ -14,6 +14,12 @@ whole design is about keeping them apart:
   names, "Press again to move". These live on **one class, `X2AccessVocab`**, as `localized` vars,
   and in **`mods/X2AccessCompanion/Localization/X2AccessCompanion.<lang>`** under `[X2AccessVocab]`.
 
+One spoken concept has one source. Native recipes first read the live screen. If its game-owned
+label is empty, `Vocab::GameString` reads the same game's localized class default on the game
+thread. It retries a missing class because some packages load on demand. Only if that also fails
+does it say a generic mod label such as "Screen" or "button"; the specific game label is never
+copied into our INT/RUS files. A wordless game state gets its own mod label instead.
+
 ## The contract
 
 - ⛔ **One vocabulary class.** Every `localized` var the companion owns is declared on

@@ -173,7 +173,7 @@ std::unique_ptr<GraphRender> BuildScoringDialog()
         b.SetStart(start);
 
     b.BeginStop("actions");
-    AddClickButton(b, "tlescore/continue", view.continueButton, Vocab::SummaryContinueFallback);
+    AddClickButton(b, "tlescore/continue", view.continueButton, Vocab::SummaryContinueFallback());
     return b.Build();
 }
 
@@ -311,7 +311,7 @@ std::unique_ptr<GraphRender> BuildLadderSoldiers()
             NodeVtable vt;
             vt.Type = &ButtonType();
             vt.Announcements.emplace_back(NodeAnnouncement::Static(
-                view.helpSoldierInfo.empty() ? std::string(Vocab::SoldierInfoFallback)
+                view.helpSoldierInfo.empty() ? std::string(Vocab::SoldierInfoFallback())
                                              : view.helpSoldierInfo));
             vt.Announcements.back().Kind = AnnouncementKinds::Label;
             vt.OnActivate = [slotIndex]() { GameUI::OpenLadderSoldierStats(gScreen, slotIndex); };
@@ -388,7 +388,7 @@ std::unique_ptr<GraphRender> BuildLadderSoldiers()
     AddClickButton(b, "tlesquad/prev", view.prevButton, view.helpPrevPage);
     AddClickButton(b, "tlesquad/next", view.nextButton, view.helpNextPage);
     AddVerbButton(b, "tlesquad/nextmission",
-        view.nextMission.empty() ? std::string(Vocab::SummaryContinueFallback) : view.nextMission,
+        view.nextMission.empty() ? std::string(Vocab::SummaryContinueFallback()) : view.nextMission,
         "NextMissionButtonClicked");
     b.EndRow();
 
@@ -458,7 +458,7 @@ std::unique_ptr<GraphRender> BuildLadderMedal()
         b.SetStart(start);
 
     b.BeginStop("actions");
-    AddVerbButton(b, "tlemedal/continue", Vocab::SummaryContinueFallback, "ContinueButtonClicked");
+    AddVerbButton(b, "tlemedal/continue", Vocab::SummaryContinueFallback(), "ContinueButtonClicked");
     return b.Build();
 }
 
@@ -522,7 +522,7 @@ std::unique_ptr<GraphRender> BuildLadderMedalProgress()
 
     b.BeginStop("actions");
     AddVerbButton(
-        b, "tleprogress/continue", Vocab::SummaryContinueFallback, "ContinueButtonClicked");
+        b, "tleprogress/continue", Vocab::SummaryContinueFallback(), "ContinueButtonClicked");
     return b.Build();
 }
 
@@ -570,7 +570,7 @@ std::unique_ptr<GraphRender> BuildLadderEnd()
         b.SetStart(start);
 
     b.BeginStop("actions");
-    AddVerbButton(b, "tleend/continue", Vocab::SummaryContinueFallback, "ContinueButtonClicked");
+    AddVerbButton(b, "tleend/continue", Vocab::SummaryContinueFallback(), "ContinueButtonClicked");
     return b.Build();
 }
 
@@ -622,7 +622,7 @@ std::unique_ptr<GraphRender> BuildChallengePost()
 
     b.BeginStop("actions");
     b.StartRow();
-    AddClickButton(b, "tlepost/continue", view.continueButton, Vocab::SummaryContinueFallback);
+    AddClickButton(b, "tlepost/continue", view.continueButton, Vocab::SummaryContinueFallback());
     if (view.leaderboardButton) {
         GameUI::MenuItem leaderboard;
         leaderboard.handle = view.leaderboardButton;

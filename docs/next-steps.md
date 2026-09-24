@@ -220,6 +220,9 @@ target cover, locked door and evac marker; compare cover wording with the game's
 `XLocalizedData.TargetHighCover`/`TargetLowCover`. Hear combat, replay/tutorial, hacking, Avenger,
 Geoscape, objectives, menus, number plurals (1/2/5/21/22) and native punctuation/color names.
 After the run, shape-count the speech ring and look for English fragments and doubled spaces.
+Check the log for `Vocab: game label ... not yet available` and make sure a later `resolved` line
+appears for any game-owned title whose live screen field was empty. The only emergency speech
+for those paths should be generic "Screen", "Section", or "button", never a copied game label.
 The CDO has previously been checked in Russian for the first tile/scanner batch, but the expanded
 key set and native cache have not been read live. Hook startup failures before the CDO exists retain
 English fallback; `docs/localization.md` describes that boundary.

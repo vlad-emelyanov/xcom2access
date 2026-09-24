@@ -252,7 +252,7 @@ std::unique_ptr<GraphRender> BuildChallengeMenu()
 std::string ChallengeMenuName()
 {
     const GameUI::ChallengeMenuView view = GameUI::ReadChallengeMenu(gScreen);
-    return view.title.empty() ? std::string(Vocab::ScreenChallengeArchiveFallback) : view.title;
+    return view.title.empty() ? std::string(Vocab::ScreenChallengeArchiveFallback()) : view.title;
 }
 
 } // namespace

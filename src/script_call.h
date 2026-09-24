@@ -79,6 +79,10 @@ void* FindStateFunction(const char* className, const char* stateName, const char
 /// be wrong the moment the player is not.
 std::string LocalizeString(const char* section, const char* key, const char* package);
 
+/// Read a localized property from a loaded game class's default object. Game thread only;
+/// returns empty until the class and its localization are available.
+std::string ReadGameDefaultString(const char* className, const char* propertyName);
+
 /// The game's Show Subtitles option, read off the ENGINE (`UEngine.bSubtitlesEnabled`) rather
 /// than off the profile, because the engine's copy is what the game itself tests before drawing
 /// a subtitle — the profile can be one toggle ahead of it. True when it cannot be determined:

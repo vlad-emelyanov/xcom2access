@@ -26,6 +26,13 @@ struct Word {
     operator std::string() const { return c_str(); }
 };
 
+// Game-owned labels come from their own class defaults when a screen's live field is empty.
+// The generic mod word is only for a missing game CDO, never a copy of the game's label.
+inline constexpr Word ScreenUnnamed{"ScreenUnnamed", "Screen"};
+inline constexpr Word SectionUnnamed{"SectionUnnamed", "Section"};
+std::string GameString(const char* className, const char* propertyName,
+    const Word& emergency = ScreenUnnamed);
+
 inline std::string operator+(const std::string& left, const Word& right)
 { return left + std::string(right); }
 inline std::string operator+(const Word& left, const std::string& right)
@@ -226,19 +233,19 @@ inline constexpr Word My2KOffline{"My2KOffline", "offline"};
 // their own localized titles and only fall back to these; the Ironman screen and the modal
 // dialog have no title property of their own worth trusting, so these name them outright.
 inline constexpr Word ScreenDifficultyFallback{"ScreenDifficultyFallback", "New campaign"};
-inline constexpr Word ScreenIronManFallback{"ScreenIronManFallback", "Ironman"};
-inline constexpr Word ScreenNarrativeFallback{"ScreenNarrativeFallback", "Optional narrative content"};
+inline std::string ScreenIronManFallback() { return GameString("UIShellDifficulty", "m_strDifficultyEnableIronman", ScreenUnnamed); }
+inline std::string ScreenNarrativeFallback() { return GameString("UIShellNarrativeContent", "NarrativeContentTitle", ScreenUnnamed); }
 inline constexpr Word ScreenSoundtrackFallback{"ScreenSoundtrackFallback", "Soundtrack"};
 inline constexpr Word ScreenDialog{"ScreenDialog", "Dialog"};
 // The Tactical Legacy Pack hub carries its own localized title; this names it only when that
 // read came back empty.
-inline constexpr Word ScreenTLEHubFallback{"ScreenTLEHubFallback", "Tactical Legacy Pack"};
+inline std::string ScreenTLEHubFallback() { return GameString("UITLEHub", "m_strTitle", ScreenUnnamed); }
 // The Legacy Operations menu, its difficulty page and the soldier loadout popup carry their own
 // localized titles (the difficulty page's through the companion); these name them only when the
 // read came back empty.
-inline constexpr Word ScreenLadderMenuFallback{"ScreenLadderMenuFallback", "Legacy operations"};
+inline std::string ScreenLadderMenuFallback() { return GameString("UITLE_LadderModeMenu", "m_ScreenTitle", ScreenUnnamed); }
 inline constexpr Word ScreenLadderDifficultyFallback{"ScreenLadderDifficultyFallback", "Operation difficulty"};
-inline constexpr Word ScreenUnitStatsFallback{"ScreenUnitStatsFallback", "Soldier loadout"};
+inline std::string ScreenUnitStatsFallback() { return GameString("UITLEUnitStats", "m_ScreenTitle", ScreenUnnamed); }
 // A ladder row whose name neither the companion nor the widget supplied.
 inline std::string LadderRowFallback(int n) { return Format(LadderRowFormat, std::to_string(n)); }
 // A medal threshold on the ladder panel the score has reached (the game lights the icon).
@@ -249,10 +256,10 @@ inline constexpr Word EmptySlot{"EmptySlot", "empty"};
 inline constexpr Word PCSLabel{"PCSLabel", "PCS"};
 // The Challenge Archives menu carries its own localized title; this names it only when the
 // read came back empty.
-inline constexpr Word ScreenChallengeArchiveFallback{"ScreenChallengeArchiveFallback", "Challenge archives"};
+inline std::string ScreenChallengeArchiveFallback() { return GameString("UITLE_ChallengeModeMenu", "m_ScreenTitle", ScreenUnnamed); }
 // The Skirmish Mode menu carries its own title and START GAME word; fallbacks for empty reads.
-inline constexpr Word ScreenSkirmishFallback{"ScreenSkirmishFallback", "Skirmish mode"};
-inline constexpr Word SkirmishStartFallback{"SkirmishStartFallback", "Start game"};
+inline std::string ScreenSkirmishFallback() { return GameString("UITLE_SkirmishModeMenu", "m_ScreenTitle", ScreenUnnamed); }
+inline std::string SkirmishStartFallback() { return GameString("UITLE_SkirmishModeMenu", "m_StartGame", RoleButton); }
 // The Legacy Pack's mission-side screens (recipe_tle_mission.cpp): each carries its own
 // localized header; these name them only when the read came back empty.
 inline constexpr Word ScreenScoringFallback{"ScreenScoringFallback", "Mission scoring"};
@@ -277,7 +284,7 @@ inline constexpr Word ScreenPopup{"ScreenPopup", "Notification"};
 // cannot dismiss is worse than one that reads badly. If a live run shows these often, the fix is
 // a missing field name in the alert table, not better wording here.
 inline constexpr Word PopupNoText{"PopupNoText", "No readable text"};
-inline constexpr Word PopupContinue{"PopupContinue", "Continue"};
+inline std::string PopupContinue() { return GameString("UIUtilities_Text", "m_strGenericContinue", RoleButton); }
 inline constexpr Word PopupDismiss{"PopupDismiss", "Dismiss"};
 
 // The mission blade family (docs/mission-blade-recon.md). Every blade carries its own localized
@@ -291,13 +298,13 @@ inline constexpr Word MissionBladeNoText{"MissionBladeNoText", "No readable text
 // The research report (docs/research-report-recon.md). The screen pushes its own localized
 // "RESEARCH REPORT" and we read that, so the fallback is reached only when the Flash capture
 // found nothing at all.
-inline constexpr Word ScreenResearchReport{"ScreenResearchReport", "Research report"};
+inline std::string ScreenResearchReport() { return GameString("XComHQPresentationLayer", "m_strResearchReportTitle", ScreenUnnamed); }
 /// ⛔ The report's close key depends on the screen stack, so its BUTTON must too — one of these
 /// two, never both. The game's own words are unreachable: AddContinueButton spawns a Flash
 /// X2ContinueButton whose label lives in the movie, and on mouse-active PC the back button is an
 /// icon rather than text (UINavigationHelp.uc:99-107).
-inline constexpr Word ReportContinue{"ReportContinue", "Continue"};
-inline constexpr Word ReportBack{"ReportBack", "Back"};
+inline std::string ReportContinue() { return GameString("UIUtilities_Text", "m_strGenericContinue", RoleButton); }
+inline std::string ReportBack() { return GameString("UIUtilities_Text", "m_strGenericBack", RoleButton); }
 /// The capture came back empty on a screen we recognised. Said out loud for the same reason
 /// PopupNoText is: the player is looking at a modal they still have to dismiss, and silence
 /// there is indistinguishable from no screen at all.
@@ -310,7 +317,7 @@ inline constexpr Word ReportNoText{"ReportNoText", "Report text unavailable"};
 inline constexpr Word ScreenResearchUnlocked{"ScreenResearchUnlocked", "Research available"};
 
 // The in-game Escape menu. It carries its own localized title and only falls back to this.
-inline constexpr Word ScreenPauseMenuFallback{"ScreenPauseMenuFallback", "Pause menu"};
+inline std::string ScreenPauseMenuFallback() { return GameString("UIPauseMenu", "m_sPauseMenu", ScreenUnnamed); }
 
 // Squad select. The screen is named by its own operation name ("Операция ...") and reaches these
 // only in the window between attaching and the companion answering — or, for the two below, when
@@ -329,18 +336,18 @@ inline constexpr Word LoadoutEmptySlot{"LoadoutEmptySlot", "empty"};
 // companion reaches the game's own m_strGenericContinue as a class default, so both fallbacks
 // fire only in the window between attaching and the companion answering.
 inline constexpr Word ScreenAfterActionFallback{"ScreenAfterActionFallback", "Mission results"};
-inline constexpr Word AfterActionContinueFallback{"AfterActionContinueFallback", "Continue"};
+inline std::string AfterActionContinueFallback() { return GameString("UIUtilities_Text", "m_strGenericContinue", RoleButton); }
 
 // The mission bookends (docs/mission-summary-recon.md) — the two windows that open the instant a
 // mission ends, ahead of the after-action walk-up. Both name themselves out of their own Flash
 // push (the result headline, "CHOSEN ENCOUNTER"), so these two are reached only when the capture
 // came back with nothing at all.
 inline constexpr Word ScreenMissionSummaryFallback{"ScreenMissionSummaryFallback", "Mission summary"};
-inline constexpr Word ScreenChosenSummaryFallback{"ScreenChosenSummaryFallback", "Chosen encounter"};
+inline std::string ScreenChosenSummaryFallback() { return GameString("UIChosenMissionSummary", "ChosenEncounterTitle", ScreenUnnamed); }
 /// The mission summary's Continue. Unlike the research report's, the game's own word IS
 /// reachable — XComGame.int populates m_strContinue under [UIMissionSummary] — so this fires
 /// only if that field reads empty.
-inline constexpr Word SummaryContinueFallback{"SummaryContinueFallback", "Continue"};
+inline std::string SummaryContinueFallback() { return GameString("UIUtilities_Text", "m_strGenericContinue", RoleButton); }
 /// Recognised the screen, captured nothing. Said out loud for ReportNoText's reason: the player
 /// is looking at a window they still have to dismiss, and silence there is indistinguishable
 /// from no screen at all. ⚠ It must NOT read as "the mission had no result" — hence "readout",
@@ -356,8 +363,8 @@ inline constexpr Word SummaryNoText{"SummaryNoText", "Mission summary readout un
 // else in this mod Delete means RE-ANNOUNCE (tile cursor, shot HUD, hacking pad, ant farm), so
 // naming it here would teach the one exception to a rule the player has learned everywhere
 // else — and get a save deleted by someone reaching for a re-read.
-inline constexpr Word ScreenSaveFallback{"ScreenSaveFallback", "Save game"};
-inline constexpr Word ScreenLoadFallback{"ScreenLoadFallback", "Load game"};
+inline std::string ScreenSaveFallback() { return GameString("UISaveGame", "m_sSaveTitle", ScreenUnnamed); }
+inline std::string ScreenLoadFallback() { return GameString("UILoadGame", "m_sLoadTitle", ScreenUnnamed); }
 inline constexpr Word SaveLoadEmpty{"SaveLoadEmpty", "No saved games"};
 inline constexpr Word SaveLoadBusy{"SaveLoadBusy", "Working, please wait"};
 inline constexpr Word KeyBackspace{"KeyBackspace", "Backspace"};
@@ -419,13 +426,13 @@ inline constexpr Word ImplantCannotEquip{"ImplantCannotEquip", "cannot equip"};
 // fallbacks fire only in the window before those reads answer; the third is a sell row whose
 // name the companion had not supplied. Every other word on both screens is the game's — the
 // button labels, the greyed-out reasons, the column headings, the credits prefix.
-inline constexpr Word ScreenBlackMarketFallback{"ScreenBlackMarketFallback", "Black market"};
+inline std::string ScreenBlackMarketFallback() { return GameString("UIBlackMarket", "m_strTitle", ScreenUnnamed); }
 inline constexpr Word ScreenBlackMarketSellFallback{"ScreenBlackMarketSellFallback", "Sell inventory"};
 inline constexpr Word SellItemFallback{"SellItemFallback", "Item"};
 
 // Choosing what to build in a room (UIChooseFacility). It carries its own localized title and
 // list heading and reaches this only in the window between attaching and the companion answering.
-inline constexpr Word ScreenChooseFacilityFallback{"ScreenChooseFacilityFallback", "Build facility"};
+inline std::string ScreenChooseFacilityFallback() { return GameString("XGBuildUI", "m_strLabelBuildFacility", ScreenUnnamed); }
 
 // ---- the resource strip (UIAvengerHUD.ResourceContainer) ----
 //
@@ -456,7 +463,7 @@ inline constexpr Word ResourcesNotRead{"ResourcesNotRead", "Resources not read y
 // Nearly every word on this screen is the game's own: the row text is retained on the widget, and
 // the card, the risks and the slots come off the screen's own accessors through the companion.
 // Two are ours, and both name a thing the game states with no words at all.
-inline constexpr Word ScreenCovertActions{"ScreenCovertActions", "Covert actions"};
+inline std::string ScreenCovertActions() { return GameString("UIFacility_CovertActions", "m_strViewActions", ScreenUnnamed); }
 /// ⛔ The one AID on this surface, and it is a warning about a control's SIDE EFFECT.
 /// SelectedItemChanged empties the outgoing action's staff and cost slots before switching
 /// (UICovertActions.uc:883), so arrowing to a neighbouring action to compare it silently throws
@@ -472,7 +479,7 @@ inline constexpr Word CovertActionStaffed{"CovertActionStaffed",
 //
 // The screen carries no title of its own — DeckTitle names the HAND, not the board — so this one
 // is ours outright. The other three each name something the screen draws with no words at all.
-inline constexpr Word ScreenPolicy{"ScreenPolicy", "Resistance orders"};
+inline std::string ScreenPolicy() { return GameString("UIStrategyMap", "m_srResistanceOrders", ScreenUnnamed); }
 /// A slot with nothing in it. The game draws an empty card frame and gives it no text whatever
 /// (RealizeColumn hints only the wild-card column's blanks), and an unnamed node is a control
 /// that silently ceases to exist — on the one screen where the empty slots are the whole point.
@@ -542,8 +549,8 @@ inline constexpr Word SortDescending{"SortDescending", "descending"};
 // the screen cached. These are the attach-window fallbacks and the words for what the game draws
 // with no text at all: a bond level as a digit inside an icon, a meter filled to a level.
 inline constexpr Word ScreenChosenInfoFallback{"ScreenChosenInfoFallback", "Chosen database"};
-inline constexpr Word ScreenBondsFallback{"ScreenBondsFallback", "Soldier bonds"};
-inline constexpr Word ScreenBondConfirmFallback{"ScreenBondConfirmFallback", "Confirm bond"};
+inline std::string ScreenBondsFallback() { return GameString("XLocalizedData", "SoldierBondTutorialTitle", ScreenUnnamed); }
+inline std::string ScreenBondConfirmFallback() { return GameString("UISoldierBondConfirmScreen", "m_strTitle", ScreenUnnamed); }
 /// The Skyranger-arrived prompt before the companion answers; its real name is the screen's own
 /// two localized blade strings.
 inline constexpr Word ScreenSkyrangerArrivesFallback{"ScreenSkyrangerArrivesFallback", "Skyranger arrived"};
@@ -570,7 +577,7 @@ inline std::string MeterLevel(int level, int max)
 // Both screens name themselves from their own localized titles; these are the attach-window
 // fallbacks. The Avatar meter is drawn as pips with only its heading for text.
 inline constexpr Word ScreenMonthlyReportFallback{"ScreenMonthlyReportFallback", "Monthly report"};
-inline constexpr Word ScreenChosenEventsFallback{"ScreenChosenEventsFallback", "Chosen activity"};
+inline std::string ScreenChosenEventsFallback() { return GameString("UIResistanceReport_ChosenEvents", "ChosenActivityTitle", ScreenUnnamed); }
 /// A count against its maximum where the game draws pips (Avatar progress). Not Position() —
 /// "3 of 12" after a heading reads as a menu position — and not MeterLevel, which names a step.
 inline std::string Fraction(int value, int max)
@@ -601,7 +608,7 @@ inline constexpr Word CustomizeColours{"CustomizeColours", "Colours"};
 /// A chip whose colour string did not parse. It keeps its node — an unnamed chip is a colour
 /// that silently ceases to exist — and its drawn number still identifies it.
 inline constexpr Word ColourUnknown{"ColourUnknown", "colour"};
-inline constexpr Word ScreenManageEquipmentFallback{"ScreenManageEquipmentFallback", "Manage equipment"};
+inline std::string ScreenManageEquipmentFallback() { return GameString("UIManageEquipmentMenu", "m_strTitleLabel", ScreenUnnamed); }
 inline constexpr Word ScreenCharacterPoolFallback{"ScreenCharacterPoolFallback", "Character pool"};
 inline constexpr Word ScreenPoolFilesFallback{"ScreenPoolFilesFallback", "Character pool files"};
 inline constexpr Word PoolEmptyFallback{"PoolEmptyFallback", "No characters"};
@@ -740,7 +747,7 @@ inline constexpr Word WeaponSlotsMirror{"WeaponSlotsMirror", "current slots"};
 // draws a row only for items that reached the soldier's inventory and says nothing when none did.
 inline constexpr Word ScreenLootFallback{"ScreenLootFallback", "Loot recovered"};
 inline constexpr Word LootEmpty{"LootEmpty", "Nothing recovered"};
-inline constexpr Word LootOkFallback{"LootOkFallback", "OK"};
+inline std::string LootOkFallback() { return GameString("UIUtilities_Text", "m_strGenericOK", RoleButton); }
 
 // ---- soldier info (UITacticalCharInfoScreen) ----
 //
@@ -748,8 +755,8 @@ inline constexpr Word LootOkFallback{"LootOkFallback", "OK"};
 // window's word. SoldierInfoFallback names the HUD graph's button when the HUD's own hint label
 // (m_strNavHelpCharShow) reads empty. CharInfoNoValue is what a stat the screen draws as "---"
 // (its own marker for zero) is said as; dashes read as dashes.
-inline constexpr Word ScreenCharInfoFallback{"ScreenCharInfoFallback", "Soldier info"};
-inline constexpr Word SoldierInfoFallback{"SoldierInfoFallback", "Soldier info"};
+inline std::string ScreenCharInfoFallback() { return GameString("UITacticalHUD_MouseControls", "m_strSoldierInfo", ScreenUnnamed); }
+inline std::string SoldierInfoFallback() { return GameString("UITacticalHUD_MouseControls", "m_strSoldierInfo", RoleButton); }
 inline constexpr Word CharInfoNoValue{"CharInfoNoValue", "none"};
 
 // The geoscape's mission tray. Almost nothing here is ours: each icon's Title and Body are the
@@ -763,7 +770,7 @@ inline constexpr Word CharInfoNoValue{"CharInfoNoValue", "none"};
 // Escape, not Tab, even though UIStrategyMap answers both: Tab's case label falls through into
 // Escape's own body inside `if(`notdefined(FINAL_RELEASE)), so it is a debug convenience rather
 // than a shipped binding — and naming the key the whole game uses beats naming the odd one out.
-inline constexpr Word ScreenGeoscapeFallback{"ScreenGeoscapeFallback", "Geoscape"};
+inline std::string ScreenGeoscapeFallback() { return GameString("UIControllerMap", "m_sGeoscape", ScreenUnnamed); }
 inline constexpr Word GeoscapeLeaveHint{"GeoscapeLeaveHint", "Escape to leave the map"};
 // The resistance-network overlay is a map MODE, and a sighted player reads its state off the
 // globe redrawing itself. The verb's own label ("ПЕРЕКЛЮЧИТЬ СЕТЬ СОПРОТИВЛЕНИЯ") names the
@@ -793,7 +800,7 @@ inline constexpr Word GeoscapeNoComms{"GeoscapeNoComms", "no comms capacity"};
 // ("Alien Facility in West Africa", "SABOTAGE") are all the game's own. What the game states
 // only as pips BLINKING is how many blocks just appeared or vanished, and that is the one
 // vocabulary here. The title fallback is for the frame before the panel's localized string reads.
-inline constexpr Word DoomTitleFallback{"DoomTitleFallback", "Avatar Project"};
+inline std::string DoomTitleFallback() { return GameString("UIStrategyMap_HUD", "m_strDoomTitle", ScreenUnnamed); }
 /// The change a doom sequence just drew: blocks added blink in, blocks removed blink out.
 inline std::string DoomDelta(int delta)
 {
@@ -874,7 +881,7 @@ inline constexpr Word TacticalWorldMode{"TacticalWorldMode", "Map"};
 
 // The HUD graph's stop headings. Our own structure words, same standing as the role words above.
 inline constexpr Word StopSoldier{"StopSoldier", "Soldier"};
-inline constexpr Word StopAbilities{"StopAbilities", "Abilities"};
+inline std::string StopAbilities() { return GameString("XLocalizedData", "TacticalTextAbilitiesHeader", SectionUnnamed); }
 inline constexpr Word StopCommands{"StopCommands", "Commands"};
 // The enemy strip (UITacticalHUD_Enemies). "Targets" rather than "Enemies" because the same strip
 // carries a medkit's soldiers and a hack's terminals — it is the game's own name for the panel.
@@ -882,7 +889,7 @@ inline constexpr Word StopTargets{"StopTargets", "Targets"};
 // A head whose name the companion could not give. Never expected: DescribeNonUnitTarget already
 // falls back to a word, so this is the wire-format's "field missing" answer, not the game's.
 inline constexpr Word TargetFallback{"TargetFallback", "Target"};
-inline constexpr Word StopObjectives{"StopObjectives", "Objectives"};
+inline std::string StopObjectives() { return GameString("UITacticalHUD_ObjectivesList", "m_strObjectivesListTitle", SectionUnnamed); }
 
 // ---- the Avenger HUD graph (the ant farm's ambient recipe, Tab) ----
 //
@@ -901,13 +908,13 @@ inline constexpr Word StopToDo{"StopToDo", "To do"};
 inline constexpr Word StopEvents{"StopEvents", "Events"};
 // The Avenger objective list draws dark events under a second heading the widget retains
 // (m_strDarkEventsListTitle); this is only the fallback for a list that gave none.
-inline constexpr Word StopDarkEventsFallback{"StopDarkEventsFallback", "Dark events"};
+inline std::string StopDarkEventsFallback() { return GameString("UIControllerMap", "m_sDarkEvents", StopEvents); }
 // An event-queue row whose ETA the game cannot compute prints "--" and tints the title amber —
 // a build with no engineer, a project with nobody on it. Said in words rather than as dashes.
 inline constexpr Word EventNoEstimate{"EventNoEstimate", "no estimate"};
 // The hologlobe button on the nav help strip. Its label (m_strGeoscapeLabel) is the game's own
 // word and is what is normally spoken; this is only for a nav help that has not populated it.
-inline constexpr Word GeoscapeButtonFallback{"GeoscapeButtonFallback", "Geoscape"};
+inline std::string GeoscapeButtonFallback() { return GameString("UIControllerMap", "m_sGeoscape", RoleButton); }
 
 // An ability icon whose antenna text read empty (the game populates it only while the mouse is
 // active, and a stale-cleared icon holds ""), so the node still gets a name a player can act on.
