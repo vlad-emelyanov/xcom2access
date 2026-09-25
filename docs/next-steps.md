@@ -14,6 +14,13 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**Loot pickup announcement** (2026-09-25, `X2AccessTacticalEvents.NarrateLootAvailable`).
+The companion compiles and is installed; the announcement has not been heard in game. Kill an
+enemy that drops timed loot and confirm "Loot available for pickup" follows the death line.
+Check a kill with no drop, explosive loot destruction, and a drop collected immediately by a
+nearby soldier: none should announce a pickup. In a tutorial replay, verify the same order
+without speaking loot from a future frame. Hear the Russian line in a Russian game session.
+
 **Campaign endings and memorial detail** (2026-09-25, `X2AccessEndGameReader` and two
 recipes). The native ASI and UnrealScript companion build and are installed; neither screen
 has been heard live. On a win and a loss, verify the localized result, difficulty, date,
@@ -1066,7 +1073,7 @@ one branch nobody has seen is a real install that owns the DLC and lacks the plu
    — the "REINFORCEMENTS INCOMING" flare with its countdown, which the object scanner lists but nothing
    announces when it appears), the "surprised" clause on a reveal (`SurprisedScamperUnitIDs` plus
    `X2Action_RevealAIBegin.SurprisedText`, whose CDO must be checked to hold the word first), the
-   Chosen arriving, objective completion, will/panic thresholds, loot. Each is one more `AddCHEvent`
+   Chosen arriving, objective completion, will/panic thresholds. Each is one more `AddCHEvent`
    line; the cost is judgement about spam, not code. `UnitMoveFinished` was deliberately dropped —
    the shipped sources trigger it only from `DLC_2`'s Alien Ruler code, so it is not a base-game event.
    The drop and the reveal themselves came off this list on 2026-09-16 (live-run debt above).

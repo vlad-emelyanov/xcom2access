@@ -370,6 +370,7 @@ var localized string Hacked;
 var localized string HasLoot;
 
 var localized string Loot;
+var localized string LootAvailable;
 var localized string LootFrom;
 var localized string PsiLoot;
 var localized string LootExpires;

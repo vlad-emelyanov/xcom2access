@@ -1248,6 +1248,12 @@ the listener set does not work if any one of them is undone.
     `AbilityActivated` re-triggers per interrupt step. Fog parity via `CanXComSquadSeeTarget` with
     ONE documented exception — a unit stops being visible the moment it dies, so a kill the squad
     CAUSED is always announced.
+  - **Loot appears after a death only when the death state contains a timed drop** whose
+    `LootSourceID` is that unit and whose marker is visible (`LootExpirationTurnsRemaining > 0`
+    and `HasAvailableLoot()`). `NarrateDeath` says the kill first, then `Loot available for pickup`
+    on the combat channel. In live play it checks the current drop version again, since the game's
+    `LootDropCreated` handler can collect it immediately; the replay path stays on its visualized
+    frame because later history is already populated. No separate loot event listener is needed.
   - **The pod reveal and the reinforcement drop** (`ScamperBegin`, `SpawnReinforcementsComplete`,
     both `ELD_OnVisualizationBlockStarted`; builders `BuildRevealLine` / `BuildReinforcementLine`,
     shared with the replay narrator). Neither cutscene draws a word — the reveal is a camera pan

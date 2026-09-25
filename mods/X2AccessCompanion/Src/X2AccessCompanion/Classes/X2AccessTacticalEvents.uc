@@ -406,7 +406,7 @@ static function EventListenerReturn OnUnitDied(Object EventData, Object EventSou
 	if (GameState == none)
 		return ELR_NoInterrupt;
 
-	NarrateDeath(XComGameState_Unit(EventData), GameState.GetContext());
+	NarrateDeath(XComGameState_Unit(EventData), GameState.GetContext(), GameState, true);
 
 	return ELR_NoInterrupt;
 }
@@ -415,7 +415,8 @@ static function EventListenerReturn OnUnitDied(Object EventData, Object EventSou
 // this one owns its push: the channel IS the decision here, and UnrealScript forbids `out bool`,
 // so handing the answer back to the caller would mean an int flag pretending to be a boolean.
 // Shared with the replay narrator.
-static function NarrateDeath(XComGameState_Unit Unit, XComGameStateContext Context)
+static function NarrateDeath(XComGameState_Unit Unit, XComGameStateContext Context,
+	XComGameState GameState, bool bCheckCurrentLoot)
 {
 	local XComGameState_Unit Killer;
 	local XComGameStateContext_Ability AbilityContext;
@@ -448,8 +449,42 @@ static function NarrateDeath(XComGameState_Unit Unit, XComGameStateContext Conte
 		class'X2AccessNarrator'.static.Alert(class'X2AccessVocab'.static.FillS(
 			class'XComPresentationLayer'.default.m_strUnitDied, UnitName(Unit)));
 	else
+	{
 		class'X2AccessNarrator'.static.Combat(class'X2AccessVocab'.static.FillS(
 			class'XComPresentationLayer'.default.m_strUnitDied, UnitName(Unit)));
+		NarrateLootAvailable(Unit, GameState, bCheckCurrentLoot);
+	}
+}
+
+// The death state contains the drop only when the game created collectible items. Match the
+// source ID rather than assuming every killed enemy drops loot. In live play a nearby soldier may
+// collect it immediately, so check the current version before promising a pickup; a replay must
+// use its visualized frame instead, since the history already contains the replay's future.
+static function NarrateLootAvailable(XComGameState_Unit Unit, XComGameState GameState,
+	bool bCheckCurrentLoot)
+{
+	local XComGameState_LootDrop Drop, CurrentDrop;
+
+	if (GameState == none)
+		return;
+
+	foreach GameState.IterateByClassType(class'XComGameState_LootDrop', Drop)
+	{
+		if (Drop.LootSourceID != Unit.ObjectID || Drop.LootExpirationTurnsRemaining <= 0
+			|| !Drop.HasAvailableLoot())
+			continue;
+
+		if (bCheckCurrentLoot)
+		{
+			CurrentDrop = XComGameState_LootDrop(`XCOMHISTORY.GetGameStateForObjectID(Drop.ObjectID));
+			if (CurrentDrop == none || CurrentDrop.LootExpirationTurnsRemaining <= 0
+				|| !CurrentDrop.HasAvailableLoot())
+				continue;
+		}
+
+		class'X2AccessNarrator'.static.Combat(class'X2AccessVocab'.default.LootAvailable);
+		return;
+	}
 }
 
 // ---------------------------------------------------------------------------

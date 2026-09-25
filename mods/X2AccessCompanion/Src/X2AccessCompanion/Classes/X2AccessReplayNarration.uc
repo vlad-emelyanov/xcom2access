@@ -247,7 +247,7 @@ private function NarrateUnits(XComGameStateHistory History, XComGameState GameSt
 		if (PrevUnit == none || !PrevUnit.IsAlive())
 			continue;
 
-		class'X2AccessTacticalEvents'.static.NarrateDeath(Unit, Context);
+		class'X2AccessTacticalEvents'.static.NarrateDeath(Unit, Context, GameState, false);
 	}
 }
 
