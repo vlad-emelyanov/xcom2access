@@ -170,6 +170,8 @@ private function AppendRows(UIInventory Screen)
 			&& !ClassIsChildOf(Screen.Class, class'UISimpleCommodityScreen'))
 		{
 			AddField(Rec, "qty", string(Row.Quantity));
+			if (Screen.Class == class'UIInventory_LootRecovered')
+				AddField(Rec, "qtyRecovered", "1");
 		}
 
 		// UIInventory_ClassListItem — the psi ability picker's and the class picker's row — is
