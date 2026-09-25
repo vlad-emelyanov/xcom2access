@@ -175,7 +175,7 @@ on every push of main.
 
 ## Dependencies
 
-- `deps/prism` (submodule, pinned to `v0.17.3`) — speech output, linked static, ⛔ **MPL-2.0, not
+- `deps/prism` (submodule, pinned to `v0.18.2`) — speech output, linked static, ⛔ **MPL-2.0, not
   MIT** (file-level copyleft: we vendor it unmodified and the README says where the source is). Its
   deps are bundled under its own `third_party/`, so the build is offline; it needs the Windows SDK's
   `midl.exe` to generate the NVDA RPC client stubs, which is why no `nvdaControllerClient.dll` ships
