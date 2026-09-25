@@ -181,6 +181,7 @@ void Shutdown() {
 }
 
 void Speak(const std::string& text) {
+    if (text.empty()) return;
     std::lock_guard<std::mutex> lock(sMutex);
     if (!sAvailable || !sEnabled) return;
     // The speech log: every spoken line, so a session can be reconstructed from X2Access.log

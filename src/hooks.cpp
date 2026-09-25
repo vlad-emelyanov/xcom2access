@@ -242,7 +242,6 @@ void Init() {
     if (!sdkReady) {
         LOG_ERROR("Hooks: SDK initialization failed after %d attempts — game hooks disabled",
                   SDK_INIT_MAX_ATTEMPTS);
-        TTS::Speak(std::string(Vocab::StartupSdkFailure));
         return;
     }
 
@@ -255,7 +254,6 @@ void Init() {
         LOG_INFO("Hooks: ProcessEvent hook active — intercepting game events");
     } else {
         LOG_ERROR("Hooks: ProcessEvent hook installation failed");
-        TTS::Speak(std::string(Vocab::StartupHookFailure));
     }
 }
 

@@ -42,8 +42,9 @@ copied into our INT/RUS files. A wordless game state gets its own mod label inst
   unchanged), and none of the 40 workshop mods shipping an `XComGame.int` redefines a vanilla key —
   only ADDING keys is evidenced. So a wrong game word (the "Chosen Sarcophagus" turrets) is fixed by
   choosing a different game word or, last, a word of ours, never by overriding.
-- **A word that is a developer's, not a player's, stays an English literal**: `"Bad category"`,
-  `"Bad direction"`, the `` `log `` lines. They are unreachable by a player or read only by us.
+- **A word that is a developer's, not a player's, may stay an English literal** in logs and
+  `X2AccessTileProbe`'s dev-server responses. Invalid category and direction results can pass
+  through the speech bridge, so they have INT/RUS keys even though normal controls cannot trigger them.
 
 ## Word order: vanilla's tags
 
@@ -82,15 +83,18 @@ Vanilla has 393 `Singular`/`Plural` key pairs chosen by `== 1` (an English split
 `Vocab::LoadFromGame` reads the same values off the `X2AccessVocab` CDO by property name on the
 game tick, caches the strings and never retains the CDO pointer. `Vocab::Word` resolves the cache
 without reading engine memory, including from UI callbacks. `src/vocab_words.inc` is the list of
-native property names. A missing key falls back to its English literal; this is diagnostic debt,
-not a translated line. The Graph kernel remains STL-only. Startup success is spoken after the
-vocabulary loads; a hook-initialization failure may still use English because the game localization
-system is unavailable at that point.
+native property names. `Vocab::Word` stores a key only: before the CDO loads or when a key is
+missing it resolves to empty, and missing loaded keys are logged. No compiled English text can
+enter speech through it. Startup success is spoken after the vocabulary loads. If SDK or hook
+initialization fails before localization is accessible, the failure is logged rather than spoken.
+The missing-companion warning uses the game's `Object.Localize` lookup on our INT/RUS key at the
+main menu; if the package's localization is unavailable too, that failure is logged. The Graph
+kernel remains STL-only.
 
 Run `python tools/check_localization.py` after changing any word. It checks that the class, INT,
 RUS, and native word index agree, that keys are unique, and that Russian templates retain every
 placeholder. The installed game's `XComGame.int/.rus` were checked for exact matching terms;
-screen and template fields are preferred at runtime, while matching translations inform fallbacks.
+screen and template fields are preferred at runtime.
 
 ## Status
 

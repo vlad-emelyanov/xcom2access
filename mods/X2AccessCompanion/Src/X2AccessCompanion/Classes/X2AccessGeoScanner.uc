@@ -121,7 +121,8 @@ function ScanCategory(int Category, int Delta)
 
 	if (Category < 0 || Category >= CAT_COUNT)
 	{
-		NativeResult = "Bad category" @ string(Category);
+		NativeResult = class'X2AccessVocab'.static.Fill1(
+			class'X2AccessVocab'.default.InvalidCategory, Category);
 		return;
 	}
 

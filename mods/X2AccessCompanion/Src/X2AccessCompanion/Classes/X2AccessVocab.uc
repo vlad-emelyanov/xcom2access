@@ -39,18 +39,18 @@ class X2AccessVocab extends Object;
 var localized string PluralRule;
 var localized string ScreenUnnamed;
 var localized string SectionUnnamed;
-var localized string KeyBindingsFallback;
 var localized string CompanionNotLoaded;
+var localized string KeyBindingsFallback;
 var localized string KeyBindingPrompt;
 var localized string KeyBound;
 var localized string ItemFallback;
+var localized string InvalidCategory;
+var localized string InvalidDirection;
 var localized string NarrationDropped_One;
 var localized string NarrationDropped_Few;
 var localized string NarrationDropped_Many;
 
 // Native UI vocabulary, loaded from this class's CDO on the game tick.
-var localized string StartupHookFailure;
-var localized string StartupSdkFailure;
 var localized string StartupActive;
 var localized string HackCancelled;
 var localized string EngineVolume;

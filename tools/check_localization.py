@@ -40,6 +40,16 @@ def main() -> int:
     native_index = keys(ROOT / "src/vocab_words.inc", r'^\s*"(\w+)",')
     errors = []
 
+    native_header = (ROOT / "src/vocab.h").read_text(encoding="utf-8")
+    if re.search(r'inline constexpr Word \w+\{\s*"\w+"\s*,', native_header):
+        errors.append("native words must contain only a localization key")
+    for path in (BASE / "Src/X2AccessCompanion/Classes").glob("*.uc"):
+        if path.name == "X2AccessTileProbe.uc":  # dev-server diagnostics, never speech
+            continue
+        for match in re.finditer(r'\b(?:NativeResult|AccessibilityData)\s*=\s*"([^"\r\n]+)"',
+                                 path.read_text(encoding="utf-8")):
+            errors.append(f"{path.name}: literal speech result {match.group(1)!r}")
+
     for label, values in (("class", declared), ("INT", english_keys), ("RUS", russian_keys),
                           ("native index", native_index)):
         duplicates = sorted(key for key, count in Counter(values).items() if count > 1)
@@ -57,6 +67,9 @@ def main() -> int:
 
     english = localized(english_path)
     russian = localized(russian_path)
+    for key in native_index:
+        if not english.get(key) or not russian.get(key):
+            errors.append(f"native word {key}: INT and RUS must both be nonempty")
     for key in set(english) & set(russian):
         if not russian[key] and english[key] and not key.endswith("_Few"):
             errors.append(f"RUS: empty {key}")

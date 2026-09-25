@@ -49,7 +49,7 @@ namespace Recipes {
 const ControlType& ButtonType()
 {
     static const ControlType type{
-        /*Key*/ Vocab::RoleButton.english,
+        /*Key*/ Vocab::RoleButton.key,
         /*Order*/ {AnnouncementKinds::Label, AnnouncementKinds::Role, AnnouncementKinds::Enabled,
             AnnouncementKinds::Reason, kKindAttention, AnnouncementKinds::Value,
             AnnouncementKinds::Selected},
@@ -67,7 +67,7 @@ const ControlType& ButtonType()
 const ControlType& TickerType()
 {
     static const ControlType type{
-        /*Key*/ Vocab::RoleTicker.english,
+        /*Key*/ Vocab::RoleTicker.key,
         /*Order*/ {AnnouncementKinds::Label, AnnouncementKinds::Role},
         /*Common*/ []() {
             return std::vector<NodeAnnouncement>{
@@ -84,7 +84,7 @@ const ControlType& TickerType()
 ControlType MakeValueType(const Vocab::Word& roleWord)
 {
     return ControlType{
-        /*Key*/ roleWord.english,
+        /*Key*/ roleWord.key,
         /*Order*/ {AnnouncementKinds::Label, AnnouncementKinds::Role, AnnouncementKinds::Value,
             AnnouncementKinds::Enabled, AnnouncementKinds::Reason, AnnouncementKinds::Selected},
         /*Common*/ [role = &roleWord]() {
@@ -405,9 +405,13 @@ void Attach()
     if (!sCompanionChecked && gActive == &kMainMenuRecipe) {
         sCompanionChecked = true;
         if (!GameUI::CompanionPackageLoaded()) {
-            LOG_WARN("MenuNavigator: companion package not loaded at the first main-menu attach"
-                     " — announcing it once");
-            TTS::Speak(Vocab::CompanionNotLoaded);
+            LOG_WARN("MenuNavigator: companion package not loaded at the first main-menu attach");
+            const std::string warning = GameUI::LocalizeString(
+                "X2AccessVocab", "CompanionNotLoaded", "X2AccessCompanion");
+            if (!warning.empty())
+                TTS::Speak(warning);
+            else
+                LOG_ERROR("MenuNavigator: localized companion warning unavailable");
         }
     }
 

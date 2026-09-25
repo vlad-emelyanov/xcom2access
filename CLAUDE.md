@@ -171,6 +171,9 @@ rules** below instead — that is the test for which file a new rule goes in.
 - ⛔ **One spoken concept has one source.** If the game owns the label, read the screen's word
   and, for an empty read, its localized class default; do not copy that label into our loc files.
   `X2AccessVocab` is for mod-owned speech and generic emergency labels (`docs/localization.md`).
+- ⛔ **No compiled speech defaults.** Native `Vocab::Word` carries only a localization key; a
+  missing CDO or key is logged and gives no speech. Player-facing companion error paths use
+  `X2AccessVocab` too, never an English literal (`docs/localization.md`).
 - **Earcons are game-native SoundCues, played through the game's sound manager** —
   `` `SOUNDMGR.PlaySoundEvent("<cue>") `` over the Highlander's SoundCue mapping — never WAVs
   played from the ASI: the game's mixer is where the player's volume settings live. The cues are

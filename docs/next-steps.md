@@ -224,8 +224,9 @@ Check the log for `Vocab: game label ... not yet available` and make sure a late
 appears for any game-owned title whose live screen field was empty. The only emergency speech
 for those paths should be generic "Screen", "Section", or "button", never a copied game label.
 The CDO has previously been checked in Russian for the first tile/scanner batch, but the expanded
-key set and native cache have not been read live. Hook startup failures before the CDO exists retain
-English fallback; `docs/localization.md` describes that boundary.
+key set and native cache have not been read live. Confirm the missing-companion warning can be
+resolved through `Object.Localize` even when its script package fails to load; startup failures
+before localization exists are logged, not spoken (`docs/localization.md`).
 
 **The pod reveal and the reinforcement drop** (2026-09-16, `X2AccessTacticalEvents.OnScamperBegin` /
 `OnSpawnReinforcementsComplete`, builders `BuildRevealLine` / `BuildReinforcementLine`, the replay

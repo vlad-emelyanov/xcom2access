@@ -109,7 +109,8 @@ function CursorStep(int Cardinal)
 	if (!CardinalDelta(Cardinal, DX, DY))
 	{
 		// Unreachable for the four cardinals, but a press must never be silent.
-		NativeResult = "Bad direction" @ string(Cardinal);
+		NativeResult = class'X2AccessVocab'.static.Fill1(
+			class'X2AccessVocab'.default.InvalidDirection, Cardinal);
 		return;
 	}
 	Target.X = Clamp(CurX + DX, 0, WorldData.NumX - 1);

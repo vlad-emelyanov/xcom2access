@@ -26,12 +26,12 @@ std::unordered_map<std::string, uint64_t> sGameWordMissMs;
 
 } // namespace
 
-const char* Lookup(const char* key, const char* english)
+const char* Lookup(const char* key)
 {
     if (!sLoaded.load(std::memory_order_acquire))
-        return english;
+        return "";
     const auto it = sWords.find(key);
-    return it == sWords.end() ? english : it->second.c_str();
+    return it == sWords.end() ? "" : it->second.c_str();
 }
 
 std::string GameString(const char* className, const char* propertyName, const Word& emergency)
@@ -69,6 +69,8 @@ void LoadFromGame()
         std::string value = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), key);
         if (!value.empty())
             sWords.emplace(key, std::move(value));
+        else
+            LOG_ERROR("Vocab: missing localized word %s", key);
     }
     std::string pluralRule = UE3Reflect::ReadStringProperty(reinterpret_cast<UObject*>(cdo), "PluralRule");
     sWords.emplace("PluralRule", std::move(pluralRule));

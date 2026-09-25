@@ -1074,7 +1074,8 @@ function FreeAimStep(int Cardinal)
 	if (!class'X2AccessTileReader'.static.CardinalDelta(Cardinal, DX, DY))
 	{
 		// Unreachable for the four cardinals, but a press must never be silent.
-		NativeResult = "Bad direction" @ string(Cardinal);
+		NativeResult = class'X2AccessVocab'.static.Fill1(
+			class'X2AccessVocab'.default.InvalidDirection, Cardinal);
 		return;
 	}
 	Target.X = Clamp(AimX + DX, 0, WorldData.NumX - 1);
