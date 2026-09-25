@@ -719,6 +719,14 @@ void OnTooltipKey()
     gGraph->Tooltip(); // the node's action owns the speech; no handler → silent refusal
 }
 
+void OnSecondaryKey()
+{
+    if (!gGraph)
+        return;
+    if (gGraph->Secondary())
+        SpeakStateAfterChange();
+}
+
 // The game's own tab-cycle shortcut on the settings screen (PageUp/PageDown), kept because it
 // beats Tab+arrows for a five-tab strip. SetSelectedTab wraps out-of-range itself.
 void OnTabPage(int dir)
@@ -848,6 +856,18 @@ void Init()
     RegisterClaim({VK_TAB, ModShift, attached, onDown([]() { OnStop(-1); }), "menu: previous stop"});
     RegisterClaim({VK_RETURN, ModNone, attached,
         [](const KeyEvent& e) { if (e.down && !e.repeat) OnActivate(); }, "menu: activate"});
+    // Claim Backspace only where the focused node offers a secondary action. Else the game's
+    // own Backspace still reaches screens such as save/load and text entry. CurrentNode reads
+    // the already-built graph; activeWhen must not rebuild it inside the window procedure.
+    auto secondaryAvailable = []() {
+        if (!gAttached || !gFocused || !gGraph)
+            return false;
+        const GraphNode* node = gGraph->CurrentNode();
+        return node && static_cast<bool>(node->Vtable.OnSecondary);
+    };
+    RegisterClaim({VK_BACK, ModNone, secondaryAvailable,
+        [](const KeyEvent& e) { if (e.down && !e.repeat) OnSecondaryKey(); },
+        "menu: secondary action"});
     // Space reads the focused control's tooltip — the hover description sighted players get.
     // Claimed either way, so it can't reach the game's own handler and double-act on the
     // focus our write-back keeps in sync. No tooltip → silent (the layer's refusals are

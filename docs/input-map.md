@@ -266,6 +266,7 @@ Claimed here:
 | `Tab` | enter the Avenger HUD layer | the ant farm is current AND the layer is not focused (one claim shared with tactical's mission gate) | nothing — see below, and the config removes the section's Tab line anyway |
 | `E` / `Q` | next / previous soldier on the Armory, Customize and Bond screens | — (not claimed: the game's own binding under our config) | the vanilla Tab / LeftShift cycle, moved rather than displaced |
 | `Escape` | leave the layer | an ambient recipe is focused | the pause menu, for that one press |
+| `Backspace` | the focused graph node's secondary action (including voice preview) | a focused recipe whose current node offers `OnSecondary` | the game's Backspace only on that node; elsewhere it passes through |
 | `+` / `-` (also `Shift+=` and numpad `+`/`-`) | adjust the focused control — the kernel's `TryAdjust`; today the trading post's sell quantity | ANY menu recipe focused, in either layer | `=`/`-`: nothing, no binding in any input section; numpad `Add`/`Subtract`: tactical `SpeedUpGame`/`SlowDownGame`, only while a menu holds the keyboard mid-mission, still at `Ctrl+numpad` |
 
 ⚠ **`+`/`-` exist because a sheet spends the arrows.** Left/Right already adjust a focused
