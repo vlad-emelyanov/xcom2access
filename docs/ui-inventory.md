@@ -122,7 +122,7 @@ along. `avenger-view-recon.md` §14.
 |---|---|---|
 | `UIPersonnel` + 10 subclasses | roster picker (`_Armory`, `_BarMemorial`, `_BoostSoldier`, `_BuildFacility`, `_ChooseResearch`, `_CovertAction`, `_LivingQuarters`, `_SpecialFeature`, `_SquadSelect`, `_TrainingCenter`) | ✅ personnel roster (family via class chain) |
 | `UIRecruitSoldiers` | recruit list | ◐ built — `recruits` recipe + `X2AccessRecruitReader` (2026-09-03, unexercised live; `recruit-recap-recon.md` §1). A row retains nothing; the join is position against `m_arrRecruits` |
-| `UIBarMemorial_Details` | fallen-soldier detail card | ⬜ P2 |
+| `UIBarMemorial_Details` | fallen-soldier detail card | ◐ built — `memorial details` recipe; live pass owed |
 | `UISoldierBondScreen` | bond overview for a soldier | ◐ built — `soldier bonds` recipe + `X2AccessBondReader` (2026-09-03, unexercised live; `chosen-bond-recon.md`). The roster is a `GraphSheet`; CREATE BOND, sorting and the soldier cycle are re-provided |
 | `UISoldierBondConfirmScreen` | confirm-bond screen | ◐ built — `bond confirm` recipe, same reader (2026-09-03, unexercised live) |
 
@@ -220,7 +220,7 @@ cinematic gate never let it attach (fixed 2026-09-04, unexercised live —
 | `UIAfterAction` | post-mission squad walk-up (wounds, promotions) | ✅ `after action` recipe + `X2AccessAfterActionReader` (`after-action-recon.md`). ⚠ The soldier-wording unification (`04a264c`) postdates the deployed companion — re-walk after the next `just go-full` |
 | `UIResearchReport` | research complete | ✅ research report recipe (`research-report-recon.md`) |
 | `UIResearchUnlocked` | new research available | ✅ `research unlocked` recipe, Flash capture, no companion (`research-unlocked-recon.md`); multi-card decks and shadow projects still unheard (`next-steps.md`) |
-| `UIEndGameStats` | campaign-end stats | ⬜ P3 |
+| `UIEndGameStats` | campaign-end win/loss stats | ◐ built — `campaign result` recipe; live pass owed |
 | `UISoldierIntroCinematic` | soldier intro cinematic card | ⬜ P3 (mostly visual) |
 
 ## 13. Tactical

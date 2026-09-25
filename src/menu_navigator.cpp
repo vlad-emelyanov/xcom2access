@@ -532,7 +532,8 @@ void SpeakStateAfterChange()
 //    it, or the layer would attach to the screen underneath.
 //  · Settings stacks on the shell, so the shell is last.
 // Each recipe's own definition in src/recipes/ carries the rest of its ordering argument.
-const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kResearchReportRecipe,
+const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kEndGameRecipe,
+    &kMemorialDetailsRecipe, &kResearchReportRecipe,
     // The rewards recap beside the research deck it follows: the last modal of the post-mission
     // chain, sequential with the deck and never stacked with it.
     &kResearchUnlockedRecipe, &kRewardsRecapRecipe,

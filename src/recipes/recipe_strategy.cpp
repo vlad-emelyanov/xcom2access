@@ -24,6 +24,192 @@ namespace MenuNavigator {
 namespace Recipes {
 namespace {
 
+// Campaign win/loss and the fallen-soldier card retain their data in script,
+// while Flash owns the drawn text. The companion reuses the screens' own values.
+constexpr const char* kEndGameReaderClass = "X2AccessEndGameReader";
+WireCache gEndGameWords(kEndGameReaderClass, "DescribeEndGame");
+WireCache gMemorialWords(kEndGameReaderClass, "DescribeMemorial");
+
+const std::vector<WireRecord>& EndGameWords()
+{
+    // The current page and world-stat availability change without replacing the screen.
+    return gEndGameWords.Get({gScreen}, 0, true);
+}
+
+const std::vector<WireRecord>& MemorialWords()
+{
+    // Editing an epitaph returns from a dialog to the same screen and widgets.
+    return gMemorialWords.Get({gScreen}, 0, true);
+}
+
+std::unique_ptr<GraphRender> BuildEndGame()
+{
+    const auto& words = EndGameWords();
+    const WireRecord* header = FindRecord(words, "header");
+    if (!header)
+        return nullptr;
+    const std::string page = RecField(*header, "number");
+    const std::string prefix = "endgame/" + page + "/";
+    GraphBuilder b;
+    b.BeginStop("summary");
+    const std::string pageLine = JoinPhrases(RecField(*header, "page"), page);
+    b.AddLabel(ControlId::Structural(prefix + "page"), [pageLine]() { return pageLine; });
+    if (page == "1/5") {
+        const std::string difficulty
+            = JoinPhrases(RecField(*header, "difficulty"), RecField(*header, "level"));
+        if (!difficulty.empty())
+            b.AddLabel(ControlId::Structural(prefix + "difficulty"),
+                [difficulty]() { return difficulty; });
+        const std::string ironman = RecField(*header, "ironman");
+        if (!ironman.empty())
+            b.AddLabel(ControlId::Structural(prefix + "ironman"),
+                [ironman]() { return ironman; });
+        const std::string date = JoinPhrases(RecField(*header, "date"), RecField(*header, "day"));
+        if (!date.empty())
+            b.AddLabel(ControlId::Structural(prefix + "date"), [date]() { return date; });
+        if (const WireRecord* doom = FindRecord(words, "doom")) {
+            const std::string line
+                = JoinPhrases(RecField(*doom, "label"), RecField(*doom, "value"));
+            if (!line.empty())
+                b.AddLabel(ControlId::Structural(prefix + "doom"), [line]() { return line; });
+        }
+    }
+
+    b.BeginStop("stats");
+    const WireRecord* firstStat = FindRecord(words, "stat");
+    std::vector<std::string> headings;
+    if (firstStat) {
+        headings.push_back(RecField(*firstStat, "youlabel"));
+        if (!RecField(*firstStat, "worldlabel").empty())
+            headings.push_back(RecField(*firstStat, "worldlabel"));
+    }
+    GraphSheet sheet(b, prefix + "stats/",
+        SheetConfig{Vocab::TableBlank, Vocab::RoleTable, &TextType()});
+    sheet.Region(RecField(*header, "summary"), headings);
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "stat")
+            continue;
+        const std::string label = RecField(rec, "label");
+        const std::string you = RecField(rec, "you");
+        const std::string world = RecField(rec, "world");
+        const std::string yourResult = JoinPhrases(RecField(rec, "youlabel"), you);
+        const std::string worldResult = JoinPhrases(RecField(rec, "worldlabel"), world);
+        NodeVtable primary;
+        primary.Type = &TextType();
+        primary.Announcements.emplace_back(NodeAnnouncement::Static(label));
+        primary.Announcements.back().Kind = AnnouncementKinds::Label;
+        primary.Announcements.emplace_back(NodeAnnouncement::Static(yourResult));
+        primary.Announcements.back().Kind = AnnouncementKinds::Value;
+        if (!world.empty()) {
+            primary.Announcements.emplace_back(NodeAnnouncement::Static(worldResult));
+            primary.Announcements.back().Kind = AnnouncementKinds::Value;
+        }
+        std::vector<std::function<std::string()>> cells;
+        cells.push_back([you]() { return you; });
+        if (!headings.empty() && headings.size() > 1)
+            cells.push_back([world]() { return world; });
+        // Fixed rows within one page; the page-specific sheet key supplies identity.
+        sheet.Row(std::move(primary), nullptr, std::move(cells));
+    }
+    sheet.Finish();
+
+    b.BeginStop("pages");
+    b.StartRow(prefix + "buttons");
+    if (page != "1/5") {
+        NodeVtable back;
+        back.Type = &ButtonType();
+        back.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::ReportBack()));
+        back.Announcements.back().Kind = AnnouncementKinds::Label;
+        back.OnActivate = []() { GameUI::SendScreenCommand(gScreen, GameUI::kCmdEscape); };
+        b.AddItem(ControlId::Structural(prefix + "back"), std::move(back));
+    }
+    NodeVtable next;
+    next.Type = &ButtonType();
+    next.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::PopupContinue()));
+    next.Announcements.back().Kind = AnnouncementKinds::Label;
+    next.OnActivate = []() { GameUI::SendScreenCommand(gScreen, GameUI::kCmdEnter); };
+    b.AddItem(ControlId::Structural(prefix + "continue"), std::move(next));
+    b.EndRow();
+    return b.Build();
+}
+
+std::string EndGameName()
+{
+    const WireRecord* header = FindRecord(EndGameWords(), "header");
+    return header ? RecField(*header, "title") : std::string();
+}
+
+std::unique_ptr<GraphRender> BuildMemorialDetails()
+{
+    const auto& words = MemorialWords();
+    const WireRecord* header = FindRecord(words, "header");
+    if (!header)
+        return nullptr;
+    GraphBuilder b;
+    b.BeginStop("soldier");
+    const std::string identity = JoinParts(*header, {"rank", "name", "class"});
+    b.AddLabel(ControlId::Structural("memorial/identity"),
+        [identity]() { return identity; });
+    for (const char* key : {"date", "missions", "kills"}) {
+        const std::string labelKey = std::string(key) + "Label";
+        const std::string line = JoinPhrases(RecField(*header, labelKey.c_str()), RecField(*header, key));
+        if (!line.empty())
+            b.AddLabel(ControlId::Structural(std::string("memorial/") + key),
+                [line]() { return line; });
+    }
+    b.BeginStop("service");
+    if (const WireRecord* section = FindRecord(words, "section"))
+        b.SetRegion(RecField(*section, "label"));
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "stat")
+            continue;
+        const std::string index = RecField(rec, "index");
+        const std::string line = JoinPhrases(RecField(rec, "label"), RecField(rec, "value"));
+        if (!line.empty())
+            b.AddLabel(ControlId::Structural("memorial/stat/" + index),
+                [line]() { return line; });
+    }
+    if (const WireRecord* epitaph = FindRecord(words, "epitaph")) {
+        b.BeginStop("epitaph");
+        const std::string line
+            = JoinPhrases(RecField(*epitaph, "label"), RecField(*epitaph, "value"));
+        b.AddLabel(ControlId::Structural("memorial/epitaph"), [line]() { return line; });
+    }
+    b.BeginStop("actions");
+    b.StartRow("memorial/buttons");
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "button")
+            continue;
+        const int action = RecField(rec, "action") == "pool" ? 1 : 0;
+        const std::string label = RecField(rec, "label");
+        if (label.empty())
+            continue;
+        NodeVtable button;
+        button.Type = &ButtonType();
+        button.Announcements.emplace_back(NodeAnnouncement::Static(label));
+        button.Announcements.back().Kind = AnnouncementKinds::Label;
+        button.OnActivate = [action]() {
+            CallCompanionVerb(gMemorialWords, kEndGameReaderClass, "ActivateMemorial", action);
+        };
+        b.AddItem(ControlId::Structural("memorial/button/" + std::to_string(action)),
+            std::move(button));
+    }
+    NodeVtable back;
+    back.Type = &ButtonType();
+    back.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::ReportBack()));
+    back.Announcements.back().Kind = AnnouncementKinds::Label;
+    back.OnActivate = []() { GameUI::SendScreenCommand(gScreen, GameUI::kCmdEscape); };
+    b.AddItem(ControlId::Structural("memorial/back"), std::move(back));
+    b.EndRow();
+    return b.Build();
+}
+
+std::string MemorialDetailsName()
+{
+    const WireRecord* section = FindRecord(MemorialWords(), "section");
+    return section ? RecField(*section, "label") : std::string();
+}
+
 // ---- squad select recipe (UISquadSelect) ----
 //
 // The last gate before every mission. Unlike the shell screens this one already HAS working
@@ -3489,6 +3675,13 @@ void ClearGeoscapeHover()
 // consumes it. Adding a recipe means adding it there as well as declaring it in recipes.h; a
 // recipe declared and never listed is a screen that is silently never probed. Each definition
 // below keeps the sentence that argues where in that order it belongs.
+
+const Recipe kEndGameRecipe{
+    "campaign result", ProbeFocused<GameUI::FindEndGameStatsScreen>, BuildEndGame, EndGameName};
+
+// The card stacks over UIPersonnel_BarMemorial, so it must probe before the roster.
+const Recipe kMemorialDetailsRecipe{"memorial details",
+    ProbeFocused<GameUI::FindMemorialDetailsScreen>, BuildMemorialDetails, MemorialDetailsName};
 
 const Recipe kSquadSelectRecipe{
     "squad select", ProbeFocused<GameUI::FindSquadSelect>, BuildSquadSelect, SquadSelectName};

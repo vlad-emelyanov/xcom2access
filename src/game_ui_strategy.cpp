@@ -17,6 +17,18 @@
 
 namespace GameUI {
 
+void* FindEndGameStatsScreen()
+{
+    void* screen = FindStackScreenRaw("UIEndGameStats", ClassMatch::Derived);
+    return screen && IsTopmostScreen(screen) ? screen : nullptr;
+}
+
+void* FindMemorialDetailsScreen()
+{
+    void* screen = FindStackScreenRaw("UIBarMemorial_Details", ClassMatch::Derived);
+    return screen && IsTopmostScreen(screen) ? screen : nullptr;
+}
+
 namespace {
 
 // ---- squad select: UISquadSelect + its cards (docs/squad-select-recon.md §3) ----

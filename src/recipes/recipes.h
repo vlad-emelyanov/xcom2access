@@ -57,6 +57,8 @@ extern const Recipe kChallengeEventRecipe;      // the networked challenge's eve
 extern const Recipe kModConfigRecipe;        // Mod Config Menu (MCM_OptionsScreen), over settings
 
 // ---- strategy (recipe_strategy.cpp) ----
+extern const Recipe kEndGameRecipe;         // campaign win/loss, five pages
+extern const Recipe kMemorialDetailsRecipe; // fallen soldier detail card
 extern const Recipe kSquadSelectRecipe;
 extern const Recipe kAfterActionRecipe;
 extern const Recipe kArmoryLoadoutRecipe;
@@ -101,7 +103,7 @@ extern const Recipe kLootRecipe;     // the mid-mission loot receipt (UIInventor
 extern const Recipe kCharInfoRecipe; // the soldier sheet (UITacticalCharInfoScreen)
 
 // How many of the above kRecipes must list. Pinned by a static_assert next to the array.
-constexpr std::size_t kRecipeCount = 64;
+constexpr std::size_t kRecipeCount = 66;
 
 } // namespace Recipes
 } // namespace MenuNavigator

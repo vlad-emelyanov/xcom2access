@@ -8,6 +8,11 @@
 
 namespace GameUI {
 
+// The two campaign endings share UIEndGameStats; the Bar's memorial detail is
+// pushed over the already-covered personnel roster.
+void* FindEndGameStatsScreen();
+void* FindMemorialDetailsScreen();
+
 // ---- armory loadout (UIArmory_Loadout) ----
 //
 // The screen squad select hands the player to, and the one place armour and a soldier's actual

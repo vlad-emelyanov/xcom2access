@@ -14,6 +14,16 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**Campaign endings and memorial detail** (2026-09-25, `X2AccessEndGameReader` and two
+recipes). The native ASI and UnrealScript companion build and are installed; neither screen
+has been heard live. On a win and a loss, verify the localized result, difficulty, date,
+Avatar progress, all five stat pages, both player and world columns when world data exists,
+the player-only layout when it does not, Back, Continue, and the transition to credits.
+In the Bar memorial, enter a fallen soldier's detail card from the accessible roster;
+verify identity, date, service statistics, cause of death and epitaph. Edit the epitaph,
+return to the card, add the soldier to the character pool, and close the card. Confirm
+the button labels and dialogue remain in the game's language.
+
 **Soldier voice preview and PCS activation** (2026-09-23, native): verify Backspace previews
 without closing in both `UICustomize_Voice` (mouseless) and the mouse-active trait picker, with
 the localized preview caption and Backspace announced. Enter must accept and Escape must retain

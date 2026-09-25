@@ -33,6 +33,7 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Facility upgrades (`UIChooseUpgrade`) | `game_ui_avenger.cpp` | `X2AccessUpgradeReader.uc`, `facility upgrades` | avenger.md | `avenger-view-recon.md` §18 |
 | Commodity list (13 screens) | `game_ui_avenger.cpp` | `X2AccessCommodityReader.uc`, `commodity list` | avenger.md | `avenger-view-recon.md` §14 |
 | Personnel roster | `game_ui_avenger.cpp` | `X2AccessPersonnelReader.uc`, `personnel roster` | avenger.md | `avenger-view-recon.md` §15 |
+| Memorial detail card | `game_ui_strategy.cpp` (finder) | `X2AccessEndGameReader.uc`, `memorial details` | — | — (source pass; live pass owed) |
 | Black market — entry menu + trading post (the Buy side is the commodity list's) | `game_ui_avenger.cpp` (buttons, numbers, headings; the welcome line via Flash capture) | `X2AccessBlackMarketReader.uc`, `black market` + `black market sell` | avenger.md | `avenger-view-recon.md` §19 |
 | Choose facility | `game_ui_avenger.cpp` | `X2AccessBuildFacilityReader.uc`, `choose facility` | avenger.md | `avenger-view-recon.md` §16 |
 | Research report | `game_ui_avenger.cpp` (Flash capture) | — (no companion), `research report` | — | `research-report-recon.md` |
@@ -49,6 +50,7 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Squad select | — | `X2AccessSquadReader.uc`, `squad select` | strategy.md | `squad-select-recon.md` |
 | Chosen encounter summary | `game_ui_tactical.cpp` | — (no companion), `chosen summary` | — | `mission-summary-recon.md` |
 | Mission summary (post-mission stats) | `game_ui_tactical.cpp` | — (no companion), `mission summary` | — | `mission-summary-recon.md` |
+| Campaign win/loss statistics | `game_ui_strategy.cpp` (finder) | `X2AccessEndGameReader.uc`, `campaign result` | — | — (source pass; live pass owed) |
 | After action (post-mission walk-up) | `game_ui_strategy.cpp` | `X2AccessAfterActionReader.uc`, `after action` | — | `after-action-recon.md` |
 | Armory loadout | — | `X2AccessLoadoutReader.uc`, `armory loadout` | strategy.md | `loadout-recon.md` |
 | Promotion / level-up (3 screens) | `game_ui_strategy.cpp` | `X2AccessPromotionReader.uc`, `promotion` | — | — (no recon; built straight from source) |
@@ -87,4 +89,3 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Challenge event notice (`UIChallengeModeEventNotify`, networked only) | `game_ui_tle_mission.cpp` | — (no companion), `challenge event` | tactical.md | `tle-mission-recon.md` |
 | Score HUD (`UIChallengeModeHUD`, `UILadderModeHUD`) — narrate-only, no recipe | `game_ui_tactical.cpp` (whitelisted in `kTacticalPassives`; the HUDs retain nothing) | `X2AccessLadderReader` listener on `ChallengeModeScoreChange` (banners + total); `DescribeHudScore` for the HUD graph's trailing `score` stop via `AddTLEHudStop` | tactical.md | `tle-mission-recon.md` §1, §3 |
 | Mod Config Menu (`MCM_OptionsScreen`) + the injected Options button — the first mod-provided screen: no SDK class, read by walking and by name | `game_ui_mods.cpp` + the Options button scan in `game_ui_shell.cpp` | — (no companion), `mod config` | — (built from source; never run) | `mod-config-menu-recon.md` |
-
