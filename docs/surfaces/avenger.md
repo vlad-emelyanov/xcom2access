@@ -527,6 +527,10 @@ database and post-mission loot. (`UIBlackMarket_Sell` is NOT in the family despi
 - ⛔ The list holds things that are NOT rows: `UIInventory_LootRecovered` interleaves
   `UIInventory_HeaderListItem` dividers, plain `UIPanel`s with no such bitfield — skipped by CLASS
   while keeping `i` as the index, so every remaining number equals the game's own.
+- **The quantity column is just a number, and its meaning varies by screen.** Loot counts items
+  recovered, implants and storage count items on hand, and Build Items counts items already made.
+  Speak a stack count above one; a single item needs only its name. Do not append a shared
+  "owned" label to this whole family.
 - ⛔ **Enter goes to the SCREEN, not to the row**, and the counter-example proves it:
   `UIInventory_LootRecovered` overrides `OnUnrealCommand` to CLOSE on Enter and its rows buy
   nothing, so a row-targeted Enter would strand a blind player on the post-mission loot screen

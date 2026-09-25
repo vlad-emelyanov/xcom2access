@@ -167,7 +167,7 @@ private function NarrateTurnChange(XComGameStateHistory History, XComGameStateCo
 	switch (PlayerState.GetTeam())
 	{
 	case eTeam_XCom:
-		class'X2AccessNarrator'.static.Alert(class'UITurnOverlay'.default.m_sXComTurn);
+		class'X2AccessNarrator'.static.Alert(class'UISpecialMissionHUD_TurnCounter'.default.m_strPlayerTurnLabel);
 		break;
 	case eTeam_Alien:
 		class'X2AccessNarrator'.static.Alert(class'UITurnOverlay'.default.m_sAlienTurn);

@@ -809,14 +809,13 @@ std::unique_ptr<GraphRender> BuildCommodity()
         if (label.empty())
             continue;
 
-        // The right-hand quantity column, spoken only where the row draws one. On the loot
-        // receipt it counts items recovered this mission, omitting a redundant one;
-        // elsewhere it counts items owned.
+        // The right-hand quantity column belongs to every item row, but "1" adds nothing
+        // to its name. Use the game's number for larger stacks without assigning a meaning
+        // such as "owned" to every screen (the loot receipt counts recovered items).
         // `label` is the game's own item name, so the join is AppendPhrase's — never a bare comma.
         const std::string qty = RecField(rec, "qty");
-        const bool recovered = RecField(rec, "qtyRecovered") == "1";
-        if (!qty.empty() && (!recovered || qty != "1"))
-            AppendPhrase(label, recovered ? qty : qty + " " + Vocab::CommodityOwned);
+        if (!qty.empty() && qty != "1")
+            AppendPhrase(label, qty);
 
         // The class row (psi ability picker, class picker) draws its training time in that same
         // right-hand column — short, decisive, on the line. Its description is a paragraph the

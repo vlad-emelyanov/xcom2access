@@ -1218,6 +1218,10 @@ the listener set does not work if any one of them is undone.
   seconds ahead of the animation; `ELD_OnStateSubmitted` for structural facts (`PlayerTurnBegun`,
   concealment, panic, shields, evac), which are tied to no animation and would be dropped entirely
   by a state that never builds a visualization block.
+  - **The player-turn alert uses the game's `UISpecialMissionHUD_TurnCounter.m_strPlayerTurnLabel`**
+    on both live and replay paths. In Russian its loaded value is "Ваш ход"; the regular
+    `UITurnOverlay.m_sXComTurn` says "ДЕЙСТВИЯ СОПРОТИВЛЕНИЯ", which sounds like Resistance NPC
+    activity rather than the player's turn. Keep both paths on the same game-owned label.
   - ⛔ **The split is what puts cause before consequence, and a shared window cannot.** Priority
     orders listeners for the SAME event only; between events the order is the GAME's trigger order,
     and that is backwards for us — `XComGameState_Unit` triggers `UnitTakeEffectDamage` (`:5874`)
