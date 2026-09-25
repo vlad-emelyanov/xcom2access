@@ -810,6 +810,7 @@ inline constexpr Word TextInputEmpty{"TextInputEmpty"};
 inline constexpr Word TextInputStart{"TextInputStart"};
 inline constexpr Word TextInputEnd{"TextInputEnd"};
 inline constexpr Word TextInputDeleted{"TextInputDeleted"};
+inline constexpr Word TextInputConfirmHint{"TextInputConfirmHint"};
 
 // Character echo. A LETTER or a digit is spoken as itself and the reader pronounces it; a lone
 // punctuation mark is not — most screen readers drop it entirely at their default punctuation

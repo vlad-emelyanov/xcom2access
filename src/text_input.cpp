@@ -48,6 +48,7 @@ void* gScreen = nullptr; // the dialog being tracked; compared only, never deref
 GameUI::TextFieldState gLast;
 bool gHaveLast = false;
 bool gPending = false; // a key is still settling
+bool gMultiLine = false; // cached for the window-procedure claim predicate
 uint64_t gPendingUntilMs = 0;
 uint64_t gLastReadMs = 0;
 
@@ -63,6 +64,7 @@ void Reset()
     gLast = GameUI::TextFieldState{};
     gHaveLast = false;
     gPending = false;
+    gMultiLine = false;
     gLastReadMs = 0;
     gKeySeen = false;
     gSpoken.clear();
@@ -172,6 +174,8 @@ void AnnounceDialog(const GameUI::TextInputView& view, const GameUI::TextFieldSt
     append(s.text.empty() ? std::string(Vocab::TextInputEmpty) : Utf8(s.text));
     if (s.HasSelection() && static_cast<size_t>(s.selEnd - s.selBegin) == s.text.size())
         append(Vocab::Selected);
+    if (view.multiLine)
+        append(Vocab::TextInputConfirmHint);
     if (line.empty())
         return;
     // Alert, not Focus: the player did not press a key to get HERE — a screen appeared over what
@@ -227,9 +231,25 @@ void AnnounceChange(const GameUI::TextFieldState& before, const GameUI::TextFiel
 
 void Init()
 {
-    // No claims, and that is the design: every key here belongs to the text field. The observer
-    // watches the traffic on its way past — the field still receives everything — and exists to
-    // TRIGGER a read, because reading the field costs outbound calls that must not free-run.
+    // Only this chord is claimed. UIInputDialogue deliberately uses Enter for a line break in
+    // multiline mode and ignores Tab, leaving its visible Confirm button mouse-only. Its own
+    // OnMouseAccept is the button's delegate and reads the Flash field before invoking callbacks.
+    // The predicate runs in the window procedure: it reads cached bits only, never engine state.
+    InputArbiter::RegisterClaim({VK_RETURN, InputArbiter::ModCtrl,
+        []() { return gScreen && gMultiLine; },
+        [](const InputArbiter::KeyEvent& e) {
+            if (!e.down || e.repeat)
+                return;
+            void* screen = GameUI::FindTextInputScreen();
+            if (screen != gScreen || !screen || !GameUI::IsTopmostScreen(screen)
+                || !GameUI::ReadTextInput(screen).multiLine)
+                return;
+            if (!GameUI::InvokeScreenVerb(screen, "OnMouseAccept"))
+                LOG_WARN("TextInput: Ctrl+Enter could not invoke UIInputDialogue.OnMouseAccept");
+        }, "text input: confirm multiline"});
+
+    // The observer watches ordinary editing traffic on its way past: the field receives it and
+    // its own changed state decides what was typed, selected or deleted.
     InputArbiter::RegisterObserver(InputArbiter::Observer{
         OnObservedKey, OnObservedChar, "text input: read trigger"});
     LOG_INFO("TextInput: observer registered");
@@ -257,6 +277,7 @@ void OnTick()
         Reset();
         gScreen = screen;
         GameUI::TextInputView view = GameUI::ReadTextInput(screen);
+        gMultiLine = view.multiLine;
         gLast = GameUI::ReadFocusedTextField(screen);
         gHaveLast = gLast.valid;
         gLastReadMs = now;

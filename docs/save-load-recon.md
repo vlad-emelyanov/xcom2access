@@ -137,12 +137,15 @@ are retained (`m_kData.strTitle` +0x410, `m_kData.strInputBoxText` +0x420) —
 and the prompt is the only one of those the reader still uses, because the field
 itself turned out to be readable (§7.1).
 
-⛔ It must NOT be a graph recipe, and it must claim NOTHING. A recipe attaching
+⛔ It must NOT be a graph recipe, and ordinary editing keys must not be claimed. A recipe attaching
 turns on the navigator's claims — arrows, **Enter**, **Space**, Tab, Home, End
 — and every one of those is a key the player is using to type or to answer; and
 a spare chord for a read-back key does not exist either (`F1`–`F4`, `?` and
 Ctrl+Shift+S are claimed globally by `src/input.cpp`, and everything else is a
-text-editing key).
+text-editing key). The later memorial live pass exposed one exception: multiline
+`UIInputDialogue` deliberately turns Enter into a newline and ignores Tab, leaving
+its visible Confirm action mouse-only. `Ctrl+Enter` is now claimed only while a
+multiline dialog is active and calls the game's `OnMouseAccept` delegate.
 
 So `src/text_input.cpp` **observes and reads**. `InputArbiter::RegisterObserver`
 is a passive fan-out added for this: it sees every key-down and every `WM_CHAR`

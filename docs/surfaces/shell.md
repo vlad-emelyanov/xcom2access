@@ -213,12 +213,16 @@ yet run live**. The measurement is `../tle-challenge-recon.md`.
 `UIInputDialogue` — naming a new save, and the error reporter. The player types into a **Flash
 TextField**, which no screen reader can see, so nothing echoes their own keystrokes back.
 
-- ⛔ It is NOT a graph recipe and it claims NOTHING: a recipe attaching turns on the navigator's
+- ⛔ It is NOT a graph recipe and leaves editing keys to the field: a recipe attaching turns on the navigator's
   arrows, Enter, Space, Tab, Home and End, every one of which the player is using to type or
   answer — and a read-back key would answer the wrong question anyway, since what the player needs
   is the echo of the key just pressed. It **observes and reads**:
   `InputArbiter::RegisterObserver` records that a key happened, and the field itself answers what
   it did.
+- **Multiline confirmation is Ctrl+Enter.** The game deliberately uses Enter for a new line and
+  ignores Tab in `UIInputDialogue`. The scoped claim calls the visible Confirm button's
+  `OnMouseAccept`, which reads the Flash field and runs its normal accept callback. Single-line
+  dialogs keep their own Enter path; every other editing key passes through.
 - **The Flash side is READABLE** (measured; `docs/save-load-recon.md` §7.1 has the table): AS2's
   global `Selection` class resolves through `ActionScriptInt` **with or without the `_global.`
   prefix**, so `Selection.getCaretIndex()` / `getBeginIndex()` / `getEndIndex()` give an EXACT

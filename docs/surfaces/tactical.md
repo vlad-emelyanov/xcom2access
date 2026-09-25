@@ -387,6 +387,16 @@ sits.
   disagree. Walk `StoredTileData` **by index**: its element type
   `WorldEffectTileDataContainer` is declared inside that class and referenced NOWHERE
   else in the SDK, so cross-class scoping of the name is untested ground.
+- A Codex's Psionic Bomb is a delayed ability, not a world-effect hazard tile. The live
+  stage-one shooter effect retains its target location; stage two's multi-target style
+  supplies the blast tiles. The tile reader and hazards ring use that same query, and
+  only currently seen tiles are spoken. The name comes from `PsiBombStage1`'s localized
+  `LocFriendlyName`.
+- `IsCivilian()` takes precedence over the friendly/enemy split on a visible tile.
+  A neutral civilian has the rescue circle when `RescueRingRadius > 0`, or on a
+  `Terror` mission, where `X2UnitRadiusManager` draws the same circle dynamically
+  without writing that radius. The tile reader and civilian ring distinguish that
+  person from an ordinary civilian.
 - ⛔ **`ground.evac` speaks the origin CLAMPED into the zone bounds**, not
   `CenterLocation` — a rectangle's centre gives the wrong distance, the wrong bearing
   and a plant you may not be able to stand on.

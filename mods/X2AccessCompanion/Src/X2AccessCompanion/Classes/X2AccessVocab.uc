@@ -301,6 +301,7 @@ var localized string TextInputEmpty;
 var localized string TextInputStart;
 var localized string TextInputEnd;
 var localized string TextInputDeleted;
+var localized string TextInputConfirmHint;
 var localized string Loading;
 var localized string GroupDifficulty;
 var localized string GroupCampaignOptions;
@@ -395,6 +396,9 @@ var localized string TowerDetection;
 
 var localized string Ally;
 var localized string Enemy;
+var localized string Civilian;
+var localized string RescueCivilian;
+var localized string AttackArea;
 
 var localized string Ramp;
 var localized string Ladder;

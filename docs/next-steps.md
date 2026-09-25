@@ -22,14 +22,20 @@ nearby soldier: none should announce a pickup. In a tutorial replay, verify the 
 without speaking loot from a future frame. Hear the Russian line in a Russian game session.
 
 **Campaign endings and memorial detail** (2026-09-25, `X2AccessEndGameReader` and two
-recipes). The native ASI and UnrealScript companion build and are installed; neither screen
-has been heard live. On a win and a loss, verify the localized result, difficulty, date,
+recipes). The original native ASI and UnrealScript companion build and are installed; the
+campaign result has not been heard live. On a win and a loss, verify the localized result, difficulty, date,
 Avatar progress, all five stat pages, both player and world columns when world data exists,
 the player-only layout when it does not, Back, Continue, and the transition to credits.
 In the Bar memorial, enter a fallen soldier's detail card from the accessible roster;
 verify identity, date, service statistics, cause of death and epitaph. Edit the epitaph,
 return to the card, add the soldier to the character pool, and close the card. Confirm
 the button labels and dialogue remain in the game's language.
+The first memorial live pass reached the detail card and found the epitaph editor's multiline Confirm inaccessible by
+keyboard: Enter inserts a line and Tab does not move focus. The native text-entry reader now
+claims Ctrl+Enter only for multiline dialogs and calls the game's Confirm handler. The native
+change builds; compile and install both layers after the running game is closed,
+then test that Ctrl+Enter saves the epitaph while bare Enter still inserts a line; also check
+single-line save naming and the crash report's two fields.
 
 **Soldier voice preview and PCS activation** (2026-09-23, native): verify Backspace previews
 without closing in both `UICustomize_Voice` (mouseless) and the mouse-active trait picker, with

@@ -51,6 +51,12 @@ next-unit binding — the chord had to be claimed mission-wide to keep leniency 
 binding under it. With that binding moved to `E` by config the chord is retired and bare Tab is
 the entry key.)
 
+**Multiline text entry:** `UIInputDialogue` uses bare Enter to insert a newline and ignores
+Tab, leaving its visible Confirm action without a keyboard route. `text_input.cpp` claims
+`Ctrl+Enter` only while a multiline dialog is active, then invokes the game's
+`OnMouseAccept` handler. The claim swallows that chord so Flash cannot also insert a line;
+single-line dialogs and all other editing keys keep their vanilla paths.
+
 **The engine executes exactly ONE binding per key event.** `UPlayerInput::InputKey` asks
 `GetBind` for a single command string and execs that; `GetBind` walks `Bindings` from the END and
 returns the first match, so a later entry shadows an earlier one for the same key. Measured in the

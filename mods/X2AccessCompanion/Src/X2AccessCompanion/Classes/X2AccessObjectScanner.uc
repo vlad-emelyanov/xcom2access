@@ -1092,7 +1092,7 @@ private function AddCivilians(TTile Origin, out array<AccessMarker> Entries)
 		M.Key = UnitState.ObjectID;
 		M.Tile = UnitState.TileLocation;
 		M.bIsDestination = true;
-		M.Label = UnitState.GetName(eNameType_Full);
+		M.Label = class'X2AccessHelper'.static.DescribeCivilian(UnitState);
 
 		M.Detail = "";
 		class'X2AccessHelper'.static.AppendComma(M.Detail, StatusWords(UnitState));
@@ -1153,13 +1153,74 @@ private function AddLost(TTile Origin, out array<AccessMarker> Entries)
 //
 // Grouping matters here: fire SPREADS, and each spread step writes another
 // XComGameState_WorldEffectTileData, so a per-object ring would grow a new "Fire" entry every turn
-// for what the player sees as one fire. Four types means at most four entries, ever.
+// for what the player sees as one fire. Delayed Psi Bomb areas below are separate warnings.
 private function AddHazards(TTile Origin, out array<AccessMarker> Entries)
 {
 	local int TypeIdx;
 
 	for (TypeIdx = 0; TypeIdx < HAZARD_COUNT; TypeIdx++)
 		AddHazardOfType(TypeIdx, Origin, Entries);
+	AddPsiBombAreas(Origin, Entries);
+}
+
+// Delayed Psi Bombs are not XComGameState_WorldEffectTileData. Each active stage-one effect
+// retains one warning area, and the game's stage-two targeting style supplies its exact tiles.
+private function AddPsiBombAreas(TTile Origin, out array<AccessMarker> Entries)
+{
+	local XComGameState_Effect EffectState;
+	local XComWorldData WorldData;
+	local array<TTile> Tiles;
+	local AccessMarker M;
+	local TTile MinT, MaxT, NearT, T;
+	local int i, D, NearDist, Span;
+	local bool bAny;
+
+	WorldData = `XWORLD;
+	foreach `XCOMHISTORY.IterateByClassType(class'XComGameState_Effect', EffectState)
+	{
+		Tiles.Length = 0;
+		if (!class'X2AccessHelper'.static.GetPsiBombArea(EffectState, Tiles))
+			continue;
+		bAny = false;
+		for (i = 0; i < Tiles.Length; i++)
+		{
+			T = Tiles[i];
+			if (!TileSeen(WorldData, T, false))
+				continue;
+			D = TileDistance(Origin, T);
+			if (!bAny)
+			{
+				MinT = T;
+				MaxT = T;
+				NearT = T;
+				NearDist = D;
+				bAny = true;
+			}
+			else
+			{
+				MinT.X = Min(MinT.X, T.X);
+				MinT.Y = Min(MinT.Y, T.Y);
+				MaxT.X = Max(MaxT.X, T.X);
+				MaxT.Y = Max(MaxT.Y, T.Y);
+				if (D < NearDist)
+				{
+					NearT = T;
+					NearDist = D;
+				}
+			}
+		}
+		if (!bAny)
+			continue;
+		M.Label = class'X2AccessHelper'.static.PsiBombAreaLabel(EffectState);
+		if (M.Label == "")
+			continue;
+		Span = Max(MaxT.X - MinT.X, MaxT.Y - MinT.Y) + 1;
+		M.Key = -100000 - EffectState.ObjectID;
+		M.Tile = NearT;
+		M.bIsDestination = false;
+		M.Detail = (Span > 1) ? SpanWords(Span) : "";
+		InsertByDistance(Origin, M, Entries);
+	}
 }
 
 private function AddHazardOfType(int TypeIdx, TTile Origin, out array<AccessMarker> Entries)

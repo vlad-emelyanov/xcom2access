@@ -250,6 +250,7 @@
     "TextInputStart",
     "TextInputEnd",
     "TextInputDeleted",
+    "TextInputConfirmHint",
     "Loading",
     "GroupDifficulty",
     "GroupCampaignOptions",

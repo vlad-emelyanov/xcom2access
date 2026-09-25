@@ -335,8 +335,108 @@ static function string DescribeHazards(XComWorldData WorldData, TTile Tile)
 		AppendPart(Result, class'X2AccessVocab'.default.Smoke);
 	if (WorldData.TileContainsAcid(Tile))
 		AppendPart(Result, class'X2AccessVocab'.default.Acid);
+	AppendPart(Result, DescribePsiBombArea(Tile));
 
 	return Result;
+}
+
+// The Codex's warning is a delayed ability, not a world-effect tile. The active shooter effect
+// retains the target location; stage two's own multi-target style defines the actual blast tiles.
+static function bool GetPsiBombArea(XComGameState_Effect EffectState, out array<TTile> Tiles)
+{
+	local XComGameStateHistory History;
+	local XComGameState_Unit SourceUnit;
+	local XComGameState_Ability BlastAbility;
+	local StateObjectReference AbilityRef;
+	local X2AbilityTemplate BlastTemplate;
+	local X2Effect_Persistent ActiveEffect;
+	local vector TargetLocation;
+
+	if (EffectState.ApplyEffectParameters.AbilityInputContext.AbilityTemplateName != 'PsiBombStage1'
+		|| EffectState.ApplyEffectParameters.AbilityInputContext.TargetLocations.Length == 0)
+		return false;
+	ActiveEffect = EffectState.GetX2Effect();
+	if (ActiveEffect == none
+		|| ActiveEffect.EffectName != class'X2Ability_Cyberus'.default.Stage1PsiBombEffectName)
+		return false;
+	History = `XCOMHISTORY;
+	SourceUnit = XComGameState_Unit(History.GetGameStateForObjectID(
+		EffectState.ApplyEffectParameters.SourceStateObjectRef.ObjectID));
+	if (SourceUnit == none)
+		return false;
+	AbilityRef = SourceUnit.FindAbility('PsiBombStage2');
+	BlastAbility = XComGameState_Ability(History.GetGameStateForObjectID(AbilityRef.ObjectID));
+	if (BlastAbility == none)
+		return false;
+	BlastTemplate = BlastAbility.GetMyTemplate();
+	if (BlastTemplate == none || BlastTemplate.AbilityMultiTargetStyle == none)
+		return false;
+
+	TargetLocation = EffectState.ApplyEffectParameters.AbilityInputContext.TargetLocations[0];
+	BlastTemplate.AbilityMultiTargetStyle.GetValidTilesForLocation(BlastAbility, TargetLocation, Tiles);
+	return Tiles.Length > 0;
+}
+
+static function string PsiBombAreaLabel(XComGameState_Effect EffectState)
+{
+	local XComGameState_Ability AbilityState;
+	local X2AbilityTemplate AbilityTemplate;
+
+	AbilityState = XComGameState_Ability(`XCOMHISTORY.GetGameStateForObjectID(
+		EffectState.ApplyEffectParameters.AbilityStateObjectRef.ObjectID));
+	if (AbilityState != none)
+		AbilityTemplate = AbilityState.GetMyTemplate();
+	if (AbilityTemplate == none)
+		AbilityTemplate = class'XComGameState_Ability'.static.GetMyTemplateManager().FindAbilityTemplate(
+			'PsiBombStage1');
+	if (AbilityTemplate == none)
+		return "";
+	return class'X2AccessVocab'.static.FillS(class'X2AccessVocab'.default.AttackArea,
+		AbilityTemplate.LocFriendlyName);
+}
+
+static function string DescribePsiBombArea(TTile Tile)
+{
+	local XComGameState_Effect EffectState;
+	local array<TTile> Tiles;
+	local int i;
+
+	foreach `XCOMHISTORY.IterateByClassType(class'XComGameState_Effect', EffectState)
+	{
+		Tiles.Length = 0;
+		if (GetPsiBombArea(EffectState, Tiles))
+		{
+			for (i = 0; i < Tiles.Length; i++)
+				if (Tiles[i].X == Tile.X && Tiles[i].Y == Tile.Y && Tiles[i].Z == Tile.Z)
+					return PsiBombAreaLabel(EffectState);
+		}
+	}
+	return "";
+}
+
+static function string DescribeCivilian(XComGameState_Unit UnitState)
+{
+	if (CivilianHasRescueRing(UnitState))
+		return class'X2AccessVocab'.static.FillS(class'X2AccessVocab'.default.RescueCivilian,
+			UnitState.GetName(eNameType_Full));
+	return class'X2AccessVocab'.static.FillS(class'X2AccessVocab'.default.Civilian,
+		UnitState.GetName(eNameType_Full));
+}
+
+static function bool CivilianHasRescueRing(XComGameState_Unit UnitState)
+{
+	local XComTacticalMissionManager MissionMgr;
+
+	if (UnitState.GetTeam() != eTeam_Neutral)
+		return false;
+	if (UnitState.RescueRingRadius > 0)
+		return true;
+
+	// Terror draws the same CivilianRescueRing mesh through X2UnitRadiusManager instead of
+	// writing RescueRingRadius. The manager is spawned only for this mission type and draws
+	// a circle around each living, visible neutral civilian.
+	MissionMgr = `TACTICALMISSIONMGR;
+	return MissionMgr != none && MissionMgr.ActiveMission.sType == "Terror";
 }
 
 // Is this tile inside the XCom evac zone, and would standing here count? "" when there is no
@@ -576,10 +676,13 @@ static function string DescribeUnitsOnTile(TTile Tile)
 		if (!UnitState.IsAlive())
 			continue;
 
-		AppendPart(Result, class'X2AccessVocab'.static.FillS(
-			UnitState.IsFriendlyToLocalPlayer() ? class'X2AccessVocab'.default.Ally
-				: class'X2AccessVocab'.default.Enemy,
-			UnitState.GetName(eNameType_Full)));
+		if (UnitState.IsCivilian())
+			AppendPart(Result, DescribeCivilian(UnitState));
+		else
+			AppendPart(Result, class'X2AccessVocab'.static.FillS(
+				UnitState.IsFriendlyToLocalPlayer() ? class'X2AccessVocab'.default.Ally
+					: class'X2AccessVocab'.default.Enemy,
+				UnitState.GetName(eNameType_Full)));
 	}
 
 	return Result;
