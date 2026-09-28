@@ -995,6 +995,9 @@ private static function string InteractiveMarkWords(XComGameState_InteractiveObj
 	local int i;
 
 	VisActor = XComInteractiveLevelActor(`XCOMHISTORY.GetVisualizer(Obj.ObjectID));
+	// A door is open or closed, never "used": its interaction count only counts swings.
+	if (VisActor != none && VisActor.IsDoor())
+		return DoorStateWords(VisActor);
 	if (VisActor != none && VisActor.SkeletalMeshComponent != none)
 	{
 		for (i = 0; i < VisActor.SkeletalMeshComponent.GetNumElements(); i++)
@@ -1344,7 +1347,7 @@ private function AddInteractables(TTile Origin, out array<AccessMarker> Entries)
 		M.bIsDestination = true;
 		M.Label = InteractiveLabel(Obj);
 
-		M.Detail = "";
+		M.Detail = DoorStateOf(Obj);
 		if (Obj.bHasBeenHacked)
 			class'X2AccessHelper'.static.AppendComma(M.Detail, class'X2AccessVocab'.default.Hacked);
 		else if (Obj.LockStrength > 0)
@@ -2114,7 +2117,8 @@ private function AddThresholdEdge(XComWorldData WorldData, TTile Origin, TTile T
 	// built from T, which is the lower-coordinate end by the +X/+Y sweep order and therefore
 	// origin-independent, so the selection survives the scan window sliding with the cursor.
 	M.Tile = (TileDistance(Origin, T) <= TileDistance(Origin, N)) ? T : N;
-	M.Detail = "";
+	// Asked of the threshold's own actor, so a door the history never adopted still answers.
+	M.Detail = DoorStateWords(Interactive);
 	// Somewhere you WALK to, so the reach clause earns its place — the same call the connectors
 	// and the cover ring make about the same kind of answer.
 	M.bIsDestination = true;
@@ -2174,6 +2178,12 @@ static function string InteractiveLabel(XComGameState_InteractiveObject Obj)
 		// Otherwise name it by what you DO with it, which is how a player thinks of it anyway
 		// and is already localized: Interact_OpenDoor -> "Open Door", Interact_HackDoor, and so
 		// on. Strictly better than a bare category word, and free of any new string of ours.
+		// Except a plain door: "Open Door" reads as a description once the state clause follows
+		// it ("Open Door, closed"), so it is just a door and DoorStateWords says which way it
+		// swings. A door whose interaction is anything else (Interact_HackDoor) keeps the ability
+		// name, since that is what tells it apart.
+		if (VisActor.InteractionAbilityTemplateName == 'Interact_OpenDoor' && VisActor.IsDoor())
+			return class'X2AccessVocab'.default.Door;
 		if (VisActor.InteractionAbilityTemplateName != '')
 		{
 			InteractTemplate = class'XComGameState_Ability'.static.GetMyTemplateManager()
@@ -2188,6 +2198,27 @@ static function string InteractiveLabel(XComGameState_InteractiveObject Obj)
 	if (Obj.MustBeHacked())
 		return class'X2AccessVocab'.default.HackableObject;
 	return class'X2AccessVocab'.default.InteractiveObject;
+}
+
+// "open" / "closed" for a door, empty for anything else — the swing a sighted player sees in the
+// doorway. IsOpenDoor is the engine's own question (XComInteractiveLevelActor.uc:476), asked of the
+// ACTOR rather than re-derived from InteractionCount parity, because a door can be knocked open by
+// a stray shot (X2Ability.uc:210) and shut again by the level, and the native knows both. Static and
+// public for the same reason as InteractiveLabel: the tile under the cursor and the rings must say
+// the same thing about the same door.
+static function string DoorStateWords(XComInteractiveLevelActor Door)
+{
+	if (Door == none || !Door.IsDoor())
+		return "";
+	return Door.IsOpenDoor() ? class'X2AccessVocab'.default.DoorOpen
+		: class'X2AccessVocab'.default.DoorClosed;
+}
+
+static function string DoorStateOf(XComGameState_InteractiveObject Obj)
+{
+	if (Obj == none)
+		return "";
+	return DoorStateWords(XComInteractiveLevelActor(`XCOMHISTORY.GetVisualizer(Obj.ObjectID)));
 }
 
 // ---------------------------------------------------------------------------

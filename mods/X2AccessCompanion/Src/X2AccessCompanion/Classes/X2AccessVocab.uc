@@ -363,6 +363,8 @@ var localized string OffsetDown;
 
 // Interactive objects the game left unnamed, and their state.
 var localized string Door;
+var localized string DoorOpen;
+var localized string DoorClosed;
 var localized string HackableObject;
 var localized string InteractiveObject;
 var localized string Passage;

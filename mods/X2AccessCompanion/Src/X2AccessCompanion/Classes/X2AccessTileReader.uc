@@ -893,6 +893,7 @@ private function string DescribeInteractives(TTile Tile)
 		if (!SameTile(IObj.TileLocation, Tile))
 			continue;
 		ObjName = class'X2AccessObjectScanner'.static.InteractiveLabel(IObj);
+		AppendComma(ObjName, class'X2AccessObjectScanner'.static.DoorStateOf(IObj));
 		if (IObj.LockStrength > 0)
 			AppendComma(ObjName, class'X2AccessVocab'.static.Fill1(
 				class'X2AccessVocab'.default.LockedStrength, IObj.LockStrength));
