@@ -553,16 +553,20 @@ different ways at once, and each half of the mod owns one.
   at all. Re-providing those two is most of what this surface is for. Launch goes through
   `UIButton::Click()`, which self-gates on `IsDisabled && bIsVisible`; the slot buttons go through
   the slot object's own `HandleClick("theButton"/"theButton2")`.
-- ⛔ **Selecting a row is DESTRUCTIVE, so the warning is preventive rather than a report.**
+- ⛔ **Selecting a row is DESTRUCTIVE, so once a slot is filled the list stops selecting.**
   `SelectedItemChanged` (`:883`) calls `ClearSlots()` BEFORE switching `ActionRef`, submitting a
-  game state that empties the OUTGOING action's staff and cost slots — so arrowing to a neighbour
-  to compare it throws away the squad you just assembled. The recipe mirrors vanilla rather than
-  decoupling (the confirm handler reads the screen's own `ActionRef`, so a focus that disagreed
-  would be the `UISaveGame.OnAccept` hazard at campaign scale). It cannot be ANNOUNCED after the
-  fact either: `WriteBackFocus` runs before `SpeakMove`, so anything said there lands ahead of
-  the reading the player asked for and gets cut by a reader set to interrupt on new text.
-  `Vocab::CovertActionStaffed` therefore rides on the SELECTED row while it still has something
-  to lose.
+  game state that empties the OUTGOING action's staff and cost slots. For a sighted player that
+  takes a deliberate click on another row; for us it was one stray arrow — and it was the arrow
+  a player pressed first, because every return from the personnel picker used to land on the
+  list (the navigator now resumes the slot instead; `menu_navigator.cpp`, parked focus). A
+  warning on the row was tried first and is gone: it asked the player to hear and heed a
+  sentence on every landing, where a key that cannot do the damage asks nothing. So while
+  anyone is assigned the rows only BROWSE (no write-back), the committed action carries
+  `Selected`, and Enter on another row is the switch. This is the decoupling the recipe used to
+  refuse, and the reason it was refused — the confirm handler reads the screen's own
+  `ActionRef`, the `UISaveGame.OnAccept` hazard — does not bite: browsing moves nothing the
+  other stops describe, so the card, the risks, the slots and CONFIRM all still name the
+  committed action, and the one row that says `Selected` is the one CONFIRM would launch.
 - ⛔ **A slot's gate is its own `IsDisabled`, not a re-derived condition.**
   `UICovertActionStaffSlot.HandleClick` only tests `!GetAction().bStarted`, so with ANOTHER action
   in progress it would happily open the personnel picker for an action that cannot be run —
@@ -572,8 +576,8 @@ different ways at once, and each half of the mod owns one.
 - **The game's own slot mode is skipped.** Enter on a row calls `SelectStaffSlots()`, which rewires
   the screen's navigator into a 2×2 grid with its own Escape meaning. Our recipe owns the arrows,
   so the slots are ordinary nodes in one graph and the 2×2 is flattened to four rows — geometry is
-  not information. A row therefore has NO Enter: selecting IS the action, and Tab is the way on to
-  the slots.
+  not information. While every slot is empty a row therefore has NO Enter: selecting IS the
+  action, and Tab is the way on to the slots.
 - **The risks are a LIST, not a `GraphSheet`.** Two facts per row, no column headings drawn
   anywhere, and "Soldier captured, moderate" is a complete sentence. ⚠ The bucket
   (`Low`/`Moderate`/`High`) is all a sighted player gets — `GetRiskLevel` thresholds

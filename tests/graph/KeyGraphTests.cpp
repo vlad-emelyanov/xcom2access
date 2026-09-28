@@ -243,6 +243,41 @@ TEST(ReconcileFallsBackToNearestSurvivor)
     CHECK_EQ(Id("b"), state.CurKey); // nearest earlier survivor
 }
 
+// A host parks a cursor while its screen is covered and resumes it in a FRESH KeyGraph when the
+// screen comes back. The parked copy must land on the same key — and must not follow a reference,
+// because by then the address it names may belong to a different object on a different node.
+TEST(ParkedStateResumesByKeyAndIgnoresStaleReferences)
+{
+    int first = 0, second = 0;
+    const void* cardA = &first;
+    const void* cardB = &second;
+    bool swapped = false; // after the gap, the address that was "slot2"'s now backs "slot0"
+
+    auto build = [&]()
+    {
+        GraphBuilder b;
+        b.AddItem(ControlId::Referenced(swapped ? cardB : cardA, "slot0"), Vt("Slot 0"));
+        b.AddItem(Id("slot1"), Vt("Slot 1"));
+        b.AddItem(ControlId::Referenced(swapped ? cardA : cardB, "slot2"), Vt("Slot 2"));
+        return b.Build();
+    };
+
+    GraphState live;
+    KeyGraph before(build, &live);
+    before.MoveToEdge(GraphDir::Down);
+    CHECK_EQ("slot2", live.CurKey.StructuralKey);
+
+    GraphState parked = live.WithoutReferences();
+    CHECK(parked.CurKey.Reference == nullptr);
+    for (const ControlId& id : parked.KeyOrder)
+        CHECK(id.Reference == nullptr);
+
+    swapped = true;
+    KeyGraph after(build, &parked);
+    CHECK(after.Rerender());
+    CHECK_EQ("slot2", parked.CurKey.StructuralKey); // the reference would have said slot0
+}
+
 TEST(SuggestedMoveIsHonoredAndConsumed)
 {
     GraphState state;

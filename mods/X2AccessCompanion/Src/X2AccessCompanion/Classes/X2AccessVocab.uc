@@ -98,7 +98,6 @@ var localized string ObjectiveEvidence;
 var localized string ObjectiveCivilian;
 var localized string PercentManyFormat;
 var localized string PercentFewFormat;
-var localized string CovertActionStaffed;
 var localized string PunctTilde;
 var localized string PunctRightBrace;
 var localized string PunctBar;

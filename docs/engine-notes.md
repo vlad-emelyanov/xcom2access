@@ -294,6 +294,17 @@ and note that a rule with no measurement under it any more is a rule to delete, 
     stack"; `UIDialogueBox`'s real state is its queue, so it is `bIsInited` plus a non-empty
     `m_arrData`. Child widgets differ: a BUTTON's `bIsVisible` is toggled deliberately and does mean
     hidden, and the ant farm's grid is the one screen-level exception because the GAME gates on it.
+  - ⛔ **A covered screen is not a closed one, and the navigator must not treat it as one.** A push
+    (personnel picker, armory, any popup) takes focus off the screen beneath, its recipe's probe
+    fails and the navigator detaches — but the screen stays a live stack entry, and the player
+    comes back to it. Detaching used to discard the cursor, so every return landed on the recipe's
+    start node; on covert actions that was the list, where the next arrow emptied the slots just
+    filled. The navigator now PARKS the cursor of a detached screen that is still live on the stack
+    and resumes it when the same instance re-attaches, skipping the screen name (`ParkFocus` /
+    `TakeParkedFocus` in `menu_navigator.cpp`). The park is keyed on the instance and dropped on
+    the first poll that does not find it on the stack, the corpse rule above applied to a cursor;
+    it keeps structural keys only (`GraphState::WithoutReferences`), since the widget pointers do
+    not survive the gap.
 - ⛔ **`UE3Reflect::ReadStringProperty` is the single choke point every companion payload passes
   through** — tile cursor, shot HUD, object scanner, hacking pad, every recipe's wire records, and
   `X2AccessNarrator`'s 24-line drain — and it read all of them into a fixed `wchar_t[2048]`,

@@ -24,6 +24,7 @@
 #include <functional>
 #include <initializer_list>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -232,6 +233,27 @@ ControlId gLastSpoken;
 // resolves a different text for a watched part, the navigator speaks just that part.
 std::unordered_map<std::string, std::string> gLiveBase;
 
+// Focus PARKED on a screen that another screen covered. A pushed screen — the personnel picker
+// a covert action slot opens, the armory, any popup — takes focus off the one beneath, its
+// recipe's probe fails and the navigator detaches, which throws the cursor away. Coming back
+// then landed on the recipe's start node, not the control the player pressed: on the covert
+// actions screen that is the action list, where the next arrow empties the slots just filled.
+// So a detach from a screen that is still live on the stack keeps its cursor here, and the
+// attach that returns to that same instance resumes it.
+//
+// ⛔ Keyed on the screen INSTANCE, and valid only while that instance stays live on the stack
+// without a break — PruneParkedFocus checks every poll. A removed screen's address can be reused
+// by the next one, so the first poll that does not find it drops the entry for good. The cursor
+// is kept WithoutReferences for the same reason: widget pointers do not survive the gap, the
+// structural keys do.
+struct ParkedFocus {
+    const Recipe* recipe;
+    void* screen;
+    GraphState state;
+};
+std::vector<ParkedFocus> gParked;
+constexpr std::size_t kMaxParked = 8; // deeper than any push chain the game builds
+
 constexpr int kSettlePolls = 2;
 constexpr uint64_t kPollIntervalMs = 100;
 
@@ -316,9 +338,53 @@ void SpeakMove(const GraphNode* from, const GraphNode* to, const std::string& tr
     RefreshLiveBaseline(to);
 }
 
+// Keep the attached recipe's cursor if its screen is only being COVERED — still live on the
+// stack — rather than closed. A screen the stack does not manage is never parked.
+void ParkFocus()
+{
+    if (!gAttached || !gActive || !gScreen || !gState.CurKey.IsValid())
+        return;
+    if (!GameUI::IsScreenOnStack(gScreen))
+        return;
+    std::erase_if(gParked, [](const ParkedFocus& p) { return p.screen == gScreen; });
+    if (gParked.size() >= kMaxParked)
+        gParked.erase(gParked.begin());
+    gParked.push_back({gActive, gScreen, gState.WithoutReferences()});
+    LOG_INFO("MenuNavigator: parked focus on %s at \"%s\"", gActive->logName,
+        gState.CurKey.StructuralKey.c_str());
+}
+
+// Drop every parked cursor whose screen has left the stack. Every poll, attached or not: a gap
+// between two checks is exactly the window in which a freed address could be handed on.
+void PruneParkedFocus()
+{
+    std::erase_if(gParked, [](const ParkedFocus& p) {
+        if (GameUI::IsScreenOnStack(p.screen))
+            return false;
+        LOG_INFO("MenuNavigator: dropped parked focus on %s (screen left the stack)",
+            p.recipe->logName);
+        return true;
+    });
+}
+
+// The parked cursor for this recipe on this screen instance, taken out of the park; empty when
+// there is none.
+std::optional<GraphState> TakeParkedFocus(const Recipe* recipe, void* screen)
+{
+    for (auto it = gParked.begin(); it != gParked.end(); ++it) {
+        if (it->recipe == recipe && it->screen == screen) {
+            GraphState state = std::move(it->state);
+            gParked.erase(it);
+            return state;
+        }
+    }
+    return std::nullopt;
+}
+
 void Detach()
 {
     const char* name = gActive ? gActive->logName : "?";
+    ParkFocus();
     ClearGeoscapeHover();
     // The alert text cache is keyed on symbol+path+name, which is self-invalidating for a
     // REPLACED alert — but a second alert of the same kind, raised after the first closed,
@@ -351,9 +417,14 @@ void Detach()
 // Screen name first (the user just landed here), then the landing readout queued behind it
 // (§9 standardized first-focus). Shared by a menu recipe's attach and an
 // ambient recipe's Tab focus entry, which are the same moment to the player.
-void AnnounceEntry()
+//
+// A RESUMED attach — back on a screen whose focus was parked while something covered it — skips
+// the name: the player never left this screen in their own mind, and the control they come back
+// to (a slot now holding the soldier they just picked) is the news.
+void AnnounceEntry(bool resumed = false)
 {
-    TTS::Speak(gActive->ScreenName());
+    if (!resumed)
+        TTS::Speak(gActive->ScreenName());
     GraphNode* landing = gGraph->CurrentNode();
     if (landing) {
         std::string line = GraphAnnouncer::ComposeFull(landing);
@@ -367,7 +438,9 @@ void AnnounceEntry()
 
 void Attach()
 {
-    gState = GraphState{};
+    std::optional<GraphState> parked = TakeParkedFocus(gActive, gScreen);
+    const bool resumed = parked.has_value();
+    gState = resumed ? std::move(*parked) : GraphState{};
     gLastSpoken = {};
     gLiveBase.clear();
     // ⛔ The focus map is reset HERE, not by each builder. gFocus holds raw widget pointers that
@@ -384,16 +457,22 @@ void Attach()
     if (!gGraph->Rerender()) {
         gGraph.reset();
         gAttached = false;
+        // The retry next poll must still find the cursor it was coming back for.
+        if (resumed)
+            gParked.push_back({gActive, gScreen, std::move(gState)});
         return; // screen not actually readable yet — stay detached, poll again
     }
     gAttached = true;
     gFocused = !gActive->ambient;
+    if (resumed)
+        LOG_INFO("MenuNavigator: resumed parked focus on %s at \"%s\"", gActive->logName,
+            gState.CurKey.StructuralKey.c_str());
 
     // An ambient attach is SILENT and unfocused: it happens the moment a mission's HUD settles,
     // mid-gameplay, and announcing a screen the player did not navigate to would be noise. The
     // player hears it when they ask for it (Tab → AnnounceEntry).
     if (gFocused)
-        AnnounceEntry();
+        AnnounceEntry(resumed);
 
     // ONE announcement per session about the companion, and this is its moment: the first
     // main-menu attach is after DLC enumeration (so the package is loaded or never will be)
@@ -943,6 +1022,8 @@ void OnTick()
     try {
         Vocab::LoadFromGame();
         Vocab::AnnounceStartup();
+        if (!gParked.empty())
+            PruneParkedFocus();
         // Being on top of the stack is not the same as being reachable. Starting a campaign pops
         // the narrative screen and leaves the difficulty screen underneath inited, focused and
         // topmost for the whole twelve seconds the loading movie plays — so the layer happily

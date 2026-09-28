@@ -99,6 +99,13 @@ bool IsScreenFocused(void* screen);
 /// Mod Config Menu. False for screens the stack does not manage (UIDialogueBox).
 bool IsTopmostScreen(void* screen);
 
+/// Is this exact screen instance a LIVE entry anywhere in the game's own screen stack — covered
+/// or not? What the navigator needs to know about a screen it parked focus on: while the answer
+/// stays yes, the instance is the same one the player will come back to; the first no means it
+/// was removed, and the pointer may soon name a stranger. False for screens the stack does not
+/// manage (UIDialogueBox) and whenever there is no readable stack. Game thread only.
+bool IsScreenOnStack(void* screen);
+
 /// Is this screen an instance of `baseClass`, or of anything extending it? The ONE way a feature
 /// TU outside the reader layer may ask "is this screen mine", and the one that survives a mod.
 ///

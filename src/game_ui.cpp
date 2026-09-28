@@ -1974,6 +1974,19 @@ bool IsTopmostScreen(void* screen)
     return IsTopStackScreenRaw(screen);
 }
 
+bool IsScreenOnStack(void* screen)
+{
+    if (!screen)
+        return false;
+    void* screens[kMaxStackScreens] = {};
+    const int count = WalkStackRaw(screens, kMaxStackScreens);
+    for (int i = 0; i < count; i++) {
+        if (screens[i] == screen)
+            return StackEntryLiveRaw(screen);
+    }
+    return false;
+}
+
 bool IsScreenKindOf(void* screen, const char* baseClass)
 {
     if (!screen || !baseClass || !baseClass[0])

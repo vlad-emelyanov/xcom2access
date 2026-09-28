@@ -2882,10 +2882,17 @@ std::string SkyrangerArrivesName()
 // HandleClick through the companion. Geometry is not information: four cards read better as four
 // rows than as a square, and inheriting a second input mode buys nothing.
 //
-// ⛔ A ROW HAS NO Enter, DELIBERATELY. Selecting IS the action here — the focus write-back drives
-// UIList::SetSelectedIndex, which fires SelectedItemChanged and repopulates every other stop — so
-// an Enter would have to mean something else, and the only thing vanilla gives it is the slot
-// mode above. Tab is the way on to the slots.
+// ⛔ WHILE EVERY SLOT IS EMPTY, A ROW HAS NO Enter. Selecting IS the action there — the focus
+// write-back drives UIList::SetSelectedIndex, which fires SelectedItemChanged and repopulates
+// every other stop — so an Enter would have to mean something else, and the only thing vanilla
+// gives it is the slot mode above. Tab is the way on to the slots.
+//
+// ⛔ ONCE A SLOT IS FILLED, THE LIST STOPS SELECTING. SelectedItemChanged empties the outgoing
+// action's slots, and to a sighted player that takes a deliberate click on another row; to us it
+// was one stray arrow. So while anyone is assigned, arrows only BROWSE the rows (no write-back),
+// the committed action says "selected", and Enter on another row is the switch. Nothing is lost
+// by not repopulating while browsing: the card, risks and slots stay those of the committed
+// action, which is exactly what CONFIRM would launch (it reads the screen's own ActionRef).
 
 constexpr const char* kCovertActionReaderClass = "X2AccessCovertActionReader";
 
@@ -2945,7 +2952,8 @@ void BuildCovertActionList(GraphBuilder& b, const GameUI::CovertActionsView& vie
 
     const WireRecord* screenRec = FindRecord(words, "screen");
     const std::string listHeader = screenRec ? RecField(*screenRec, "listheader") : std::string();
-    const int staffed = CountStaffedSlots(words);
+    // The browse-only mode in the header: a stray arrow must not cost the squad.
+    const bool guarded = CountStaffedSlots(words) > 0;
 
     b.BeginStop("actions");
     bool listContext = false;
@@ -2970,7 +2978,9 @@ void BuildCovertActionList(GraphBuilder& b, const GameUI::CovertActionsView& vie
         // as "the same control" the moment anything changed.
         ControlId id = ControlId::Referenced(
             row.handle, "covert/row/" + std::to_string(row.actionId));
-        gFocus[id.StructuralKey] = FocusTarget{row.index, nullptr, false, nullptr};
+        const bool committed = row.actionId == view.actionId;
+        if (!guarded)
+            gFocus[id.StructuralKey] = FocusTarget{row.index, nullptr, false, nullptr};
 
         NodeVtable vt;
         vt.Type = &ButtonType();
@@ -2989,19 +2999,33 @@ void BuildCovertActionList(GraphBuilder& b, const GameUI::CovertActionsView& vie
             }
         }
 
-        // ⛔ On the SELECTED row only, and only while something is in a slot: moving away empties
-        // it. See Vocab::CovertActionStaffed for why this is preventive rather than a report.
-        if (row.actionId == view.actionId && staffed > 0) {
-            vt.Announcements.emplace_back(
-                NodeAnnouncement::Static(Vocab::CovertActionStaffed));
-            vt.Announcements.back().Kind = kKindAttention;
+        // Browsing, focus and selection part ways, so the committed row has to say which it is.
+        // While the list selects, focus IS the selection and the word would be noise on every row.
+        // ⚠ Kind Selected also makes it the stop's landing node — right here, where it is the
+        // action the rest of the screen describes.
+        if (guarded && committed) {
+            vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Selected));
+            vt.Announcements.back().Kind = AnnouncementKinds::Selected;
         }
 
-        // No OnActivate — see the header. Space still reads the row's own hover tooltip, which is
-        // where SetDisabled parked the refusal for a sighted player.
+        // Enter on another row is the switch, and only while browsing — see the header. The
+        // index is the list's own, the same one the write-back uses when the list selects.
+        if (guarded && !committed) {
+            vt.OnActivate = [index = row.index]() {
+                GameUI::SetCovertActionSelection(GameUI::ReadCovertActions(gScreen), index);
+            };
+        }
+        // What a switch answers with: the rebuilt row, now committed. Spoken only after an
+        // activation, so it costs nothing on a row without one.
+        vt.StateText = [committed]() {
+            return committed ? std::string(Vocab::Selected) : std::string();
+        };
+
+        // Space still reads the row's own hover tooltip, which is where SetDisabled parked the
+        // refusal for a sighted player.
         vt.OnTooltip = ListItemTooltipAction(row.handle);
 
-        if (!start.IsValid() && row.actionId == view.actionId)
+        if (!start.IsValid() && committed)
             start = id;
         b.AddItem(std::move(id), std::move(vt));
     }

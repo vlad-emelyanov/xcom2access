@@ -563,7 +563,6 @@ PunctLeftBrace="открывающая фигурная скобка"
 PunctBar="вертикальная черта"
 PunctRightBrace="закрывающая фигурная скобка"
 PunctTilde="тильда"
-CovertActionStaffed="назначены сотрудники; при переходе к другому заданию они будут сняты"
 
 PercentFewFormat="{0} процента"
 PercentManyFormat="{0} процентов"

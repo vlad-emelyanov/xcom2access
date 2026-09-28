@@ -566,7 +566,6 @@ PunctLeftBrace="left brace"
 PunctBar="bar"
 PunctRightBrace="right brace"
 PunctTilde="tilde"
-CovertActionStaffed="staffed; moving to another action clears it"
 
 PercentFewFormat="{0} percent"
 PercentManyFormat="{0} percent"

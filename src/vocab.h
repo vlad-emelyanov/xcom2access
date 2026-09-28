@@ -457,17 +457,9 @@ inline constexpr Word ResourcesNotRead{"ResourcesNotRead"};
 //
 // Nearly every word on this screen is the game's own: the row text is retained on the widget, and
 // the card, the risks and the slots come off the screen's own accessors through the companion.
-// Two are ours, and both name a thing the game states with no words at all.
+// The screen-name fallback is ours; the committed action's marker while the list only browses is
+// the generic Selected.
 inline std::string ScreenCovertActions() { return GameString("UIFacility_CovertActions", "m_strViewActions", ScreenUnnamed); }
-/// ⛔ The one AID on this surface, and it is a warning about a control's SIDE EFFECT.
-/// SelectedItemChanged empties the outgoing action's staff and cost slots before switching
-/// (UICovertActions.uc:883), so arrowing to a neighbouring action to compare it silently throws
-/// away the squad you just assembled. A sighted player watches the portraits vanish; speech gets
-/// nothing. Said on the SELECTED row only, and only while something is actually in a slot, so it
-/// costs nothing until there is something to lose — and it is PREVENTIVE rather than a report,
-/// because the write-back runs before the move's own readout and anything said there would land
-/// ahead of the reading the player actually asked for.
-inline constexpr Word CovertActionStaffed{"CovertActionStaffed"};
 
 // ---- resistance orders (UIStrategyPolicy) ----
 //

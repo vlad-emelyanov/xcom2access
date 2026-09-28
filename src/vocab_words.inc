@@ -280,6 +280,5 @@
     "TutorialRejected",
     "TutorialNoMessage",
     "TutorialReaderUnavailable",
-    "CovertActionStaffed",
     "ScreenUnnamed",
     "SectionUnnamed",

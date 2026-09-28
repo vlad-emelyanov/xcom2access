@@ -356,6 +356,32 @@ struct GraphState
     /// explicit state; the engine's expand/collapse operations mutate it. Screens hold NO
     /// expansion state of their own.
     ControlIdSet Expanded;
+
+    /// This cursor with every ControlId::Reference dropped, for a host that keeps a graph's
+    /// position across a GAP in rendering (its screen covered by another, then uncovered). A
+    /// reference is only meaningful to the render that produced it; across a gap its object may
+    /// be gone and its address reused, so tier-1 reconciliation could match a stranger. With the
+    /// references gone, reconciliation resolves by structural key (tier 2) and the fallbacks.
+    GraphState WithoutReferences() const
+    {
+        auto strip = [](ControlId id) {
+            id.Reference = nullptr;
+            return id;
+        };
+        GraphState out;
+        out.CurKey = strip(CurKey);
+        out.NextSuggestedMove = strip(NextSuggestedMove);
+        out.KeyOrder.reserve(KeyOrder.size());
+        for (const ControlId& id : KeyOrder)
+            out.KeyOrder.push_back(strip(id));
+        for (const auto& kv : StopMemory)
+            out.StopMemory.emplace(kv.first, strip(kv.second));
+        out.LastColumn = LastColumn;
+        out.LastLandGroup = LastLandGroup;
+        for (const ControlId& id : Expanded)
+            out.Expanded.insert(strip(id));
+        return out;
+    }
 };
 
 } // namespace X2Access::Graph
