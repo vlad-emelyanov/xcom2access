@@ -14,6 +14,21 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**Camera follows the tile cursor; north-most vanilla heading** (2026-09-30,
+`X2AccessCamera_TileFollow.uc`, called from `X2AccessTileReader.SetCursorTile` and
+`CursorRecenter`). Not yet run. On Gatecrasher (tutorial off), mouse and keyboard:
+1. Step the cursor ten or more tiles in each direction: the camera must glide with it on every
+   step, and the pathing preview must still match the spoken tile. `just dev-screenshot` or a
+   sighted look confirms it; our readout does not.
+2. Ctrl+Q twice, then `C`: the camera must turn back the short way to the default heading and
+   centre on the soldier. Screen-up should be roughly north-west (north towards the upper right).
+3. After a shot (aim camera), an enemy turn and a pod reveal, the heading must be unchanged and
+   the next arrow step must re-centre on the cursor.
+4. Save, load the save: the first step after the load must follow again (fresh camera stack,
+   re-installed). A sighted player's WASD and edge scroll must still pan.
+5. Regression: soldier switch still centres the camera on the new soldier; the mouse, when moved,
+   still picks tiles without the camera chasing it.
+
 **Loot pickup announcement** (2026-09-25, `X2AccessTacticalEvents.NarrateLootAvailable`).
 The companion compiles and is installed; the announcement has not been heard in game. Kill an
 enemy that drops timed loot and confirm "Loot available for pickup" follows the death line.

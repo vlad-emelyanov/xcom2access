@@ -12,12 +12,12 @@ screens is here.
 
 The RT TileExplorer port, deliberately OUTSIDE the Graph kernel (the map is not a
 widget tree). C++ owns keys and speech — arrows (world-absolute: Up is always north, so the
-camera's yaw plays no part, which is why the vanilla Q/E rotation could be given up), `Ctrl+,`/`Ctrl+.`
+camera's yaw plays no part in stepping; the rotation now lives on Ctrl+Q/E), `Ctrl+,`/`Ctrl+.`
 floors, `C` recenter, `Delete` re-announce, `Backspace` two-press move-to. Each
 press makes one outbound call to the companion CDO (`GameUI::FindCompanionCDO` +
 `CallScriptFunction`) and speaks the `NativeResult` reflected back. Script drives
 the game's OWN `XCom3DCursor` (`CursorSetLocation`/`CursorSnapToFloor`/`MoveToUnit`
-— pathing preview and camera follow come free; the cursor is NOT range-clamped,
+— the pathing preview comes free; the cursor is NOT range-clamped,
 only the pathing pawn's destination is) and commits through
 `XComTacticalInput.ClickToPath`, guarded: commit only when the pawn's clamped
 `LastDestinationTile` EQUALS the cursor tile, so a move can never land anywhere
@@ -48,6 +48,17 @@ focus.
   always: never read the cursor pawn back (it sits at body-center heights and is
   repositioned natively every frame). `XCom3DCursorMouse.CursorSnapToFloor` is
   overridden to a no-op, so floor keys must set exact Z themselves.
+- ⛔ **Pushing the 3D cursor does NOT move the camera on mouse and keyboard.** The mouse-mode
+  default camera (`X2Camera_FollowMouseCursor`) never follows the cursor, because the mouse
+  places the cursor by a ray through that camera and a follow would chase itself; only the
+  controller camera (`X2Camera_FollowCursor.UpdateCamera`) follows. So `SetCursorTile` tells
+  `X2AccessCamera_TileFollow` (a subclass of the mouse camera, added above the vanilla default
+  on the first landing of each camera stack, found by `CameraTag`) to centre on every landing.
+  It follows OUR moves only, never the mouse. Heading: the game offers only `HumanTurnYaw`
+  (48.5) plus 90 degree steps, none of which puts north up; by player decision (2026-09-30)
+  the one nearest north is applied at the camera's first activation and on `C` (the shipped
+  default itself, screen-up about 41.5 degrees west of north). A true north-up yaw of 90 is
+  possible (the free-look path proves the camera takes any angle) and was deferred, not refused.
 - ⛔ **The game's FLOOR LEVEL is a CEILING the cursor lands under, never a floor it is
   pinned to — and it is shared, load-bearing state: never bypass it, never duplicate it.**
   The rule is the mouse trace's own, `XComTacticalHUD.GetMouseInteractionInterface`: of every

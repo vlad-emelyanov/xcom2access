@@ -6,7 +6,8 @@
 //
 // STATE-FIRST (the first live test's lesson): the authoritative cursor tile is CurX/CurY/CurZ
 // on this CDO. The game's XCom3DCursor is PUSHED to that tile (CursorSetLocation) so the
-// pathing-pawn preview and the camera follow — but it is never read back for stepping: the
+// pathing-pawn preview follows, and X2AccessCamera_TileFollow is told to centre on it (the
+// vanilla mouse camera never follows the cursor) — but it is never read back for stepping: the
 // cursor pawn sits at body-center heights and keeps moving between presses, so position→tile
 // round-trips climbed one Z level per press and drifted tiles sideways.
 //
@@ -245,6 +246,8 @@ function CursorRecenter()
 	}
 	NativeResult = AdoptFloor(Cursor, WorldData, UnitState.TileLocation);
 	SetCursorTile(Cursor, WorldData, UnitState.TileLocation);
+	// Recenter also undoes a Ctrl+Q/E rotation: back to the vanilla heading nearest north.
+	class'X2AccessCamera_TileFollow'.static.FaceNorthmost();
 
 	// No name prefix: DescribeTile's own DescribeUnitsOnTile leads with "Ally: <name>" for the
 	// unit standing here, which on a recenter is always this one. Prefixing it said the name
@@ -1244,6 +1247,9 @@ private function SetCursorTile(XCom3DCursor Cursor, XComWorldData WorldData, TTi
 	Cursor.CursorSnapToFloor(Cursor.m_iRequestedFloor, eCursorSearch_ExactFloor);
 	LastSpokenFloor = Cursor.m_iRequestedFloor;
 	Cursor.CursorSetLocation(Pos, false, false);
+	// The cursor push alone does not move the camera on mouse and keyboard; the vanilla default
+	// camera there never follows the 3D cursor (X2AccessCamera_TileFollow has the why).
+	class'X2AccessCamera_TileFollow'.static.Follow(Pos);
 	// Here rather than beside each DescribeIndoor call: every way the cursor lands on a tile —
 	// a step, a floor key, the floor poll, a plant, a recenter, the scanner marker — passes
 	// through this one function, and a crossing missed on any of them is a silent bug.
