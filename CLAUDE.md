@@ -278,6 +278,11 @@ path-API survey, the field maps, screen lifetime — is `docs/engine-notes.md`.*
   Bink-related. `src/movie_subtitles.cpp` dereferences a raw C++ object, and its rule is the one to
   copy if a second ever needs to: hard-code ONE address and validate it by its VTABLE before
   dereferencing anything, because that check is the entire pin (`docs/surfaces/strategy.md`).
+  - ⛔ **A playing movie is a SECOND THREAD in the config cache: never call `Localize`
+    (`GameUI::LocalizeString`) while `MoviePlaying()`.** The movie thread localizes its cue on every
+    pump through the same unlocked GConfig walk, and one concurrent call from us froze the game on a
+    Chosen cinematic. Resolve anything a movie-time surface needs BEFORE the movie
+    (`docs/engine-notes.md`, the Bink bullet).
 - ⛔ **No gameplay event fires in the TUTORIAL — it replays history, it never submits it.** Two
   consequences: **anything built on the event bus must be tested on a normal mission**
   (Gatecrasher — a campaign with the tutorial checkbox off), and the tutorial reader's

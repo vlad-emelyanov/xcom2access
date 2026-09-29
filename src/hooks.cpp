@@ -128,7 +128,8 @@ static void RegisterEventHandlers() {
             // TransientReader because the two divide the game's dialogue between them — the
             // commlink for in-engine scenes, this for pre-rendered cinematics — and they can
             // never both be showing, so their lines cannot collide. Costs one pointer read and a
-            // null check whenever no movie is up, which is nearly always.
+            // null check whenever no movie is up, which is nearly always — after the first second
+            // or so of the session, which it spends resolving the cue text table.
             MovieSubtitles::OnTick();
             // The Avenger's ant farm. Its gate is a plain "is UIFacilityGrid the current
             // screen", so outside the strategy layer this is one stack walk and no more.

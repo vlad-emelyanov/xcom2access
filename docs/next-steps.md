@@ -819,6 +819,21 @@ as "this is broken".
 The branches carried over when the 2026-08-31 build's live-run debt was retired (main paths all
 confirmed in play):
 
+- **Movie subtitles: the pre-resolved cue table** (built 2026-09-30 after the Warlock-stronghold
+  crash; `surfaces/strategy.md`, the `Localize` bullet). Built clean, never run. A boot must log
+  `MovieSubtitles: cue table ready — N key(s), M with localized text` with N ≈ 800 before the first
+  story movie. Then `CIN_XP_Stronghold_Warlock` must play to its end WITHOUT a crash and speak its
+  two cues. The movie's `closed — N cue(s) spoken` line must match the cue count in
+  `Movies/<name>.txt`. Any `not in the resolved table` warning names a key the INT file lacks.
+- **Movie subtitles: which cinematics the engine gives no cue track** (`surfaces/strategy.md`, the
+  "name on the movie player" bullet). The open line now prints the cue track. Sit through
+  `CIN_TP_OldGods_pt1`, a `CIN_TP_*` played from Kismet, and one NON-instant base-game autopsy. For
+  each, record `cue track …` from the open line (or the fact that no `opened` line appeared at all).
+  Take one `just dev-shot` mid-cinematic. **The screenshot decides whether a silent cinematic is
+  parity or a defect**: if the engine loaded an EMPTY track and the screen shows no text, silence
+  is correct. If text is on screen anyway, it comes from a path this surface does not read, and
+  `just dev-props "instance=UINarrativeMgr"` plus `instance=UINarrativeCommLink` during the scene
+  is the next read.
 - **Movie subtitles with Show Subtitles OFF** — the surface's main path ran on 2026-09-04 (see
   `surfaces/strategy.md`) but the option gate did not. `PumpMovie` blanks the string unless
   `UEngine.bSubtitlesEnabled` OR the movie's flag `0x80`, and we mirror both; the branch that has
@@ -1012,24 +1027,21 @@ one branch nobody has seen is a real install that owns the DLC and lacks the plu
 
 ## Known defects
 
-- ⛔ **An in-engine MATINEE cutscene reads NOTHING, and nothing in the mod currently owns that
-  path.** Found 2026-09-04 in the same log that confirmed movie subtitles working:
-  `CIN_TP_OldGods_pt1` played for **2 minutes 13 seconds in total silence** (13:37:03 → 13:39:16,
-  28 log lines, not one of them speech), and `CIN_TP_ShadowChamberReveal` and `CIN_TP_BuildOutpost`
-  the same. This is NOT a `movie_subtitles.cpp` defect — that surface behaved exactly right, and
-  the reason is on disk: **`CIN_XP_PreIntro` has both a `.bk2` and a `.txt` cue track and read all
-  35 of its cues; the `CIN_TP_*` three have a `.txt` cue track and NO `.bk2` at all.** So the Bink
-  player is handed the NAME (which is why `MovieSubtitles: movie '…' opened` is logged, and why
-  `IsAnyMoviePlaying` gates the navigator with `movie 1`) but never a cue table, and the reader
-  correctly stays quiet. The text exists — 21 cues under `CIN_TP_OldGods_pt1_*` in
-  `XComGame/Localization/<lang>/Subtitles.<lang>`, the same file the Bink path reads — drawn by
-  `RenderExtraSubtitles` timed against the MATINEE rather than a `BINKHANDLE`. ⚠ The per-cutscene
+- ⛔ **Some story cinematics read NOTHING, and the cause is not settled.** On 2026-09-04,
+  `CIN_TP_OldGods_pt1` played for **2 minutes 13 seconds in total silence**, and so did
+  `CIN_TP_ShadowChamberReveal` and `CIN_TP_BuildOutpost`, although `movie '…' opened` was logged for
+  each. ⚠ The explanation this entry used to give was WRONG: these are not videoless matinees. Their
+  `.bk2` files are in the base game's `XCOM 2/XComGame/Movies/`, and a base-game video opens fine
+  (`CIN_TP_HumansAreObsolete` read 19/19 on 09-25). The measured candidate is the engine's own
+  cue-track gate: `PlayMovie` loads the `.txt` only while the global at `0x141E82224` is set, and a
+  Kismet-started movie inherits whatever the last caller left (`surfaces/strategy.md`). A cue track can
+  have no owner but the movie player: the track loader (`FUN_14034c850`) has exactly one caller,
+  `PlayMovie`. `RenderExtraSubtitles` is XComEngine vtable slot 112, called from the viewport draw
+  right after `DisplaySubtitles`, and its body was not located. The owed live pass under *Unexercised
+  paths* settles it. Base-game **autopsies** are unmeasured in the same way. The one autopsy in the
+  logs (`Вскрытие берсерка`, 09-25 20:02) was an INSTANT research: no movie opened and nothing was
+  gated, so there is no evidence yet that a cinematic even played. ⚠ The per-cutscene
   `CIN_TP_OldGods_pt1_ART.<lang>` package is a red herring: its `SpokenText` entries are all `""`.
-  `surfaces/strategy.md` assumed `UINarrativeCommLink` covers these (`HideUIForCinematics` spares
-  it); this run says something does not, so the first job is to find out WHICH path draws them —
-  one live pass with `just dev-props` during such a cutscene, looking for who holds the cue index,
-  before any code. The gap is worth the trouble: these are the game's tentpole story beats, they
-  run minutes long, and silence over one is indistinguishable from a hang.
 - **Raw `". "` joins survive in the LEGACY screen listeners** — `UIScreenListener_Difficulty` (six),
   `UIScreenListener_NarrativeContent` (three), `UIScreenListener_KeyBindings` (two) and
   `X2AccessGeoScanner` (one) each build `Label $ ". " $ Value` instead of calling

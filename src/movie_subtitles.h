@@ -11,16 +11,17 @@
 // calls. Neither of this project's two usual layers can see any of it, so this module reads the
 // player object directly — see movie_subtitles.cpp for what is read and how it is validated.
 //
-// The base game's TENTPOLE cinematics are NOT this: they are in-engine matinees over which
-// UINarrativeMgr deliberately keeps the commlink alive, so the transient reader already has
-// them. The two paths cannot both speak one line — they are different sources on different
-// screens.
+// ⚠ The base game's story cinematics (`CIN_TP_*`, `CIN_Autopsy_*`) ARE Bink movies too — their
+// `.bk2` files ship in the BASE game's `XComGame/Movies`, not WOTC's, which holds only their cue
+// tracks. Whether one is spoken depends on whether the engine loaded its cue track, which it does
+// only on some play paths; docs/surfaces/strategy.md has the measured rule.
 
 namespace MovieSubtitles {
 
 /// Poll the movie player and speak the subtitle it is currently showing. Rate-limited
-/// internally (100 ms). Makes an outbound ProcessEvent call on a cue change, so GAME THREAD
-/// ONLY — drive it from the frame pump. One pointer read and a null check when no movie is up.
+/// internally (100 ms). GAME THREAD ONLY — drive it from the frame pump. While no movie is up it
+/// resolves the cue text table through the engine's `Localize` a batch at a time; while one is,
+/// it makes no outbound call that touches the config cache (movie_subtitles.cpp says why).
 void OnTick();
 
 } // namespace MovieSubtitles

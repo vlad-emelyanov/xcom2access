@@ -39,10 +39,29 @@
 //   * `FUN_14023ed10` (PumpMovie) is the per-frame driver, and the time arithmetic below is
 //     transcribed from it line for line.
 //   * `FUN_14034db80` is the track's cue lookup, which the scan below mirrors.
+//   * `FUN_1402336c0` is the per-pump subtitle fetch: cue lookup, then `Localize("Subtitles",
+//     key, "Subtitles")` (`FUN_140163d80`) — ON THE MOVIE THREAD, every pump while a cue is up.
+//
+// ---------------------------------------------------------------------------------------------
+// ⛔ NEVER CALL `Localize` WHILE A MOVIE IS PLAYING
+//
+// PumpMovie runs on the movie player's own worker thread, and it localizes the current cue on
+// every pump. `Localize` walks GConfig, which has no lock, so a game-thread `Localize` racing it
+// corrupts the config cache. That is not theory: on 2026-09-30 this file's first `Localize` of the
+// session, one cue into `CIN_XP_Stronghold_Warlock`, came back empty AND the movie thread died in
+// `scalable_realloc` under `FUN_140163d80` in the same second (minidump
+// `XCom-…-2026.09.30-02.09.03`), freezing the game on the Chosen's first line.
+//
+// So the cue TEXT is resolved AHEAD of time: while no movie is up, on the game thread, every key of
+// the `[Subtitles]` section goes through the engine's own `Localize` — the same lookup PumpMovie
+// makes, in the language the engine resolved — a batch per tick, into `gCueText`. During a movie
+// this file only reads that table. The key LIST comes from the shipped INT file (`Subtitles.int`),
+// which says which keys exist and nothing else; the words are still the engine's.
 
 #include "movie_subtitles.h"
 
 #include "game_build.h"
+#include "game_ui_core.h"
 #include "log.h"
 #include "narrator.h"
 #include "script_call.h"
@@ -52,7 +71,13 @@
 #include <windows.h>
 
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 namespace MovieSubtitles {
 
@@ -111,6 +136,11 @@ constexpr const char* kSubtitlePackage = "Subtitles";
 // 100 ms, matching the narrator drain. Every stock cue is at least a second long, so this cannot
 // miss one; going faster would only cost outbound calls on a screen where nothing else runs.
 constexpr uint64_t kPollIntervalMs = 100;
+
+// Keys resolved per idle tick. The stock section is ~800 keys, so the table is whole about a
+// second and a half after the first idle tick — long before the first story movie — while no
+// single frame pays for more than a few dozen config lookups.
+constexpr size_t kResolveBatch = 64;
 
 // Runaway guards on counts read out of engine memory. Neither is a working limit — the longest
 // stock track is under 200 cues in one group — so tripping either means the layout is wrong, and
@@ -222,6 +252,16 @@ bool gChecked = false;  // has the global been validated yet
 bool gUsable = false;   // ...and did it pass
 void* gHandle = nullptr; // the BINKHANDLE of the movie we are following
 std::string gLastCue;    // the cue key last acted on, so a held cue speaks once
+std::string gMovieName;  // the movie we are following, for the close line
+int gCuesSpoken = 0;     // ...and how many of its cues reached speech
+
+// The cue text table — see the header comment for why it is filled ahead of time. A key maps to
+// its cleaned line, or to "" when the engine has no words for it (that answer is cached too, so a
+// missing line is looked up once, not once per movie).
+std::unordered_map<std::string, std::string> gCueText;
+std::vector<std::string> gPendingKeys; // keys not yet resolved, consumed from the back
+bool gKeysRead = false;
+bool gCacheAnnounced = false;
 
 /// The movie player, or null — either because none exists yet or because the global did not
 /// validate, which is checked exactly once and then remembered.
@@ -322,10 +362,154 @@ std::string CueAt(const void* track, uint32_t timeMs)
     return {};
 }
 
+/// What the engine loaded for this movie, for the open line. `PlayMovie` (`FUN_14023d7a0`) reads
+/// `Movies\<name>.txt` only while the global at 0x141E82224 is set — `XComEngine.PlayMovie` sets
+/// it when subtitles are on, a loading movie can clear it, and a Kismet `SeqAct_ControlGameMovie`
+/// never touches it — and otherwise hands the track an EMPTY path. So "no cues" here is the engine's
+/// own choice, and the log has to say which of the two happened or a silent cinematic is
+/// indistinguishable from a broken reader.
+std::string TrackSummary(const void* track)
+{
+    if (!track)
+        return "no cue track object";
+    const int32_t groupCount = ReadI32(track, kTrackGroupCount);
+    const int32_t groupIndex = ReadI32(track, kTrackGroupIndex);
+    if (groupIndex < 0 || groupIndex >= groupCount || groupCount > kMaxPlausibleGroups)
+        return "EMPTY (the engine loaded no cues for this movie)";
+    const auto* groups = static_cast<const uint8_t*>(ReadPtr(track, kTrackGroups));
+    if (!groups)
+        return "EMPTY (no group array)";
+    const uint8_t* group = groups + static_cast<ptrdiff_t>(groupIndex) * kGroupStride;
+    return std::to_string(ReadI32(group, kGroupEntryCount)) + " cue(s) in group "
+        + std::to_string(groupIndex) + " of " + std::to_string(groupCount)
+        + (ReadI32(group, kGroupMode) != 0 ? " (random picker, not timed)" : "");
+}
+
+/// The game's own root (`…\XCom2-WarOfTheChosen`), from the running executable's path, which is
+/// `<root>\Binaries\Win64\XCom2.exe` on both retail builds.
+std::filesystem::path GameRoot()
+{
+    std::wstring exe(32768, L'\0');
+    const DWORD len = GetModuleFileNameW(nullptr, exe.data(), static_cast<DWORD>(exe.size()));
+    if (len == 0 || len >= exe.size())
+        return {};
+    exe.resize(len);
+    return std::filesystem::path(exe).parent_path().parent_path().parent_path();
+}
+
+/// Every key of the `[Subtitles]` section of the shipped INT file. Only the NAMES are taken from
+/// disk — which keys exist is the same in every language — and the text is left to the engine.
+std::vector<std::string> ReadSubtitleKeys()
+{
+    const std::filesystem::path file
+        = GameRoot() / L"XComGame" / L"Localization" / L"INT" / L"Subtitles.int";
+    std::ifstream in(file, std::ios::binary);
+    if (!in) {
+        LOG_ERROR("MovieSubtitles: cannot open %s — movie subtitles will not be spoken",
+            file.string().c_str());
+        return {};
+    }
+    const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    // Every shipped loc file is UTF-16LE with a BOM; anything else means the file is not what
+    // this parser assumes, and guessing would produce keys the engine never asks for.
+    if (bytes.size() < 2 || static_cast<uint8_t>(bytes[0]) != 0xFF
+        || static_cast<uint8_t>(bytes[1]) != 0xFE) {
+        LOG_ERROR("MovieSubtitles: %s is not UTF-16LE — movie subtitles will not be spoken",
+            file.string().c_str());
+        return {};
+    }
+    std::wstring text((bytes.size() - 2) / 2, L'\0');
+    memcpy(text.data(), bytes.data() + 2, text.size() * sizeof(wchar_t));
+
+    auto trim = [](std::wstring_view s) {
+        const size_t b = s.find_first_not_of(L" \t\r");
+        if (b == std::wstring_view::npos)
+            return std::wstring_view{};
+        const size_t e = s.find_last_not_of(L" \t\r");
+        return s.substr(b, e - b + 1);
+    };
+
+    std::vector<std::string> keys;
+    std::unordered_set<std::string> seen;
+    bool inSection = false;
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t end = text.find(L'\n', pos);
+        if (end == std::wstring::npos)
+            end = text.size();
+        const std::wstring_view line = trim(std::wstring_view(text).substr(pos, end - pos));
+        pos = end + 1;
+
+        if (line.empty() || line.front() == L';')
+            continue;
+        if (line.front() == L'[') {
+            inSection = line == L"[Subtitles]";
+            continue;
+        }
+        const size_t eq = line.find(L'=');
+        if (!inSection || eq == std::wstring_view::npos)
+            continue;
+        const std::wstring_view wkey = trim(line.substr(0, eq));
+        std::string key;
+        key.reserve(wkey.size());
+        bool ascii = !wkey.empty();
+        for (const wchar_t c : wkey) {
+            if (c >= 0x80) {
+                ascii = false;
+                break;
+            }
+            key.push_back(static_cast<char>(c));
+        }
+        // A cue key is an identifier the game wrote; a non-ASCII one is not a key the cue tracks
+        // can name, so it is skipped rather than mangled.
+        if (ascii && seen.insert(key).second)
+            keys.push_back(std::move(key));
+    }
+    return keys;
+}
+
+/// Resolve the next batch of cue keys through the engine's `Localize`. ⛔ The caller guarantees
+/// no movie is playing — see the header comment; this is the ONLY place this file localizes.
+void ResolvePendingCues()
+{
+    if (!gKeysRead) {
+        gKeysRead = true;
+        gPendingKeys = ReadSubtitleKeys();
+        LOG_INFO("MovieSubtitles: resolving %zu subtitle cue(s) while no movie is playing",
+            gPendingKeys.size());
+    }
+    if (gPendingKeys.empty())
+        return;
+
+    for (size_t n = 0; n < kResolveBatch && !gPendingKeys.empty(); n++) {
+        std::string key = std::move(gPendingKeys.back());
+        gPendingKeys.pop_back();
+        std::string line = GameUI::CleanText(
+            GameUI::LocalizeString(kSubtitleSection, key.c_str(), kSubtitlePackage));
+        gCueText.emplace(std::move(key), std::move(line));
+    }
+
+    if (gPendingKeys.empty() && !gCacheAnnounced) {
+        gCacheAnnounced = true;
+        size_t withText = 0;
+        for (const auto& [key, line] : gCueText)
+            withText += line.empty() ? 0 : 1;
+        LOG_INFO("MovieSubtitles: cue table ready — %zu key(s), %zu with localized text",
+            gCueText.size(), withText);
+    }
+}
+
 void Reset()
 {
+    if (gHandle) {
+        LOG_INFO("MovieSubtitles: movie '%s' closed — %d cue(s) spoken", gMovieName.c_str(),
+            gCuesSpoken);
+    }
     gHandle = nullptr;
     gLastCue.clear();
+    gMovieName.clear();
+    gCuesSpoken = 0;
 }
 
 } // namespace
@@ -339,23 +523,30 @@ void OnTick()
     sLastMs = now;
 
     void* player = FindPlayer();
-    if (!player) {
-        Reset();
-        return;
-    }
+    if (gChecked && !gUsable)
+        return; // the vtable pin failed; FindPlayer said so once and the surface is off
 
     // The BINKHANDLE is the engine's own "is a movie open". Nothing else here is meaningful
     // without it, and a CHANGED one is a different movie — which must forget the last cue, or a
-    // second cinematic opening on the same key would be swallowed as already-said.
-    void* handle = ReadPtr(player, kPlayerBinkHandle);
+    // second cinematic opening on the same key would be swallowed as already-said. No player at
+    // all means none was ever created, so no movie thread exists either.
+    void* handle = player ? ReadPtr(player, kPlayerBinkHandle) : nullptr;
     if (!handle) {
         Reset();
+        // ⛔ The one window in which `Localize` is safe: no movie open, and the engine's own
+        // answer agrees. IsAnyMoviePlaying is asked as well because it is the game's test, and a
+        // disagreement costs only a tick of delay. Asked only while the table is filling, so the
+        // idle cost afterwards is back to one pointer read.
+        if ((!gKeysRead || !gPendingKeys.empty()) && !GameUI::MoviePlaying())
+            ResolvePendingCues();
         return;
     }
     if (handle != gHandle) {
+        Reset();
         gHandle = handle;
-        gLastCue.clear();
-        LOG_INFO("MovieSubtitles: movie '%s' opened", ReadFString(player, kPlayerName).c_str());
+        gMovieName = ReadFString(player, kPlayerName);
+        LOG_INFO("MovieSubtitles: movie '%s' opened — cue track %s", gMovieName.c_str(),
+            TrackSummary(ReadPtr(player, kPlayerCueTrack)).c_str());
     }
 
     // ⛔ The option gate, and it is the GAME's own test rather than a policy of ours: PumpMovie
@@ -383,8 +574,19 @@ void OnTick()
     if (cue.empty())
         return; // a gap between two lines — the screen went quiet, and so do we
 
-    const std::string line = GameUI::CleanText(
-        GameUI::LocalizeString(kSubtitleSection, cue.c_str(), kSubtitlePackage));
+    // ⛔ A table read, never a `Localize` — the movie thread is localizing this very cue as we
+    // speak, and a second caller is what crashed the game (header comment).
+    const auto found = gCueText.find(cue);
+    if (found == gCueText.end()) {
+        // The table was not whole when this movie began, or the cue track names a key the INT
+        // file lacks (a mod's track). Either way the text cannot be fetched safely now, and a
+        // raw key is not speech — so it is logged, loudly, rather than guessed.
+        LOG_WARN("MovieSubtitles: cue '%s' is not in the resolved table (%zu key(s) still "
+                 "pending) — not spoken",
+            cue.c_str(), gPendingKeys.size());
+        return;
+    }
+    const std::string& line = found->second;
     if (line.empty()) {
         // The engine falls back to DRAWING the raw cue key here, and we deliberately do not
         // speak it: "CIN_XP_PreIntro_01" tells a blind player exactly as much as it tells a
@@ -400,6 +602,7 @@ void OnTick()
     // is text the game itself put on screen — which also lets the narrator drop a State line
     // that duplicates it.
     Narrator::Say(Narrator::Channel::Combat, line, Narrator::Source::Flyover);
+    gCuesSpoken++;
 }
 
 } // namespace MovieSubtitles

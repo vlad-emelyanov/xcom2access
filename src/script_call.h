@@ -77,6 +77,10 @@ void* FindStateFunction(const char* className, const char* stateName, const char
 /// that would rather stay silent than speak an asset name is making a different call. Use this
 /// wherever the words are in a loc FILE rather than on a widget — a built-in English table would
 /// be wrong the moment the player is not.
+///
+/// ⛔ NEVER while a full-screen movie is playing (`GameUI::MoviePlaying()`): the movie thread calls
+/// the same unlocked GConfig lookup on every pump, and a concurrent call crashed the game
+/// (movie_subtitles.cpp). Resolve ahead of time instead.
 std::string LocalizeString(const char* section, const char* key, const char* package);
 
 /// Read a localized property from a loaded game class's default object. Game thread only;

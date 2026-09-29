@@ -215,14 +215,38 @@ and note that a rule with no measurement under it any more is a rule to delete, 
 - ⛔ **A full-screen `.bk2` movie is engine-native all the way down — no UObject, no reflection, no
   script.** `FFullScreenMovieBink` is a plain C++ object behind the global `GFullScreenMovie`
   (RVA `0x1DB8900`); it owns the Bink handle, the frame counter and the parsed
-  `Movies/<name>.txt` cue track, and it draws its subtitles with native canvas calls
-  (`XComEngine::RenderExtraSubtitles`). Script sees exactly two things about it, both booleans in
+  `Movies/<name>.txt` cue track, and it draws its subtitles with native canvas calls inside
+  `PumpMovie` (`FUN_14023ed10` → `FUN_1402432d0`). Script sees exactly two things about it, both booleans in
   disguise: `XComEngine.PlayMovie` starts one and `IsAnyMoviePlaying` says whether one is up. So
   **do not go looking for a UIScreen, a Flash path or a companion hook for anything Bink-related**
   — `src/movie_subtitles.cpp` is the only surface in this mod that dereferences a raw C++ object,
   and the rule it established is the one to copy if a second ever needs to: hard-code ONE address
   (the global), and validate it by its VTABLE before dereferencing anything through it, because no
   offset on a non-UObject can be `static_assert`ed and that check is therefore the entire pin.
+  - ⛔ **The movie is pumped on its OWN THREAD, and that thread calls `Localize`.** (Addresses in
+    this bullet and the three below are Steam-build VAs; none is used as a constant by the mod.)
+    Each pump,
+    `FUN_1402336c0` looks up the current cue and localizes it through `FUN_140163d80`, the native
+    behind `Object.Localize`. That function walks GConfig (`FUN_1400c29b0` on the global at
+    `0x141C77430`) with no lock. **Any game-thread `Localize`, and any other GConfig reader, can
+    corrupt it while a movie plays**. Measured 2026-09-30: the movie thread faulted in
+    `tbbmalloc!scalable_realloc` under `FUN_140163d80` (thread-start frame `XCom2+0x23f030`, inside
+    `PumpMovie`) in the same second the mod made its first `Localize` call. The localized string is a
+    per-pump local, freed after drawing, so it is retained nowhere. `GameUI::LocalizeString` carries
+    the warning, and `movie_subtitles.cpp` resolves its cues ahead of time.
+  - **The cue track is loaded only on request.** `PlayMovie` (`FUN_14023d7a0`) passes
+    `Movies\<name>.txt` to the track loader (`FUN_14034c850`, which has no other caller) only while the
+    global at `0x141E82224` is nonzero. Otherwise it passes an empty path. `XComEngine.PlayMovie`
+    (`FUN_140ba9880`) sets that global when `bSubtitlesEnabled` is on, the loading-movie path
+    (`FUN_140ba9200`) can clear it, and `SeqAct_ControlGameMovie.Activated` (`FUN_1409b9ee0`) calls
+    the player directly without touching it.
+  - The base game's cinematics (`CIN_TP_*`, `CIN_Autopsy_*`) have their `.bk2` in the BASE install's
+    `XComGame/Movies/`. WOTC's holds only their cue tracks, and the WOTC exe opens the base video.
+  - UE3's own `FSubtitleManager` (singleton `0x141E275D8`, getter `FUN_1406d4630`, `QueueSubtitles`
+    `FUN_1406df480`, `DisplaySubtitles` `FUN_1406c8100`) is live but fed only by `SoundNodeWave`
+    (`FUN_140419420`). Every voice line in this game is a Wwise `AkEvent` (all `SoundSpeech*.int`
+    sections are `AkEvent`), so it carries no dialogue. `QueueSubtitles` returns early when
+    `bSubtitlesEnabled` (`GEngine+0x46c` bit `0x10`) is clear.
 - ⛔ **No gameplay event fires in the TUTORIAL — it replays history, it never submits it.**
   `X2GameRuleset.SubmitGameStateContext` (`:292`, `:401`) routes every context to
   `XComTutorialMgr.HandleSubmittedGameStateContext` instead of `SubmitGameStateContext_Internal`
