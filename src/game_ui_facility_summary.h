@@ -28,7 +28,9 @@ struct FacilitySummaryRow {
     bool commandersQuarters = false; // m_FacilityName == 'CommandersQuarters': the game refuses
                                      // Enter on this row (the player is already in that room)
     bool captured = false;   // the row's setData push was found in the capture
-    std::string name;        // arg 0 — the display name, with the upkeep "(§N)" when it has one
+    std::string name;        // arg 0 — the display name, the upkeep suffix split off
+    int upkeep = -1;         // arg 0's "(§N)" suffix — the monthly upkeep in supplies; -1 when
+                             // the row draws none (no upkeep, or still under construction)
     std::string staff1;      // arg 1 — staff slot 1's display string, empty with no slot
     std::string staff2;      // arg 2 — staff slot 2's
     std::string power;       // arg 3 — the facility's power output, signed

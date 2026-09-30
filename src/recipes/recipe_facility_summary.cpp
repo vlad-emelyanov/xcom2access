@@ -143,6 +143,17 @@ std::unique_ptr<GraphRender> BuildFacilitySummary()
         primary.Type = &ButtonType();
         primary.Announcements.emplace_back(NodeAnnouncement::Static(row.name));
         primary.Announcements.back().Kind = AnnouncementKinds::Label;
+        // The "(§105)" the name cell draws, said as what it is: the game's own upkeep label, then
+        // the figure as a counted supplies noun — a bare "105" means nothing without the glyph.
+        if (row.upkeep >= 0) {
+            std::string upkeep = Vocab::UpkeepCostLabel();
+            AppendPhrase(upkeep,
+                Vocab::Format(Vocab::CountForm(row.upkeep, Vocab::SuppliesCountOne,
+                                  Vocab::SuppliesCountFew, Vocab::SuppliesCountMany),
+                    std::to_string(row.upkeep)));
+            primary.Announcements.emplace_back(NodeAnnouncement::Static(upkeep));
+            primary.Announcements.back().Kind = AnnouncementKinds::Value;
+        }
         // The row's other cells on the PRIMARY as value parts, left to right as drawn: this is
         // what keeps the flat reading and the tabular one the same graph.
         for (const std::string& cell : cells) {

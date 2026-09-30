@@ -7,6 +7,7 @@
 
 #include <windows.h>
 
+#include <cstdlib>
 #include <cstring>
 #include <string>
 
@@ -48,6 +49,36 @@ enum FacilityRowArg {
     kArgStatus = 5,
     kArgQueue = 6,
 };
+
+// Arg 0 is `DisplayName @ "(" $ m_strCreditsPrefix $ UpkeepCost $ ")"` (UpdateData:36-42), so the
+// upkeep is a trailing parenthesis holding a short non-digit prefix and then digits. Split it off
+// so the recipe can say what the number IS; a name that does not end that way is left whole.
+void SplitUpkeep(std::string& name, int& upkeep)
+{
+    upkeep = -1;
+    if (name.size() < 3 || name.back() != ')')
+        return;
+    const size_t open = name.rfind('(');
+    if (open == std::string::npos)
+        return;
+    const size_t close = name.size() - 1;
+    size_t digits = close;
+    while (digits > open + 1 && name[digits - 1] >= '0' && name[digits - 1] <= '9')
+        digits--;
+    // Digits must be present, and the prefix before them short (the "§" glyph, 2 bytes of UTF-8)
+    // and free of spaces, so a name that merely ends in a parenthesis is never cut.
+    const size_t prefixLen = digits - (open + 1);
+    if (digits == close || prefixLen > 8)
+        return;
+    for (size_t i = open + 1; i < digits; i++)
+        if (name[i] == ' ')
+            return;
+    upkeep = atoi(name.c_str() + digits);
+    size_t end = open;
+    while (end > 0 && name[end - 1] == ' ')
+        end--;
+    name.resize(end);
+}
 
 std::vector<void*> ReadHeaderButtons(void* screen)
 {
@@ -138,6 +169,7 @@ FacilitySummaryView ReadFacilitySummary(void* screen)
             const std::vector<std::string> args = call.StringArgs();
             r.captured = true;
             r.name = FlashArg(args, kArgName);
+            SplitUpkeep(r.name, r.upkeep);
             r.staff1 = FlashArg(args, kArgStaff1);
             r.staff2 = FlashArg(args, kArgStaff2);
             r.power = FlashArg(args, kArgPower);

@@ -141,6 +141,11 @@ inline constexpr Word ObjectiveTurnsOne{"ObjectiveTurnsOne"};
 inline constexpr Word ObjectiveTurnsFew{"ObjectiveTurnsFew"};
 inline constexpr Word ObjectiveTurnsMany{"ObjectiveTurnsMany"};
 inline constexpr Word ObjectiveOfFormat{"ObjectiveOfFormat"};
+// A counted supplies figure ("105 материалов"). Ours because the game's only counted form,
+// UIRecruitSoldiers.m_strSupplies, is one template for every number ("21 материалов").
+inline constexpr Word SuppliesCountOne{"SuppliesCountOne"};
+inline constexpr Word SuppliesCountFew{"SuppliesCountFew"};
+inline constexpr Word SuppliesCountMany{"SuppliesCountMany"};
 inline constexpr Word SurfaceAvengerReader{"SurfaceAvengerReader"};
 inline constexpr Word SurfaceAimReader{"SurfaceAimReader"};
 inline constexpr Word SurfaceGeoscapeScanner{"SurfaceGeoscapeScanner"};
@@ -255,6 +260,8 @@ inline std::string ScreenChallengeArchiveFallback() { return GameString("UITLE_C
 // The Avenger Report (UIFacilitySummary) likewise: its own m_strTitle, from the class default when
 // the live read came back empty.
 inline std::string ScreenFacilitySummaryFallback() { return GameString("UIFacilitySummary", "m_strTitle", ScreenUnnamed); }
+// The facility upkeep label, the game's own — what UIChooseFacility draws over the same number.
+inline std::string UpkeepCostLabel() { return GameString("UIChooseFacility", "m_strUpkeepCostLabel", SectionUnnamed); }
 // The Skirmish Mode menu carries its own title and START GAME word; fallbacks for empty reads.
 inline std::string ScreenSkirmishFallback() { return GameString("UITLE_SkirmishModeMenu", "m_ScreenTitle", ScreenUnnamed); }
 inline std::string SkirmishStartFallback() { return GameString("UITLE_SkirmishModeMenu", "m_StartGame", RoleButton); }
