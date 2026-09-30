@@ -223,9 +223,12 @@ static function string BuildAbilityLine(XComGameState_Ability AbilityState, XCom
 	if (!IsNarratable(SourceUnit) && !IsNarratable(TargetUnit))
 		return "";
 
+	// An ability with no localized name is one the game never names to anyone — the Chosen's
+	// ChosenActivation / ChosenEngaged fire as "offensive" on every reveal — so it gets no line.
+	// Its template name would be an internal identifier read aloud, in English, to every player.
 	AbilityName = AbilityTemplate.LocFriendlyName;
 	if (AbilityName == "")
-		AbilityName = string(AbilityTemplate.DataName);
+		return "";
 
 	Line = UnitName(SourceUnit) $ ": " $ AbilityName;
 

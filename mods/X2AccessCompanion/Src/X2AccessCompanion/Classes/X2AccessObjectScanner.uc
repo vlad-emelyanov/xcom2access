@@ -792,11 +792,10 @@ private function AddTutorialMarker(TTile Origin, out array<AccessMarker> Markers
 	Template = class'XComGameState_Ability'.static.GetMyTemplateManager()
 		.FindAbilityTemplate(Ctx.InputContext.AbilityTemplateName);
 
+	// No localized name means no verb — never the template name, which is an internal identifier.
 	Verb = "";
 	if (Template != none && Template.LocFriendlyName != "")
 		Verb = Template.LocFriendlyName;
-	else if (Ctx.InputContext.AbilityTemplateName != '')
-		Verb = string(Ctx.InputContext.AbilityTemplateName);
 
 	// Which marker the game would render follows the ability's targeting method — mirroring
 	// XComTutorialMgr.SetMoveMarkers / SetTargetLocationMarkers exactly, movement first because a

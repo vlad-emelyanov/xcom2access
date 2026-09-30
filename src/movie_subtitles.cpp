@@ -493,10 +493,23 @@ void ResolvePendingCues()
     if (gPendingKeys.empty() && !gCacheAnnounced) {
         gCacheAnnounced = true;
         size_t withText = 0;
-        for (const auto& [key, line] : gCueText)
-            withText += line.empty() ? 0 : 1;
+        std::string empty;
+        for (const auto& [key, line] : gCueText) {
+            if (!line.empty()) {
+                withText++;
+                continue;
+            }
+            if (!empty.empty())
+                empty += ' ';
+            empty += key;
+        }
         LOG_INFO("MovieSubtitles: cue table ready — %zu key(s), %zu with localized text",
             gCueText.size(), withText);
+        // Every key the shipped file names HAS text in the shipped languages, so an empty answer
+        // is the engine refusing the lookup, not a gap in the file — and a cue that will go
+        // silent must be nameable before the movie, not discovered during it.
+        if (!empty.empty())
+            LOG_WARN("MovieSubtitles: Localize gave no text for: %s", empty.c_str());
     }
 }
 
