@@ -224,14 +224,14 @@ try {
             git worktree add --detach --force $SrcDir $sha 2>&1 | Out-Host
         }
         if ($LASTEXITCODE -ne 0) { throw "Could not park a worktree at $sha." }
-        # Only the submodules the ARCHIVE is built from: prism links into the ASI, and the
-        # companion's build.ps1 sources X2ModBuildCommon by relative path. The Highlander is a
+        # Only the submodules the ARCHIVE is built from: prism and minhook link into the ASI, and
+        # the companion's build.ps1 sources X2ModBuildCommon by relative path. The Highlander is a
         # reference tree (the companion compiles against the WORKSHOP sources, see build.ps1) and
         # the SDK generator is a dev tool; neither reaches the archive. Their objects are already
         # in this repo's .git, so this is a local checkout, not a fetch — and NOT --recursive:
         # prism's own submodule is godot-cpp, which PRISM_ENABLE_GDEXTENSION=OFF never builds, and
         # pulling it would turn an offline checkout into a network clone.
-        git -C $SrcDir submodule update --init deps/prism deps/X2ModBuildCommon 2>&1 | Out-Host
+        git -C $SrcDir submodule update --init deps/prism deps/minhook deps/X2ModBuildCommon 2>&1 | Out-Host
         if ($LASTEXITCODE -ne 0) { throw "Submodule checkout failed in $SrcDir." }
     }
 
@@ -332,6 +332,11 @@ try {
         if (-not (Test-Path $src)) { throw "No $doc in $SrcDir; refusing to package a build without it." }
         Copy-Item $src $StageDir
     }
+    # MinHook is BSD-2-Clause: a binary redistribution must carry its copyright and conditions
+    # (and those of the HDE disassembler it bundles), which its own LICENSE.txt holds verbatim.
+    $minhookLicense = Join-Path $SrcDir 'deps/minhook/LICENSE.txt'
+    if (-not (Test-Path $minhookLicense)) { throw "No MinHook LICENSE.txt in $SrcDir; refusing to package without it." }
+    Copy-Item $minhookLicense (Join-Path $StageDir 'LICENSE-MinHook.txt')
 
     # The install check ships at the root beside the README it complements: it verifies that the
     # pieces above landed, names what is missing, and enables the companion and the Highlander in
@@ -414,6 +419,7 @@ holding ``Binaries`` and ``XComGame`` (under ``steamapps\common\XCOM 2``). It co
 
 ``````
 README.md, LICENSE                  (at the root — the README lists the keys)
+LICENSE-MinHook.txt                 (the hooking library's BSD notice)
 X2Access-Check.cmd, .ps1            (at the root — the install check, see below)
 Binaries/Win64/scripts/             X2Access.asi, X2Access.pdb
 XComGame/Mods/X2AccessCompanion/    the companion mod (.XComMod, Config, Localization, Script)
@@ -463,7 +469,8 @@ $recent
 ---
 
 MIT. Bundles [Prism](https://github.com/ethindp/prism) (MPL-2.0) statically; its source is the
-upstream repository at the pinned tag. Unofficial fan project, not affiliated with Firaxis Games,
+upstream repository at the pinned tag. Also links [MinHook](https://github.com/TsudaKageyu/minhook)
+(BSD-2-Clause, notice in `LICENSE-MinHook.txt`). Unofficial fan project, not affiliated with Firaxis Games,
 2K or Take-Two Interactive.
 "@
 

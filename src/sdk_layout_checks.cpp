@@ -981,18 +981,6 @@ static_assert(offsetof(AUIStrategyMap_HUD, CachedDoom) == 0x4C4, "doom meter cac
 // dereferenced natively.
 static_assert(offsetof(AUIMission, MissionRef) == 0x600, "UIMission::MissionRef");
 
-// ---- UEngine's option flags (src/game_ui.cpp SubtitlesEnabled, src/movie_subtitles.cpp) ----
-//
-// bSubtitlesEnabled is bit 0x10 of the bitfield dword at 0x46C, so it is bracketed like every
-// other bitfield here: the FString ending exactly at 0x46C and the float starting after the
-// block. This is the flag the movie player itself tests before it lets a subtitle be drawn, and
-// getting its offset wrong would read some neighbouring option as the subtitle switch — which
-// fails SILENTLY in the direction that matters, by never speaking.
-static_assert(offsetof(UEngine, TangentColorMaterialName) == 0x45C,
-    "UEngine flag dword (bSubtitlesEnabled) follows TangentColorMaterialName at 0x46C");
-static_assert(offsetof(UEngine, MaxRMSDForCombiningMappings) == 0x474,
-    "UEngine flag dwords end before MaxRMSDForCombiningMappings");
-
 // ---- the Chosen dossier and the bond screens (docs/chosen-bond-recon.md §2) ----
 //
 // UIChosenInfo keeps only the tab index and the array it populated Flash from — the wire-cache

@@ -20,9 +20,9 @@ namespace {
 // (`docs/engine-notes.md`, the Steam/GOG table). ⛔ Row 0 is the REFERENCE: it is what an
 // unrecognised image falls back to, and what `tools/derive_offsets.py` derives a new row FROM.
 constexpr Build kBuilds[] = {
-    // name     timestamp    SizeOfImage  GNames       GObjects     ProcessEvent  movie global  movie vtable
-    {  "Steam", 0x621562FA,  0x020C7000,  0x01DAF450,  0x01DAF4A8,  0x00143B50,   0x01DB8900,   0x013E9B28 },
-    {  "GOG",   0x5B9A17C4,  0x020CA000,  0x01DB2490,  0x01DB24E8,  0x00144310,   0x01DBB950,   0x013EA7B8 },
+    // name     timestamp    SizeOfImage  GNames       GObjects     ProcessEvent  movie global  movie vtable  subtitle draw
+    {  "Steam", 0x621562FA,  0x020C7000,  0x01DAF450,  0x01DAF4A8,  0x00143B50,   0x01DB8900,   0x013E9B28,   0x002432D0 },
+    {  "GOG",   0x5B9A17C4,  0x020CA000,  0x01DB2490,  0x01DB24E8,  0x00144310,   0x01DBB950,   0x013EA7B8,   0x002434F0 },
 };
 constexpr int kReference = 0;
 

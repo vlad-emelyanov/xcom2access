@@ -42,14 +42,14 @@ except ImportError:
 # What the mod pins, as measured on the Steam build. Keep in step with:
 #   GNames/GObjects   deps/CodeRed-Generator/Engine/XCOM2/Configuration.cpp (-> GameDefines.hpp)
 #   ProcessEvent      src/process_event_hook.cpp
-#   the movie player  src/movie_subtitles.cpp
+#   the movie player  src/movie_subtitles.cpp (global, vtable, and the subtitle draw it hooks)
 REFERENCE_ANCHORS = {
     "GNames": 0x1DAF450,
     "GObjects": 0x1DAF4A8,
     "MoviePlayerGlobal": 0x1DB8900,
 }
 REFERENCE_VTABLES = {"MoviePlayerVtable": 0x13E9B28}
-REFERENCE_FUNCTIONS = {"ProcessEvent": 0x143B50}
+REFERENCE_FUNCTIONS = {"ProcessEvent": 0x143B50, "MovieSubtitleDraw": 0x2432D0}
 PROCESS_EVENT_SLOT = 72
 
 
@@ -385,6 +385,14 @@ def main():
             print(f"   vtable slot, {tag:9}: most common is {top[0]} ({top[1]} vtables){flag}")
         lockstep, mismatch, first = diff_function(ref, tgt, pr, pt)
         print(f"   ProcessEvent diff: {lockstep} instructions in lockstep,"
+              f" {mismatch} differing structure displacements")
+        print(f"   first difference : {first or 'none'}")
+    if "MovieSubtitleDraw" in derived:
+        # The hook's target. Its prologue is a common shape, so the signature match alone is weak;
+        # what settles it is the whole body agreeing, structure displacements included.
+        lockstep, mismatch, first = diff_function(
+            ref, tgt, REFERENCE_FUNCTIONS["MovieSubtitleDraw"], derived["MovieSubtitleDraw"])
+        print(f"   MovieSubtitleDraw diff: {lockstep} instructions in lockstep,"
               f" {mismatch} differing structure displacements")
         print(f"   first difference : {first or 'none'}")
     print()

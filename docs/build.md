@@ -143,7 +143,7 @@ on every push of main.
   lookup until twenty seconds after the main menu.
 - **Built from a parked worktree, never the live tree.** Several sessions work this tree at once,
   so the archive is built from `release-stage/src`, a detached worktree at the published commit
-  (submodules `deps/prism` and `deps/X2ModBuildCommon` only — the Highlander and the SDK generator
+  (submodules `deps/prism`, `deps/minhook` and `deps/X2ModBuildCommon` only — the Highlander and the SDK generator
   never reach the archive). `-FromWorkingTree` exists and refuses when any build input is dirty.
 - **The generated SDK is borrowed.** A clean checkout has no `generated_sdk/`, so the release tree
   configures with `-DX2ACCESS_SDK_DIR=<main tree>/generated_sdk/X2SDK` — the same SDK the layout
@@ -192,12 +192,18 @@ on every push of main.
   does not hear the rest of the sentence, then LEAK the context on purpose. The dev server's bounded
   `Stop()` (`dev-harness.md`) follows the same reasoning.
 - `deps/X2ModBuildCommon` (submodule) — UnrealScript build pipeline.
-- **No hooking library, on purpose.** The two interception points ship without one — the
-  ProcessEvent hook is a vtable pointer swap and input is a WNDPROC subclass. If an inline hook on a
-  non-virtual native is ever needed (`ProcessInternal` is the candidate, `engine-notes.md`), use
-  **MinHook** (small, CMake-friendly, the game-modding standard), not MS Detours, and do not vendor a
-  runtime assembler (AsmJit / Xbyak) — MinHook generates its own trampolines. The game ships
-  Firaxis' own `EasyHook64.dll` but nothing loads it; it is vestigial and not for us.
+- `deps/minhook` (submodule, pinned to `v1.3.4`, BSD-2-Clause) — the ONE inline hook, on the Bink
+  movie's subtitle draw (`src/movie_subtitles.cpp`), linked static after Prism so it inherits the
+  `/MT` and `BUILD_SHARED_LIBS OFF` cache pins. Every other interception point is still a pointer
+  swap — the ProcessEvent vtable slot, `UFunction::Func`, the WNDPROC — and a new one stays that
+  way whenever a pointer to swap exists. MinHook is for a DIRECT call, where none does. ⛔ Validate
+  the target's bytes before `MH_CreateHook` (a wrong address is a patched instruction stream in
+  someone else's function), keep the address per build in `src/game_build.cpp`, and never call
+  `MH_Uninitialize` — it suspends threads, and the only place it could run is `DllMain`'s detach,
+  under the loader lock. The detour runs on whatever thread the game calls from, so it RECORDS and
+  returns; the game tick acts. Not MS Detours, and no runtime assembler (AsmJit / Xbyak) — MinHook
+  generates its own trampolines. The game ships Firaxis' own `EasyHook64.dll` but nothing loads
+  it; it is vestigial and not for us.
 - `deps/X2WOTCCommunityHighlander` (submodule, pinned to `v1.31.2-beta`) — pure UnrealScript, no
   native code. Compile-time include for the companion and the source of narration event hooks;
   declared as a runtime requirement in the README, the mod's ReadMe.txt and the .XComMod description.

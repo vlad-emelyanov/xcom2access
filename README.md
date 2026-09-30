@@ -135,8 +135,9 @@ the one holding `Binaries/` and `XComGame/` (on Steam, under
 ```
 README.md
 LICENSE
+LICENSE-MinHook.txt                        (the hooking library's notice)
 X2Access-Check.cmd, X2Access-Check.ps1     (the install check: run it after extracting)
-Binaries/Win64/scripts/X2Access.asi        (the native plugin, Prism statically linked)
+Binaries/Win64/scripts/X2Access.asi        (the native plugin, Prism and MinHook statically linked)
 Binaries/Win64/scripts/X2Access.pdb        (symbols, so a crash dump can be read)
 XComGame/Mods/X2AccessCompanion/           (the companion mod: .XComMod, Config, Localization, Script)
 ```
@@ -414,6 +415,11 @@ we make to its files, must stay available to anyone who receives the binary. We 
 unmodified as the `deps/prism` submodule pinned to a published tag (`v0.17.3`), so the upstream
 repository is that source. Prism in turn bundles its own third-party code — see its `NOTICE`
 file.
+
+[MinHook](https://github.com/TsudaKageyu/minhook) (Copyright (C) 2009-2017 Tsuda Kageyu, with the
+Hacker Disassembler Engine, Copyright (c) 2008-2009 Vyacheslav Patkov) is **BSD-2-Clause** and is
+statically linked into `X2Access.asi`, pinned to `v1.3.4` as the `deps/minhook` submodule. Its
+full notice ships beside this file as `LICENSE-MinHook.txt`.
 
 The companion mod is built with
 [X2ModBuildCommon](https://github.com/X2CommunityCore/X2ModBuildCommon) (MIT) against the

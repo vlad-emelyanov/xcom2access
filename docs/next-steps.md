@@ -819,12 +819,6 @@ as "this is broken".
 The branches carried over when the 2026-08-31 build's live-run debt was retired (main paths all
 confirmed in play):
 
-- **Movie subtitles: the pre-resolved cue table** (built 2026-09-30 after the Warlock-stronghold
-  crash; `surfaces/strategy.md`, the `Localize` bullet). Built clean, never run. A boot must log
-  `MovieSubtitles: cue table ready — N key(s), M with localized text` with N ≈ 800 before the first
-  story movie. Then `CIN_XP_Stronghold_Warlock` must play to its end WITHOUT a crash and speak its
-  two cues. The movie's `closed — N cue(s) spoken` line must match the cue count in
-  `Movies/<name>.txt`. Any `not in the resolved table` warning names a key the INT file lacks.
 - **Movie subtitles: which cinematics the engine gives no cue track** (`surfaces/strategy.md`, the
   "name on the movie player" bullet). The open line now prints the cue track. Sit through
   `CIN_TP_OldGods_pt1`, a `CIN_TP_*` played from Kismet, and one NON-instant base-game autopsy. For
@@ -836,11 +830,10 @@ confirmed in play):
   is the next read.
 - **Movie subtitles with Show Subtitles OFF** — the surface's main path ran on 2026-09-04 (see
   `surfaces/strategy.md`) but the option gate did not. `PumpMovie` blanks the string unless
-  `UEngine.bSubtitlesEnabled` OR the movie's flag `0x80`, and we mirror both; the branch that has
-  never been heard is the OFF one, which must be SILENT — our speech IS the subtitle, and a mod
-  that keeps reading after the player turned subtitles off is the failure. The 0x80 half wants a
-  legal/attract screen, which stays readable with the option off; that is the branch that proves
-  we mirror the flag rather than just the setting.
+  `UEngine.bSubtitlesEnabled` OR the movie's flag `0x80`, BEFORE the draw the hook reads; the
+  branch that has never been heard is the OFF one, which must be SILENT — our speech IS the
+  subtitle, and a mod that keeps reading after the player turned subtitles off is the failure. The
+  0x80 half wants a legal/attract screen, which stays readable with the option off.
 
 - **The commodity card's shortfall line** (built 2026-09-16, `surfaces/avenger.md`, the
   "row's red says THAT" bullet) — the `short` field and its "not enough" line have compiled and

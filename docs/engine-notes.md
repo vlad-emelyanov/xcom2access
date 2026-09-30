@@ -34,6 +34,11 @@ and note that a rule with no measurement under it any more is a rule to delete, 
   | ProcessEvent | `0x143B50` | `0x144310` | +0x7C0 |
   | `GFullScreenMovie` global | `0x1DB8900` | `0x1DBB950` | +0x3050 |
   | `FFullScreenMovieBink` vtable | `0x13E9B28` | `0x13EA7B8` | +0xC90 |
+  | Bink subtitle draw (hooked) | `0x2432D0` | `0x2434F0` | +0x220 |
+
+  The subtitle draw is a function, matched on its opening instructions (one hit in GOG) and
+  confirmed by diffing the whole body: 196 instructions in lockstep, zero differing structure
+  displacements. Its call site in `PumpMovie` sets up the same registers on both builds.
 
   **How each was derived, and what confirms it.** A global is reached by RIP-relative operands, so
   the bytes AROUND a Steam reference are the signature: wildcard the 4-byte displacement, find that
@@ -219,10 +224,11 @@ and note that a rule with no measurement under it any more is a rule to delete, 
   `PumpMovie` (`FUN_14023ed10` → `FUN_1402432d0`). Script sees exactly two things about it, both booleans in
   disguise: `XComEngine.PlayMovie` starts one and `IsAnyMoviePlaying` says whether one is up. So
   **do not go looking for a UIScreen, a Flash path or a companion hook for anything Bink-related**
-  — `src/movie_subtitles.cpp` is the only surface in this mod that dereferences a raw C++ object,
-  and the rule it established is the one to copy if a second ever needs to: hard-code ONE address
-  (the global), and validate it by its VTABLE before dereferencing anything through it, because no
-  offset on a non-UObject can be `static_assert`ed and that check is therefore the entire pin.
+  — `src/movie_subtitles.cpp` takes the subtitle line with a MinHook detour on that draw (the line
+  is its `R8` argument, already option-gated and localized), and reads the raw object only for its
+  open/close log lines. Both raw addresses are pinned by what they point AT, because no offset on a
+  non-UObject can be `static_assert`ed: the global by the object's VTABLE, the draw by its prologue
+  bytes plus the L"RenderFMV" label it loads at `+0x62`.
   - ⛔ **The movie is pumped on its OWN THREAD, and that thread calls `Localize`.** (Addresses in
     this bullet and the three below are Steam-build VAs; none is used as a constant by the mod.)
     Each pump,
@@ -232,8 +238,8 @@ and note that a rule with no measurement under it any more is a rule to delete, 
     corrupt it while a movie plays**. Measured 2026-09-30: the movie thread faulted in
     `tbbmalloc!scalable_realloc` under `FUN_140163d80` (thread-start frame `XCom2+0x23f030`, inside
     `PumpMovie`) in the same second the mod made its first `Localize` call. The localized string is a
-    per-pump local, freed after drawing, so it is retained nowhere. `GameUI::LocalizeString` carries
-    the warning, and `movie_subtitles.cpp` resolves its cues ahead of time.
+    per-pump local, freed after drawing, so it is retained nowhere — its one moment of existence is
+    the draw call, which is where the hook takes it. `GameUI::LocalizeString` carries the warning.
   - **The cue track is loaded only on request.** `PlayMovie` (`FUN_14023d7a0`) passes
     `Movies\<name>.txt` to the track loader (`FUN_14034c850`, which has no other caller) only while the
     global at `0x141E82224` is nonzero. Otherwise it passes an empty path. `XComEngine.PlayMovie`

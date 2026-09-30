@@ -275,14 +275,17 @@ path-API survey, the field maps, screen lifetime — is `docs/engine-notes.md`.*
   an `XComScrollingTextField` at all.
 - ⛔ **A full-screen `.bk2` movie is engine-native all the way down — no UObject, no reflection, no
   script**, so do not go looking for a UIScreen, a Flash path or a companion hook for anything
-  Bink-related. `src/movie_subtitles.cpp` dereferences a raw C++ object, and its rule is the one to
-  copy if a second ever needs to: hard-code ONE address and validate it by its VTABLE before
-  dereferencing anything, because that check is the entire pin (`docs/surfaces/strategy.md`).
+  Bink-related. The subtitle line exists only as an ARGUMENT — the movie thread localizes it, draws
+  it and frees it every pump — so `src/movie_subtitles.cpp` catches it with a MinHook detour on the
+  draw, and that is the rule for any text the engine builds and discards: **catch it in flight, never
+  rebuild it or cache a lookup of it** (a pre-resolved cue table lost 128 cues to one startup race).
+  Validate the target's BYTES before hooking and pin every raw address per build
+  (`docs/surfaces/strategy.md`).
   - ⛔ **A playing movie is a SECOND THREAD in the config cache: never call `Localize`
     (`GameUI::LocalizeString`) while `MoviePlaying()`.** The movie thread localizes its cue on every
     pump through the same unlocked GConfig walk, and one concurrent call from us froze the game on a
-    Chosen cinematic. Resolve anything a movie-time surface needs BEFORE the movie
-    (`docs/engine-notes.md`, the Bink bullet).
+    Chosen cinematic (`docs/engine-notes.md`, the Bink bullet). A detour on that thread RECORDS and
+    returns; the game tick acts.
 - ⛔ **No gameplay event fires in the TUTORIAL — it replays history, it never submits it.** Two
   consequences: **anything built on the event bus must be tested on a normal mission**
   (Gatecrasher — a campaign with the tutorial checkbox off), and the tutorial reader's
@@ -483,8 +486,11 @@ how it is gated and armed, the endpoint manual and the `just dev-*` verbs are
   the gotchas.
 - **Precedence**: prefer the ASI log + Ghidra; reach for Frida only when the answer needs the running
   process. Anything needed more than once belongs in the ASI, not in a Frida script.
-- **No hooking library**: both interception points are pointer swaps. If an inline hook is ever
-  needed, it is MinHook (`docs/build.md`, dependencies).
+- **Pointer swaps first; MinHook only for a DIRECT call.** ProcessEvent, `UFunction::Func` and the
+  WNDPROC are pointer swaps, and a new interception point stays one whenever a pointer exists to
+  swap. MinHook (`deps/minhook`) holds exactly one hook, the Bink subtitle draw; its rules — bytes
+  validated before `MH_CreateHook`, address per build, never `MH_Uninitialize` — are in
+  `docs/build.md`, dependencies.
 
 ## Adding a screen recipe
 

@@ -42,12 +42,6 @@ namespace {
 // live in game_ui_internal.h; what remains here is what only the core helpers read. Every
 // hand-transcribed offset is pinned by a static_assert in sdk_layout_checks.cpp either way.
 
-// UEngine's flag dword. `bSubtitlesEnabled` (0x10) is the game's Show Subtitles option after
-// XComOnlineProfileSettings.ApplyOptions has copied the profile value onto the engine — the copy
-// the game itself tests before drawing any subtitle, so it is the one parity is defined against.
-constexpr int32_t kEngineFlagsOffset = 0x46C;
-constexpr uint32_t kEngineSubtitlesEnabled = 0x10;
-
 // A localized line is as long as the translator made it; this is the runaway guard on a count
 // read out of engine memory, not a working limit (the longest stock movie subtitle is ~250).
 constexpr int32_t kMaxPlausibleLocalizedChars = 1 << 16;
@@ -2013,30 +2007,6 @@ void HintScreenChange()
     gScanEpoch++;
 }
 
-namespace {
-
-// The Engine singleton, through its own `native static final function Engine GetEngine()`. Not
-// cached: it is one ProcessEvent on a static native, and the GC rule says a UObject pointer held
-// across frames must be revalidated anyway — asking again IS the revalidation.
-void* FindEngine()
-{
-    struct {
-        void* ReturnValue;
-    } params{};
-    if (!CallStaticNative("Engine", "GetEngine", &params))
-        return nullptr;
-    return params.ReturnValue;
-}
-
-} // namespace
-
-bool SubtitlesEnabled()
-{
-    void* engine = FindEngine();
-    if (!engine)
-        return true; // unknown — err toward speaking rather than toward silent omission
-    return (ReadU32Raw(engine, kEngineFlagsOffset) & kEngineSubtitlesEnabled) != 0;
-}
 
 std::string LocalizeString(const char* section, const char* key, const char* package)
 {

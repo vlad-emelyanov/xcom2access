@@ -303,10 +303,17 @@ in the BASE game's `XCOM 2/XComGame/Movies/`, not WOTC's. WOTC's `Movies/` holds
 cue tracks, and the engine opens the base-game video anyway (`CIN_TP_HumansAreObsolete` read 19 of
 19 cues on 2026-09-25).
 
-✅ **First live pass 2026-09-04, and it works.** The vtable pin held
-(`MovieSubtitles: movie player at 0x… validated`) and `CIN_XP_PreIntro` read all 35 of its cues in
-Russian, timed to the film, with not one `no localized text for cue` — which is what says the loc
-lookup found the right package in a language nobody wrote the lookup for.
+✅ **The draw hook, heard on Steam 2026-09-30** in a strategy save, every movie started through the
+harness: `CIN_XP_Autopsy_Lost` 2/2 lines, `CIN_XP_05_LA_RendezvousAssassin` 13/13 (cue 5 *Рычит*),
+`CIN_XP_16a_ElderRage_WarlockDead` 11/11, `CIN_XP_AvengerAssault_Warlock` 14/14, `CIN_XP_PreIntro`
+35/35 — `closed — N line(s) spoken` equal to the opened cue count every time, no warnings, no
+crash. Every one of the first four is from the tail of the loc file the cue table had lost. The GOG
+row is derived and body-diffed but has not run in a game.
+
+⚙ **Replaying a movie for a test**: `/call?cdo=XComEngine&fn=PlayMovie&arg=false&arg=<Name>.bk2&arg=&arg=0`
+— the engine's own entry point, which also turns the cue track on. The empty third argument is
+the Wwise event, so the film plays silent and the screen reader is the only voice. ⛔ Not the
+`PlayBink` cheat: it `WaitForMovie`s on the GAME thread, which stops the tick that speaks.
 
 - ⛔ **`Localize` is NEVER called while a movie plays — it crashed the game.** `PumpMovie` runs on
   the movie player's own worker thread and calls `Localize("Subtitles", key, "Subtitles")`
@@ -314,10 +321,28 @@ lookup found the right package in a language nobody wrote the lookup for.
   which has no lock. On 2026-09-30 our game-thread `Localize` of the first `CIN_XP_Stronghold_Warlock`
   cue came back empty, and the movie thread died in `tbbmalloc!scalable_realloc` under
   `FUN_140163d80` in the same second (minidump `XCom-…-2026.09.30-02.09.03`). The game froze on the
-  Warlock's first line. The pre-intro reading cleanly on 09-04 was luck of timing, not safety. So
-  the cue text is resolved **ahead of time**. While no movie is open, a batch of keys per tick goes
-  through the engine's own `Localize` into a table. During a movie the reader only reads that
-  table. A key the table lacks is logged (`not in the resolved table`) and not spoken.
+  Warlock's first line. The pre-intro reading cleanly on 09-04 was luck of timing, not safety.
+- ⛔ **Catch the line the engine DRAWS; never look it up or cache it.** The first fix for the crash
+  resolved every `[Subtitles]` key through `Localize` while no movie was open and served movies from
+  that table. It stopped the crash and silently lost the last **128** cues of the file for the whole
+  session: its first two 64-key batches ran before `Object.Localize` was resolvable, and the empty
+  answers were stored as "no words" (the stored set cut off exactly at the file's key 582). The
+  reader now owns no lookup at all — see the next bullet.
+- **The hook.** `PumpMovie` hands the finished line to the frame draw, `FUN_1402432d0` (Steam RVA
+  `0x2432D0`, GOG `0x2434F0`, its only caller), in **R8** — `RCX` the renderer (`player+0x104`),
+  `RDX` the `BINKHANDLE`, `R9` the "movie is paused" caption, three more on the stack. The call is
+  DIRECT, so no pointer swap reaches it, and it is the mod's one MinHook detour. The detour runs on
+  the MOVIE thread and only copies the line into a locked slot when it changed (compared with the
+  handle, so a new movie opening on the previous movie's last line still counts); `OnTick` speaks
+  what changed. What it hears is exactly what is drawn — after the option gate, in the resolved
+  language, through any mod that replaced a track — and it calls nothing, so the crash above
+  cannot recur.
+- ⛔ **The draw is validated by its BYTES before it is hooked**, because a wrong address patches
+  the middle of someone else's function: the 25-byte prologue both builds share, AND a
+  `lea r8,[rip+…]` at `+0x62` that must load L"RenderFMV" (the GPU-profiler label this function
+  alone passes). Either failing logs `MovieSubtitles: DISABLED` and hooks nothing.
+  `tools/derive_offsets.py` derives the address for a new build and confirms it by diffing the
+  whole body (196 instructions in lockstep, zero differing displacements, Steam against GOG).
 - ⛔ **A name on the movie player does not mean cues were loaded.** `PlayMovie` (`FUN_14023d7a0`)
   loads `Movies\<name>.txt` only while the global at `0x141E82224` is set, and otherwise hands the
   track an EMPTY path. `XComEngine.PlayMovie` (`FUN_140ba9880`) sets it when subtitles are on. The
@@ -327,7 +352,7 @@ lookup found the right package in a language nobody wrote the lookup for.
   running 2m13s silent on 09-04: `movie '…' opened` logged, zero cues. The open line now prints the
   track (`cue track N cue(s) in group …` or `EMPTY (the engine loaded no cues for this movie)`), so
   the next such cinematic says which case it is. With an EMPTY track, `PumpMovie` draws nothing
-  either, so silence is parity. **Do not "fix" it by parsing the `.txt` ourselves** until a
+  either — the hook hears an empty line — so silence is parity. **Do not "fix" it by parsing the `.txt` ourselves** until a
   screenshot shows the sighted player getting text there.
 - ⚠ **The engine's standard UE3 subtitle manager is not a source here.** `FSubtitleManager`
   (singleton at `0x141E275D8`, `QueueSubtitles` `FUN_1406df480`, `DisplaySubtitles` `FUN_1406c8100`)
@@ -337,10 +362,9 @@ lookup found the right package in a language nobody wrote the lookup for.
 
 - **The pipeline**: `XComGame/Movies/<name>.txt` is a cue track (`startMs endMs CueKey`) that the
   Bink player loads beside the video; each cue resolves through `Localize("Subtitles", <CueKey>,
-  "Subtitles")` and is drawn by `PumpMovie`'s render call (`FUN_1402432d0`), then freed. The
-  localized line is **retained nowhere**. **No `UIScreen`, no Flash, no script-visible property
-  anywhere on it**, which is why this surface reads a raw C++ object, the only place in the mod that
-  does.
+  "Subtitles")` ON THE MOVIE THREAD and is drawn by `PumpMovie`'s render call (`FUN_1402432d0`),
+  then freed. The localized line is **retained nowhere**. **No `UIScreen`, no Flash, no
+  script-visible property anywhere on it**, which is why the only way to read it is in flight.
 - ⛔ **There are TWO `Subtitles` loc files and only one is the right one.**
   `Engine/Localization/<lang>/Subtitles.<lang>` is 72-76 bytes and holds `MovieIsPaused` alone; the
   cue text is in **`XComGame/Localization/<lang>/Subtitles.<lang>`**, 167 KB of `CueKey="line"`
@@ -350,33 +374,28 @@ lookup found the right package in a language nobody wrote the lookup for.
   a private parser would have been half the code — and a second subtitle system agreeing with the
   game only by luck: it would keep talking after the player turned subtitles off, guess a language
   instead of using the one the engine resolved, drift the moment a mod replaced a track, and miss
-  the loop counter that says which pass through a looping movie is running. So the cue table, the
-  frame and the option are read out of the live player, and the text comes from the engine's own
-  `Localize`. The only thing reproduced is the interval scan that picks a cue for a time. The one
-  thing taken from disk is the LIST of keys to resolve ahead of time (`[Subtitles]` in the shipped
-  `Localization/INT/Subtitles.int`). It says which keys exist and carries no words, and it is on disk
-  only because the crash rule above forbids asking the engine at the moment a key is needed.
-- ⛔ **One hard-coded address, and it is validated before anything is dereferenced through it.**
-  `GFullScreenMovie` is at RVA `0x1DB8900`; the object's vtable must be RVA `0x13E9B28`, the one
-  `FFullScreenMovieBink`'s constructor writes. A mismatch disables the surface permanently with one
-  `LOG_ERROR`. **That check IS the pin** — none of these offsets can be `static_assert`ed, because
-  the type is not a UObject and appears in no SDK dump. Provenance for re-derivation: `FUN_14024c630`
-  is the lazy creator (names the global and the constructor), `FUN_1402073b0` the constructor
-  (writes the vtable, allocates the cue track into `+0x114`), `FUN_14023d7a0` `PlayMovie` (movie
-  name `+0x40`, `BINKHANDLE` `+0x84`), `FUN_14023ed10` `PumpMovie` (the time arithmetic, transcribed
-  line for line), `FUN_14034db80` the cue lookup.
-- **The option gate is the game's own test, not a policy of ours**: `PumpMovie` blanks the string
-  it just fetched unless `UEngine.bSubtitlesEnabled` is set OR the movie carries flag `0x80` on
-  `+0x60` (which is how a legal screen stays readable). Both are mirrored. `GameUI::SubtitlesEnabled`
-  reads the ENGINE's copy for the same reason the commlink does — the profile can be a toggle ahead.
-- **A missing localization is logged, not spoken.** The engine falls back to drawing the raw cue key;
-  we do not say "CIN_XP_PreIntro_01" out loud, because an internal name tells a blind player exactly
-  as much as it tells a sighted one. The `LOG_WARN` naming the cue is what keeps a missing line from
-  being indistinguishable from a silent one.
+  the loop counter that says which pass through a looping movie is running. The hook needs none of
+  that: every one of those decisions has already been made when the line reaches the draw.
+- **The option gate is the game's, applied before we see the line**: `PumpMovie` blanks the string
+  it just fetched unless `UEngine.bSubtitlesEnabled` (engine `+0x46C` bit `0x10`) is set OR the
+  movie carries flag `0x80` on `+0x60` (how a legal screen stays readable). So subtitles off means
+  an empty line at the draw, and nothing of ours mirrors the gate.
+- **The movie player object is diagnostics only.** `GFullScreenMovie` (RVA `0x1DB8900`; GOG
+  `0x1DBB950`) is read for the `opened — cue track …` / `closed — N line(s) spoken` lines and
+  validated by its vtable (`0x13E9B28`; GOG `0x13EA7B8`) first; a mismatch loses those lines, not
+  speech. Provenance: `FUN_14024c630` the lazy creator, `FUN_1402073b0` the constructor (vtable,
+  cue track into `+0x114`), `FUN_14023d7a0` `PlayMovie` (name `+0x40`, `BINKHANDLE` `+0x84`),
+  `FUN_14023ed10` `PumpMovie`.
+- **A missing localization is logged, not spoken.** The engine then draws the raw cue key or its
+  `?LANG?…?` marker; we do not say "CIN_XP_PreIntro_01" out loud, because an internal name tells a
+  blind player exactly as much as it tells a sighted one. The `LOG_WARN` naming it keeps a missing
+  line from being indistinguishable from a silent one.
+- **Angle brackets are characters, not markup.** The canvas draws `<Growl>` / `<Рычит>` literally,
+  so the brackets are dropped and the word is spoken; stripping it as a tag silenced
+  `CIN_XP_05_LA_RendezvousAssassin_05` entirely.
 - Speech is on the **Combat** channel (subtitles are a sequence — a line that interrupted its
   predecessor would cut off the half not yet heard) with source **Flyover** (the game put it on
-  screen). A changed `BINKHANDLE` means a different movie and clears the last-cue marker, so a
-  second cinematic reusing a cue key is not swallowed as already-said.
+  screen). The "movie is paused" caption (`R9`) is not read yet.
 
 ## Squad select and armory loadout
 

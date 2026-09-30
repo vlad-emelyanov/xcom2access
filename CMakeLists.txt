@@ -58,6 +58,13 @@ endif()
 
 add_subdirectory(deps/prism EXCLUDE_FROM_ALL)
 
+# MinHook (https://github.com/TsudaKageyu/minhook, pinned v1.3.4) — the one inline hook in the
+# mod, on the Bink movie's subtitle draw (src/movie_subtitles.cpp). Everything else we intercept
+# is a pointer swap; this is the case CLAUDE.md reserved MinHook for: a DIRECT call, with no
+# vtable slot or UFunction::Func to repoint. Static, and it inherits the /MT pin and
+# BUILD_SHARED_LIBS OFF from the cache lines above, which is why it comes after them.
+add_subdirectory(deps/minhook EXCLUDE_FROM_ALL)
+
 # Generated SDK global definitions (GObjects/GNames externs). Overridable because the release
 # script (tools/release.ps1) builds from a clean worktree parked at the published commit, which
 # has no generated_sdk/ of its own — the SDK is not in git — and borrows the main tree's, the
@@ -205,7 +212,7 @@ target_include_directories(X2Access PRIVATE
 )
 
 # prism::prism carries PRISM_STATIC and the include dir itself (see the Prism block above).
-target_link_libraries(X2Access PRIVATE prism::prism)
+target_link_libraries(X2Access PRIVATE prism::prism minhook)
 
 # Dev harness: two TUs (the server, and the Desktop Duplication screenshot which owns the
 # D3D/GDI+ includes). The define is target-wide because log.cpp's /log ring, tts.cpp's /speech

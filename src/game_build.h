@@ -26,6 +26,7 @@ struct Build {
     uintptr_t processEvent;
     uintptr_t moviePlayerGlobal;
     uintptr_t moviePlayerVtable;
+    uintptr_t movieSubtitleDraw; // the Bink frame draw that receives the subtitle line (hooked)
 };
 
 // The offsets to use. Never null; falls back to the reference build (see above).

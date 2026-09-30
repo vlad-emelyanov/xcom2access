@@ -127,9 +127,8 @@ static void RegisterEventHandlers() {
             // The OTHER subtitle system: what the engine draws over a full-screen .bk2. Next to
             // TransientReader because the two divide the game's dialogue between them — the
             // commlink for in-engine scenes, this for pre-rendered cinematics — and they can
-            // never both be showing, so their lines cannot collide. Costs one pointer read and a
-            // null check whenever no movie is up, which is nearly always — after the first second
-            // or so of the session, which it spends resolving the cue text table.
+            // never both be showing, so their lines cannot collide. Costs a pointer read and one
+            // uncontended lock whenever no movie is up, which is nearly always.
             MovieSubtitles::OnTick();
             // The Avenger's ant farm. Its gate is a plain "is UIFacilityGrid the current
             // screen", so outside the strategy layer this is one stack walk and no more.

@@ -80,18 +80,12 @@ void* FindStateFunction(const char* className, const char* stateName, const char
 ///
 /// ⛔ NEVER while a full-screen movie is playing (`GameUI::MoviePlaying()`): the movie thread calls
 /// the same unlocked GConfig lookup on every pump, and a concurrent call crashed the game
-/// (movie_subtitles.cpp). Resolve ahead of time instead.
+/// (movie_subtitles.cpp, which now catches the drawn line instead of looking anything up).
 std::string LocalizeString(const char* section, const char* key, const char* package);
 
 /// Read a localized property from a loaded game class's default object. Game thread only;
 /// returns empty until the class and its localization are available.
 std::string ReadGameDefaultString(const char* className, const char* propertyName);
-
-/// The game's Show Subtitles option, read off the ENGINE (`UEngine.bSubtitlesEnabled`) rather
-/// than off the profile, because the engine's copy is what the game itself tests before drawing
-/// a subtitle — the profile can be one toggle ahead of it. True when it cannot be determined:
-/// erring toward speaking beats a surface that goes silently missing.
-bool SubtitlesEnabled();
 
 // ---- and the cleaning every payload that comes back needs ----
 

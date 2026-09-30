@@ -11,3 +11,6 @@
 [submodule "deps/prism"]
 	path = deps/prism
 	url = https://github.com/ethindp/prism.git
+[submodule "deps/minhook"]
+	path = deps/minhook
+	url = https://github.com/TsudaKageyu/minhook.git
