@@ -104,7 +104,7 @@ All ✅ — shell recipes: `UIShellDifficulty`, `UISecondWave`, `UIShellNarrativ
 | `UIChooseFacility` | facility picker | ✅ |
 | `UIChooseUpgrade` | THE facility upgrade screen — what `XComHQPresentationLayer.UIFacilityUpgrade()` actually spawns, from the room's UPGRADE button, a locked staff slot, the to-do widget and the ant farm | ✅ `facility upgrades` recipe + `X2AccessUpgradeReader` (2026-09-03, unexercised live) |
 | `UIFacilityUpgrade` | DEAD CODE — shipped, never instantiated; `UIFacilityUpgrade()` on the presentation layer spawns `UIChooseUpgrade` instead | — out of scope (its `m_strCompleted` loc string is borrowed by the reader above) |
-| `UIFacilitySummary` | all-facilities overview list (the Avenger Report) | ✅ `avenger report` recipe, native only (2026-09-30, unexercised live) |
+| `UIFacilitySummary` | all-facilities overview list (the Avenger Report) | ✅ `avenger report` recipe, native only (2026-09-30, ran live) |
 | `UIHuntersLodge3D` | DLC_2 trophy wall viewer | ⬜ P3 |
 
 ## 5. Commodity family — ✅, one recipe, 19 classes

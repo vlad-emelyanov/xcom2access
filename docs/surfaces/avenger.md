@@ -752,8 +752,9 @@ recipe with `X2AccessRecapReader`. Built 2026-09-03 from source; **not yet run l
 The Commander's Quarters' "Avenger status" screen (`UIFacilitySummary`, reached from the CIC's
 shortcut submenu): every facility in one sortable table (`../avenger-view-recon.md` §4). The
 `avenger report` recipe, native only — `game_ui_facility_summary.cpp` +
-`recipes/recipe_facility_summary.cpp`, no companion. Built 2026-09-30 from source; **not yet run
-live**, so each ⛔ is a reading of the code and the first pass promotes or demotes it.
+`recipes/recipe_facility_summary.cpp`, no companion. Built 2026-09-30 from source and confirmed
+working live the same day in a Russian session: 17 rows, attached one poll after the capture
+caught their pushes, no empty heading in the speech ring.
 
 - ⛔ **The words are the Flash capture of each row's `setData`.** `UIFacilitySummary_ListItem`
   keeps only `FacilityRef` and the template name; the seven strings (name + upkeep, staff 1,
