@@ -14,6 +14,21 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**Avenger Report** (2026-09-30, `avenger report` recipe, `game_ui_facility_summary.cpp`). Native
+only; the ASI builds, and the screen has not been heard live. From the Commander's Quarters open
+"Avenger status" (the CIC shortcut submenu):
+1. Attach names the screen and lands on the first row; walking down reads each whole row, and a
+   Russian session speaks the headings and cells in the game's words (`(§80)` upkeep included).
+   If the screen stays silent, the log's `FacilitySummary: … no captured setData` line says the
+   capture missed the rows' push.
+2. Right-arrow across a row: STAFF (both lines), POWER, BUILT, STATUS (status + queue), each under
+   its heading; Up/Down then reads that column. Empty cells are skipped.
+3. Tab to the sort headers; Enter on POWER re-sorts and says the direction, Enter again flips it,
+   and focus in the table stays on the same facility. A screenshot confirms the arrow moved.
+4. Enter on a room row opens that room exactly ONCE (Escape returns to the grid or the report
+   rather than through a second copy of the room); Enter on the Commander's Quarters does nothing.
+5. `grep -P '  '` over the speech ring: a double space means a header label read empty.
+
 **Camera follows the tile cursor; north-most vanilla heading** (2026-09-30,
 `X2AccessCamera_TileFollow.uc`, called from `X2AccessTileReader.SetCursorTile` and
 `CursorRecenter`). Not yet run. On Gatecrasher (tutorial off), mouse and keyboard:

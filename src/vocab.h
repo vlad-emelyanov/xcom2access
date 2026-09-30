@@ -252,6 +252,9 @@ inline constexpr Word PCSLabel{"PCSLabel"};
 // The Challenge Archives menu carries its own localized title; this names it only when the
 // read came back empty.
 inline std::string ScreenChallengeArchiveFallback() { return GameString("UITLE_ChallengeModeMenu", "m_ScreenTitle", ScreenUnnamed); }
+// The Avenger Report (UIFacilitySummary) likewise: its own m_strTitle, from the class default when
+// the live read came back empty.
+inline std::string ScreenFacilitySummaryFallback() { return GameString("UIFacilitySummary", "m_strTitle", ScreenUnnamed); }
 // The Skirmish Mode menu carries its own title and START GAME word; fallbacks for empty reads.
 inline std::string ScreenSkirmishFallback() { return GameString("UITLE_SkirmishModeMenu", "m_ScreenTitle", ScreenUnnamed); }
 inline std::string SkirmishStartFallback() { return GameString("UITLE_SkirmishModeMenu", "m_StartGame", RoleButton); }

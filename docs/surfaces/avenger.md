@@ -746,3 +746,31 @@ recipe with `X2AccessRecapReader`. Built 2026-09-03 from source; **not yet run l
   `…Bad` arrays, good first. The captions ride the header only when the screen would draw them.
 - **Every key is Continue** (A, Enter, Escape, B, right-click; Space is swallowed; Tab only outside
   `FINAL_RELEASE`), so the one button is the whole action list and Escape is left to the game.
+
+## Avenger Report
+
+The Commander's Quarters' "Avenger status" screen (`UIFacilitySummary`, reached from the CIC's
+shortcut submenu): every facility in one sortable table (`../avenger-view-recon.md` §4). The
+`avenger report` recipe, native only — `game_ui_facility_summary.cpp` +
+`recipes/recipe_facility_summary.cpp`, no companion. Built 2026-09-30 from source; **not yet run
+live**, so each ⛔ is a reading of the code and the first pass promotes or demotes it.
+
+- ⛔ **The words are the Flash capture of each row's `setData`.** `UIFacilitySummary_ListItem`
+  keeps only `FacilityRef` and the template name; the seven strings (name + upkeep, staff 1,
+  staff 2, power, date, status, queue) go straight into Flash. Read by position, exactly as drawn,
+  so nothing is re-derived and the `(§N)` upkeep reads as the screen shows it. Every `UpdateData`
+  (a sort, a return from a room) respawns every row, and the build waits — logging once — until
+  every fresh row's push has landed.
+- **A GraphSheet**, headed by the sort buttons' own `m_strButtonLabels`: the two staff lines share
+  the STAFF cell and status + queue share the STATUS cell, as drawn. Row identity is the
+  facility's ObjectID, because a sort respawns the rows in a new order.
+- ⛔ **Enter goes to the ROW's `OnUnrealCommand`, selection first — not the screen's, not the
+  list's.** The screen hands Enter to the selected row and then falls through to `super`, whose
+  navigator reaches the list, whose Enter branch calls the row AGAIN and then `OnItemClicked`:
+  `SelectFacility` up to three times per key. The row's handler is the one that refuses the
+  Commander's Quarters, and that row carries no activation here (the game drops its Select nav
+  help there).
+- **The sort headers are mouse-only in vanilla** (the D-pad column switch is controller-only and
+  moves the arrow without re-sorting), so Enter on one fires the header's own
+  `OnMouseEvent(FXS_L_MOUSE_UP)`: select the column, or flip it when it already sorts. Unflipped
+  is ascending for all five — every comparator has the same `A < B → 1` shape.

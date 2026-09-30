@@ -124,6 +124,7 @@ add_library(X2Access SHARED
     src/game_ui_strategy.cpp
     src/game_ui_popup.cpp
     src/game_ui_avenger.cpp
+    src/game_ui_facility_summary.cpp
     src/game_ui_tactical.cpp
     src/game_ui_tle.cpp
     src/game_ui_tle_challenge.cpp
@@ -144,6 +145,7 @@ add_library(X2Access SHARED
     src/recipes/recipe_shell.cpp
     src/recipes/recipe_strategy.cpp
     src/recipes/recipe_avenger.cpp
+    src/recipes/recipe_facility_summary.cpp
     src/recipes/recipe_tactical.cpp
     src/recipes/recipe_tle.cpp
     src/recipes/recipe_tle_challenge.cpp

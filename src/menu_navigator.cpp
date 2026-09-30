@@ -683,6 +683,9 @@ const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kEndGameRecipe
     // CloseScreen pushes the Chosen page), both over the geoscape, and the Chosen page raises
     // only the level-up popups — resolved by the popup recipe above.
     &kChosenEventsRecipe, &kResistanceReportRecipe,
+    // The Avenger Report: pushed over the Commander's Quarters (the room recipe, next), raising
+    // only dialogs above itself; Enter on a row leaves it for the chosen room.
+    &kFacilitySummaryRecipe,
     &kRoomBuildRecipe, &kRoomRecipe, &kGeoscapeRecipe,
     // The mission bookends, ABOVE the ambient tactical recipe they are pushed over. Sequential
     // with each other (the Chosen screen pops itself before pushing the summary), so their

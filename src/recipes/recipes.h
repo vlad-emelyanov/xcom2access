@@ -94,6 +94,8 @@ extern const Recipe kBlackMarketRecipe;     // the shop's entry menu (UIBlackMar
 extern const Recipe kBlackMarketSellRecipe; // the trading post (UIBlackMarket_Sell)
 extern const Recipe kRecruitsRecipe;        // the Armory's recruit list (UIRecruitSoldiers)
 extern const Recipe kRewardsRecapRecipe;    // the post-mission rewards recap (UIRewardsRecap)
+// ---- the Avenger Report (recipe_facility_summary.cpp) ----
+extern const Recipe kFacilitySummaryRecipe; // every facility in one table (UIFacilitySummary)
 
 // ---- tactical (recipe_tactical.cpp) ----
 extern const Recipe kTacticalHudRecipe;
@@ -103,7 +105,7 @@ extern const Recipe kLootRecipe;     // the mid-mission loot receipt (UIInventor
 extern const Recipe kCharInfoRecipe; // the soldier sheet (UITacticalCharInfoScreen)
 
 // How many of the above kRecipes must list. Pinned by a static_assert next to the array.
-constexpr std::size_t kRecipeCount = 66;
+constexpr std::size_t kRecipeCount = 67;
 
 } // namespace Recipes
 } // namespace MenuNavigator

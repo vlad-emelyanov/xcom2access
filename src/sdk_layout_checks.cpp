@@ -288,6 +288,27 @@ static_assert(offsetof(AUITLE_ChallengeModeMenu_execOnChallengeClicked_Params, C
 static_assert(offsetof(AUITLE_ChallengeModeMenu_execOnChallengeClicked_Params, ListItemIndex) == 0x8,
     "OnChallengeClicked index");
 
+// ---- the Avenger Report (UIFacilitySummary) ----
+// m_bFlipSort (0x410, bit 0) is a bitfield and cannot be offsetof'd; m_eSortType follows at 0x414.
+static_assert(offsetof(AUIFacilitySummary, m_eSortType) == 0x414, "facility summary sort type");
+static_assert(offsetof(AUIFacilitySummary, m_kHeader) == 0x418, "facility summary header");
+static_assert(offsetof(AUIFacilitySummary, m_kList) == 0x428, "facility summary list");
+static_assert(offsetof(AUIFacilitySummary, m_strTitle) == 0x45C, "facility summary title");
+static_assert(offsetof(AUIFacilitySummary_HeaderButton, SortType) == 0x4CC,
+    "facility sort header type");
+static_assert(offsetof(AUIFacilitySummary_HeaderButton, m_strButtonLabels) == 0x4D8,
+    "facility sort header labels");
+static_assert(sizeof(AUIFacilitySummary_HeaderButton::m_strButtonLabels) == 0x50,
+    "facility sort header labels: five FStrings at 0x10 stride");
+static_assert(offsetof(AUIFacilitySummary_ListItem, FacilityRef) == 0x3D8, "facility row ref");
+static_assert(offsetof(AUIFacilitySummary_ListItem, m_FacilityName) == 0x3DC,
+    "facility row template name");
+static_assert(offsetof(AUIFacilitySummary_HeaderButton_execOnMouseEvent_Params, Cmd) == 0x0
+        && offsetof(AUIFacilitySummary_HeaderButton_execOnMouseEvent_Params, args) == 0x4,
+    "facility sort header OnMouseEvent");
+static_assert(offsetof(AUIFacilitySummary_ListItem_execOnUnrealCommand_Params, Arg) == 0x4,
+    "facility row OnUnrealCommand (SendRowCommand's block)");
+
 // ---- the Tactical Legacy Pack's Skirmish Mode menu (UITLE_SkirmishModeMenu) ----
 static_assert(offsetof(AUITLE_SkirmishModeMenu, List) == 0x420, "skirmish list");
 static_assert(offsetof(AUITLE_SkirmishModeMenu, ContinueButton) == 0x428, "skirmish start button");
