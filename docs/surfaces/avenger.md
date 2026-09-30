@@ -762,6 +762,12 @@ caught their pushes, no empty heading in the speech ring.
   so nothing is re-derived and the `(§N)` upkeep reads as the screen shows it. Every `UpdateData`
   (a sort, a return from a room) respawns every row, and the build waits — logging once — until
   every fresh row's push has landed.
+- ⛔ **The upkeep is split off the name and said as what it is.** The name cell draws
+  `DisplayName (§N)`, and a screen reader voices the `§` as nothing, leaving a bare number. The
+  reader strips the trailing parenthesis; the recipe says `UIChooseFacility.m_strUpkeepCostLabel`
+  (the game's own label for the same figure) plus `SuppliesCount One/Few/Many` — ours, because the
+  game's only counted supplies form (`UIRecruitSoldiers.m_strSupplies`) is one template for every
+  number. Heard live 2026-09-30: "Зал теней, …, ЕЖЕМЕСЯЧНАЯ СТОИМОСТЬ ОБСЛУЖИВАНИЯ: 80 материалов".
 - **A GraphSheet**, headed by the sort buttons' own `m_strButtonLabels`: the two staff lines share
   the STAFF cell and status + queue share the STATUS cell, as drawn. Row identity is the
   facility's ObjectID, because a sort respawns the rows in a new order.
