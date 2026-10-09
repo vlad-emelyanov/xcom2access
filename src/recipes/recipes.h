@@ -34,6 +34,8 @@ extern const Recipe kSaveLoadRecipe;
 extern const Recipe kCharacterPoolRecipe; // the main menu's character pool (UICharacterPool)
 extern const Recipe kPoolFilesRecipe;     // its import / export picker (UICharacterPool_ListPools)
 extern const Recipe kTLEHubRecipe;        // the Tactical Legacy Pack hub (UITLEHub)
+// ---- My2K (recipe_my2k.cpp) ----
+extern const Recipe kMy2KRecipe;          // legal documents + account login (UIFiraxisLiveLogin)
 
 // ---- Tactical Legacy Pack, shell half (recipe_tle.cpp) ----
 extern const Recipe kLadderMenuRecipe;       // Legacy Operations (UITLE_LadderModeMenu)
@@ -105,7 +107,7 @@ extern const Recipe kLootRecipe;     // the mid-mission loot receipt (UIInventor
 extern const Recipe kCharInfoRecipe; // the soldier sheet (UITacticalCharInfoScreen)
 
 // How many of the above kRecipes must list. Pinned by a static_assert next to the array.
-constexpr std::size_t kRecipeCount = 67;
+constexpr std::size_t kRecipeCount = 68;
 
 } // namespace Recipes
 } // namespace MenuNavigator

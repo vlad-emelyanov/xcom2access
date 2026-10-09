@@ -611,7 +611,12 @@ void SpeakStateAfterChange()
 //    it, or the layer would attach to the screen underneath.
 //  · Settings stacks on the shell, so the shell is last.
 // Each recipe's own definition in src/recipes/ carries the rest of its ordering argument.
-const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe, &kEndGameRecipe,
+const Recipe* const kRecipes[] = {&kDialogRecipe, &kPopupRecipe,
+    // My2K: pushed over the main menu (the legal documents on a first launch, the account link
+    // from the shell's My2K button), raising only dialogs and the text-entry dialog above itself —
+    // so above every shell screen and below the dialog. It never shares a stack with the strategy
+    // screens that follow.
+    &kMy2KRecipe, &kEndGameRecipe,
     &kMemorialDetailsRecipe, &kResearchReportRecipe,
     // The rewards recap beside the research deck it follows: the last modal of the post-mission
     // chain, sequential with the deck and never stacked with it.

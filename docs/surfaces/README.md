@@ -14,6 +14,7 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Surface | Native | Companion / recipe | Rules | Recon |
 |---|---|---|---|---|
 | Main menu, settings, new-campaign flow, pause menu | `game_ui_shell.cpp` | `recipes/recipe_shell.cpp` | shell.md (Settings) | — |
+| My2K legal documents + account login (`UIFiraxisLiveLogin`) — the first-launch Terms of Service prompt | `game_ui_my2k.cpp` | — (no companion), `my2k` | shell.md | — (built from `SrcOrig` after a tester report; never run) |
 | Save / load | `game_ui_shell.cpp` | `X2AccessSaveReader.uc`, save/load recipe | shell.md | `save-load-recon.md` |
 | Text-entry dialog | `text_input.cpp` | — (observer, no recipe) | shell.md | `save-load-recon.md` §7.1 |
 | Tactical tile cursor | `tile_reader.cpp`, `mouse_gate.cpp` | `X2AccessTileReader.uc` | tactical.md | `concealment-recon.md` (detection readout) |

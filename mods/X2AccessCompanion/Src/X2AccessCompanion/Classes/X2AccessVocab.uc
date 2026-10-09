@@ -205,6 +205,7 @@ var localized string PopupDismiss;
 var localized string ScreenMissionBlade;
 var localized string MissionBladeNoText;
 var localized string ReportNoText;
+var localized string LegalDocumentNoText;
 var localized string ScreenResearchUnlocked;
 var localized string ScreenSquadSelectFallback;
 var localized string SoldierFallback;

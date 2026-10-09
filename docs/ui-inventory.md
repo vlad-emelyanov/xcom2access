@@ -66,7 +66,7 @@ now a question for a live pass, not for this list.
 | `UIStartScreen` | press-start (console) | — |
 | `UICredits` | credits scroll | ⬜ P3 |
 | `UIFontTest` | font test | 🚫 debug |
-| `UILoginScreen` / `UIFiraxisLiveLogin` | my2K / Firaxis Live login | ⬜ P3 |
+| `UILoginScreen` / `UIFiraxisLiveLogin` | my2K / Firaxis Live login — and the legal documents a first launch raises | ✅ `my2k` recipe (never run live) |
 | `UISaveExplanationScreen` | ironman/save explanation popup | ⬜ P3 |
 | `UIControllerMap` / `_Shell` / `_Tactical` | controller button map | — |
 | `UIVirtualKeyboard` | controller on-screen keyboard (PC uses `UIInputDialogue`) | — |

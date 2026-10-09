@@ -315,6 +315,13 @@ inline std::string ReportBack() { return GameString("UIUtilities_Text", "m_strGe
 /// there is indistinguishable from no screen at all.
 inline constexpr Word ReportNoText{"ReportNoText"};
 
+// The My2K legal-documents screen (UIFiraxisLiveLogin, ReadEULA state — docs/surfaces/shell.md).
+// Every other word on it is the game's or 2K's own; this one is said when a document opened with
+// no text in it, for ReportNoText's reason: the player still has to press OK to get back.
+inline constexpr Word LegalDocumentNoText{"LegalDocumentNoText"};
+/// The OK that closes an open document, drawn as nav help: the screen's own localized label.
+inline std::string LegalDocumentClose() { return GameString("UIFiraxisLiveLogin", "m_InitOKLabel", RoleButton); }
+
 // New research available (docs/research-unlocked-recon.md). Same arrangement as the report: the
 // screen's own localized "RESEARCH AVAILABLE" rides in every card's payload and names the screen;
 // this fallback is reached only when the capture found nothing. The continue button and the

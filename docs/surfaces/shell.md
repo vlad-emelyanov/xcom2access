@@ -1,6 +1,6 @@
 # Shell surfaces
 
-Implementation rules for the menus outside a campaign — saving, loading, and typing into a Flash text field. Each ⛔ was earned by a live bug; each ⚠ is a
+Implementation rules for the menus outside a campaign — saving, loading, the My2K screen, and typing into a Flash text field. Each ⛔ was earned by a live bug or, where a section says so, by the game's source; each ⚠ is a
 known limit or an open decision. **Read the section for a surface before editing
 it** — `CLAUDE.md`'s Surfaces table points here for exactly that reason.
 
@@ -76,6 +76,49 @@ read by the shell recipe, with `UIScreenListener_Difficulty` fixing the rows up.
 `OnItemDoubleClicked` delegates (Remove Missing Mods dispatches on the row's `Tag` there), so the
 named call activated every vanilla row and silently skipped every mod-added one. The game's path
 means the INPUT path, not the handler at its end.
+
+## My2K legal documents and account login
+
+`UIFiraxisLiveLogin` — the whole Firaxis Live / My2K flow in one screen, switched by UnrealScript
+`state`. Its `ReadEULA` state is what a first launch raises over the main menu: the 2K client signs
+in with the platform account, finds documents that account has not accepted, and
+`XComOnlineEventMgr.FiraxisLiveClient_OnLegalNotify` pushes the screen to ask. The same class
+opens from the main menu's My2K button (account linking) and again from Challenge Mode when the
+documents were declined. `game_ui_my2k.cpp` reads it, `recipes/recipe_my2k.cpp` is the recipe.
+Built from `SrcOrig` after a tester report; never run live (`../next-steps.md`).
+
+- ⛔ **Vanilla gives the keyboard NOTHING here, so there is no game key path to prefer.**
+  `InitScreen` turns the mouse on, and `ReadEULA.BeginState`, seeing the mouse active, pushes
+  `XComShellInput` into `BlockingInput`, whose `PreProcessCheckGameLogic` returns false for every
+  command — no key reaches any screen. The state's `CloseScreen` is empty as well, so only its
+  two buttons close it. Our claims are taken before the engine and never meet the block; the game's
+  `Escape` stays unclaimed and is still swallowed, exactly as in vanilla.
+- ⛔ **Activation goes through the mouse's own path — a button's or a row's `Click()` — never a
+  handler called by name.** The handlers are STATE functions (`ReadEULA.OnGeneric2ButtonPress` is
+  accept-all; the class-level one logs *"NOT IMPLEMENTED"*), and `CallNamedFunction` resolves on
+  the class chain, so a named call would reach the global stub. A delegate is resolved on the object
+  at call time, which is state-aware.
+- ⛔ **Opening a document is FOCUS, then click.** `ReadEulas` ignores the row that was clicked and
+  loads the text of every row whose `bIsFocused` is set, so `OpenMy2KDocument` takes focus off
+  every other row before giving it to the target — a stale mouse hover would otherwise leave the
+  wrong document on screen.
+- ⛔ **The document's OK is the screen's `Escape`, and only while the document is showing.** That
+  Escape calls the state's `AgreeToEULA`, which is the game's name for "back to the list", not an
+  acceptance. The SAME Escape on the list is `OnGeneric1ButtonPress` — decline every document, no
+  confirmation — so `CloseMy2KDocument` refuses unless `m_eulaText` is visible.
+- **Everything shown is retained**, unlike the house style: `m_2KTitle` and `m_2kMessage` (pushed to
+  Flash but kept), the buttons' labels, the document rows' own text, and the open document in
+  `m_eulaText`'s `UIText.HtmlText`. The document is read through a COUNT-SIZED FString read, never
+  the 1024-character field reader: 2K's server decides its length, and a clipped Terms of Service
+  would sound complete. It is HTML, so it is split at `<br>` and the block tags before cleaning, and
+  its character references are decoded after — `CleanText` does neither because the game's own
+  strings never need it.
+- **While a document is open, its panel's buttons are not offered**: `ReadEulas` calls
+  `HideMy2kPanel`, a Flash-side hide that leaves every button's `bIsVisible` set, so the button bits
+  would say "showing" over a panel a sighted player cannot see.
+- ⚠ The other states read through the same shape — message, then whichever buttons are showing —
+  and are unexercised. `EnterDOBData`'s three date dropdowns are not read at all: they are spawned
+  only for a brand-new account, and the recipe offers its OK and Cancel without them.
 
 ## Character pool
 

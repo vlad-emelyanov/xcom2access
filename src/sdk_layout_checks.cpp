@@ -288,6 +288,19 @@ static_assert(offsetof(AUITLE_ChallengeModeMenu_execOnChallengeClicked_Params, C
 static_assert(offsetof(AUITLE_ChallengeModeMenu_execOnChallengeClicked_Params, ListItemIndex) == 0x8,
     "OnChallengeClicked index");
 
+// ---- the My2K screen (UIFiraxisLiveLogin, game_ui_my2k.cpp) ----
+static_assert(offsetof(AUIFiraxisLiveLogin, m_Generic1Button) == 0x440, "My2K generic 1 button");
+static_assert(offsetof(AUIFiraxisLiveLogin, m_Generic2Button) == 0x448, "My2K generic 2 button");
+static_assert(offsetof(AUIFiraxisLiveLogin, m_Generic4Button) == 0x450, "My2K generic 4 button");
+static_assert(offsetof(AUIFiraxisLiveLogin, m_UsernameButton) == 0x458, "My2K username button");
+static_assert(offsetof(AUIFiraxisLiveLogin, m_PasswordButton) == 0x460, "My2K password button");
+static_assert(offsetof(AUIFiraxisLiveLogin, m_eulaTitle) == 0x470, "My2K document title");
+static_assert(offsetof(AUIFiraxisLiveLogin, m_eulaText) == 0x478, "My2K document text");
+static_assert(offsetof(AUIFiraxisLiveLogin, m_eulaButtons) == 0x488, "My2K document rows");
+static_assert(offsetof(AUIFiraxisLiveLogin, m_InitOKLabel) == 0x548, "My2K OK label");
+static_assert(offsetof(AUIFiraxisLiveLogin, m_2KTitle) == 0x6CC, "My2K title");
+static_assert(offsetof(AUIFiraxisLiveLogin, m_2kMessage) == 0x6DC, "My2K message");
+
 // ---- the Avenger Report (UIFacilitySummary) ----
 // m_bFlipSort (0x410, bit 0) is a bitfield and cannot be offsetof'd; m_eSortType follows at 0x414.
 static_assert(offsetof(AUIFacilitySummary, m_eSortType) == 0x414, "facility summary sort type");

@@ -155,6 +155,7 @@
     "ScreenMissionBlade",
     "MissionBladeNoText",
     "ReportNoText",
+    "LegalDocumentNoText",
     "ScreenResearchUnlocked",
     "ScreenSquadSelectFallback",
     "SoldierFallback",

@@ -14,6 +14,24 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**My2K legal documents on first launch** (2026-10-09, `game_ui_my2k.cpp`, `recipes/recipe_my2k.cpp`;
+rules in `surfaces/shell.md`, "My2K legal documents and account login"). Built from `SrcOrig`
+after testers hit the prompt with no speech and no working keys; never run. The prompt shows only
+for an account that has not accepted 2K's current documents, so it needs a tester on a fresh Steam
+account (or one whose documents changed). Ask them to check, in order:
+1. On boot, over the main menu: the title is spoken, then 2K's message; Down reaches one
+   "Read: …" row per document, Tab reaches decline-all and accept-all.
+2. Enter on a row opens that document — the RIGHT one, try the second row first — and reads it
+   line by line to the end (the end of the text, not a clipped tail); Tab reaches OK, and OK lands
+   back on the row that opened it.
+3. Accept all closes the screen and the main menu speaks. On a second account, decline all does
+   the same; Challenge Mode then raises the declined-documents dialog, and its OK reopens the screen.
+4. A sighted look or `just dev-shot` while a document is open: the panel buttons are hidden, which
+   is why the recipe does not offer them there.
+Then the account-link form from the main menu's My2K button (other states of the same screen):
+message, the e-mail and password buttons (each opens the text-entry dialog), Cancel, Create, OK.
+The new-account date-of-birth dropdowns (`EnterDOBData`) are not read at all.
+
 **Camera follows the tile cursor; north-most vanilla heading** (2026-09-30,
 `X2AccessCamera_TileFollow.uc`, called from `X2AccessTileReader.SetCursorTile` and
 `CursorRecenter`). Not yet run. On Gatecrasher (tutorial off), mouse and keyboard:
