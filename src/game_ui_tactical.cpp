@@ -253,18 +253,19 @@ uint64_t AbilityActionsSignatureRaw(void* container, int32_t stride)
 
 int32_t AvailableActionStride(void* container)
 {
+    // Only a PLAUSIBLE answer is kept; a bad read returns 0 (uncomputable, so uncached) and the
+    // next call asks again rather than latching the failure for the session.
     static int32_t sStride = 0;
     if (sStride == 0) {
         int32_t stride = UE3Reflect::ArrayElementSize(
             reinterpret_cast<UObject*>(container), "m_arrAbilities");
         if (stride < 0x2C || stride > 0x38) {
-            LOG_WARN("GameUI: AvailableAction stride reads 0x%X — implausible, ability-name "
-                     "cache disabled",
+            LOG_WARN("GameUI: AvailableAction stride reads 0x%X - implausible, ability-name "
+                     "cache off for this call",
                 stride);
-            sStride = -1;
-        } else {
-            sStride = stride;
+            return 0;
         }
+        sStride = stride;
     }
     return sStride;
 }

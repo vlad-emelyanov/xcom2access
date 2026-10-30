@@ -35,6 +35,7 @@
 #include "vocab.h"
 #include "log.h"
 
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
@@ -62,27 +63,45 @@ void* ProbeTacticalHud()
 
 // The bar's names from the companion, for a bar whose icons retained none. UpdateData writes
 // m_strAntennaText only while Movie.IsMouseActive(), so with a controller as the input device every
-// icon's name reads empty — and in mouse mode none does, which is why this is asked for ONLY when
-// an entry's name is empty and never otherwise. Cached on the abilities the bar was built from
+// icon's name reads empty. The call is made ONLY when an entry's name is empty, which is every
+// icon in controller mode. It can also fire in mouse mode before the first UpdateData has run (the
+// field is empty until then); that is harmless, the companion returns the same GetMyFriendlyName
+// words UpdateData would push. Cached on the abilities the bar was built from
 // (ReadAbilityBarSignature), so a soldier switch or a changed bar re-asks and a plain rebuild does
 // not; the key is a number folded from object IDs, never a pointer held across frames.
+//
+// A failed, empty or count-mismatched answer is NOT kept: the cache is invalidated and the next
+// attempt waits two seconds, so a failing companion is not called on every render and a transient
+// failure does not pin "Ability N" until the signature happens to change.
 WireCache gAbilityNames("X2AccessTacticalReader", "BuildAbilityBarNames");
 
 std::vector<std::string> AbilityNamesFromCompanion(const GameUI::AbilityBarView& bar)
 {
+    using Clock = std::chrono::steady_clock;
+    static bool sFailed = false;
+    static Clock::time_point sRetryAt;
+
+    std::vector<std::string> names;
+    if (sFailed && Clock::now() < sRetryAt)
+        return names;
+
     const uint64_t signature = GameUI::ReadAbilityBarSignature(gScreen);
     // 0 = the signature could not be computed: ask every time rather than risk stale words.
     const std::vector<WireRecord>& records = gAbilityNames.Get(
         {gScreen}, static_cast<long long>(signature), signature == 0);
-    std::vector<std::string> names;
-    // ⛔ One record per icon, by position. A count that disagrees with the bar means the mapping
-    // (commander abilities compacted out) is not the one this was written against, and a shifted
-    // name is worse than the numbered fallback. Loud, not silent.
-    if (records.size() != bar.entries.size()) {
-        LOG_WARN("Tactical HUD: companion ability names %zu vs bar icons %zu — names not used",
+    // One record per icon, by position. A count that disagrees with the bar means the mapping
+    // (commander abilities skipped) is not the one this was written against, and a shifted name
+    // is worse than the numbered fallback. Loud, not silent.
+    if (records.empty() || records.size() != bar.entries.size()) {
+        LOG_WARN("Tactical HUD: companion ability names %zu vs bar icons %zu - names not used, "
+                 "retrying in 2 s",
             records.size(), bar.entries.size());
+        gAbilityNames.Invalidate();
+        sFailed = true;
+        sRetryAt = Clock::now() + std::chrono::seconds(2);
         return names;
     }
+    sFailed = false;
     names.reserve(records.size());
     for (const WireRecord& rec : records)
         names.push_back(RecField(rec, "name"));

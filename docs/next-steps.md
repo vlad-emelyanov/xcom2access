@@ -27,15 +27,12 @@ Controller (`input-map.md`), so the same keys are still unrun in mouse mode. ⚠
 failed to leave `UIShellDifficulty` once, after Enter on a difficulty row, cause not found.
 
 **Controller-mode fixes written from source, never run** (2026-10-30). Three changes, each unreachable in
-mouse mode by construction, none exercised. Run in controller mode on a normal mission (Gatecrasher):
+mouse mode by construction (except the ability-name call, which can fire once in mouse mode before the first UpdateData, harmlessly), none exercised. Run in controller mode on a normal mission (Gatecrasher):
 1. Ability names (`recipe_tactical.cpp`, `X2AccessTacticalReader.BuildAbilityBarNames`, which is
    UNCOMPILED: build the companion before anything else). The HUD Abilities stop must read each
    ability's game name, not `Ability N`; check the log for `companion ability names ... names not
    used`; switch soldiers with E and Q and confirm the names follow; take a soldier with a command
    ability (`bCommanderAbility`) and confirm bar icon k matches the k-th non-commander ability.
-   Unmeasured: whether `AbilityClicked` works with `m_kMouseControls` null (it does not touch the
-   strip itself, but `DirectConfirmAbility` at `UITacticalHUD_AbilityContainer:547` does), and
-   whether the icon index equals the `m_arrAbilities` index when commander abilities exist.
 2. Commands stop (`ReadPadCommands`, `ActivatePadEndTurn`). Tab to the HUD: a Commands stop with one
    End Turn node, spoken in the game's word. Enter ends the turn (not in the tutorial, where it must
    say unavailable). Unmeasured: whether `EndTurnButton` retains its text (else the HUD's

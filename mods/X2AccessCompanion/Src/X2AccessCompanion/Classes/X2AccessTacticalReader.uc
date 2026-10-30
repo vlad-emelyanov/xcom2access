@@ -925,8 +925,9 @@ function BuildEnemyRecords()
 //
 // Bar index to m_arrAbilities index: PopulateFlash walks m_arrAbilities in order and gives the
 // icon at ActiveAbilities to every ability whose template is NOT bCommanderAbility, so icon k is
-// the k-th non-commander entry. SortAbilities puts the commander abilities first, so a bar with
-// commander abilities is offset by their count. Mirrored here by skipping them, not by arithmetic.
+// the k-th non-commander entry. Sort swaps on a negative result, so SortAbilities puts the
+// commander abilities last and bar index equals array index. Mirrored here by skipping them by
+// flag, not by position.
 //
 // ONE RECORD PER ICON, THE NAME POSITIONAL. An ability whose state cannot be resolved still gets
 // its record with an empty name, because a dropped record would shift the name of every icon after

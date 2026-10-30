@@ -65,8 +65,8 @@ TacticalGate ReadTacticalGate();
 // text": ClearData() clears availability, cooldown and charge but NOT the antenna text, so a
 // soldier switch leaves the previous soldier's ability names sitting on the trailing icons.
 // ActiveAbilities is written by the same PopulateFlash pass that feeds the icons, and the
-// widgets [0, ActiveAbilities) map 1:1 onto m_arrAbilities — commander abilities are compacted
-// out into the mouse-controls panel by that same pass.
+// widgets [0, ActiveAbilities) map 1:1 onto the non-commander m_arrAbilities (commander abilities sort last and are compacted
+// out into the mouse-controls panel by that same pass).
 struct AbilityBarEntry {
     void* handle = nullptr;  // UITacticalHUD_Ability — opaque
     std::string name;        // m_strAntennaText, cleaned; may be empty (see the view note)
