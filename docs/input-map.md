@@ -104,6 +104,14 @@ mode by physical presses: the ant farm's arrows, Escape, `E` and `Q` reach the w
 passes them on, and the game does nothing, while the stick, Start and the bumpers all work. Keys we
 claim still work. So a route that rests on a key reaching the game exists in mouse mode only.
 
+The gate is `XComInputBase.InputEvent` (`:483`), through `IsEventWithinInputTypeRange` (`:823`): with
+the mouse inactive it drops every keyboard and mouse event before any screen sees it. The two
+exceptions are `J` and, inside Options, Escape. So a key "passed to the game" in the arbiter's log
+reached the engine and died in script. `bAllowAllInput` overrides the gate in both directions, and
+`UIOptionsPCScreen` sets it on entry and clears it on exit (`:927`, `:2919`).
+`UIMovie.ActivateMouse` changes `MouseActive` in memory only, so it writes no profile, but a new
+movie seeds from the profile again and the HUD's mode branches have already run.
+
 `src/gamepad.cpp`. A pad acts as a second keyboard on the shell: each mapped input runs the existing
 claim for a key, and every recipe works on a pad without knowing one exists.
 
