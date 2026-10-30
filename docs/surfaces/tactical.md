@@ -943,9 +943,25 @@ panels do.
   array's length and never "which icons hold text".** `UITacticalHUD_Ability.ClearData()` clears
   availability, cooldown and charge but NOT `m_strAntennaText` or the hotkey label, so a soldier
   switch leaves the previous soldier's ability names sitting on the trailing icons, readable and
-  wrong. `ActiveAbilities` is written by the same `PopulateFlash` pass that feeds the icons, and
-  the widgets `[0, ActiveAbilities)` map 1:1 onto `m_arrAbilities` (commander abilities sort to
-  the tail and are compacted out — the same assumption the game's own `AbilityClicked` makes).
+  wrong. `ActiveAbilities` is written by the same `PopulateFlash` pass that feeds the icons.
+  ⚠ The mapping to `m_arrAbilities` is NOT 1:1 when commander abilities exist: `PopulateFlash`
+  walks `m_arrAbilities` in order and gives icon `ActiveAbilities` to every ability whose template
+  is not `bCommanderAbility`, so icon k is the k-th NON-commander entry. `SortAbilities` returns -1
+  for a commander A against a non-commander B, which reads as commanders FIRST (an earlier note
+  here said "tail"; neither order is measured). `ActivateBarAbility` passes the bar index
+  straight to `AbilityClicked`, which indexes `m_arrAbilities` — right only while the offset is
+  zero. Unverified live and untouched here (it is the mouse path).
+- **Ability names in controller mode come from the companion (2026-10-30, NOT VERIFIED LIVE).**
+  `UITacticalHUD_Ability.UpdateData:89` writes `m_strAntennaText` only under
+  `Movie.IsMouseActive()`, so with a controller as the input device every icon's name is empty
+  and the stop read `Ability 1`, `Ability 2`. `BuildTacticalHud` asks
+  `X2AccessTacticalReader.BuildAbilityBarNames` (one record per icon, name positional, empty
+  values kept; commander abilities skipped as above) ONLY when an icon's retained name is empty, so
+  mouse mode never makes the call. The words are `CapsCheckForGermanScharfesS(GetMyFriendlyName())`,
+  the pair the game would have pushed. Cached in a `WireCache` keyed on `ReadAbilityBarSignature`
+  (a fold of the ObjectIDs in `m_arrAbilities`, so a soldier switch or a changed bar re-asks;
+  0 = uncomputable = never cached). A record count that differs from the bar's icon count is
+  logged and the names dropped for the numbered fallback — a shifted name is worse.
 - **The stop list is `UITacticalHUD_MouseControls`'s list, never a sketch of what a HUD "should"
   have.** Both halves of the parity rule bit here: the WOTC initiative order looks like an obvious
   stop and is CHEAT-GATED in retail (`UITurnOverlay.ShowOrHideInitiative` shows it only when

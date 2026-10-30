@@ -42,6 +42,12 @@ constexpr int32_t kTacHudAbilityHudOffset = 0x42C;  // m_kAbilityHUD (UITactical
 constexpr int32_t kAbilityBarCurrentOffset = 0x3DC;   // m_iCurrentIndex
 constexpr int32_t kAbilityBarActiveOffset = 0x3EC;    // ActiveAbilities (live icon count)
 constexpr int32_t kAbilityBarWidgetsOffset = 0x408;   // m_arrUIAbilities (TArray<UITacticalHUD_Ability*>)
+constexpr int32_t kAbilityBarActionsOffset = 0x3F8;   // m_arrAbilities (TArray<AvailableAction>)
+// Inside one AvailableAction element: AbilityObjectRef.ObjectID is the first member. The element
+// STRIDE is asked of the live UArrayProperty (the TButtonItems rule below): the compiled struct is
+// 0x30 but the engine's own rounding is its call.
+constexpr int32_t kAvailableActionIdOffset = 0x00;
+constexpr int kAbilityActionsMax = 64;                // a runaway guard on the signature walk
 constexpr int32_t kAbilityIconCooldownOffset = 0x3F8; // m_strCooldown
 constexpr int32_t kAbilityIconChargeOffset = 0x408;   // m_strCharge
 constexpr int32_t kAbilityIconAntennaOffset = 0x418;  // m_strAntennaText (ability name, PC only)
@@ -206,6 +212,65 @@ AbilityBarView ReadAbilityBar(void* screen)
         v.entries.push_back(std::move(e));
     }
     return v;
+}
+
+namespace {
+
+// PODs only (SEH): the object IDs of m_arrAbilities folded into one number. The ability states
+// those IDs name are exactly what the companion's name lookup resolves, so the fold changes
+// whenever the answer can: a soldier switch, a weapon swap, a gained or lost ability. 0 = could
+// not be computed, which the caller must read as "do not cache".
+uint64_t AbilityActionsSignatureRaw(void* container, int32_t stride)
+{
+    __try {
+        auto* arr = reinterpret_cast<const uint8_t*>(container) + kAbilityBarActionsOffset;
+        auto* data = *reinterpret_cast<const uint8_t* const*>(arr);
+        int32_t n = *reinterpret_cast<const int32_t*>(arr + 8);
+        if (n < 0 || n > kAbilityActionsMax)
+            return 0;
+        uint64_t h = 1469598103934665603ull ^ static_cast<uint64_t>(n);
+        for (int32_t i = 0; i < n; i++) {
+            if (!data)
+                return 0;
+            uint32_t id = *reinterpret_cast<const uint32_t*>(
+                data + static_cast<size_t>(i) * stride + kAvailableActionIdOffset);
+            h = (h ^ id) * 1099511628211ull;
+        }
+        return h ? h : 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+int32_t AvailableActionStride(void* container)
+{
+    static int32_t sStride = 0;
+    if (sStride == 0) {
+        int32_t stride = UE3Reflect::ArrayElementSize(
+            reinterpret_cast<UObject*>(container), "m_arrAbilities");
+        if (stride < 0x2C || stride > 0x38) {
+            LOG_WARN("GameUI: AvailableAction stride reads 0x%X — implausible, ability-name "
+                     "cache disabled",
+                stride);
+            sStride = -1;
+        } else {
+            sStride = stride;
+        }
+    }
+    return sStride;
+}
+
+} // namespace
+
+uint64_t ReadAbilityBarSignature(void* screen)
+{
+    if (!screen)
+        return 0;
+    void* container = ReadPtrRaw(screen, kTacHudAbilityHudOffset);
+    if (!container)
+        return 0;
+    int32_t stride = AvailableActionStride(container);
+    return stride > 0 ? AbilityActionsSignatureRaw(container, stride) : 0;
 }
 
 bool ActivateBarAbility(void* screen, int index)

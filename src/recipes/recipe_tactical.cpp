@@ -60,6 +60,35 @@ void* ProbeTacticalHud()
     return GameUI::FindTacticalHUD();
 }
 
+// The bar's names from the companion, for a bar whose icons retained none. UpdateData writes
+// m_strAntennaText only while Movie.IsMouseActive(), so with a controller as the input device every
+// icon's name reads empty — and in mouse mode none does, which is why this is asked for ONLY when
+// an entry's name is empty and never otherwise. Cached on the abilities the bar was built from
+// (ReadAbilityBarSignature), so a soldier switch or a changed bar re-asks and a plain rebuild does
+// not; the key is a number folded from object IDs, never a pointer held across frames.
+WireCache gAbilityNames("X2AccessTacticalReader", "BuildAbilityBarNames");
+
+std::vector<std::string> AbilityNamesFromCompanion(const GameUI::AbilityBarView& bar)
+{
+    const uint64_t signature = GameUI::ReadAbilityBarSignature(gScreen);
+    // 0 = the signature could not be computed: ask every time rather than risk stale words.
+    const std::vector<WireRecord>& records = gAbilityNames.Get(
+        {gScreen}, static_cast<long long>(signature), signature == 0);
+    std::vector<std::string> names;
+    // ⛔ One record per icon, by position. A count that disagrees with the bar means the mapping
+    // (commander abilities compacted out) is not the one this was written against, and a shifted
+    // name is worse than the numbered fallback. Loud, not silent.
+    if (records.size() != bar.entries.size()) {
+        LOG_WARN("Tactical HUD: companion ability names %zu vs bar icons %zu — names not used",
+            records.size(), bar.entries.size());
+        return names;
+    }
+    names.reserve(records.size());
+    for (const WireRecord& rec : records)
+        names.push_back(RecField(rec, "name"));
+    return names;
+}
+
 std::unique_ptr<GraphRender> BuildTacticalHud()
 {
     GameUI::AbilityBarView bar = GameUI::ReadAbilityBar(gScreen);
@@ -130,6 +159,14 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
         // Mirror both: rows of 15 sharing one row key, so Up/Down crosses rows
         // column-preserving exactly when the game itself draws two.
         constexpr size_t kBarRowLen = 15;
+        // Controller mode only: see AbilityNamesFromCompanion. Any one empty name triggers it.
+        std::vector<std::string> companionNames;
+        for (const GameUI::AbilityBarEntry& entry : bar.entries) {
+            if (entry.name.empty()) {
+                companionNames = AbilityNamesFromCompanion(bar);
+                break;
+            }
+        }
         for (size_t i = 0; i < bar.entries.size(); i++) {
             if (i % kBarRowLen == 0) {
                 if (i)
@@ -137,12 +174,17 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
                 b.StartRow("abilities");
             }
             const GameUI::AbilityBarEntry& e = bar.entries[i];
-            // The antenna text is mouse-active-only in the game's own code paths; the mouse
-            // gate deliberately preserves IsMouseActive so it stays fed, but an empty name
-            // must still land a node — dropping it would silently renumber every ability
-            // after it (the empty-answer trap).
-            std::string name = e.name.empty() ? Vocab::AbilityFallback(static_cast<int>(i))
-                                              : e.name;
+            // The antenna text is written only while the mouse is the active input device, so
+            // in controller mode every icon's name is empty and the companion supplies it
+            // (companionNames, same position). A name still empty after that — the lookup failed,
+            // or the game gave the ability none — must still land a node with the numbered
+            // fallback: dropping it would silently renumber every ability after it (the
+            // empty-answer trap).
+            std::string name = e.name;
+            if (name.empty() && i < companionNames.size())
+                name = companionNames[i];
+            if (name.empty())
+                name = Vocab::AbilityFallback(static_cast<int>(i));
 
             NodeVtable vt;
             vt.Type = &AbilityType();

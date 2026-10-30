@@ -597,6 +597,10 @@ static_assert(offsetof(AUITacticalHUD_AbilityContainer, m_iCurrentIndex) == 0x3D
     "UITacticalHUD_AbilityContainer::m_iCurrentIndex");
 static_assert(offsetof(AUITacticalHUD_AbilityContainer, ActiveAbilities) == 0x3EC,
     "UITacticalHUD_AbilityContainer::ActiveAbilities");
+static_assert(offsetof(AUITacticalHUD_AbilityContainer, m_arrAbilities) == 0x3F8,
+    "UITacticalHUD_AbilityContainer::m_arrAbilities (the signature walk and the companion's names)");
+static_assert(offsetof(FAvailableAction, AbilityObjectRef) == 0x0,
+    "AvailableAction::AbilityObjectRef (ObjectID is its first member; the stride is read live)");
 static_assert(offsetof(AUITacticalHUD_AbilityContainer, m_arrUIAbilities) == 0x408,
     "UITacticalHUD_AbilityContainer::m_arrUIAbilities");
 static_assert(offsetof(AUITacticalHUD_Ability, m_strCooldown) == 0x3F8,

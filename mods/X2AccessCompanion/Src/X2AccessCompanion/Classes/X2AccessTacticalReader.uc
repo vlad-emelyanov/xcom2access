@@ -915,6 +915,65 @@ function BuildEnemyRecords()
 	NativeResult = Recs;
 }
 
+// The ability bar's NAMES, one record per BAR icon in bar order. Native asks for this only when an
+// icon's retained m_strAntennaText came back empty: UITacticalHUD_Ability.UpdateData writes that
+// field under Movie.IsMouseActive() alone, so with a controller as the input device the icons
+// retain no name at all. (Not verified live: the controller-mode claim is read from source.)
+//
+// The words are the SAME ones UpdateData would have pushed when the mouse was active:
+// CapsCheckForGermanScharfesS(AbilityState.GetMyFriendlyName()), asked of the same ability state.
+//
+// Bar index to m_arrAbilities index: PopulateFlash walks m_arrAbilities in order and gives the
+// icon at ActiveAbilities to every ability whose template is NOT bCommanderAbility, so icon k is
+// the k-th non-commander entry. SortAbilities puts the commander abilities first, so a bar with
+// commander abilities is offset by their count. Mirrored here by skipping them, not by arithmetic.
+//
+// ONE RECORD PER ICON, THE NAME POSITIONAL. An ability whose state cannot be resolved still gets
+// its record with an empty name, because a dropped record would shift the name of every icon after
+// it. Native checks the record count against the bar's own count and refuses a mismatch.
+//
+// Reads the container's retained array and the history for the state, not a fresh rules query.
+function BuildAbilityBarNames()
+{
+	local UITacticalHUD HUD;
+	local UITacticalHUD_AbilityContainer Bar;
+	local XComGameState_Ability AbilityState;
+	local X2AbilityTemplate AbilityTemplate;
+	local string Recs, Rec, AbilityName;
+	local int i;
+
+	NativeResult = "";
+
+	HUD = GetTacticalHUD();
+	if (HUD == none || HUD.m_kAbilityHUD == none)
+		return;
+	Bar = HUD.m_kAbilityHUD;
+
+	for (i = 0; i < Bar.m_arrAbilities.Length; i++)
+	{
+		AbilityState = XComGameState_Ability(
+			`XCOMHISTORY.GetGameStateForObjectID(Bar.m_arrAbilities[i].AbilityObjectRef.ObjectID));
+		AbilityTemplate = None;
+		AbilityName = "";
+		if (AbilityState != none)
+		{
+			AbilityTemplate = AbilityState.GetMyTemplate();
+			AbilityName = class'UIUtilities_Text'.static.CapsCheckForGermanScharfesS(
+				AbilityState.GetMyFriendlyName());
+		}
+
+		// Not drawn on the bar (PopulateFlash compacts them out), so not a record.
+		if (AbilityTemplate != none && AbilityTemplate.bCommanderAbility)
+			continue;
+
+		Rec = "kind=ability";
+		class'X2AccessWire'.static.AddPositionalField(Rec, "name", AbilityName);
+		class'X2AccessWire'.static.AddRecord(Recs, Rec);
+	}
+
+	NativeResult = Recs;
+}
+
 // Enter on a head: the strip's own click. FXS_L_MOUSE_UP on an icon is SelectEnemyByIndex —
 // DirectTargetObject (the selected ability if one is up, else the unit's default attack, raising
 // the shot HUD on that target), the flag extension for the targeted unit, and the select sound —

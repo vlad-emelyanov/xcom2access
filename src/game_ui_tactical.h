@@ -56,7 +56,9 @@ TacticalGate ReadTacticalGate();
 // The one tactical panel besides objectives that IS readable from widgets (engine-notes: the
 // bar "needs NO companion call"). Each icon retains the strings the game last pushed:
 // m_strAntennaText (the ability's localized friendly name — refreshed only while
-// Movie.IsMouseActive(), which the mouse gate deliberately preserves), m_strHotkeyLabel,
+// Movie.IsMouseActive(), which the mouse gate deliberately preserves; with a controller as the
+// input device it stays EMPTY, and the HUD recipe asks the companion for the names instead —
+// X2AccessTacticalReader.BuildAbilityBarNames), m_strHotkeyLabel,
 // m_strCooldown / m_strCharge (localized prefixes baked in by the game), and IsAvailable.
 //
 // ⛔ The live icon count is the container's own ActiveAbilities, never "how many widgets hold
@@ -82,6 +84,12 @@ struct AbilityBarView {
 
 /// Read the bar off a UITacticalHUD screen. Game thread only.
 AbilityBarView ReadAbilityBar(void* screen);
+
+/// A fold of the object IDs in the container's m_arrAbilities — the abilities the bar was built
+/// from, in order. Changes whenever the companion's name lookup could answer differently (soldier
+/// switch, weapon swap, gained or lost ability); the HUD recipe keys its name cache on it. 0 means
+/// it could not be computed, which a caller must read as "do not cache". Never a pointer.
+uint64_t ReadAbilityBarSignature(void* screen);
 
 /// Activate bar slot `index` through the container's own AbilityClicked — the mouse path, with
 /// every side effect a click has: the input-gate check (PreProcessCheckGameLogic refuses when
