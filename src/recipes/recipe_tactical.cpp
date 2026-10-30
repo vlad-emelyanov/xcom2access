@@ -35,6 +35,7 @@
 #include "vocab.h"
 #include "log.h"
 
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
@@ -58,6 +59,53 @@ void* ProbeTacticalHud()
     if (!gate.hudOnStack || gate.blocked)
         return nullptr;
     return GameUI::FindTacticalHUD();
+}
+
+// The bar's names from the companion, for a bar whose icons retained none. UpdateData writes
+// m_strAntennaText only while Movie.IsMouseActive(), so with a controller as the input device every
+// icon's name reads empty. The call is made ONLY when an entry's name is empty, which is every
+// icon in controller mode. It can also fire in mouse mode before the first UpdateData has run (the
+// field is empty until then); that is harmless, the companion returns the same GetMyFriendlyName
+// words UpdateData would push. Cached on the abilities the bar was built from
+// (ReadAbilityBarSignature), so a soldier switch or a changed bar re-asks and a plain rebuild does
+// not; the key is a number folded from object IDs, never a pointer held across frames.
+//
+// A failed, empty or count-mismatched answer is NOT kept: the cache is invalidated and the next
+// attempt waits two seconds, so a failing companion is not called on every render and a transient
+// failure does not pin "Ability N" until the signature happens to change.
+WireCache gAbilityNames("X2AccessTacticalReader", "BuildAbilityBarNames");
+
+std::vector<std::string> AbilityNamesFromCompanion(const GameUI::AbilityBarView& bar)
+{
+    using Clock = std::chrono::steady_clock;
+    static bool sFailed = false;
+    static Clock::time_point sRetryAt;
+
+    std::vector<std::string> names;
+    if (sFailed && Clock::now() < sRetryAt)
+        return names;
+
+    const uint64_t signature = GameUI::ReadAbilityBarSignature(gScreen);
+    // 0 = the signature could not be computed: ask every time rather than risk stale words.
+    const std::vector<WireRecord>& records = gAbilityNames.Get(
+        {gScreen}, static_cast<long long>(signature), signature == 0);
+    // One record per icon, by position. A count that disagrees with the bar means the mapping
+    // (commander abilities skipped) is not the one this was written against, and a shifted name
+    // is worse than the numbered fallback. Loud, not silent.
+    if (records.empty() || records.size() != bar.entries.size()) {
+        LOG_WARN("Tactical HUD: companion ability names %zu vs bar icons %zu - names not used, "
+                 "retrying in 2 s",
+            records.size(), bar.entries.size());
+        gAbilityNames.Invalidate();
+        sFailed = true;
+        sRetryAt = Clock::now() + std::chrono::seconds(2);
+        return names;
+    }
+    sFailed = false;
+    names.reserve(records.size());
+    for (const WireRecord& rec : records)
+        names.push_back(RecField(rec, "name"));
+    return names;
 }
 
 std::unique_ptr<GraphRender> BuildTacticalHud()
@@ -130,6 +178,14 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
         // Mirror both: rows of 15 sharing one row key, so Up/Down crosses rows
         // column-preserving exactly when the game itself draws two.
         constexpr size_t kBarRowLen = 15;
+        // Controller mode only: see AbilityNamesFromCompanion. Any one empty name triggers it.
+        std::vector<std::string> companionNames;
+        for (const GameUI::AbilityBarEntry& entry : bar.entries) {
+            if (entry.name.empty()) {
+                companionNames = AbilityNamesFromCompanion(bar);
+                break;
+            }
+        }
         for (size_t i = 0; i < bar.entries.size(); i++) {
             if (i % kBarRowLen == 0) {
                 if (i)
@@ -137,12 +193,17 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
                 b.StartRow("abilities");
             }
             const GameUI::AbilityBarEntry& e = bar.entries[i];
-            // The antenna text is mouse-active-only in the game's own code paths; the mouse
-            // gate deliberately preserves IsMouseActive so it stays fed, but an empty name
-            // must still land a node — dropping it would silently renumber every ability
-            // after it (the empty-answer trap).
-            std::string name = e.name.empty() ? Vocab::AbilityFallback(static_cast<int>(i))
-                                              : e.name;
+            // The antenna text is written only while the mouse is the active input device, so
+            // in controller mode every icon's name is empty and the companion supplies it
+            // (companionNames, same position). A name still empty after that — the lookup failed,
+            // or the game gave the ability none — must still land a node with the numbered
+            // fallback: dropping it would silently renumber every ability after it (the
+            // empty-answer trap).
+            std::string name = e.name;
+            if (name.empty() && i < companionNames.size())
+                name = companionNames[i];
+            if (name.empty())
+                name = Vocab::AbilityFallback(static_cast<int>(i));
 
             NodeVtable vt;
             vt.Type = &AbilityType();
@@ -250,6 +311,46 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
             }
             b.EndRow();
             b.PopContext();
+        } else if (!ctl.valid) {
+            // ---- Commands with a controller as the input device ----
+            //
+            // UITacticalHUD.OnInit spawns the mouse strip only with the mouse active; otherwise it
+            // spawns plain UIButtons on the HUD. (From source; not measured live.) This is the
+            // structural ELSE of the strip above: ReadPadCommands refuses whenever the strip
+            // pointer exists, so mouse mode cannot reach it. One node, End Turn. The Evac button is
+            // left out (R3 is XComTacticalInput.Stick_R3, a state function taking an FName this
+            // layer cannot build) and the CharInfo button is the soldier stop's own button.
+            // No key hint: the sighted HUD draws a pad glyph there and the pad is not ours.
+            GameUI::PadCommandsView pad = GameUI::ReadPadCommands(gScreen);
+            if (pad.present) {
+                anyNode = true;
+                b.BeginStop("commands");
+                b.PushContext(Vocab::StopCommands);
+                b.StartRow("commands");
+                std::string name = pad.endTurnLabel.empty() ? Vocab::CommandFallback(0)
+                                                            : pad.endTurnLabel;
+
+                NodeVtable vt;
+                vt.Type = &ButtonType();
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(name));
+                vt.Announcements.back().Kind = AnnouncementKinds::Label;
+                vt.OnActivate = []() {
+                    // The game's own answer is a sound (the tutorial's negative cue, or
+                    // PerformEndTurn's positive one); a pressed key must not be silent here, so a
+                    // refusal and a failed call are both spoken.
+                    switch (GameUI::ActivatePadEndTurn(gScreen)) {
+                    case GameUI::PadEndTurn::Done:
+                        break;
+                    case GameUI::PadEndTurn::Refused:
+                    case GameUI::PadEndTurn::Failed:
+                        TTS::Speak(Vocab::Disabled);
+                        break;
+                    }
+                };
+                b.AddItem(ControlId::Structural("thud/cmd/pad/endturn/" + name), std::move(vt));
+                b.EndRow();
+                b.PopContext();
+            }
         }
     }
 

@@ -42,6 +42,12 @@ constexpr int32_t kTacHudAbilityHudOffset = 0x42C;  // m_kAbilityHUD (UITactical
 constexpr int32_t kAbilityBarCurrentOffset = 0x3DC;   // m_iCurrentIndex
 constexpr int32_t kAbilityBarActiveOffset = 0x3EC;    // ActiveAbilities (live icon count)
 constexpr int32_t kAbilityBarWidgetsOffset = 0x408;   // m_arrUIAbilities (TArray<UITacticalHUD_Ability*>)
+constexpr int32_t kAbilityBarActionsOffset = 0x3F8;   // m_arrAbilities (TArray<AvailableAction>)
+// Inside one AvailableAction element: AbilityObjectRef.ObjectID is the first member. The element
+// STRIDE is asked of the live UArrayProperty (the TButtonItems rule below): the compiled struct is
+// 0x30 but the engine's own rounding is its call.
+constexpr int32_t kAvailableActionIdOffset = 0x00;
+constexpr int kAbilityActionsMax = 64;                // a runaway guard on the signature walk
 constexpr int32_t kAbilityIconCooldownOffset = 0x3F8; // m_strCooldown
 constexpr int32_t kAbilityIconChargeOffset = 0x408;   // m_strCharge
 constexpr int32_t kAbilityIconAntennaOffset = 0x418;  // m_strAntennaText (ability name, PC only)
@@ -72,6 +78,15 @@ constexpr int kMouseCtlFixedButtons = 5;               // end turn, prev, next, 
 constexpr int kMouseCtlCommandSlot = 5;                // m_optCallSkyranger
 constexpr int kMouseCtlChosenSlot = 6;                 // m_optChosenInfo
 constexpr int kMouseCtlButtonCount = 10;               // ButtonItems.Length, set once at init
+
+// ---- the controller-mode command buttons (UITacticalHUD, controller branch of OnInit) ----
+// From the generated SDK's dump comments; pinned in sdk_layout_checks.cpp. NOT measured live.
+constexpr int32_t kTacHudEndTurnButtonOffset = 0x4F0; // UITacticalHUD::EndTurnButton (UIButton*)
+constexpr int32_t kTacHudEndTurnHintOffset = 0x540;   // ::m_strNavHelpEndTurn (localized FString)
+constexpr int32_t kPanelPlayerControllerOffset = 0x2C8; // UIPanel::PC (the XComTacticalController)
+// EPlayerEndTurnType_PlayerInput — the value XComTacticalInput.Back_Button and
+// UITacticalHUD_MouseControls.OnAccept both pass. Pinned in sdk_layout_checks.cpp.
+constexpr uint8_t kEndTurnPlayerInput = 1;
 
 // ---- the objectives list (UIObjectiveList / UIObjectiveListItem) ----
 // Verified live 2026-08-23 against the running class on LostAndAbandonedB: m_kObjectivesControl
@@ -206,6 +221,66 @@ AbilityBarView ReadAbilityBar(void* screen)
         v.entries.push_back(std::move(e));
     }
     return v;
+}
+
+namespace {
+
+// PODs only (SEH): the object IDs of m_arrAbilities folded into one number. The ability states
+// those IDs name are exactly what the companion's name lookup resolves, so the fold changes
+// whenever the answer can: a soldier switch, a weapon swap, a gained or lost ability. 0 = could
+// not be computed, which the caller must read as "do not cache".
+uint64_t AbilityActionsSignatureRaw(void* container, int32_t stride)
+{
+    __try {
+        auto* arr = reinterpret_cast<const uint8_t*>(container) + kAbilityBarActionsOffset;
+        auto* data = *reinterpret_cast<const uint8_t* const*>(arr);
+        int32_t n = *reinterpret_cast<const int32_t*>(arr + 8);
+        if (n < 0 || n > kAbilityActionsMax)
+            return 0;
+        uint64_t h = 1469598103934665603ull ^ static_cast<uint64_t>(n);
+        for (int32_t i = 0; i < n; i++) {
+            if (!data)
+                return 0;
+            uint32_t id = *reinterpret_cast<const uint32_t*>(
+                data + static_cast<size_t>(i) * stride + kAvailableActionIdOffset);
+            h = (h ^ id) * 1099511628211ull;
+        }
+        return h ? h : 1;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+
+int32_t AvailableActionStride(void* container)
+{
+    // Only a PLAUSIBLE answer is kept; a bad read returns 0 (uncomputable, so uncached) and the
+    // next call asks again rather than latching the failure for the session.
+    static int32_t sStride = 0;
+    if (sStride == 0) {
+        int32_t stride = UE3Reflect::ArrayElementSize(
+            reinterpret_cast<UObject*>(container), "m_arrAbilities");
+        if (stride < 0x2C || stride > 0x38) {
+            LOG_WARN("GameUI: AvailableAction stride reads 0x%X - implausible, ability-name "
+                     "cache off for this call",
+                stride);
+            return 0;
+        }
+        sStride = stride;
+    }
+    return sStride;
+}
+
+} // namespace
+
+uint64_t ReadAbilityBarSignature(void* screen)
+{
+    if (!screen)
+        return 0;
+    void* container = ReadPtrRaw(screen, kTacHudAbilityHudOffset);
+    if (!container)
+        return 0;
+    int32_t stride = AvailableActionStride(container);
+    return stride > 0 ? AbilityActionsSignatureRaw(container, stride) : 0;
 }
 
 bool ActivateBarAbility(void* screen, int index)
@@ -354,6 +429,54 @@ bool ActivateMouseControl(void* screen, int index)
         uint32_t ReturnValue;
     } params{0};
     return CallNamedFunction(controls, "OnAccept", &params);
+}
+
+// ---- the controller-mode command buttons ----
+
+PadCommandsView ReadPadCommands(void* screen)
+{
+    PadCommandsView v;
+    if (!screen)
+        return v;
+    // ⛔ Structurally the OTHER half of ReadMouseControls: UITacticalHUD.OnInit spawns the mouse
+    // strip when the mouse is the active input device and these buttons when it is not, never both.
+    // So a strip pointer means mouse mode, and this reads nothing then — mouse mode cannot reach
+    // the rest of this function.
+    if (ReadPtrRaw(screen, kTacHudMouseControlsOffset))
+        return v;
+    void* btn = ReadPtrRaw(screen, kTacHudEndTurnButtonOffset);
+    if (!btn)
+        return v;
+    v.present = true;
+    // The button's retained text is m_strNavHelpEndTurn, handed to InitButton; the HUD's own field
+    // is the same word and is the fallback if the button kept none.
+    v.endTurnLabel = ReadFStringField(btn, kButtonTextOffset);
+    if (v.endTurnLabel.empty())
+        v.endTurnLabel = ReadFStringField(screen, kTacHudEndTurnHintOffset);
+    return v;
+}
+
+PadEndTurn ActivatePadEndTurn(void* screen)
+{
+    if (!screen || ReadPtrRaw(screen, kTacHudMouseControlsOffset))
+        return PadEndTurn::Failed; // not the controller branch: nothing here to activate
+    // UITacticalHUD_MouseControls.OnAccept (m_optEndTurn) and Back_Button both refuse when
+    // `TUTORIAL != none`; XComTutorialMgr exists only in the tutorial mission.
+    if (ReadTutorialState().valid)
+        return PadEndTurn::Refused;
+    void* pc = ReadPtrRaw(screen, kPanelPlayerControllerOffset);
+    if (!pc)
+        return PadEndTurn::Failed;
+    // XComTacticalController.PerformEndTurn(eEndTurnType) -> bool, every parameter in the block
+    // (pinned against the generated _Params in sdk_layout_checks.cpp). The return is not read:
+    // the vanilla chain ends in XGPlayer.EndTurn, which answers false whether or not it
+    // submitted the turn, and the mouse path ignores it too.
+    struct {
+        uint8_t eEndTurnType;
+        uint32_t ReturnValue;
+    } params{kEndTurnPlayerInput, 0};
+    return CallNamedFunction(pc, "PerformEndTurn", &params) ? PadEndTurn::Done
+                                                             : PadEndTurn::Failed;
 }
 
 // ---- the objectives list (UIObjectiveList) ----

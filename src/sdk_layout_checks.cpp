@@ -597,6 +597,10 @@ static_assert(offsetof(AUITacticalHUD_AbilityContainer, m_iCurrentIndex) == 0x3D
     "UITacticalHUD_AbilityContainer::m_iCurrentIndex");
 static_assert(offsetof(AUITacticalHUD_AbilityContainer, ActiveAbilities) == 0x3EC,
     "UITacticalHUD_AbilityContainer::ActiveAbilities");
+static_assert(offsetof(AUITacticalHUD_AbilityContainer, m_arrAbilities) == 0x3F8,
+    "UITacticalHUD_AbilityContainer::m_arrAbilities (the signature walk and the companion's names)");
+static_assert(offsetof(FAvailableAction, AbilityObjectRef) == 0x0,
+    "AvailableAction::AbilityObjectRef (ObjectID is its first member; the stride is read live)");
 static_assert(offsetof(AUITacticalHUD_AbilityContainer, m_arrUIAbilities) == 0x408,
     "UITacticalHUD_AbilityContainer::m_arrUIAbilities");
 static_assert(offsetof(AUITacticalHUD_Ability, m_strCooldown) == 0x3F8,
@@ -609,6 +613,26 @@ static_assert(offsetof(AUITacticalHUD_Ability, m_strHotkeyLabel) == 0x428,
     "UITacticalHUD_Ability::m_strHotkeyLabel");
 static_assert(offsetof(AUITacticalHUD_Ability, Index) == 0x43C,
     "UITacticalHUD_Ability::Index (the IsAvailable dword precedes it at 0x438)");
+
+// ---- the controller-mode command buttons (game_ui_tactical.cpp: ReadPadCommands) ----
+// Dump-derived, NOT measured live. EndTurnButton is a UIButton* spawned in the controller branch
+// of UITacticalHUD.OnInit; PC is UIPanel's controller (an XComTacticalController in a mission).
+static_assert(offsetof(AUITacticalHUD, CharInfoButton) == 0x4E8, "UITacticalHUD::CharInfoButton");
+static_assert(offsetof(AUITacticalHUD, EndTurnButton) == 0x4F0, "UITacticalHUD::EndTurnButton");
+static_assert(offsetof(AUITacticalHUD, SkyrangerButton) == 0x4F8,
+    "UITacticalHUD::SkyrangerButton (live: visible, text retained)");
+static_assert(offsetof(AUITacticalHUD, m_strNavHelpEndTurn) == 0x540,
+    "UITacticalHUD::m_strNavHelpEndTurn");
+static_assert(offsetof(AUIPanel, PC) == 0x2C8, "UIPanel::PC");
+// XComTacticalController.PerformEndTurn's block: the enum byte at 0 and the bool return's DWORD at
+// 4 (the dump's own comment: `ReturnValue : 1` at 0x0004, 0x0004 wide; CPF_ReturnParm). The
+// generated struct declares the bool as a bitfield of `bool`, so its compiled sizeof is not the
+// engine's and the return slot cannot be offsetof'd or sized here — only the first member can.
+// game_ui_tactical.cpp hand-rolls { uint8_t; uint32_t } under pack(4), which is that layout.
+static_assert(offsetof(AXComTacticalController_execPerformEndTurn_Params, eEndTurnType) == 0x0,
+    "XComTacticalController::PerformEndTurn params: eEndTurnType");
+static_assert(static_cast<int>(EPlayerEndTurnType::ePlayerEndTurnType_PlayerInput) == 1,
+    "EPlayerEndTurnType::ePlayerEndTurnType_PlayerInput (kEndTurnPlayerInput)");
 
 // ---- the command buttons (UITacticalHUD_MouseControls) ----
 // The one tactical panel besides objectives that RETAINS its words: SetButtonItem assigns

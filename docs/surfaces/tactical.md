@@ -943,9 +943,25 @@ panels do.
   array's length and never "which icons hold text".** `UITacticalHUD_Ability.ClearData()` clears
   availability, cooldown and charge but NOT `m_strAntennaText` or the hotkey label, so a soldier
   switch leaves the previous soldier's ability names sitting on the trailing icons, readable and
-  wrong. `ActiveAbilities` is written by the same `PopulateFlash` pass that feeds the icons, and
-  the widgets `[0, ActiveAbilities)` map 1:1 onto `m_arrAbilities` (commander abilities sort to
-  the tail and are compacted out — the same assumption the game's own `AbilityClicked` makes).
+  wrong. `ActiveAbilities` is written by the same `PopulateFlash` pass that feeds the icons.
+  `PopulateFlash` walks `m_arrAbilities` in order and gives icon `ActiveAbilities` to every
+  ability whose template is not `bCommanderAbility`. UnrealScript `Sort` swaps on a negative
+  result, so `SortAbilities` puts commander abilities LAST (`UITacticalHUD_AbilityContainer:547`
+  assumes the same): bar index equals array index for the non-commander abilities, and
+  `ActivateBarAbility` is right, as is the game's own click path.
+- **Ability names in controller mode come from the companion (2026-10-30, NOT VERIFIED LIVE).**
+  `UITacticalHUD_Ability.UpdateData:89` writes `m_strAntennaText` only under
+  `Movie.IsMouseActive()`, so with a controller as the input device every icon's name is empty
+  and the stop read `Ability 1`, `Ability 2`. `BuildTacticalHud` asks
+  `X2AccessTacticalReader.BuildAbilityBarNames` (one record per icon, name positional, empty
+  values kept; commander abilities skipped as above) ONLY when an icon's retained name is empty. That is every icon in
+  controller mode; in mouse mode the field is also empty until the first `UpdateData`, so the call
+  can fire there once, harmlessly (same `GetMyFriendlyName` words). A failed, empty or
+  count-mismatched answer is not cached and is retried no faster than every 2 s. The words are `CapsCheckForGermanScharfesS(GetMyFriendlyName())`,
+  the pair the game would have pushed. Cached in a `WireCache` keyed on `ReadAbilityBarSignature`
+  (a fold of the ObjectIDs in `m_arrAbilities`, so a soldier switch or a changed bar re-asks;
+  0 = uncomputable = never cached). A record count that differs from the bar's icon count is
+  logged and the names dropped for the numbered fallback — a shifted name is worse.
 - **The stop list is `UITacticalHUD_MouseControls`'s list, never a sketch of what a HUD "should"
   have.** Both halves of the parity rule bit here: the WOTC initiative order looks like an obvious
   stop and is CHEAT-GATED in retail (`UITurnOverlay.ShowOrHideInitiative` shows it only when
@@ -954,7 +970,7 @@ panels do.
   `UiTimer.ShouldShow`, so an untimed mission reads `Timers = 0`. On mouse/keyboard the
   mouse-controls strip IS the command surface: `CharInfoButton` / `EndTurnButton` /
   `SkyrangerButton` are spawned only in the CONTROLLER branch of `UITacticalHUD.OnInit` and read
-  null live.
+  null live (in mouse mode; the controller-mode stop is the next-but-one bullet).
 - **Activation is `AbilityClicked(index)`** — the mouse path, with the input gate
   (`PreProcessCheckGameLogic` refuses outside the player's moment), the tutorial's
   disabled-trigger check and the select sound. It returns false SILENTLY, so the recipe speaks
@@ -991,6 +1007,30 @@ panels do.
   rulebook's outbound-call rule) — and the stop is built only while the shot HUD is DOWN,
   because raised, slot 0's retained label is legitimately "cancel shot" and the layer is
   yielding focus anyway.
+- **Commands with a controller as the input device (2026-10-30; the three buttons MEASURED live: non-null, visible, text retained as SHOW CHARACTER DETAILS / END TURN / CALL SKYRANGER, offsets 0x4E8 / 0x4F0 / 0x4F8 match the SDK dump; the stop itself and its activation NOT run).**
+  `UITacticalHUD.OnInit` spawns `m_kMouseControls` only with `Movie.IsMouseActive()`; otherwise it
+  spawns `EndTurnButton`, `SkyrangerButton` and `CharInfoButton`, plain `UIButton`s on the HUD, so
+  the stop list was Objectives, Score, Soldier, Abilities with no way to end the turn. The recipe's
+  commands block is now `if (strip valid with buttons) {...} else if (!strip valid) {pad branch}`,
+  and `ReadPadCommands` returns nothing whenever the strip POINTER exists, so mouse mode cannot
+  reach it. One node, End Turn, labelled with the button's retained text (else the HUD's
+  `m_strNavHelpEndTurn`, else `CommandFallback`), no key hint. Activation mirrors `OnAccept`
+  `m_optEndTurn` and `Back_Button`: refused in the tutorial (`TUTORIAL != none`, here
+  `ReadTutorialState().valid`; speaks `Disabled`), otherwise
+  `XComTacticalController.PerformEndTurn(ePlayerEndTurnType_PlayerInput)` called on `UIPanel.PC`
+  (0x2C8), the block hand-rolled with both members. No other gate, same as the mouse path: not the
+  player's turn or a move running is decided inside, where `XGPlayer.EndTurn` calls
+  `Visualizer_ReleaseControl` unconditionally and submits the skip turn only when the local player
+  is the cached unit-action player; the return value is false either way and is not read.
+  **Left out, on purpose:** Evac. The pad path is `XComTacticalInput.Stick_R3`, a STATE function that
+  gates on `SkyrangerButton.bIsVisible`, the tutorial and `ActivateAbilityByName(mask, FName)`,
+  and the Highlander swaps the name for `CHHelpers.GetPlaceEvacZoneAbilityName()` (Issue 855). That
+  needs an FName this layer has no way to build and more than one call; the button is therefore
+  still unreachable on a pad (`next-steps.md`); live, SkyrangerButton was VISIBLE on a mission ("CALL SKYRANGER"), so it is a real gap.
+  Live: `AbilityClicked` works with `m_kMouseControls` null. Live, `m_arrAbilities` held 9 entries against 8 icons (the extra priority 2000, AA_Success): the name mapping skips `bCommanderAbility` templates by flag, not by position, so it does not depend on where the extra entry sorts; if that entry is not a commander ability the record count will differ from the icon count and the names are dropped loudly. The targeting line's "3 of 9" counts `m_arrAbilities`, not icons; untouched. CharInfo is the Soldier stop's own button.
+  Highlander diff for the classes touched here (`Workshop/1134256495`): `UITacticalHUD`,
+  `UITacticalHUD_Ability`, `UITacticalHUD_AbilityContainer`, `XComTacticalInput` carry changes, none
+  that touch the controller-mode branches above; `XComTacticalController.PerformEndTurn` is unchanged.
 - **The `TButtonItems` element stride is the live engine's, not the compiled SDK's.** The
   ScriptStruct's runtime `PropertiesSize` is 0x21 and whether `UStructProperty` rounds that to 4
   when striding is the engine's business, so `ReadMouseControls` asks the live `UArrayProperty`

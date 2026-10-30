@@ -870,6 +870,9 @@ std::unique_ptr<GraphRender> BuildSaveLoad()
         vt.Type = &ButtonType();
         vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
         vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        // Absent, unlabelled or genuinely disabled. A button the game merely HIDES on an unfocused
+        // row (controller mode) is not any of those: ReadSaveLoad still hands it over, and the
+        // activation below selects the row before it clicks.
         if (slot.acceptDisabled || !slot.accept) {
             vt.Announcements.emplace_back(NodeAnnouncement::Static(Vocab::Disabled));
             vt.Announcements.back().Kind = AnnouncementKinds::Enabled;

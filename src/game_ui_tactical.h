@@ -56,15 +56,17 @@ TacticalGate ReadTacticalGate();
 // The one tactical panel besides objectives that IS readable from widgets (engine-notes: the
 // bar "needs NO companion call"). Each icon retains the strings the game last pushed:
 // m_strAntennaText (the ability's localized friendly name — refreshed only while
-// Movie.IsMouseActive(), which the mouse gate deliberately preserves), m_strHotkeyLabel,
+// Movie.IsMouseActive(), which the mouse gate deliberately preserves; with a controller as the
+// input device it stays EMPTY, and the HUD recipe asks the companion for the names instead —
+// X2AccessTacticalReader.BuildAbilityBarNames), m_strHotkeyLabel,
 // m_strCooldown / m_strCharge (localized prefixes baked in by the game), and IsAvailable.
 //
 // ⛔ The live icon count is the container's own ActiveAbilities, never "how many widgets hold
 // text": ClearData() clears availability, cooldown and charge but NOT the antenna text, so a
 // soldier switch leaves the previous soldier's ability names sitting on the trailing icons.
 // ActiveAbilities is written by the same PopulateFlash pass that feeds the icons, and the
-// widgets [0, ActiveAbilities) map 1:1 onto m_arrAbilities — commander abilities are compacted
-// out into the mouse-controls panel by that same pass.
+// widgets [0, ActiveAbilities) map 1:1 onto the non-commander m_arrAbilities (commander abilities sort last and are compacted
+// out into the mouse-controls panel by that same pass).
 struct AbilityBarEntry {
     void* handle = nullptr;  // UITacticalHUD_Ability — opaque
     std::string name;        // m_strAntennaText, cleaned; may be empty (see the view note)
@@ -82,6 +84,12 @@ struct AbilityBarView {
 
 /// Read the bar off a UITacticalHUD screen. Game thread only.
 AbilityBarView ReadAbilityBar(void* screen);
+
+/// A fold of the object IDs in the container's m_arrAbilities — the abilities the bar was built
+/// from, in order. Changes whenever the companion's name lookup could answer differently (soldier
+/// switch, weapon swap, gained or lost ability); the HUD recipe keys its name cache on it. 0 means
+/// it could not be computed, which a caller must read as "do not cache". Never a pointer.
+uint64_t ReadAbilityBarSignature(void* screen);
 
 /// Activate bar slot `index` through the container's own AbilityClicked — the mouse path, with
 /// every side effect a click has: the input-gate check (PreProcessCheckGameLogic refuses when
@@ -128,6 +136,34 @@ MouseControlsView ReadMouseControls(void* screen);
 /// is also where a disabled button gets the game's own negative sound. Returns false only when
 /// the call could not be made at all. Game thread only.
 bool ActivateMouseControl(void* screen, int index);
+
+// ---- the controller-mode command buttons (UITacticalHUD.EndTurnButton) ----
+//
+// With a controller as the input device UITacticalHUD.OnInit spawns no mouse-controls strip; it
+// spawns EndTurnButton, SkyrangerButton and CharInfoButton, plain UIButtons on the HUD. (Read from
+// source; not measured live.) The HUD graph's Commands stop is built from EndTurnButton alone: the
+// soldier stop and `;` already carry CharInfo, and the Evac button is left out (the pad path is
+// XComTacticalInput.Stick_R3, a state function that takes an FName this layer cannot build).
+struct PadCommandsView {
+    /// m_kMouseControls is null AND EndTurnButton exists — i.e. the controller branch ran.
+    bool present = false;
+    std::string endTurnLabel; // the button's retained text, else the HUD's m_strNavHelpEndTurn
+};
+
+/// Game thread only. `present` is false whenever the mouse strip exists, by construction.
+PadCommandsView ReadPadCommands(void* screen);
+
+enum class PadEndTurn {
+    Done,    // PerformEndTurn was called
+    Refused, // the tutorial: the game refuses End Turn there too
+    Failed,  // the call could not be made, or this is not the controller branch
+};
+
+/// Activate End Turn the way UITacticalHUD_MouseControls.OnAccept (m_optEndTurn) does: refused in
+/// the tutorial, otherwise XComTacticalController.PerformEndTurn(ePlayerEndTurnType_PlayerInput).
+/// It adds no gate of its own for "not your turn" or "a move is running" — the mouse path has none;
+/// XGPlayer.EndTurn submits the skip only for the local player's own action phase. Game thread only.
+PadEndTurn ActivatePadEndTurn(void* screen);
 
 // ---- the objectives list (UIObjectiveList) ----
 //

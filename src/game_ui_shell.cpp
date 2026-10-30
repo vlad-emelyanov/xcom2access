@@ -742,6 +742,44 @@ bool SaveScreenIsSaving(void* screen)
     return screen && ObjectClassNamedRaw(screen, "UISaveGame", ClassMatch::Derived);
 }
 
+namespace {
+
+// The row's AcceptButton as a verb the row is OFFERING.
+//
+// ReadButtonField reports a hidden button as absent, which is right for a button the game hides on
+// purpose (the save screen's new-save row hides Delete) and wrong here in controller mode:
+// UISaveLoadGameListItem spawns AcceptButton visible only on the FOCUSED row
+// (`SetVisible(bIsFocused)`, and HideHighlight / OnLoseFocus Hide() it on every other), so every
+// row the graph is not yet on read as "unavailable" and carried no activation. A button that
+// exists, is hidden and is not disabled is that case: the row would offer the verb the moment the
+// selection lands on it, and ActivateSaveSlot selects first (SetSelection runs ShowHighlight, which
+// Show()s the button) before it clicks. Only a null pointer, an unlabelled button or the disabled
+// bit means the verb is genuinely not there.
+//
+// Unreachable in mouse mode by construction: the only Hide() calls on AcceptButton in
+// UISaveLoadGameListItem sit inside `ISCONTROLLERACTIVE` branches (lines 73, 226, 242, 408, 428 of
+// the original source), and nothing in UISaveGame or UILoadGame touches it, so with the mouse as
+// the input device the button is never hidden and the first return below is the only one taken.
+MenuItem ReadSaveRowAccept(void* row)
+{
+    MenuItem item = ReadButtonField(row, kSaveRowAcceptOffset);
+    if (item.handle)
+        return item; // visible: exactly what the layer has always answered
+    void* btn = ReadPtrRaw(row, kSaveRowAcceptOffset);
+    if (!btn)
+        return item;
+    if (ReadU32Raw(btn, kPanelFlagsOffset) & kPanelVisible)
+        return item; // visible but unlabelled: still not a verb
+    item.label = CleanText(ReadFStringField(btn, kButtonTextOffset));
+    if (item.label.empty())
+        return item;
+    item.handle = btn;
+    item.disabled = (ReadU32Raw(btn, kButtonFlagsOffset) & kButtonDisabled) != 0;
+    return item;
+}
+
+} // namespace
+
 SaveLoadView ReadSaveLoad(void* screen)
 {
     SaveLoadView v;
@@ -771,10 +809,11 @@ SaveLoadView ReadSaveLoad(void* screen)
         slot.index = ReadI32Raw(row, kSaveRowIndexOffset);
         slot.id = ReadI32Raw(row, kSaveRowIdOffset);
 
-        // UIButton.Click() refuses an invisible button, so a hidden one is not a verb the row
-        // is offering. That is the documented bIsVisible exception: on a child BUTTON the bit is
-        // toggled deliberately (the save screen hides Delete on its new-save row).
-        MenuItem accept = ReadButtonField(row, kSaveRowAcceptOffset);
+        // Delete: UIButton.Click() refuses an invisible button, so a hidden one is not a verb the
+        // row is offering. That is the documented bIsVisible exception: on a child BUTTON the bit
+        // is toggled deliberately (the save screen hides Delete on its new-save row). Accept is
+        // the controller-mode exception to the exception — see ReadSaveRowAccept.
+        MenuItem accept = ReadSaveRowAccept(row);
         slot.accept = accept.handle;
         slot.acceptLabel = std::move(accept.label);
         slot.acceptDisabled = accept.disabled;
