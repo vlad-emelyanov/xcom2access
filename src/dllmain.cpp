@@ -3,6 +3,7 @@
 #include "dev_server.h"
 #include "tts.h"
 #include "input.h"
+#include "gamepad.h"
 #include "menu_navigator.h"
 #include "mouse_gate.h"
 #include "flash_shadow.h"
@@ -148,6 +149,7 @@ static void ShutdownAll() {
     // pointer write into a UFunction, which is what makes them legal under the loader lock.
     MouseGate::ForceRestore();
     FlashShadow::ForceRestore();
+    Gamepad::Shutdown(); // the same: one pointer write, into the exe's import table
     DevServer::Stop(); // before the hooks: the pump it depends on goes away with them
     Hooks::Shutdown();
     Input::Shutdown();

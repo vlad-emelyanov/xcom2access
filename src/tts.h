@@ -10,6 +10,9 @@ void Shutdown();
 // to the backend as queued text, and the SCREEN READER decides whether it cuts in — the player's
 // own reader settings govern that, not us. The Narrator orders lines; it never cuts them.
 void Speak(const std::string& text);
+
+// Stop what the screen reader is saying. For one job: a controller press, which a reader cannot
+// see as the keypress it would have cut itself off for (src/gamepad.cpp).
 void Silence();
 
 // Queued speech for multi-part announcements

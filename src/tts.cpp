@@ -114,6 +114,16 @@ void SpeakRaw(const std::string& text) {
         LOG_ERROR("Speech failed after re-bind: %s", prism_error_string(err));
 }
 
+// Caller must hold sMutex and have checked sBackend. ⛔ JAWS's COM StopSpeech reports success and
+// stops nothing: its audio ran on for the full sentence, the same as with no call at all
+// (docs/input-map.md). A blank line that flushes is the stop JAWS honours, and Prism leaves the
+// blank alone; an empty one fails its conversion. A line queued right after still plays.
+void StopBackend() {
+    (void)prism_backend_stop(sBackend);
+    if (std::string(prism_backend_name(sBackend)) == "JAWS")
+        (void)prism_backend_speak(sBackend, " ", /*interrupt*/ true);
+}
+
 } // namespace
 
 bool Init() {
@@ -171,7 +181,7 @@ void Shutdown() {
     //
     // What IS safe here is un-hooking our own callbacks so nothing can re-enter this module after
     // Log::Shutdown runs (next line in ShutdownAll), and cutting off speech in progress — a player
-    // quitting the game should not hear the rest of the sentence.
+    // quitting the game should not hear the rest of the sentence. JAWS ignores this stop.
     (void)prism_set_log_level(PRISM_LOG_LEVEL_NONE);
     (void)prism_set_log_handler(PrismLogHandler{nullptr, nullptr});
     if (sBackend)
@@ -197,7 +207,7 @@ void Speak(const std::string& text) {
 void Silence() {
     std::lock_guard<std::mutex> lock(sMutex);
     if (!sAvailable || !sBackend) return;
-    (void)prism_backend_stop(sBackend);
+    StopBackend();
 }
 
 void QueueSpeak(const std::string& text) {
@@ -222,7 +232,7 @@ void SetEnabled(bool enabled) {
     std::lock_guard<std::mutex> lock(sMutex);
     sEnabled = enabled;
     if (!enabled && sBackend)
-        (void)prism_backend_stop(sBackend);
+        StopBackend();
     LOG_INFO("TTS %s", enabled ? "enabled" : "disabled");
 }
 

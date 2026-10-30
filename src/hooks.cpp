@@ -3,6 +3,7 @@
 #include "dev_server.h"
 #include "event_dispatch.h"
 #include "input_arbiter.h"
+#include "gamepad.h"
 #include "menu_navigator.h"
 #include "tile_reader.h"
 #include "avenger.h"
@@ -95,6 +96,8 @@ static void RegisterEventHandlers() {
             // Install the window subclass once the game window exists, then drain claimed
             // key events.
             InputArbiter::OnTick();
+            // The controller feeds the same claims, so its presses drain on the next pass.
+            Gamepad::OnTick();
             // After input (so this frame's key operations have spoken), the navigator's
             // attach/detach poll and frame differ.
             MenuNavigator::OnTick();

@@ -23,6 +23,7 @@
 
 #include "flash_shadow.h"
 #include "game_ui.h"
+#include "gamepad.h"
 #include "gui_dump.h"
 #include "input_arbiter.h"
 #include "log.h"
@@ -849,6 +850,24 @@ std::string Route(const Request& req, int& status)
             static_cast<uint32_t>(QueryInt(req.query, "gap", 90)));
     }
 
+    // A virtual pad, seen by the mod and the game alike. Bare: the controller layer's state. The
+    // queue is our own memory, so a press needs no game-thread job; the tick plays it out.
+    if (req.path == "/pad") {
+        const std::string press = UrlDecode(QueryParam(req.query, "press"));
+        if (press.empty())
+            return OnGameThread([] { return Gamepad::DevStatus(); });
+        const std::string bad = Gamepad::DevQueuePresses(press,
+            static_cast<unsigned>(QueryInt(req.query, "hold", 80)),
+            static_cast<unsigned>(QueryInt(req.query, "gap", 150)));
+        if (!bad.empty()) {
+            status = 400;
+            return "[pad] unrecognised input: " + bad + "\n"
+                   "  names: A B X Y LB RB LT RT Start Back L3 R3\n"
+                   "         DUp DDown DLeft DRight LUp LDown LLeft LRight\n";
+        }
+        return "queued\n";
+    }
+
     if (req.path == "/screenshot") {
         return ScreenshotText(UrlDecode(QueryParam(req.query, "path")),
             QueryInt(req.query, "foreground", 1) != 0,
@@ -954,6 +973,7 @@ std::string Route(const Request& req, int& status)
            "  GET  /status              screen stack, gates, navigator + tile-reader state\n"
            "  GET  /tutorial            tutorial replay state + active world messages\n"
            "  GET  /input?keys=A,B      synthetic keys (&mode=kernel drives only our layer)\n"
+           "  GET  /pad[?press=A,DDown]  virtual controller, or its layer state\n"
            "  POST /exec  <command>     run a console command, return what it printed\n"
            "  GET  /gui[?depth=N]       widget tree of a screen: class, state, text\n"
            "  GET  /props[?filter=]     one object's properties: offset, type, live value\n"

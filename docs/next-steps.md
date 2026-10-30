@@ -14,6 +14,13 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**Controller on the shell menus** (2026-10-30, `src/gamepad.cpp`; map in `input-map.md`). Run end to
+end on the virtual pad (`/pad`): main menu, Load Game, settings, New Game and difficulty, in stick and
+D-pad, including hold-to-repeat; A answered a dialog. By hand with a physical pad: scrolling the main
+menu with one step per press, and speech cut off by each press. B on a dialog is unrun. Check the same
+keys with the game's own Input Device option set to Controller, where `ISCONTROLLERACTIVE` turns true
+and screens take their other branches.
+
 **My2K legal documents on first launch** (2026-10-09, `game_ui_my2k.cpp`, `recipes/recipe_my2k.cpp`;
 rules in `surfaces/shell.md`, "My2K legal documents and account login"). Built from `SrcOrig`
 after testers hit the prompt with no speech and no working keys; never run. The prompt shows only
@@ -1037,6 +1044,16 @@ subscribed, and the stray-plugin report by pointing `-GamePath` at a tree with n
 one branch nobody has seen is a real install that owns the DLC and lacks the plugin.
 
 ## Known defects
+
+**Main menu announced twice on return** (2026-10-30): coming back from Load Game can say "Main menu.
+NEW GAME", then "Main menu" and "NEW GAME, button". `UIScreenListener_MainMenu` speaks in the gap
+before the recipe attaches. Seen on the pad's B, and the listener also speaks at boot.
+
+**Injected Escape closes nothing on Load Game** (2026-10-30): `Esc` through `/input` reaches
+`ArbiterProc`, is passed to the game and has no effect, at 40 and 150 ms holds, while injected Enter
+and the pad's B both work. Not yet known whether a physical Escape behaves the same. Until it is
+settled, confirm with `/status` that a screen closed before sending anything that activates a row:
+an A sent after this Escape landed on a save and loaded it.
 
 - ⛔ **Some story cinematics read NOTHING, and the cause is not settled.** On 2026-09-04,
   `CIN_TP_OldGods_pt1` played for **2 minutes 13 seconds in total silence**, and so did

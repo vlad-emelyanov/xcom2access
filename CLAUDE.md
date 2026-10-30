@@ -213,6 +213,10 @@ rules** below instead — that is the test for which file a new rule goes in.
   the one being read is the SCREEN READER's decision under the player's own settings, and a mod
   that forced it overrode them on every keypress. The Narrator orders lines; it never cuts or
   discards one (`DropPending` on a hard context change is the single deliberate exception).
+  A controller press calls `TTS::Silence` because a reader cannot see it as the keypress it would
+  have cut itself off for: that stands in for the player's key, and nothing else may. Its blank
+  flush on JAWS is the one `interrupt = true`, because JAWS's own stop does nothing
+  (`docs/input-map.md`).
 - ⛔ `Narrator::Source` is not a channel: it records whether a line was read off a surface the game
   itself displayed (`Flyover`) or derived from the game state (`State`), and a `State` line is
   dropped when an identical `Flyover` line was said in the last 5 s. **One way only, and never

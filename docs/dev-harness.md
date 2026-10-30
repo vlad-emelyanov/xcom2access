@@ -46,6 +46,10 @@ Endpoints:
   press is ignored). `&mode=kernel` injects into the arbiter's own queue via
   `InputArbiter::InjectSynthetic`, driving ONLY our layer, working with the game backgrounded, and
   reporting per key whether a claim took it. `&hold=` and `&gap=` are milliseconds.
+- `/pad[?press=A,DDown&hold=&gap=]` — a virtual controller, merged into what `XInputGetState` returns,
+  so the mod AND the game read it exactly as they would a physical press, with the window in the
+  background. Bare, it prints the controller layer's state. Names: `A B X Y LB RB LT RT Start Back L3
+  R3 DUp DDown DLeft DRight LUp LDown LLeft LRight`. It needs a connected pad to merge into.
 - `/flashqueue[?index=N]` — what panels PUSHED into Scaleform, captured in flight by
   `src/flash_shadow.cpp`. For the whole retains-nothing family this is the only place the words
   ever existed, so it is the endpoint that answers "what does this screen actually say" for a
@@ -177,6 +181,13 @@ Confirmed `UIPanel` offsets against the running class: `bIsInited` 0x10, `bIsVis
 have a recipe for is the calibration check worth running after any SDK regeneration.
 
 ## Live testing without eyes or hands in the game
+
+`tools/xctl.ps1` is the short way through everything below, and it needs neither `just` nor a
+hand-built curl line: `build`, `stop`, `start`, `status`, `key Down,Enter`, `pad A,DDown`, `sr`,
+`wait <regex>`, `log`, `shot`. A press prints the speech it caused as `SR> line` and returns when
+speech goes quiet. Exit 5 means the process is gone or the frame pump has stopped, which includes the
+player choosing Exit to Desktop. `key` refuses the keys that are JAWS commands. ⚠ It never tests
+what a screen reader said: `/speech` is what the mod handed over, whichever backend took it.
 
 The dev server makes a session drivable end to end from outside: `/speech` is exactly what the screen
 reader was handed (poll with the cursor), `/status` is the gate + screen stack, and

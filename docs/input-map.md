@@ -94,6 +94,51 @@ ability bar besides, which the tactical recipe already reads. ⚠ `rooms-recon.m
 preceded it on the same argument — and the recon is corrected in place. **Displacing an ability
 hotkey has been the rule here since the cover ring, not an exception being made for exits.**
 
+## The controller: shell menus only
+
+`src/gamepad.cpp`. The game stays in mouse mode (flipping the 2D movie's mouse flag rebuilds HUDs;
+`avenger-view-recon.md` §6.1), so a pad is a second keyboard: each mapped input runs the existing
+claim for a key, and every recipe works on a pad without knowing one exists.
+
+| Pad | Key it stands for | Meaning |
+|---|---|---|
+| D-pad, left stick | arrows (repeat while held) | move, adjust |
+| A | Enter | activate |
+| Y | Space | tooltip |
+| X | Backspace | secondary action, where the row has one |
+| RB / LB | Tab / Shift+Tab | next / previous stop |
+| RT / LT | PageDown / PageUp | next / previous settings tab |
+| B | none: the game's own `FXS_BUTTON_B` | back, which shares a case with Escape on each screen |
+
+Start, Back and the stick clicks stay the game's.
+
+**A press stops speech, because a reader cannot see one.** JAWS cuts its own speech on a key going
+down, and every line reaches it queued, so without this a player scrolling on the pad heard each
+item in full, falling further behind with each press. `TTS::Silence` runs on each press and repeat
+the layer owns, B included, standing in for the keypress the reader never saw.
+
+⛔ **JAWS's COM `StopSpeech` reports success and stops nothing.** Measured on the jfw audio session
+meter with a 7 s sentence: it played on for 6757 ms after `StopSpeech` against 6764 ms with no call.
+`SayString(" ", true)` cut it, and `RunFunction("StopSpeech")` did too, but Prism cannot reach that
+one and Prism is pinned. A line queued straight after the flush still played in full, so
+`src/tts.cpp` sends the blank flush after every stop on JAWS. An empty string fails Prism's
+conversion, which is why it is a blank. Meter a reader's session rather than trusting a stop call's
+return.
+
+**The game must not see a mapped press as well.** `XCom2.exe` imports `XInputGetState` from
+`XINPUT1_3.dll` by ordinal 2, and the filter is a swap of that one IAT slot, found by walking the
+import table at runtime, so it needs no per-build address. While the layer owns the pad, EVERY
+mapped input is hidden, not only those with a live claim: an unclaimed X or Y on the settings screen
+is save-and-exit or reset-to-defaults, and the engine can poll between a press and our tick.
+
+**Scope is one predicate**, `LayerOwnsPad`: `UIFinalShell` on the stack, the game window in front,
+and a menu recipe holding input, with 400 ms of grace for the detach gap between two screens.
+Anywhere else the pad is untouched, vanilla, so a screen with no recipe still answers to it.
+
+⛔ **A sleeping wireless pad stays "connected" and reports frozen sticks** — measured at full up on
+both sticks with the packet number standing still. A stick counts for nothing until it has been seen
+near centre once. The press threshold sits at 16000, well above XInput's 7849 dead zone.
+
 ## Soldier switching: `E` / `Q`, moved there by config
 
 **The one binding change the mod ships**, `mods/X2AccessCompanion/Config/XComInput.ini`, merged
