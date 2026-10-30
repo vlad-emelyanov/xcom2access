@@ -617,7 +617,10 @@ static_assert(offsetof(AUITacticalHUD_Ability, Index) == 0x43C,
 // ---- the controller-mode command buttons (game_ui_tactical.cpp: ReadPadCommands) ----
 // Dump-derived, NOT measured live. EndTurnButton is a UIButton* spawned in the controller branch
 // of UITacticalHUD.OnInit; PC is UIPanel's controller (an XComTacticalController in a mission).
+static_assert(offsetof(AUITacticalHUD, CharInfoButton) == 0x4E8, "UITacticalHUD::CharInfoButton");
 static_assert(offsetof(AUITacticalHUD, EndTurnButton) == 0x4F0, "UITacticalHUD::EndTurnButton");
+static_assert(offsetof(AUITacticalHUD, SkyrangerButton) == 0x4F8,
+    "UITacticalHUD::SkyrangerButton (live: visible, text retained)");
 static_assert(offsetof(AUITacticalHUD, m_strNavHelpEndTurn) == 0x540,
     "UITacticalHUD::m_strNavHelpEndTurn");
 static_assert(offsetof(AUIPanel, PC) == 0x2C8, "UIPanel::PC");

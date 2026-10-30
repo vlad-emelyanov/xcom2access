@@ -1007,7 +1007,7 @@ panels do.
   rulebook's outbound-call rule) — and the stop is built only while the shot HUD is DOWN,
   because raised, slot 0's retained label is legitimately "cancel shot" and the layer is
   yielding focus anyway.
-- **Commands with a controller as the input device (2026-10-30, FROM SOURCE, NOT VERIFIED LIVE).**
+- **Commands with a controller as the input device (2026-10-30; the three buttons MEASURED live: non-null, visible, text retained as SHOW CHARACTER DETAILS / END TURN / CALL SKYRANGER, offsets 0x4E8 / 0x4F0 / 0x4F8 match the SDK dump; the stop itself and its activation NOT run).**
   `UITacticalHUD.OnInit` spawns `m_kMouseControls` only with `Movie.IsMouseActive()`; otherwise it
   spawns `EndTurnButton`, `SkyrangerButton` and `CharInfoButton`, plain `UIButton`s on the HUD, so
   the stop list was Objectives, Score, Soldier, Abilities with no way to end the turn. The recipe's
@@ -1026,7 +1026,8 @@ panels do.
   gates on `SkyrangerButton.bIsVisible`, the tutorial and `ActivateAbilityByName(mask, FName)`,
   and the Highlander swaps the name for `CHHelpers.GetPlaceEvacZoneAbilityName()` (Issue 855). That
   needs an FName this layer has no way to build and more than one call; the button is therefore
-  still unreachable on a pad (`next-steps.md`). CharInfo is the Soldier stop's own button.
+  still unreachable on a pad (`next-steps.md`); live, SkyrangerButton was VISIBLE on a mission ("CALL SKYRANGER"), so it is a real gap.
+  Live: `AbilityClicked` works with `m_kMouseControls` null. Live, `m_arrAbilities` held 9 entries against 8 icons (the extra priority 2000, AA_Success): the name mapping skips `bCommanderAbility` templates by flag, not by position, so it does not depend on where the extra entry sorts; if that entry is not a commander ability the record count will differ from the icon count and the names are dropped loudly. The targeting line's "3 of 9" counts `m_arrAbilities`, not icons; untouched. CharInfo is the Soldier stop's own button.
   Highlander diff for the classes touched here (`Workshop/1134256495`): `UITacticalHUD`,
   `UITacticalHUD_Ability`, `UITacticalHUD_AbilityContainer`, `XComTacticalInput` carry changes, none
   that touch the controller-mode branches above; `XComTacticalController.PerformEndTurn` is unchanged.
