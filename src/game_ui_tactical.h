@@ -137,6 +137,34 @@ MouseControlsView ReadMouseControls(void* screen);
 /// the call could not be made at all. Game thread only.
 bool ActivateMouseControl(void* screen, int index);
 
+// ---- the controller-mode command buttons (UITacticalHUD.EndTurnButton) ----
+//
+// With a controller as the input device UITacticalHUD.OnInit spawns no mouse-controls strip; it
+// spawns EndTurnButton, SkyrangerButton and CharInfoButton, plain UIButtons on the HUD. (Read from
+// source; not measured live.) The HUD graph's Commands stop is built from EndTurnButton alone: the
+// soldier stop and `;` already carry CharInfo, and the Evac button is left out (the pad path is
+// XComTacticalInput.Stick_R3, a state function that takes an FName this layer cannot build).
+struct PadCommandsView {
+    /// m_kMouseControls is null AND EndTurnButton exists — i.e. the controller branch ran.
+    bool present = false;
+    std::string endTurnLabel; // the button's retained text, else the HUD's m_strNavHelpEndTurn
+};
+
+/// Game thread only. `present` is false whenever the mouse strip exists, by construction.
+PadCommandsView ReadPadCommands(void* screen);
+
+enum class PadEndTurn {
+    Done,    // PerformEndTurn was called
+    Refused, // the tutorial: the game refuses End Turn there too
+    Failed,  // the call could not be made, or this is not the controller branch
+};
+
+/// Activate End Turn the way UITacticalHUD_MouseControls.OnAccept (m_optEndTurn) does: refused in
+/// the tutorial, otherwise XComTacticalController.PerformEndTurn(ePlayerEndTurnType_PlayerInput).
+/// It adds no gate of its own for "not your turn" or "a move is running" — the mouse path has none;
+/// XGPlayer.EndTurn submits the skip only for the local player's own action phase. Game thread only.
+PadEndTurn ActivatePadEndTurn(void* screen);
+
 // ---- the objectives list (UIObjectiveList) ----
 //
 // The panel that draws "ЗАДАЧИ / OBJECTIVES" and the mission's objective lines under it. Unlike

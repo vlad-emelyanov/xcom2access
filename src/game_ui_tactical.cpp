@@ -79,6 +79,15 @@ constexpr int kMouseCtlCommandSlot = 5;                // m_optCallSkyranger
 constexpr int kMouseCtlChosenSlot = 6;                 // m_optChosenInfo
 constexpr int kMouseCtlButtonCount = 10;               // ButtonItems.Length, set once at init
 
+// ---- the controller-mode command buttons (UITacticalHUD, controller branch of OnInit) ----
+// From the generated SDK's dump comments; pinned in sdk_layout_checks.cpp. NOT measured live.
+constexpr int32_t kTacHudEndTurnButtonOffset = 0x4F0; // UITacticalHUD::EndTurnButton (UIButton*)
+constexpr int32_t kTacHudEndTurnHintOffset = 0x540;   // ::m_strNavHelpEndTurn (localized FString)
+constexpr int32_t kPanelPlayerControllerOffset = 0x2C8; // UIPanel::PC (the XComTacticalController)
+// EPlayerEndTurnType_PlayerInput — the value XComTacticalInput.Back_Button and
+// UITacticalHUD_MouseControls.OnAccept both pass. Pinned in sdk_layout_checks.cpp.
+constexpr uint8_t kEndTurnPlayerInput = 1;
+
 // ---- the objectives list (UIObjectiveList / UIObjectiveListItem) ----
 // Verified live 2026-08-23 against the running class on LostAndAbandonedB: m_kObjectivesControl
 // 0x444, Items 0x3D8 (4 entries), Data 0x3DC. The Avenger's owner offset is from the dump only —
@@ -419,6 +428,54 @@ bool ActivateMouseControl(void* screen, int index)
         uint32_t ReturnValue;
     } params{0};
     return CallNamedFunction(controls, "OnAccept", &params);
+}
+
+// ---- the controller-mode command buttons ----
+
+PadCommandsView ReadPadCommands(void* screen)
+{
+    PadCommandsView v;
+    if (!screen)
+        return v;
+    // ⛔ Structurally the OTHER half of ReadMouseControls: UITacticalHUD.OnInit spawns the mouse
+    // strip when the mouse is the active input device and these buttons when it is not, never both.
+    // So a strip pointer means mouse mode, and this reads nothing then — mouse mode cannot reach
+    // the rest of this function.
+    if (ReadPtrRaw(screen, kTacHudMouseControlsOffset))
+        return v;
+    void* btn = ReadPtrRaw(screen, kTacHudEndTurnButtonOffset);
+    if (!btn)
+        return v;
+    v.present = true;
+    // The button's retained text is m_strNavHelpEndTurn, handed to InitButton; the HUD's own field
+    // is the same word and is the fallback if the button kept none.
+    v.endTurnLabel = ReadFStringField(btn, kButtonTextOffset);
+    if (v.endTurnLabel.empty())
+        v.endTurnLabel = ReadFStringField(screen, kTacHudEndTurnHintOffset);
+    return v;
+}
+
+PadEndTurn ActivatePadEndTurn(void* screen)
+{
+    if (!screen || ReadPtrRaw(screen, kTacHudMouseControlsOffset))
+        return PadEndTurn::Failed; // not the controller branch: nothing here to activate
+    // UITacticalHUD_MouseControls.OnAccept (m_optEndTurn) and Back_Button both refuse when
+    // `TUTORIAL != none`; XComTutorialMgr exists only in the tutorial mission.
+    if (ReadTutorialState().valid)
+        return PadEndTurn::Refused;
+    void* pc = ReadPtrRaw(screen, kPanelPlayerControllerOffset);
+    if (!pc)
+        return PadEndTurn::Failed;
+    // XComTacticalController.PerformEndTurn(eEndTurnType) -> bool, every parameter in the block
+    // (pinned against the generated _Params in sdk_layout_checks.cpp). The return is not read:
+    // the vanilla chain ends in XGPlayer.EndTurn, which answers false whether or not it
+    // submitted the turn, and the mouse path ignores it too.
+    struct {
+        uint8_t eEndTurnType;
+        uint32_t ReturnValue;
+    } params{kEndTurnPlayerInput, 0};
+    return CallNamedFunction(pc, "PerformEndTurn", &params) ? PadEndTurn::Done
+                                                             : PadEndTurn::Failed;
 }
 
 // ---- the objectives list (UIObjectiveList) ----

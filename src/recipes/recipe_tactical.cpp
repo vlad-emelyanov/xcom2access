@@ -292,6 +292,46 @@ std::unique_ptr<GraphRender> BuildTacticalHud()
             }
             b.EndRow();
             b.PopContext();
+        } else if (!ctl.valid) {
+            // ---- Commands with a controller as the input device ----
+            //
+            // UITacticalHUD.OnInit spawns the mouse strip only with the mouse active; otherwise it
+            // spawns plain UIButtons on the HUD. (From source; not measured live.) This is the
+            // structural ELSE of the strip above: ReadPadCommands refuses whenever the strip
+            // pointer exists, so mouse mode cannot reach it. One node, End Turn. The Evac button is
+            // left out (R3 is XComTacticalInput.Stick_R3, a state function taking an FName this
+            // layer cannot build) and the CharInfo button is the soldier stop's own button.
+            // No key hint: the sighted HUD draws a pad glyph there and the pad is not ours.
+            GameUI::PadCommandsView pad = GameUI::ReadPadCommands(gScreen);
+            if (pad.present) {
+                anyNode = true;
+                b.BeginStop("commands");
+                b.PushContext(Vocab::StopCommands);
+                b.StartRow("commands");
+                std::string name = pad.endTurnLabel.empty() ? Vocab::CommandFallback(0)
+                                                            : pad.endTurnLabel;
+
+                NodeVtable vt;
+                vt.Type = &ButtonType();
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(name));
+                vt.Announcements.back().Kind = AnnouncementKinds::Label;
+                vt.OnActivate = []() {
+                    // The game's own answer is a sound (the tutorial's negative cue, or
+                    // PerformEndTurn's positive one); a pressed key must not be silent here, so a
+                    // refusal and a failed call are both spoken.
+                    switch (GameUI::ActivatePadEndTurn(gScreen)) {
+                    case GameUI::PadEndTurn::Done:
+                        break;
+                    case GameUI::PadEndTurn::Refused:
+                    case GameUI::PadEndTurn::Failed:
+                        TTS::Speak(Vocab::Disabled);
+                        break;
+                    }
+                };
+                b.AddItem(ControlId::Structural("thud/cmd/pad/endturn/" + name), std::move(vt));
+                b.EndRow();
+                b.PopContext();
+            }
         }
     }
 
