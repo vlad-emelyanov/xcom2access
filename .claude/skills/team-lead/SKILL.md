@@ -77,8 +77,9 @@ hand:
 - ⛔ **One agent owns the game at a time.** Nothing enforces this, so name the owner in the brief and
   tell every other agent, in writing, not to run `xctl`, `curl` against port 8774, `just`, or anything
   else that touches the game (CLAUDE.md, shared-harness rule).
-- ⛔ **Tell the user before a game session starts.** The game takes over their screen and speaks
-  through JAWS on the machine they are using. Not while they are in the middle of something else.
+- **Get the user's confirmation once that you may use the computer, then launch the game whenever the
+  work needs it.** After that yes, a session needs no further notice. The game takes over their screen
+  and speaks through JAWS, which is why the first yes is needed.
 - ⛔ **Loading is not read-only.** Loading a strategy save made the game write a new autosave and
   `profile.bin`, replacing the old file, and it cannot be undone. Have the owner back up the
   `SaveData` folder (`Documents\My Games\XCOM2 War of the Chosen\XComGame\SaveData`) to a dated folder
