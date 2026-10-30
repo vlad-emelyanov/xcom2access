@@ -26,6 +26,25 @@ were already in controller mode: this machine's profile has the Input Device opt
 Controller (`input-map.md`), so the same keys are still unrun in mouse mode. ⚠ Pad B and Escape both
 failed to leave `UIShellDifficulty` once, after Enter on a difficulty row, cause not found.
 
+**Controller-mode fixes written from source, never run** (2026-10-30). Three changes, each unreachable in
+mouse mode by construction, none exercised. Run in controller mode on a normal mission (Gatecrasher):
+1. Ability names (`recipe_tactical.cpp`, `X2AccessTacticalReader.BuildAbilityBarNames`, which is
+   UNCOMPILED: build the companion before anything else). The HUD Abilities stop must read each
+   ability's game name, not `Ability N`; check the log for `companion ability names ... names not
+   used`; switch soldiers with E and Q and confirm the names follow; take a soldier with a command
+   ability (`bCommanderAbility`) and confirm bar icon k matches the k-th non-commander ability.
+   Unmeasured: whether `AbilityClicked` works with `m_kMouseControls` null (it does not touch the
+   strip itself, but `DirectConfirmAbility` at `UITacticalHUD_AbilityContainer:547` does), and
+   whether the icon index equals the `m_arrAbilities` index when commander abilities exist.
+2. Commands stop (`ReadPadCommands`, `ActivatePadEndTurn`). Tab to the HUD: a Commands stop with one
+   End Turn node, spoken in the game's word. Enter ends the turn (not in the tutorial, where it must
+   say unavailable). Unmeasured: whether `EndTurnButton` retains its text (else the HUD's
+   `m_strNavHelpEndTurn` is read) and whether `UIPanel.PC` at 0x2C8 is the tactical controller.
+   Evac stays unreachable on a pad (needs an FName and `Stick_R3`, a state function), and so does
+   the Skyranger button's visibility; queue it with a companion function if a pad player needs it.
+3. Save and load rows (`ReadSaveRowAccept`): no `unavailable` on a loadable row, Enter loads the row
+   the graph is on, and a truly disabled row still says it. Check on both the load and the save screen.
+
 **My2K legal documents on first launch** (2026-10-09, `game_ui_my2k.cpp`, `recipes/recipe_my2k.cpp`;
 rules in `surfaces/shell.md`, "My2K legal documents and account login"). Built from `SrcOrig`
 after testers hit the prompt with no speech and no working keys; never run. The prompt shows only

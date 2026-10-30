@@ -33,6 +33,24 @@ a reader, not a rescue — deliberately the thinnest recipe in the file.
   than tidy: `UISaveGame.OnAccept` and `OnDelete` ignore the control they are handed and act on
   `m_iCurrentSelection`, so a click sent while the two disagreed would overwrite or delete the
   WRONG SAVE.
+- **A row's AcceptButton is HIDDEN on every unfocused row in controller mode, and hidden is not
+  unavailable (2026-10-30, FROM SOURCE, NOT VERIFIED LIVE).** `UISaveLoadGameListItem` spawns the
+  button `SetVisible(bIsFocused)` and `HideHighlight` / `OnLoseFocus` `Hide()` it on the rest, all
+  inside `ISCONTROLLERACTIVE` branches. `ReadButtonField` reports a hidden button as absent, so a
+  pad profile heard `button, unavailable, 2 of 22` on a loadable row, the node carried no
+  activation, and Enter fell through to the game's own handler (which loads the SELECTED row, not
+  the one the graph was on). `ReadSaveRowAccept` now keeps a button that exists, is hidden, has a
+  label and has its disabled bit clear as the row's verb; null, unlabelled or disabled still reads
+  unavailable. `ReadButtonField` is unchanged for every other caller. Mouse mode never hides the
+  button (the only `Hide()` calls are the controller branches; `UISaveGame` / `UILoadGame` do not
+  touch it), so the new return is unreachable there. Activation trace for a row captured hidden:
+  `OnActivate` re-reads the screen, `ActivateSaveSlot` calls `SetSelection(index)` and THEN
+  `AcceptButton.Click()`. `UISaveGame.SetSelection` always re-runs `ShowHighlight`, which `Show()`s
+  the button. ⚠ `UILoadGame.SetSelection` returns early when the index already equals
+  `m_iCurrentSelection`; that case is fine because the selected row's button was shown when it was
+  selected, but if it were ever still hidden `UIButton.Click` would refuse silently (`bIsVisible`)
+  and `ClickButton` reports only that the call was made. Unexercised: check that Enter loads the
+  right save from a row reached by arrow keys alone.
 - Words are cached on the ROW POINTER VECTOR (the navigator re-renders ten times a second and the
   save screen's new-save row re-runs `FillInHeaderForSave`, which walks the history): a save list
   changes only through `BuildMenu()`, which respawns every row panel, so a changed pointer list is

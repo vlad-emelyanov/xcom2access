@@ -232,7 +232,10 @@ bool DialogCancel(void* screen);
 /// row 0 is the "new save" slot.
 struct SaveSlot {
     void* handle = nullptr;  // UISaveLoadGameListItem
-    void* accept = nullptr;  // AcceptButton: load / save / name-a-new-save, per the row
+    void* accept = nullptr;  // AcceptButton: load / save / name-a-new-save, per the row. Null only
+                             // when the button is absent, unlabelled or (acceptDisabled) disabled —
+                             // a HIDDEN one still counts, because in controller mode the game hides
+                             // it on every row but the focused one (ReadSaveRowAccept).
     void* remove = nullptr;  // DeleteButton — null-handled by visibility, see below
     int index = 0;
     int id = -1;             // save ID; -1 marks the save screen's new-save row
