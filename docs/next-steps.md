@@ -9,6 +9,10 @@ value, not by dependency.
 Doc references are relative to this file's own directory (`docs/`), so `geoscape-recon.md` and
 `surfaces/avenger.md` resolve as written.
 
+**What to do first is decided in `accessibility-audit-2026-10-30.md` section 7.** The mod supports
+both input modes, and Priority 1 is one journey on a controller with speech only. This file holds
+the detail behind those items; the audit's order wins where the two differ.
+
 ⚠ When one of these is finished, the RULE it earned goes back into `CLAUDE.md` (or into the
 surface's own `surfaces/*.md`) — this file loses the entry rather than gaining a "done" mark.
 
@@ -17,9 +21,10 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 **Controller on the shell menus** (2026-10-30, `src/gamepad.cpp`; map in `input-map.md`). Run end to
 end on the virtual pad (`/pad`): main menu, Load Game, settings, New Game and difficulty, in stick and
 D-pad, including hold-to-repeat; A answered a dialog. By hand with a physical pad: scrolling the main
-menu with one step per press, and speech cut off by each press. B on a dialog is unrun. Check the same
-keys with the game's own Input Device option set to Controller, where `ISCONTROLLERACTIVE` turns true
-and screens take their other branches.
+menu with one step per press, and speech cut off by each press. B on a dialog is unrun. Those runs
+were already in controller mode: this machine's profile has the Input Device option set to
+Controller (`input-map.md`), so the same keys are still unrun in mouse mode. ⚠ Pad B and Escape both
+failed to leave `UIShellDifficulty` once, after Enter on a difficulty row, cause not found.
 
 **My2K legal documents on first launch** (2026-10-09, `game_ui_my2k.cpp`, `recipes/recipe_my2k.cpp`;
 rules in `surfaces/shell.md`, "My2K legal documents and account login"). Built from `SrcOrig`
@@ -389,9 +394,10 @@ draws nothing.
 **The cover ring — `J` / `Shift+J`** (2026-09-07, `X2AccessObjectScanner.AddCover` /
 `ClaimCoverCell` + `CAT_COVER`, `X2AccessTileReader.CoverEdgeWords` / `CoverSignature`, the two
 `'J'` claims in `object_scanner.cpp`; rules in `surfaces/tactical.md` under the object scanner) —
-both halves compile clean and **NOTHING HAS EVER BEEN HEARD**. Every fact in it is inferred from
-the SDK headers and from RT's `CoverModel.cs`; not one has been read off a running map. What to
-listen for, in the order a single Gatecrasher run settles them:
+**first heard 2026-10-30**, one press only: `Half cover west, 3 tiles wide, 0 tiles, 1 action, 1 of
+16`, so `GetCoverPoints` answers and item 1 below is settled. Everything else here is still inferred
+from the SDK headers and from RT's `CoverModel.cs`. What to listen for, in the order a single
+Gatecrasher run settles them:
 
 1. **Does `GetCoverPoints` answer at all, and with what?** The whole surface rests on one native
    call this project has never made. `Radius` XY / `Height` Z in world units is read off
@@ -868,9 +874,9 @@ confirmed in play):
   over `just dev-speech` against the number of red rows arrowed through — equal, or the parse is
   matching the wrong colour constant.
 
-- ⛔ **The resource strip has NEVER RUN** (built 2026-09-03, `surfaces/avenger.md`). It is
-  first-pass debt rather than a branch, and it is cheap to walk because the strip is on screen
-  for most of the strategy layer. Four things to confirm, in order:
+- **The resource strip** (built 2026-09-03, `surfaces/avenger.md`) **was heard on 2026-10-30 on the
+  ant farm**: nine figures from `R`, with `low` on two, and the log's `9 resource(s)`. The other
+  screens and the silent states are still owed, in order:
   1. `just dev-log` carrying `ResourceStrip: N resource(s) from cache index …, showing`. **N
      must be 9 on the ant farm** — anything less means the repaint delimiter or the raised
      `kMaxCallsPerPanel` is not doing its job, and 8 specifically would mean the cap change did
@@ -885,9 +891,10 @@ confirmed in play):
   4. The strip must be **SILENT before `T0_M4_ReturnToAvenger`** and while the Avenger is in
      flight — no stop, and `R` unclaimed. This is the parity half and the only one that fails
      in the direction a player would not report.
-- ⛔ **The Avenger HUD layer has NEVER RUN** (built 2026-09-03, `surfaces/avenger.md` §Avenger
-  HUD layer). First-pass debt on the ant farm, and the checklist is short because four of its
-  five stops reuse readers that have: (1) `Tab` on the grid must say "Avenger HUD" then land on
+- **The Avenger HUD layer** (built 2026-09-03, `surfaces/avenger.md` §Avenger HUD layer) **was
+  heard on 2026-10-30**: Tab entry, all stops and Escape back to "Rooms" read correctly. Item (1)
+  is settled except the room name on the next arrow, and items (3) and (4) below are still owed: (1)
+  `Tab` on the grid must say "Avenger HUD" then land on
   the resources stop, and `Escape` must say "Rooms" and give the arrows back — the room name
   must still speak on the next arrow, which is the `OwnsInput()` gate in `avenger.cpp` doing its
   job; (2) `Tab` must cycle Resources → Objectives → To do → Events → Room shortcuts, and
@@ -1049,11 +1056,10 @@ one branch nobody has seen is a real install that owns the DLC and lacks the plu
 NEW GAME", then "Main menu" and "NEW GAME, button". `UIScreenListener_MainMenu` speaks in the gap
 before the recipe attaches. Seen on the pad's B, and the listener also speaks at boot.
 
-**Injected Escape closes nothing on Load Game** (2026-10-30): `Esc` through `/input` reaches
-`ArbiterProc`, is passed to the game and has no effect, at 40 and 150 ms holds, while injected Enter
-and the pad's B both work. Not yet known whether a physical Escape behaves the same. Until it is
-settled, confirm with `/status` that a screen closed before sending anything that activates a row:
-an A sent after this Escape landed on a save and loaded it.
+**Escape closes nothing in controller mode** (2026-10-30): settled by physical presses. In controller
+mode the game ignores keys that reach it, so Escape does nothing while the pad's B and Start work
+(`input-map.md`, controller section). Confirm with `/status` that a screen closed before sending
+anything that activates a row: an A sent after this Escape landed on a save and loaded it.
 
 - ⛔ **Some story cinematics read NOTHING, and the cause is not settled.** On 2026-09-04,
   `CIN_TP_OldGods_pt1` played for **2 minutes 13 seconds in total silence**, and so did

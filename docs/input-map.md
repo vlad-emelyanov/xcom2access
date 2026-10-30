@@ -94,10 +94,17 @@ ability bar besides, which the tactical recipe already reads. ⚠ `rooms-recon.m
 preceded it on the same argument — and the recon is corrected in place. **Displacing an ability
 hotkey has been the rule here since the cover ring, not an exception being made for exits.**
 
-## The controller: shell menus only
+## The controller
 
-`src/gamepad.cpp`. The game stays in mouse mode (flipping the 2D movie's mouse flag rebuilds HUDs;
-`avenger-view-recon.md` §6.1), so a pad is a second keyboard: each mapped input runs the existing
+⛔ **The game has two input modes, and the player's saved Input Device option picks one.**
+`XComOnlineProfileSettingsDataBlob.m_bActivateMouse` seeds `UIMovie.MouseActive` (`UIMovie.uc:118`),
+which is what `ISCONTROLLERACTIVE` reads. The mod does not flip it, because that rebuilds HUDs
+(`avenger-view-recon.md` §6.1), and it must work in both modes. Measured 2026-10-30 in controller
+mode by physical presses: the ant farm's arrows, Escape, `E` and `Q` reach the window, the arbiter
+passes them on, and the game does nothing, while the stick, Start and the bumpers all work. Keys we
+claim still work. So a route that rests on a key reaching the game exists in mouse mode only.
+
+`src/gamepad.cpp`. A pad acts as a second keyboard on the shell: each mapped input runs the existing
 claim for a key, and every recipe works on a pad without knowing one exists.
 
 | Pad | Key it stands for | Meaning |
@@ -133,13 +140,18 @@ is save-and-exit or reset-to-defaults, and the engine can poll between a press a
 
 **Scope is one predicate**, `LayerOwnsPad`: `UIFinalShell` on the stack, the game window in front,
 and a menu recipe holding input, with 400 ms of grace for the detach gap between two screens.
-Anywhere else the pad is untouched, vanilla, so a screen with no recipe still answers to it.
+Anywhere else the pad is untouched, vanilla, so a screen with no recipe still answers to it. In
+controller mode that vanilla pad already works with our polling on top, measured 2026-10-30: the
+stick walks the ant farm, Start opens the pause menu and the bumpers switch soldiers, all with speech.
+No recipe's Tab stops are reachable on a pad outside the shell.
 
 ⛔ **A sleeping wireless pad stays "connected" and reports frozen sticks** — measured at full up on
 both sticks with the packet number standing still. A stick counts for nothing until it has been seen
 near centre once. The press threshold sits at 16000, well above XInput's 7849 dead zone.
 
 ## Soldier switching: `E` / `Q`, moved there by config
+
+⚠ This section is mouse mode. In controller mode the bumpers switch soldiers and `E` / `Q` do nothing.
 
 **The one binding change the mod ships**, `mods/X2AccessCompanion/Config/XComInput.ini`, merged
 over `DefaultInput.ini` when the companion loads. It removes the vanilla `Q`, `E`, `Tab` and
@@ -294,7 +306,8 @@ A different and much richer budget, because `[XComGame.XComHeadquartersInput]` b
 nothing: the geoscape recon measured **sixteen free bare letters** —
 `C E F G H I K L O Q R T V X Y Z` (`geoscape-recon.md` §7) — against tactical's two. Two of
 them are spent since: the companion's `XComInput.ini` binds `E` / `Q` to the barracks soldier
-cycle in this section too (§Soldier switching above), so **fourteen** remain.
+cycle in this section too (§Soldier switching above), and `C`, `O` and `R` are claimed in the table
+below, so on the Geoscape **eleven** remain: `F G H I K L T V X Y Z`.
 
 ⛔ **The two layers' budgets are NOT interchangeable, and the tell is `R`.** In
 `[XComGame.XComTacticalInput]` it carries a bare `R_Key_Press | onrelease R_Key_Release`
