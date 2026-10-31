@@ -133,25 +133,47 @@ accept and did nothing. `tactical_hud.cpp` therefore claims Enter while targetin
 game is in controller mode, and sends the live input object `InputEvent(FXS_BUTTON_A)` as a press and
 a release. Mouse mode has no such branch and Enter stays the game's.
 
-`src/gamepad.cpp`. A pad acts as a second keyboard on the shell: each mapped input runs the existing
-claim for a key, and every recipe works on a pad without knowing one exists.
+`src/gamepad.cpp`. A pad acts as a second keyboard: each mapped input runs the existing claim for a
+key, and every recipe works on a pad without knowing one exists. What an input means depends on the
+LAYER the pad is in, computed each tick from the same gates the claims use:
 
-| Pad | Key it stands for | Meaning |
+| Layer | When | Gate |
 |---|---|---|
-| D-pad, left stick | arrows (repeat while held) | move, adjust |
-| A | Enter | activate |
-| Y | Space | tooltip |
-| X | Backspace | secondary action, where the row has one |
-| RB / LB | Tab / Shift+Tab | next / previous stop |
-| RT / LT | PageDown / PageUp | next / previous settings tab |
-| B | none: the game's own `FXS_BUTTON_B` | back, which shares a case with Escape on each screen |
+| Menu | a non-ambient recipe holds input, anywhere (Geoscape included), 400 ms grace across a screen change | `OwnsInput() && MenuAttached()` |
+| Hud | the ambient recipe (tactical HUD, Avenger HUD) holds input | `OwnsInput() && !MenuAttached()` |
+| World | the tile cursor has the arrows | `TileReader::IsActive()` |
+| Targeting | the shot HUD is raised | `TacticalHUD::IsTargeting()` |
+| AntFarm | the Avenger grid is current and nothing is focused | `Avenger::IsGridActive()` |
+| None | everything else: no recipe, cutscene, game not in front | nothing hidden, nothing acted on |
 
-Start, Back and the stick clicks stay the game's.
+⛔ **Past the shell a layer exists only while `KeyboardGate::ControllerMode()` is true.** In mouse
+mode the pad is the mod's under `UIFinalShell` (Menu) and nowhere else, so mouse mode cannot break.
+
+| Pad | Menu | Hud | World | Targeting | AntFarm |
+|---|---|---|---|---|---|
+| D-pad, left stick | arrows (repeat) | arrows (repeat) | arrows: tile cursor (once per press) | the game's | the game's |
+| Right stick | R: PageDown, L: PageUp, D: Ctrl+PageDown, U: Ctrl+PageUp (repeat) | same | same, once per press (object scanner) | the game's | the game's |
+| A | Enter | Enter | Backspace: tile cursor move to (press twice) | the game's (confirm) | the game's |
+| Y | Space | Space | the game's (overwatch) | the game's | the game's |
+| X | Backspace | Backspace | the game's (reload) | the game's | the game's |
+| RB / LB | Tab / Shift+Tab | Tab / Shift+Tab | the game's (soldier) | the game's (cycle target) | the game's |
+| RT | PageDown | PageDown | the game's (ability menu) | the game's (cancel) | the game's |
+| LT | PageUp | PageUp | tap: Tab, enter the HUD layer | tap: Delete, re-announce shot | tap: Tab, enter the layer |
+| B | the game's | Escape (leave the HUD layer) | the game's | the game's (cancel) | the game's |
+| LT + D-pad Up / Down | | | Ctrl+Period / Ctrl+Comma: floor up / down | | |
+| LT + D-pad Left / Right | | | `C` recenter / `O` re-announce selection | | |
+| LT + A / X / Y | | | Delete re-announce tile / Ctrl+X objectives / Left Alt target preview | LT + Y: `H` hit breakdown | |
+
+Start, Back, L3 and R3 are the game's in every layer. LT is hidden from the game in every layer but
+None; a chord's button is hidden only while LT is held. An LT tap is a press and release with no
+chord between: if a chord fired while LT was held, the release does nothing. A stick is zeroed
+where the layer maps it, so the game never steers with a stick the mod also reads.
 
 **A press stops speech, because a reader cannot see one.** JAWS cuts its own speech on a key going
 down, and every line reaches it queued, so without this a player scrolling on the pad heard each
-item in full, falling further behind with each press. `TTS::Silence` runs on each press and repeat
-the layer owns, B included, standing in for the keypress the reader never saw.
+item in full, falling further behind with each press. `TTS::Silence` runs on every pad press in every
+layer but None, including a press that passes to the game (RB, RT, X, Y, B), because the reader cannot
+see those either, and on each repeat the layer sends. It stands in for the player's key.
 
 ⛔ **JAWS's COM `StopSpeech` reports success and stops nothing.** Measured on the jfw audio session
 meter with a 7 s sentence: it played on for 6757 ms after `StopSpeech` against 6764 ms with no call.
@@ -163,9 +185,13 @@ return.
 
 **The game must not see a mapped press as well.** `XCom2.exe` imports `XInputGetState` from
 `XINPUT1_3.dll` by ordinal 2, and the filter is a swap of that one IAT slot, found by walking the
-import table at runtime, so it needs no per-build address. While the layer owns the pad, EVERY
-mapped input is hidden, not only those with a live claim: an unclaimed X or Y on the settings screen
-is save-and-exit or reset-to-defaults, and the engine can poll between a press and our tick.
+import table at runtime, so it needs no per-build address. While a layer is
+live, EVERY input it maps is hidden, not only those with a live claim: an unclaimed X or Y on the
+settings screen is save-and-exit or reset-to-defaults, and the engine can poll between a press and our
+tick. The tick publishes the layer as one atomic that selects a row of masks built from the table, so
+the filter (an engine thread, atomics only) never sees a layer and a mask that disagree. Two latches
+keep the game from seeing half a press: a press we took stays hidden until its release even after the
+layer changes, and a press the game saw on the way down stays the game's on the way up.
 
 ⚠ **The engine does not always poll the pad (measured 2026-10-30).** In one launch the filter ran four
 times and never again, Frida saw no engine call to any `xinput1_4` export, and a DirectInput device
@@ -185,22 +211,23 @@ level (below).
 delivered as `XComInputBase.InputEvent(cmd, FXS_ACTION_PRESS)` then `FXS_ACTION_RELEASE` on the live
 input object, on the game tick. The command table is `UIUtilities_Input` (A 300, B 301, X 302, Y 303,
 Start 321, Back 320, L3 311, R3 313, bumpers 330/331, triggers 332/333, D-pad 350/352/354/356, left
-stick 370-373). The layer acts on every mapped input while it owns the pad, so in the shell `A` goes
-through the mod's claims only and `B`, Start and Back go to the game only. Where the engine does read
+stick 370-373, right stick 374-376 and 378). A virtual press is delivered to the game exactly when the
+CURRENT layer does not act on it (the same table the tick walks, chords included), so in the Menu layer
+`A` goes through the mod's claims only and `B`, Start and Back go to the game only, and in the World
+layer `A` is the mod's but `X` is the game's. Names joined with `+` are held together (`LT+DUp`). Where the engine does read
 XInput, `PreProcessEventMatching` drops the second copy of the same press, which is why alternating
 `/pad RB` and a real `E` stepped one soldier each time. `engine=0` on `/pad` plays the XInput half
 alone, for measuring what the engine does by itself. The release-build pad is unchanged.
 
-**Scope is one predicate**, `LayerOwnsPad`: `UIFinalShell` on the stack, the game window in front,
-and a menu recipe holding input, with 400 ms of grace for the detach gap between two screens.
-Anywhere else the pad is untouched, vanilla, so a screen with no recipe still answers to it. In
-controller mode that vanilla pad already works with our polling on top, measured 2026-10-30: the
-stick walks the ant farm, Start opens the pause menu and the bumpers switch soldiers, all with speech.
-No recipe's Tab stops are reachable on a pad outside the shell.
+**Scope is the layer** (table above), and the layer is None anywhere no gate holds: a screen with no
+recipe, a cutscene, the game window behind another, and every screen past the shell in mouse mode keep
+the game's own pad handling untouched. Right-stick sources use the left stick's deadzones, press and
+release thresholds and arming rule, each stick arming on its own.
 
 ⛔ **A sleeping wireless pad stays "connected" and reports frozen sticks** — measured at full up on
 both sticks with the packet number standing still. A stick counts for nothing until it has been seen
-near centre once. The press threshold sits at 16000, well above XInput's 7849 dead zone.
+near centre once, each stick separately. The press threshold sits at 16000, well above XInput's 7849
+dead zone.
 
 ## Soldier switching: `E` / `Q`, moved there by config
 

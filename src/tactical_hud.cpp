@@ -167,6 +167,11 @@ bool IsMissionActive()
     return gMissionActive;
 }
 
+bool IsTargeting()
+{
+    return gTargeting;
+}
+
 void OnTick()
 {
     static uint64_t sLastMs = 0;

@@ -1,9 +1,13 @@
 #include "gamepad.h"
+#include "avenger.h"
 #include "game_ui.h"
 #include "input_arbiter.h"
+#include "keyboard_gate.h"
 #include "log.h"
 #include "menu_navigator.h"
 #include "script_call.h"
+#include "tactical_hud.h"
+#include "tile_reader.h"
 #include "tts.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -46,64 +50,206 @@ constexpr uint64_t kShellCheckMs = 100;
 // otherwise reach the game's own A handler on whatever screen is arriving.
 constexpr uint64_t kOwnershipGraceMs = 400;
 
-enum class Source { Button, StickUp, StickDown, StickLeft, StickRight, LeftTrigger, RightTrigger };
+// The layer the pad is in this tick. One computed value decides what the mod acts on and what is
+// hidden from the engine; None is the vanilla pad, untouched.
+enum class Layer : uint8_t { None, Menu, Hud, World, Targeting, AntFarm };
+constexpr int kLayerCount = 6;
+constexpr const char* kLayerNames[kLayerCount] = {"none", "menu", "hud", "world", "targeting", "antfarm"};
+
+constexpr uint8_t LayerBit(Layer l)
+{
+    return l == Layer::None ? 0 : static_cast<uint8_t>(1u << (static_cast<int>(l) - 1));
+}
+constexpr uint8_t kLbMenu = 1, kLbHud = 2, kLbWorld = 4, kLbTarget = 8, kLbFarm = 16;
+constexpr uint8_t kLbMenuHud = kLbMenu | kLbHud;
+
+enum class Source {
+    Button,
+    LStickUp, LStickDown, LStickLeft, LStickRight,
+    RStickUp, RStickDown, RStickLeft, RStickRight,
+    LeftTrigger, RightTrigger,
+};
+
+// Any: applies with or without LT held. LtHeld / LtFree: a chord, or the plain press while no chord
+// is active. "LT held" means LT was taken by a tap entry (Fire::TapRelease), so an LT the game saw
+// going down never turns later presses into chords.
+enum class Chord : uint8_t { Any, LtHeld, LtFree };
+
+// Press: the key goes down on the press and up on the release (repeating if asked). TapRelease:
+// nothing on the press, and the key is tapped on the release unless a chord fired meanwhile; only
+// LT uses it, because LT is both a button and the chord modifier.
+enum class Fire : uint8_t { Press, TapRelease };
 
 struct Mapping {
     const char* name;
     Source source;
-    WORD button; // XINPUT_GAMEPAD_* for Source::Button
+    WORD button;    // XINPUT_GAMEPAD_* for Source::Button
+    uint8_t layers; // kLb* bits the entry applies in
+    Chord chord;
+    Fire fire;
     uint8_t vk;
     uint8_t mods;
     bool repeats;
 };
 
-// ⛔ B, Start, Back and the stick clicks are deliberately absent. They stay the game's: B reaches
-// each screen's own OnUnrealCommand, where it shares a case with Escape, and Escape is not ours
-// on a menu either. Y is details and X the secondary action, the layout the Civ VI mod settled on.
+constexpr uint8_t kNone = InputArbiter::ModNone;
+constexpr uint8_t kCtrl = InputArbiter::ModCtrl;
+constexpr uint8_t kShift = InputArbiter::ModShift;
+constexpr Chord kAny = Chord::Any;
+constexpr Chord kHeld = Chord::LtHeld;
+constexpr Chord kFree = Chord::LtFree;
+constexpr Fire kPress = Fire::Press;
+constexpr Fire kTap = Fire::TapRelease;
+constexpr Source kBtn = Source::Button;
+
+// ⛔ Order matters in one place: the TapRelease entries (LT) come FIRST, because the tick works
+// out "LT is held as a chord modifier" while it walks the table, and the chord entries after them
+// read it in the same pass.
+//
+// ⛔ B, Start, Back and the stick clicks are the game's in every layer but one: B reaches each
+// screen's own OnUnrealCommand, where it shares a case with Escape, and Escape is not ours on a
+// menu either. The Hud layer is the exception, where B is the claim "HUD layer: leave" (Escape).
+// Y is details and X the secondary action, the layout the Civ VI mod settled on.
+//
+// ⚠ Repeats: the tile cursor's claims ignore a repeat (one press, one tile), so every World entry
+// has repeats off, and a held stick steps once there. Accepted for now. A repeat is also a
+// TTS::Silence, which would cut the very step it follows, so a repeat is never sent to a claim
+// that ignores it.
 const Mapping kMap[] = {
-    {"DUp", Source::Button, XINPUT_GAMEPAD_DPAD_UP, VK_UP, InputArbiter::ModNone, true},
-    {"DDown", Source::Button, XINPUT_GAMEPAD_DPAD_DOWN, VK_DOWN, InputArbiter::ModNone, true},
-    {"DLeft", Source::Button, XINPUT_GAMEPAD_DPAD_LEFT, VK_LEFT, InputArbiter::ModNone, true},
-    {"DRight", Source::Button, XINPUT_GAMEPAD_DPAD_RIGHT, VK_RIGHT, InputArbiter::ModNone, true},
-    {"LUp", Source::StickUp, 0, VK_UP, InputArbiter::ModNone, true},
-    {"LDown", Source::StickDown, 0, VK_DOWN, InputArbiter::ModNone, true},
-    {"LLeft", Source::StickLeft, 0, VK_LEFT, InputArbiter::ModNone, true},
-    {"LRight", Source::StickRight, 0, VK_RIGHT, InputArbiter::ModNone, true},
-    {"A", Source::Button, XINPUT_GAMEPAD_A, VK_RETURN, InputArbiter::ModNone, false},
-    {"Y", Source::Button, XINPUT_GAMEPAD_Y, VK_SPACE, InputArbiter::ModNone, false},
-    {"X", Source::Button, XINPUT_GAMEPAD_X, VK_BACK, InputArbiter::ModNone, false},
-    {"LB", Source::Button, XINPUT_GAMEPAD_LEFT_SHOULDER, VK_TAB, InputArbiter::ModShift, false},
-    {"RB", Source::Button, XINPUT_GAMEPAD_RIGHT_SHOULDER, VK_TAB, InputArbiter::ModNone, false},
-    {"LT", Source::LeftTrigger, 0, VK_PRIOR, InputArbiter::ModNone, false},
-    {"RT", Source::RightTrigger, 0, VK_NEXT, InputArbiter::ModNone, false},
+    // LT: tap = enter the HUD layer (World, Avenger grid) or re-announce the shot (Targeting).
+    {"LT", Source::LeftTrigger, 0, kLbWorld | kLbFarm, kAny, kTap, VK_TAB, kNone, false},
+    {"LT", Source::LeftTrigger, 0, kLbTarget, kAny, kTap, VK_DELETE, kNone, false},
+    {"LT", Source::LeftTrigger, 0, kLbMenuHud, kAny, kPress, VK_PRIOR, kNone, false},
+    {"RT", Source::RightTrigger, 0, kLbMenuHud, kAny, kPress, VK_NEXT, kNone, false},
+
+    // Menu and Hud: the shell's table, plus the right stick for the Geoscape scanner.
+    {"DUp", kBtn, XINPUT_GAMEPAD_DPAD_UP, kLbMenuHud, kAny, kPress, VK_UP, kNone, true},
+    {"DDown", kBtn, XINPUT_GAMEPAD_DPAD_DOWN, kLbMenuHud, kAny, kPress, VK_DOWN, kNone, true},
+    {"DLeft", kBtn, XINPUT_GAMEPAD_DPAD_LEFT, kLbMenuHud, kAny, kPress, VK_LEFT, kNone, true},
+    {"DRight", kBtn, XINPUT_GAMEPAD_DPAD_RIGHT, kLbMenuHud, kAny, kPress, VK_RIGHT, kNone, true},
+    {"LUp", Source::LStickUp, 0, kLbMenuHud, kAny, kPress, VK_UP, kNone, true},
+    {"LDown", Source::LStickDown, 0, kLbMenuHud, kAny, kPress, VK_DOWN, kNone, true},
+    {"LLeft", Source::LStickLeft, 0, kLbMenuHud, kAny, kPress, VK_LEFT, kNone, true},
+    {"LRight", Source::LStickRight, 0, kLbMenuHud, kAny, kPress, VK_RIGHT, kNone, true},
+    {"RUp", Source::RStickUp, 0, kLbMenuHud, kAny, kPress, VK_PRIOR, kCtrl, true},
+    {"RDown", Source::RStickDown, 0, kLbMenuHud, kAny, kPress, VK_NEXT, kCtrl, true},
+    {"RLeft", Source::RStickLeft, 0, kLbMenuHud, kAny, kPress, VK_PRIOR, kNone, true},
+    {"RRight", Source::RStickRight, 0, kLbMenuHud, kAny, kPress, VK_NEXT, kNone, true},
+    {"A", kBtn, XINPUT_GAMEPAD_A, kLbMenuHud, kAny, kPress, VK_RETURN, kNone, false},
+    {"Y", kBtn, XINPUT_GAMEPAD_Y, kLbMenuHud, kAny, kPress, VK_SPACE, kNone, false},
+    {"X", kBtn, XINPUT_GAMEPAD_X, kLbMenuHud, kAny, kPress, VK_BACK, kNone, false},
+    {"LB", kBtn, XINPUT_GAMEPAD_LEFT_SHOULDER, kLbMenuHud, kAny, kPress, VK_TAB, kShift, false},
+    {"RB", kBtn, XINPUT_GAMEPAD_RIGHT_SHOULDER, kLbMenuHud, kAny, kPress, VK_TAB, kNone, false},
+    {"B", kBtn, XINPUT_GAMEPAD_B, kLbHud, kAny, kPress, VK_ESCAPE, kNone, false},
+
+    // World: the tile cursor and the object scanner.
+    {"DUp", kBtn, XINPUT_GAMEPAD_DPAD_UP, kLbWorld, kFree, kPress, VK_UP, kNone, false},
+    {"DDown", kBtn, XINPUT_GAMEPAD_DPAD_DOWN, kLbWorld, kFree, kPress, VK_DOWN, kNone, false},
+    {"DLeft", kBtn, XINPUT_GAMEPAD_DPAD_LEFT, kLbWorld, kFree, kPress, VK_LEFT, kNone, false},
+    {"DRight", kBtn, XINPUT_GAMEPAD_DPAD_RIGHT, kLbWorld, kFree, kPress, VK_RIGHT, kNone, false},
+    {"LUp", Source::LStickUp, 0, kLbWorld, kAny, kPress, VK_UP, kNone, false},
+    {"LDown", Source::LStickDown, 0, kLbWorld, kAny, kPress, VK_DOWN, kNone, false},
+    {"LLeft", Source::LStickLeft, 0, kLbWorld, kAny, kPress, VK_LEFT, kNone, false},
+    {"LRight", Source::LStickRight, 0, kLbWorld, kAny, kPress, VK_RIGHT, kNone, false},
+    {"RUp", Source::RStickUp, 0, kLbWorld, kAny, kPress, VK_PRIOR, kCtrl, false},
+    {"RDown", Source::RStickDown, 0, kLbWorld, kAny, kPress, VK_NEXT, kCtrl, false},
+    {"RLeft", Source::RStickLeft, 0, kLbWorld, kAny, kPress, VK_PRIOR, kNone, false},
+    {"RRight", Source::RStickRight, 0, kLbWorld, kAny, kPress, VK_NEXT, kNone, false},
+    {"A", kBtn, XINPUT_GAMEPAD_A, kLbWorld, kFree, kPress, VK_BACK, kNone, false},
+    // LT chords: floor up / down, recenter, re-announce selection, re-announce tile, objectives,
+    // target preview (Left Alt's claim is a pass-through, and Y is hidden, so only the claim runs).
+    {"LT+DUp", kBtn, XINPUT_GAMEPAD_DPAD_UP, kLbWorld, kHeld, kPress, VK_OEM_PERIOD, kCtrl, false},
+    {"LT+DDown", kBtn, XINPUT_GAMEPAD_DPAD_DOWN, kLbWorld, kHeld, kPress, VK_OEM_COMMA, kCtrl, false},
+    {"LT+DLeft", kBtn, XINPUT_GAMEPAD_DPAD_LEFT, kLbWorld, kHeld, kPress, 'C', kNone, false},
+    {"LT+DRight", kBtn, XINPUT_GAMEPAD_DPAD_RIGHT, kLbWorld, kHeld, kPress, 'O', kNone, false},
+    {"LT+A", kBtn, XINPUT_GAMEPAD_A, kLbWorld, kHeld, kPress, VK_DELETE, kNone, false},
+    {"LT+X", kBtn, XINPUT_GAMEPAD_X, kLbWorld, kHeld, kPress, 'X', kCtrl, false},
+    {"LT+Y", kBtn, XINPUT_GAMEPAD_Y, kLbWorld, kHeld, kPress, VK_LMENU, kNone, false},
+
+    // Targeting: the game steers and confirms; LT adds the hit breakdown on Y.
+    {"LT+Y", kBtn, XINPUT_GAMEPAD_Y, kLbTarget, kHeld, kPress, 'H', kNone, false},
 };
 constexpr int kMapCount = static_cast<int>(sizeof(kMap) / sizeof(kMap[0]));
 
-constexpr WORD kMappedButtons = XINPUT_GAMEPAD_DPAD_UP | XINPUT_GAMEPAD_DPAD_DOWN
-    | XINPUT_GAMEPAD_DPAD_LEFT | XINPUT_GAMEPAD_DPAD_RIGHT | XINPUT_GAMEPAD_A | XINPUT_GAMEPAD_Y
-    | XINPUT_GAMEPAD_X | XINPUT_GAMEPAD_LEFT_SHOULDER | XINPUT_GAMEPAD_RIGHT_SHOULDER;
-
 struct InputState {
-    bool held = false;
+    bool held = false;  // physically down, tracked in EVERY layer so an edge is never invented
     bool owned = false; // the press was taken here, so the release is ours too
+    Layer layer = Layer::None; // the layer the press was taken in: a tap or repeat dies with it
     uint64_t nextRepeatMs = 0;
 };
 InputState sInputs[kMapCount];
+
+bool IsLeftStick(Source s)
+{
+    return s >= Source::LStickUp && s <= Source::LStickRight;
+}
+bool IsRightStick(Source s)
+{
+    return s >= Source::RStickUp && s <= Source::RStickRight;
+}
+
+// What one layer hides from the engine, built once from kMap before the filter goes live and read
+// only afterwards. Buttons are split by whether LT is held, because a chord's button is hidden
+// only then; a stick, LT or RT is hidden whenever any entry of the layer maps it.
+struct HideMask {
+    WORD buttonsNoLt = 0;
+    WORD buttonsLt = 0;
+    bool lStick = false;
+    bool rStick = false;
+    bool lt = false;
+    bool rt = false;
+};
+HideMask sHide[kLayerCount];
+
+void BuildHideMasks()
+{
+    for (int li = 1; li < kLayerCount; li++) {
+        HideMask& h = sHide[li];
+        const uint8_t bit = LayerBit(static_cast<Layer>(li));
+        for (const Mapping& m : kMap) {
+            if (!(m.layers & bit))
+                continue;
+            if (m.source == Source::Button) {
+                if (m.chord != Chord::LtHeld)
+                    h.buttonsNoLt |= m.button;
+                if (m.chord != Chord::LtFree)
+                    h.buttonsLt |= m.button;
+            } else if (m.source == Source::LeftTrigger) {
+                h.lt = true;
+            } else if (m.source == Source::RightTrigger) {
+                h.rt = true;
+            } else if (IsLeftStick(m.source)) {
+                h.lStick = true;
+            } else {
+                h.rStick = true;
+            }
+        }
+    }
+}
 
 GetStateFn sRealGetState = nullptr;
 void** sIatSlot = nullptr;
 bool sInstallTried = false;
 
-// Published by the tick, read by the filter on whichever thread the engine polls from. While
-// sLayerOwnsPad holds, every mapped input is hidden, not just those with a live claim: the engine
-// can poll between a press and our tick, and an unclaimed X or Y on the settings screen is
-// save-and-exit or reset-to-defaults. sLatched keeps a press hidden until its release after the
-// layer lets go, so the game never sees half of one.
-std::atomic<bool> sLayerOwnsPad{false};
+// Published by the tick, read by the filter on whichever thread the engine polls from: atomics
+// only. sLayer selects the row of sHide, so the layer and its mask are one atomic and can never
+// disagree. Every mapped input of the layer is hidden, not just those with a live claim: the
+// engine can poll between a press and our tick, and an unclaimed X or Y on the settings screen is
+// save-and-exit or reset-to-defaults. Two more sets keep the game from seeing HALF a press.
+// sLatched*: a press we took stays hidden until its release after the layer lets go. sPassed*: a
+// press the game saw on the way down stays the game's on the way up, even if the layer starts
+// hiding it meanwhile.
+std::atomic<uint8_t> sLayer{0};
 std::atomic<WORD> sLatchedButtons{0};
-std::atomic<bool> sLatchedStick{false};
+std::atomic<bool> sLatchedLStick{false};
+std::atomic<bool> sLatchedRStick{false};
 std::atomic<bool> sLatchedLeftTrigger{false};
 std::atomic<bool> sLatchedRightTrigger{false};
+std::atomic<WORD> sPassedButtons{0};
+std::atomic<bool> sPassedLStick{false};
+std::atomic<bool> sPassedRStick{false};
+std::atomic<bool> sPassedLeftTrigger{false};
+std::atomic<bool> sPassedRightTrigger{false};
 
 bool sSlotConnected[kSlots] = {};
 uint64_t sNextSlotScanMs = 0;
@@ -112,31 +258,57 @@ bool sAnyPadLogged = false;
 uint64_t sLastShellCheckMs = 0;
 bool sInShell = false;
 uint64_t sLastOwnedMs = 0;
+Layer sCurrentLayer = Layer::None; // game thread only
 
-Source sStickDirection = Source::Button; // Source::Button doubles as "centred"
-bool sStickArmed = false;
-bool sBackHeld = false;
+// One direction at a time per stick; Source::Button doubles as "centred".
+struct Stick {
+    Source up, down, left, right;
+    Source dir = Source::Button;
+    bool armed = false;
+};
+Stick sLeft{Source::LStickUp, Source::LStickDown, Source::LStickLeft, Source::LStickRight};
+Stick sRight{Source::RStickUp, Source::RStickDown, Source::RStickLeft, Source::RStickRight};
+
+WORD sPrevButtons = 0;
+bool sPrevLt = false;
+bool sPrevRt = false;
+Source sPrevLeftDir = Source::Button; // a direction CHANGE counts as a press for Silence
+Source sPrevRightDir = Source::Button;
+bool sLtTapHeld = false;  // LT is down and a tap entry took it: it is a chord modifier
+bool sChordFired = false; // a chord ran while LT was held, so its release is not a tap
 
 uint64_t sPresses = 0;
 uint64_t sTaken = 0;
 
 #ifdef X2ACCESS_DEVSERVER
+// One virtual press: up to three inputs held together ("LT+DUp"), each with the game command that
+// stands in for it when the engine does not poll XInput.
+struct DevComponent {
+    Source source = Source::Button;
+    WORD button = 0;
+    int cmd = 0;
+};
 struct DevStep {
     WORD buttons = 0;
     SHORT lx = 0;
     SHORT ly = 0;
+    SHORT rx = 0;
+    SHORT ry = 0;
     BYTE lt = 0;
     BYTE rt = 0;
     uint32_t holdMs = 0;
     uint32_t gapMs = 0;
-    int cmd = 0;          // UIUtilities_Input FXS_* command for the script-level stand-in
-    bool engineOnly = false; // the mod's own layer has no mapping for it, so the game must get it
+    DevComponent comps[3];
+    int compCount = 0;
 };
+constexpr int kDevMaxComps = 3;
 std::mutex sDevMutex;
 std::deque<DevStep> sDevQueue;
 std::atomic<WORD> sDevButtons{0};
 std::atomic<SHORT> sDevLx{0};
 std::atomic<SHORT> sDevLy{0};
+std::atomic<SHORT> sDevRx{0};
+std::atomic<SHORT> sDevRy{0};
 std::atomic<BYTE> sDevLt{0};
 std::atomic<BYTE> sDevRt{0};
 std::atomic<bool> sHideFromEngine{false}; // the engine is told no pad is connected
@@ -147,7 +319,7 @@ std::atomic<DWORD> sFilterThreadA{0};
 std::atomic<DWORD> sFilterThreadB{0};
 std::atomic<DWORD> sDevPacket{0}; // moved on every change, so the engine notices a virtual press
 bool sDevHolding = false;
-int sDevHeldCmd = 0;      // the command whose release is still owed to the game
+int sDevHeldCmds[kDevMaxComps] = {};  // commands whose release is still owed to the game
 uint32_t sDevGapMs = 0;
 uint64_t sDevNextMs = 0;
 #endif
@@ -161,6 +333,10 @@ void ApplyVirtualPad(XINPUT_STATE* state)
         state->Gamepad.sThumbLX = lx;
     if (const SHORT ly = sDevLy.load(std::memory_order_relaxed))
         state->Gamepad.sThumbLY = ly;
+    if (const SHORT rx = sDevRx.load(std::memory_order_relaxed))
+        state->Gamepad.sThumbRX = rx;
+    if (const SHORT ry = sDevRy.load(std::memory_order_relaxed))
+        state->Gamepad.sThumbRY = ry;
     if (const BYTE lt = sDevLt.load(std::memory_order_relaxed))
         state->Gamepad.bLeftTrigger = lt;
     if (const BYTE rt = sDevRt.load(std::memory_order_relaxed))
@@ -170,7 +346,8 @@ void ApplyVirtualPad(XINPUT_STATE* state)
 #endif
 }
 
-// What the engine calls instead of XInputGetState.
+// What the engine calls instead of XInputGetState. Runs on an engine thread: atomics and the
+// read-only sHide table only, never engine memory.
 DWORD WINAPI FilteredGetState(DWORD user, XINPUT_STATE* state)
 {
 #ifdef X2ACCESS_DEVSERVER
@@ -196,18 +373,34 @@ DWORD WINAPI FilteredGetState(DWORD user, XINPUT_STATE* state)
     }
 #endif
 
-    const bool layer = sLayerOwnsPad.load(std::memory_order_acquire);
-    WORD hidden = sLatchedButtons.load(std::memory_order_acquire);
-    if (layer)
-        hidden |= kMappedButtons;
+    const uint8_t layer = std::min<uint8_t>(sLayer.load(std::memory_order_acquire), kLayerCount - 1);
+    const HideMask& h = sHide[layer];
+    // A chord's buttons are hidden while LT is held as a modifier, judged on the raw trigger so no
+    // frame between the press and our tick leaks one; an LT the game saw going down is no modifier.
+    const bool chord = state->Gamepad.bLeftTrigger >= kTriggerPress
+        && !sPassedLeftTrigger.load(std::memory_order_acquire);
+    const WORD passed = sPassedButtons.load(std::memory_order_acquire);
+    WORD hidden = static_cast<WORD>((chord ? h.buttonsLt : h.buttonsNoLt) & ~passed);
+    hidden |= sLatchedButtons.load(std::memory_order_acquire);
     state->Gamepad.wButtons &= static_cast<WORD>(~hidden);
-    if (layer || sLatchedStick.load(std::memory_order_acquire)) {
+
+    const bool zeroL = (h.lStick && !sPassedLStick.load(std::memory_order_acquire))
+        || sLatchedLStick.load(std::memory_order_acquire);
+    if (zeroL) {
         state->Gamepad.sThumbLX = 0;
         state->Gamepad.sThumbLY = 0;
     }
-    if (layer || sLatchedLeftTrigger.load(std::memory_order_acquire))
+    const bool zeroR = (h.rStick && !sPassedRStick.load(std::memory_order_acquire))
+        || sLatchedRStick.load(std::memory_order_acquire);
+    if (zeroR) {
+        state->Gamepad.sThumbRX = 0;
+        state->Gamepad.sThumbRY = 0;
+    }
+    if ((h.lt && !sPassedLeftTrigger.load(std::memory_order_acquire))
+        || sLatchedLeftTrigger.load(std::memory_order_acquire))
         state->Gamepad.bLeftTrigger = 0;
-    if (layer || sLatchedRightTrigger.load(std::memory_order_acquire))
+    if ((h.rt && !sPassedRightTrigger.load(std::memory_order_acquire))
+        || sLatchedRightTrigger.load(std::memory_order_acquire))
         state->Gamepad.bRightTrigger = 0;
     return ERROR_SUCCESS;
 }
@@ -215,6 +408,7 @@ DWORD WINAPI FilteredGetState(DWORD user, XINPUT_STATE* state)
 void InstallFilter()
 {
     sInstallTried = true;
+    BuildHideMasks(); // before the pointer swap: the filter only ever reads it
     auto* base = reinterpret_cast<BYTE*>(GetModuleHandleW(nullptr));
     auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
     auto* nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
@@ -254,6 +448,8 @@ struct PadSnapshot {
     WORD buttons = 0;
     SHORT lx = 0;
     SHORT ly = 0;
+    SHORT rx = 0;
+    SHORT ry = 0;
     BYTE lt = 0;
     BYTE rt = 0;
     bool connected = false;
@@ -278,6 +474,8 @@ PadSnapshot ReadPads(uint64_t now)
         if (!snap.connected) {
             snap.lx = state.Gamepad.sThumbLX;
             snap.ly = state.Gamepad.sThumbLY;
+            snap.rx = state.Gamepad.sThumbRX;
+            snap.ry = state.Gamepad.sThumbRY;
         }
         snap.connected = true;
         snap.buttons |= state.Gamepad.wButtons;
@@ -291,48 +489,52 @@ PadSnapshot ReadPads(uint64_t now)
     return snap;
 }
 
-bool VirtualStickActive()
+bool VirtualStickActive(bool right)
 {
 #ifdef X2ACCESS_DEVSERVER
+    if (right)
+        return sDevRx.load(std::memory_order_relaxed) != 0 || sDevRy.load(std::memory_order_relaxed) != 0;
     return sDevLx.load(std::memory_order_relaxed) != 0 || sDevLy.load(std::memory_order_relaxed) != 0;
 #else
+    (void)right;
     return false;
 #endif
 }
 
 // One direction at a time, the dominant axis, and it holds until it falls below the release
-// threshold — so a diagonal cannot flicker between two arrows.
-void UpdateStickDirection(const PadSnapshot& snap)
+// threshold — so a diagonal cannot flicker between two arrows. Both sticks use this.
+void UpdateStickDirection(Stick& stick, int x, int y, bool right)
 {
-    const int x = snap.lx;
-    const int y = snap.ly;
     // ⛔ A sleeping wireless pad stays "connected" and reports a frozen stick, measured at full
     // up on both sticks with the packet number standing still. So a stick means nothing until it
-    // has been seen near centre, or every press of anything would come with a phantom Up.
+    // has been seen near centre, or every press of anything would come with a phantom Up. Each
+    // stick arms on its own.
     if (abs(x) < kStickRelease && abs(y) < kStickRelease)
-        sStickArmed = true;
-    if (!sStickArmed && !VirtualStickActive()) {
-        sStickDirection = Source::Button;
+        stick.armed = true;
+    if (!stick.armed && !VirtualStickActive(right)) {
+        stick.dir = Source::Button;
         return;
     }
-    switch (sStickDirection) {
-    case Source::StickUp:    if (y > kStickRelease) return; break;
-    case Source::StickDown:  if (y < -kStickRelease) return; break;
-    case Source::StickRight: if (x > kStickRelease) return; break;
-    case Source::StickLeft:  if (x < -kStickRelease) return; break;
-    default: break;
+    if (stick.dir == stick.up) {
+        if (y > kStickRelease) return;
+    } else if (stick.dir == stick.down) {
+        if (y < -kStickRelease) return;
+    } else if (stick.dir == stick.right) {
+        if (x > kStickRelease) return;
+    } else if (stick.dir == stick.left) {
+        if (x < -kStickRelease) return;
     }
-    sStickDirection = Source::Button;
+    stick.dir = Source::Button;
     if (abs(y) >= abs(x)) {
         if (y > kStickPress)
-            sStickDirection = Source::StickUp;
+            stick.dir = stick.up;
         else if (y < -kStickPress)
-            sStickDirection = Source::StickDown;
+            stick.dir = stick.down;
     } else {
         if (x > kStickPress)
-            sStickDirection = Source::StickRight;
+            stick.dir = stick.right;
         else if (x < -kStickPress)
-            sStickDirection = Source::StickLeft;
+            stick.dir = stick.left;
     }
 }
 
@@ -342,7 +544,19 @@ bool IsPressed(const Mapping& m, const PadSnapshot& snap)
     case Source::Button:       return (snap.buttons & m.button) != 0;
     case Source::LeftTrigger:  return snap.lt >= kTriggerPress;
     case Source::RightTrigger: return snap.rt >= kTriggerPress;
-    default:                   return sStickDirection == m.source;
+    default:                   return sLeft.dir == m.source || sRight.dir == m.source;
+    }
+}
+
+// Does this entry apply in the layer right now? LT as a chord modifier is the one extra state.
+bool Applies(const Mapping& m, Layer layer)
+{
+    if (!(m.layers & LayerBit(layer)))
+        return false;
+    switch (m.chord) {
+    case Chord::LtHeld: return sLtTapHeld;
+    case Chord::LtFree: return !sLtTapHeld;
+    default:            return true;
     }
 }
 
@@ -356,45 +570,86 @@ bool Send(const Mapping& m, bool down, bool repeat)
     return InputArbiter::InjectSynthetic(e);
 }
 
-void PublishLatches()
+// Latches (what we took) and passes (what the game saw) for the filter. Called with the tick's
+// results BEFORE the layer is published, so a layer that starts hiding more never meets stale sets.
+void PublishSets(const PadSnapshot& snap, bool ltDown, bool rtDown)
 {
-    WORD buttons = 0;
-    bool stick = false;
-    bool lt = false;
-    bool rt = false;
+    WORD owned = 0;
+    bool lStick = false, rStick = false, lt = false, rt = false;
     for (int i = 0; i < kMapCount; i++) {
         if (!sInputs[i].owned)
             continue;
-        switch (kMap[i].source) {
-        case Source::Button:       buttons |= kMap[i].button; break;
-        case Source::LeftTrigger:  lt = true; break;
-        case Source::RightTrigger: rt = true; break;
-        default:                   stick = true; break;
-        }
+        const Source src = kMap[i].source;
+        if (src == Source::Button)
+            owned |= kMap[i].button;
+        else if (src == Source::LeftTrigger)
+            lt = true;
+        else if (src == Source::RightTrigger)
+            rt = true;
+        else if (IsLeftStick(src))
+            lStick = true;
+        else
+            rStick = true;
     }
-    sLatchedButtons.store(buttons, std::memory_order_release);
-    sLatchedStick.store(stick, std::memory_order_release);
+    sLatchedButtons.store(owned, std::memory_order_release);
+    sLatchedLStick.store(lStick, std::memory_order_release);
+    sLatchedRStick.store(rStick, std::memory_order_release);
     sLatchedLeftTrigger.store(lt, std::memory_order_release);
     sLatchedRightTrigger.store(rt, std::memory_order_release);
+
+    // A press nobody took, going down, is the game's until it comes up.
+    WORD passed = sPassedButtons.load(std::memory_order_relaxed);
+    passed |= static_cast<WORD>(snap.buttons & ~sPrevButtons & ~owned);
+    passed &= snap.buttons;
+    sPassedButtons.store(passed, std::memory_order_release);
+
+    if (ltDown && !sPrevLt && !lt)
+        sPassedLeftTrigger.store(true, std::memory_order_release);
+    if (!ltDown)
+        sPassedLeftTrigger.store(false, std::memory_order_release);
+    if (rtDown && !sPrevRt && !rt)
+        sPassedRightTrigger.store(true, std::memory_order_release);
+    if (!rtDown)
+        sPassedRightTrigger.store(false, std::memory_order_release);
+
+    sPassedLStick.store(sLeft.dir != Source::Button && !lStick, std::memory_order_release);
+    sPassedRStick.store(sRight.dir != Source::Button && !rStick, std::memory_order_release);
 }
 
-// The whole scope of this feature, in one predicate: UIFinalShell is on the stack under every
-// shell screen and on no stack in the strategy or tactical layers. Pause menus and everything
-// else keep the game's own pad handling.
-bool LayerOwnsPad(uint64_t now, bool foreground)
+// The layer for this tick. Past the shell the pad is the mod's only in controller mode, because in
+// mouse mode the game answers a pad with its own mouse-and-keyboard handling and the mod must not
+// disturb it. UIFinalShell on the stack is the shell: pause menus and everything else keep the
+// game's own pad handling.
+Layer ComputeLayer(uint64_t now, bool foreground)
 {
-    if (now - sLastShellCheckMs >= kShellCheckMs) {
+    if (!foreground)
+        return Layer::None;
+    const bool controller = KeyboardGate::ControllerMode();
+    // The shell scan only decides anything in mouse mode; controller mode skips it.
+    if (!controller && now - sLastShellCheckMs >= kShellCheckMs) {
         sLastShellCheckMs = now;
         void* shell = GameUI::FindMainMenuShell();
         sInShell = shell && GameUI::IsScreenOnStack(shell);
     }
-    if (!sInShell || !foreground)
-        return false;
+    if (!sInShell && !controller)
+        return Layer::None;
+
+    // A non-ambient recipe holding input: a menu, anywhere.
     if (MenuNavigator::OwnsInput() && MenuNavigator::MenuAttached()) {
         sLastOwnedMs = now;
-        return true;
+        return Layer::Menu;
     }
-    return now - sLastOwnedMs < kOwnershipGraceMs;
+    if (controller) {
+        if (MenuNavigator::OwnsInput())
+            return Layer::Hud; // an ambient recipe holding input
+        if (TacticalHUD::IsTargeting())
+            return Layer::Targeting;
+        if (TileReader::IsActive())
+            return Layer::World;
+        if (Avenger::IsGridActive())
+            return Layer::AntFarm; // nothing focused, or the branch above would have taken it
+    }
+    return now - sLastOwnedMs < kOwnershipGraceMs ? Layer::Menu : Layer::None;
 }
 
 #ifdef X2ACCESS_DEVSERVER
@@ -403,6 +658,8 @@ void ClearVirtualPad()
     sDevButtons.store(0, std::memory_order_relaxed);
     sDevLx.store(0, std::memory_order_relaxed);
     sDevLy.store(0, std::memory_order_relaxed);
+    sDevRx.store(0, std::memory_order_relaxed);
+    sDevRy.store(0, std::memory_order_relaxed);
     sDevLt.store(0, std::memory_order_relaxed);
     sDevRt.store(0, std::memory_order_relaxed);
     sDevPacket.fetch_add(1, std::memory_order_relaxed);
@@ -411,8 +668,8 @@ void ClearVirtualPad()
 // ⛔ The engine does not poll XInputGetState in this build (measured: docs/input-map.md, "Virtual
 // pad"), so a virtual press the game must see is delivered where XInput's result ends up: the live
 // input object's own InputEvent, a press then a release, the same pair a pad hands it. Done when
-// the mod's layer does not itself act on the press: a mapped input in the shell is the mod's, and
-// delivering it to the game as well would act twice.
+// the mod's layer does not itself act on the press: a mapped input is the mod's, and delivering it
+// to the game as well would act twice.
 bool DevEngineEvent(int cmd, int actionMask)
 {
     void* input = GameUI::FindLocalPlayerInput();
@@ -428,14 +685,43 @@ bool DevEngineEvent(int cmd, int actionMask)
 constexpr int kActionPress = 1;    // UIUtilities_Input.FXS_ACTION_PRESS
 constexpr int kActionRelease = 32; // UIUtilities_Input.FXS_ACTION_RELEASE
 
+// Does the layer act on this input (so the game must NOT also get it)? The same table the tick
+// walks; `chord` says LT is held with it as a modifier.
+bool LayerActsOn(Layer layer, const DevComponent& c, bool chord)
+{
+    for (const Mapping& m : kMap) {
+        if (m.source != c.source || (c.source == Source::Button && m.button != c.button))
+            continue;
+        if (!(m.layers & LayerBit(layer)))
+            continue;
+        if (m.chord == Chord::LtHeld && !chord)
+            continue;
+        if (m.chord == Chord::LtFree && chord)
+            continue;
+        return true;
+    }
+    return false;
+}
+
+// LT is a chord modifier in a layer that taps it, i.e. one that has a TapRelease entry for LT.
+bool LayerTapsLt(Layer layer)
+{
+    for (const Mapping& m : kMap) {
+        if (m.fire == Fire::TapRelease && (m.layers & LayerBit(layer)))
+            return true;
+    }
+    return false;
+}
+
 void PumpVirtualPad(uint64_t now)
 {
     if (now < sDevNextMs)
         return;
     if (sDevHolding) {
-        if (sDevHeldCmd) {
-            DevEngineEvent(sDevHeldCmd, kActionRelease);
-            sDevHeldCmd = 0;
+        for (int& cmd : sDevHeldCmds) {
+            if (cmd)
+                DevEngineEvent(cmd, kActionRelease);
+            cmd = 0;
         }
         ClearVirtualPad();
         sDevHolding = false;
@@ -450,17 +736,26 @@ void PumpVirtualPad(uint64_t now)
         step = sDevQueue.front();
         sDevQueue.pop_front();
     }
-    // The mod's layer acts on what it maps while it owns the pad; everything else is the game's.
-    const bool modActs = sLayerOwnsPad.load(std::memory_order_acquire) && !step.engineOnly;
-    if (step.cmd && !modActs) {
-        const bool sent = DevEngineEvent(step.cmd, kActionPress);
-        sDevHeldCmd = sent ? step.cmd : 0;
-        LOG_DEBUG("Gamepad: virtual press cmd %d -> InputEvent %s", step.cmd,
-            sent ? "sent" : "NOT sent (no input object)");
+    // Each input is delivered to the game exactly when the current layer does not act on it.
+    const Layer layer = sCurrentLayer;
+    bool ltInStep = false;
+    for (int i = 0; i < step.compCount; i++)
+        ltInStep = ltInStep || step.comps[i].source == Source::LeftTrigger;
+    const bool chord = ltInStep && LayerTapsLt(layer);
+    for (int i = 0; i < step.compCount; i++) {
+        const DevComponent& c = step.comps[i];
+        if (!c.cmd || LayerActsOn(layer, c, chord))
+            continue;
+        const bool sent = DevEngineEvent(c.cmd, kActionPress);
+        sDevHeldCmds[i] = sent ? c.cmd : 0;
+        LOG_DEBUG("Gamepad: virtual press cmd %d -> InputEvent %s (layer %s)", c.cmd,
+            sent ? "sent" : "NOT sent (no input object)", kLayerNames[static_cast<int>(layer)]);
     }
     sDevButtons.store(step.buttons, std::memory_order_relaxed);
     sDevLx.store(step.lx, std::memory_order_relaxed);
     sDevLy.store(step.ly, std::memory_order_relaxed);
+    sDevRx.store(step.rx, std::memory_order_relaxed);
+    sDevRy.store(step.ry, std::memory_order_relaxed);
     sDevLt.store(step.lt, std::memory_order_relaxed);
     sDevRt.store(step.rt, std::memory_order_relaxed);
     sDevPacket.fetch_add(1, std::memory_order_relaxed);
@@ -496,20 +791,33 @@ void OnTick()
 #endif
 
     const PadSnapshot snap = ReadPads(now);
-    const bool owns = LayerOwnsPad(now, foreground);
-    sLayerOwnsPad.store(owns, std::memory_order_release);
-    UpdateStickDirection(snap);
+    const Layer layer = ComputeLayer(now, foreground);
+    if (layer != sCurrentLayer) {
+        LOG_INFO("Gamepad: layer %s -> %s", kLayerNames[static_cast<int>(sCurrentLayer)],
+            kLayerNames[static_cast<int>(layer)]);
+        sCurrentLayer = layer;
+    }
+    UpdateStickDirection(sLeft, snap.lx, snap.ly, /*right*/ false);
+    UpdateStickDirection(sRight, snap.rx, snap.ry, /*right*/ true);
+
+    const bool ltDown = foreground && snap.lt >= kTriggerPress;
+    const bool rtDown = foreground && snap.rt >= kTriggerPress;
+    const bool leftDir = sLeft.dir != Source::Button;
+    const bool rightDir = sRight.dir != Source::Button;
 
     // ⛔ A screen reader cuts its own speech when it sees a key go down, under the player's own
     // settings, and a pad press is no key: without this every line would queue behind the last,
-    // and scrolling a menu would lag further with each press. So a press stops speech where the
-    // keypress would have, and the mod still never interrupts on its own account. B is unmapped,
-    // so it never reaches the loop below.
-    const bool backPressed = foreground && (snap.buttons & XINPUT_GAMEPAD_B) != 0;
-    if (owns && backPressed && !sBackHeld)
+    // and scrolling a menu would lag further with each press. So any press stops speech where the
+    // keypress would have — including one that passes to the game (RB, RT, X, Y, B), because the
+    // reader cannot see those either — and the mod still never interrupts on its own account.
+    // Not in the None layer: there the pad is vanilla and so is the reader's view of it.
+    const bool anyPress = foreground
+        && ((snap.buttons & ~sPrevButtons) != 0 || (ltDown && !sPrevLt) || (rtDown && !sPrevRt)
+            || (leftDir && sLeft.dir != sPrevLeftDir) || (rightDir && sRight.dir != sPrevRightDir));
+    if (layer != Layer::None && anyPress)
         TTS::Silence();
-    sBackHeld = backPressed;
 
+    sLtTapHeld = false;
     for (int i = 0; i < kMapCount; i++) {
         const Mapping& m = kMap[i];
         InputState& s = sInputs[i];
@@ -517,28 +825,55 @@ void OnTick()
 
         if (pressed && !s.held) {
             s.held = true;
-            s.owned = owns;
+            const bool applies = Applies(m, layer);
+            s.owned = applies;
+            s.layer = layer;
             s.nextRepeatMs = now + kRepeatDelayMs;
             sPresses++;
-            if (owns) {
-                TTS::Silence();
-                const bool claimed = Send(m, /*down*/ true, /*repeat*/ false);
-                sTaken += claimed ? 1 : 0;
-                LOG_DEBUG("Gamepad: %s -> vk 0x%02X mods 0x%X (%s)", m.name, m.vk, m.mods,
-                    claimed ? "claimed" : "no claim");
+            if (applies) {
+                if (m.fire == Fire::TapRelease) {
+                    sChordFired = false; // a fresh LT: nothing has fired under it yet
+                    sTaken++;
+                } else {
+                    if (m.chord == Chord::LtHeld)
+                        sChordFired = true;
+                    const bool claimed = Send(m, /*down*/ true, /*repeat*/ false);
+                    sTaken += claimed ? 1 : 0;
+                    LOG_DEBUG("Gamepad: %s -> vk 0x%02X mods 0x%X (%s)", m.name, m.vk, m.mods,
+                        claimed ? "claimed" : "no claim");
+                }
             }
-        } else if (pressed && s.owned && m.repeats && now >= s.nextRepeatMs) {
+        } else if (pressed && s.owned && m.fire == Fire::Press && m.repeats
+            && s.layer == layer && now >= s.nextRepeatMs) {
             s.nextRepeatMs = now + kRepeatIntervalMs;
             TTS::Silence();
             Send(m, /*down*/ true, /*repeat*/ true);
         } else if (!pressed && s.held) {
-            if (s.owned)
-                Send(m, /*down*/ false, /*repeat*/ false);
+            if (s.owned) {
+                if (m.fire == Fire::Press) {
+                    Send(m, /*down*/ false, /*repeat*/ false);
+                } else if (!sChordFired && s.layer == layer) {
+                    // The tap: LT went down and came up with no chord between.
+                    const bool claimed = Send(m, /*down*/ true, /*repeat*/ false);
+                    Send(m, /*down*/ false, /*repeat*/ false);
+                    LOG_DEBUG("Gamepad: %s tap -> vk 0x%02X (%s)", m.name, m.vk,
+                        claimed ? "claimed" : "no claim");
+                }
+            }
             s.held = false;
             s.owned = false;
         }
+        if (m.fire == Fire::TapRelease && s.held && s.owned)
+            sLtTapHeld = true;
     }
-    PublishLatches();
+
+    PublishSets(snap, ltDown, rtDown);
+    sLayer.store(static_cast<uint8_t>(layer), std::memory_order_release);
+    sPrevButtons = foreground ? snap.buttons : 0;
+    sPrevLt = ltDown;
+    sPrevRt = rtDown;
+    sPrevLeftDir = sLeft.dir;
+    sPrevRightDir = sRight.dir;
 }
 
 void Shutdown()
@@ -556,55 +891,82 @@ void Shutdown()
 #ifdef X2ACCESS_DEVSERVER
 std::string DevQueuePresses(const std::string& names, unsigned holdMs, unsigned gapMs, bool engineEvents)
 {
+    // UIUtilities_Input.FXS_* commands stand in for each input when the engine does not poll XInput.
+    struct Named {
+        const char* name;
+        Source source;
+        WORD button;
+        int cmd;
+    };
+    static const Named kNamed[] = {
+        {"A", Source::Button, XINPUT_GAMEPAD_A, 300}, {"B", Source::Button, XINPUT_GAMEPAD_B, 301},
+        {"X", Source::Button, XINPUT_GAMEPAD_X, 302}, {"Y", Source::Button, XINPUT_GAMEPAD_Y, 303},
+        {"LB", Source::Button, XINPUT_GAMEPAD_LEFT_SHOULDER, 330},
+        {"RB", Source::Button, XINPUT_GAMEPAD_RIGHT_SHOULDER, 331},
+        {"Start", Source::Button, XINPUT_GAMEPAD_START, 321},
+        {"Back", Source::Button, XINPUT_GAMEPAD_BACK, 320},
+        {"L3", Source::Button, XINPUT_GAMEPAD_LEFT_THUMB, 311},
+        {"R3", Source::Button, XINPUT_GAMEPAD_RIGHT_THUMB, 313},
+        {"DUp", Source::Button, XINPUT_GAMEPAD_DPAD_UP, 350},
+        {"DRight", Source::Button, XINPUT_GAMEPAD_DPAD_RIGHT, 352},
+        {"DDown", Source::Button, XINPUT_GAMEPAD_DPAD_DOWN, 354},
+        {"DLeft", Source::Button, XINPUT_GAMEPAD_DPAD_LEFT, 356},
+        {"LUp", Source::LStickUp, 0, 370}, {"LDown", Source::LStickDown, 0, 371},
+        {"LLeft", Source::LStickLeft, 0, 372}, {"LRight", Source::LStickRight, 0, 373},
+        {"RUp", Source::RStickUp, 0, 374}, {"RDown", Source::RStickDown, 0, 375},
+        {"RLeft", Source::RStickLeft, 0, 376}, {"RRight", Source::RStickRight, 0, 378},
+        {"LT", Source::LeftTrigger, 0, 332}, {"RT", Source::RightTrigger, 0, 333},
+    };
+
     std::deque<DevStep> steps;
     size_t pos = 0;
     while (pos <= names.size()) {
         size_t comma = names.find(',', pos);
         if (comma == std::string::npos)
             comma = names.size();
-        const std::string name = names.substr(pos, comma - pos);
+        const std::string token = names.substr(pos, comma - pos);
         pos = comma + 1;
-        if (name.empty())
+        if (token.empty())
             continue;
 
         DevStep step;
         step.holdMs = holdMs;
         step.gapMs = gapMs;
-        // UIUtilities_Input.FXS_* commands; the left stick stands in as its virtual direction keys.
-        struct Named { const char* name; WORD button; int cmd; bool engineOnly; };
-        static const Named kNamed[] = {
-            {"A", XINPUT_GAMEPAD_A, 300, false}, {"B", XINPUT_GAMEPAD_B, 301, true},
-            {"X", XINPUT_GAMEPAD_X, 302, false}, {"Y", XINPUT_GAMEPAD_Y, 303, false},
-            {"LB", XINPUT_GAMEPAD_LEFT_SHOULDER, 330, false},
-            {"RB", XINPUT_GAMEPAD_RIGHT_SHOULDER, 331, false},
-            {"Start", XINPUT_GAMEPAD_START, 321, true}, {"Back", XINPUT_GAMEPAD_BACK, 320, true},
-            {"L3", XINPUT_GAMEPAD_LEFT_THUMB, 311, true}, {"R3", XINPUT_GAMEPAD_RIGHT_THUMB, 313, true},
-            {"DUp", XINPUT_GAMEPAD_DPAD_UP, 350, false}, {"DRight", XINPUT_GAMEPAD_DPAD_RIGHT, 352, false},
-            {"DDown", XINPUT_GAMEPAD_DPAD_DOWN, 354, false}, {"DLeft", XINPUT_GAMEPAD_DPAD_LEFT, 356, false},
-        };
-        bool found = false;
-        for (const Named& n : kNamed) {
-            if (name == n.name) {
-                step.buttons = n.button;
-                step.cmd = n.cmd;
-                step.engineOnly = n.engineOnly;
-                found = true;
+        // "LT+DUp": inputs held together. A space counts too, since a '+' in a query decodes to one.
+        size_t cpos = 0;
+        while (cpos <= token.size()) {
+            size_t plus = token.find_first_of("+ ", cpos);
+            if (plus == std::string::npos)
+                plus = token.size();
+            const std::string name = token.substr(cpos, plus - cpos);
+            cpos = plus + 1;
+            if (name.empty())
+                continue;
+            const Named* found = nullptr;
+            for (const Named& n : kNamed) {
+                if (name == n.name)
+                    found = &n;
             }
+            if (!found || step.compCount >= kDevMaxComps)
+                return name;
+            switch (found->source) {
+            case Source::Button:       step.buttons |= found->button; break;
+            case Source::LStickUp:     step.ly = 30000; break;
+            case Source::LStickDown:   step.ly = -30000; break;
+            case Source::LStickLeft:   step.lx = -30000; break;
+            case Source::LStickRight:  step.lx = 30000; break;
+            case Source::RStickUp:     step.ry = 30000; break;
+            case Source::RStickDown:   step.ry = -30000; break;
+            case Source::RStickLeft:   step.rx = -30000; break;
+            case Source::RStickRight:  step.rx = 30000; break;
+            case Source::LeftTrigger:  step.lt = 255; break;
+            case Source::RightTrigger: step.rt = 255; break;
+            }
+            DevComponent& c = step.comps[step.compCount++];
+            c.source = found->source;
+            c.button = found->button;
+            c.cmd = engineEvents ? found->cmd : 0; // engine=0: XInput only, to measure the engine alone
         }
-        if (!found) {
-            found = true;
-            if (name == "LUp") { step.ly = 30000; step.cmd = 370; }
-            else if (name == "LDown") { step.ly = -30000; step.cmd = 371; }
-            else if (name == "LLeft") { step.lx = -30000; step.cmd = 372; }
-            else if (name == "LRight") { step.lx = 30000; step.cmd = 373; }
-            else if (name == "LT") { step.lt = 255; step.cmd = 332; }
-            else if (name == "RT") { step.rt = 255; step.cmd = 333; }
-            else found = false;
-        }
-        if (!found)
-            return name;
-        if (!engineEvents)
-            step.cmd = 0; // XInput only: for measuring what the engine does with the pad itself
         steps.push_back(step);
     }
     std::lock_guard<std::mutex> lock(sDevMutex);
@@ -619,15 +981,15 @@ void DevSetHideFromEngine(bool hide)
 
 std::string DevStatus()
 {
-    char line[512];
+    char line[640];
     int connected = 0;
     for (bool slot : sSlotConnected)
         connected += slot ? 1 : 0;
     snprintf(line, sizeof(line),
-        "filter %s%s, pads %d, in shell %d, foreground %d, layer owns pad %d, presses %llu, "
+        "filter %s%s, pads %d, in shell %d, foreground %d, layer %s, lt chord %d, presses %llu, "
         "taken by claims %llu, engine filter calls %llu (virtual %llu), threads %lu/%lu, last %lu\n",
         sIatSlot ? "installed" : "NOT installed", sHideFromEngine.load() ? " (engine told: no pad)" : "", connected, sInShell,
-        InputArbiter::IsGameForeground(), sLayerOwnsPad.load(),
+        InputArbiter::IsGameForeground(), kLayerNames[sLayer.load() % kLayerCount], sLtTapHeld,
         static_cast<unsigned long long>(sPresses), static_cast<unsigned long long>(sTaken),
         static_cast<unsigned long long>(sFilterCalls.load()),
         static_cast<unsigned long long>(sFilterVirtual.load()),

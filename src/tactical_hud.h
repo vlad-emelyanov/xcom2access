@@ -39,4 +39,9 @@ bool IsUsable();
 /// it the right edge for per-mission state: it rises once when the mission starts.
 bool IsMissionActive();
 
+/// Is the shot HUD raised (UITacticalHUD.m_isMenuRaised, on a usable HUD)? The targeting claims'
+/// own gate, exported for the controller layer, which hands the game every steering button there.
+/// Reflects the last OnTick.
+bool IsTargeting();
+
 } // namespace TacticalHUD

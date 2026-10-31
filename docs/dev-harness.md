@@ -54,7 +54,10 @@ Endpoints:
   (`docs/input-map.md`, the controller). Bare, it prints the controller layer's state, including how
   many times the ENGINE called the filter, from how many threads, and how many of those carried a
   virtual press: a count that stands still while `presses` rises is the failing launch. Names: `A B X
-  Y LB RB LT RT Start Back L3 R3 DUp DDown DLeft DRight LUp LDown LLeft LRight`. `engine=0` skips the
+  Y LB RB LT RT Start Back L3 R3 DUp DDown DLeft DRight LUp LDown LLeft LRight RUp RDown RLeft RRight`. Inputs
+  joined with `+` are held together (at most three), so `press=LT+DUp` runs a chord; a lone `LT` is a tap. A
+  virtual input reaches the game exactly when the CURRENT layer does not act on it. Bare `/pad` prints the
+  layer (`none menu hud world targeting antfarm`). `engine=0` skips the
   script-level delivery. It needs a connected pad to merge into. `tools/xctl.ps1 pad A,DDown` drives it
   anywhere; prove a press by `/status` (screen stack) and `/props` (a soldier index), not by the
   counters.
