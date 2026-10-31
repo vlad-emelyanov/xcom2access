@@ -61,6 +61,19 @@ var config string NarratedDamageUnits;
 // ClaimSpawnNarration / WasSpawnNarrated, where the reasoning lives.
 var config string NarratedSpawnUnits;
 
+// The turn-banner memo: which banner the game last drew, as one of the BANNER_ kinds. The game
+// draws a banner only when the kind CHANGES (XComPresentationLayer.UIEndTurn compares against
+// m_lastTurnOverlay, which starts at "local"), so this is the same one-int memo and 0 is the
+// game's own starting value — which is why a config var with no initialiser is right here. Cleared
+// when a mission session ends (X2AccessMissionPoll.EndSession) and set to local on every XCom turn.
+var config int LastTurnBanner;
+
+const BANNER_LOCAL = 0;       // the XCom turn: the game draws NO banner for it
+const BANNER_ALIEN = 1;
+const BANNER_LOST = 2;
+const BANNER_CHOSEN = 3;
+const BANNER_RESISTANCE = 4;
+
 static function array<X2DataTemplate> CreateTemplates()
 {
 	local array<X2DataTemplate> Templates;
@@ -116,8 +129,18 @@ static function CHEventListenerTemplate CreateTacticalNarrationListener()
 
 	// Structural.
 	Template.AddCHEvent('PlayerTurnBegun', OnPlayerTurnBegun, ELD_OnStateSubmitted, 50);
+	// The turn BANNER is a per-group decision (XGPlayer.OnBeginTurnVisualized), so it rides the
+	// group event, not the player's. Fired from X2TacticalGameRuleset.SetupUnitActionsForGroupTurnBegin
+	// only for a group whose summoning sickness is cleared, which is half of the banner's own test.
+	Template.AddCHEvent('UnitGroupTurnBegun', OnUnitGroupTurnBegun, ELD_OnStateSubmitted, 50);
 	Template.AddCHEvent('SquadConcealmentBroken', OnSquadConcealmentBroken, ELD_OnStateSubmitted, 50);
 	Template.AddCHEvent('UnitConcealmentBroken', OnUnitConcealmentBroken, ELD_OnStateSubmitted, 45);
+	// The ENTERED pair. A squad entering fires the squad event once AND the unit event once per
+	// soldier (XComGameState_Player.SetSquadConcealmentNewGameState calls SetIndividualConcealment on
+	// each), so the unit handler stands down inside a squad change, the way the game's own
+	// BuildVisualizationForConcealmentChanged gives the squad ONE instigator flyover.
+	Template.AddCHEvent('SquadConcealmentEntered', OnSquadConcealmentEntered, ELD_OnStateSubmitted, 50);
+	Template.AddCHEvent('UnitConcealmentEntered', OnUnitConcealmentEntered, ELD_OnStateSubmitted, 45);
 	Template.AddCHEvent('UnitPanicked', OnUnitPanicked, ELD_OnStateSubmitted, 45);
 	Template.AddCHEvent('ShieldsExpended', OnShieldsExpended, ELD_OnStateSubmitted, 40);
 	Template.AddCHEvent('UnitEvacuated', OnUnitEvacuated, ELD_OnStateSubmitted, 40);
@@ -145,20 +168,118 @@ static function EventListenerReturn OnPlayerTurnBegun(Object EventData, Object E
 	// Every handover, every team — the memo's lifetime is "this turn", not "this banner".
 	ResetSpawnNarration();
 
-	// XCom and the aliens only. WOTC also runs turns for the Lost, civilians and the Resistance,
-	// and the game gives those no turn banner either — announcing them would turn a Lost-heavy
-	// mission into a metronome.
-	switch (PlayerState.GetTeam())
+	// Only the XCom turn is spoken here. The game draws NO banner for it
+	// (XComPresentationLayer.UIEndTurn, eTurnOverlay_Local: "do not show any banner for the start
+	// of the XCom turn"), so this line is an AID, not parity: the HUD coming back is what a sighted
+	// player sees, and the turn counter's "Your Turn" is the nearest word the game owns. The enemy
+	// side is not spoken here at all, because its banners are decided per initiative GROUP, not per
+	// player — OnUnitGroupTurnBegun mirrors that.
+	if (PlayerState.GetTeam() == eTeam_XCom)
 	{
-	case eTeam_XCom:
+		// The game's memo returns to "local" with this turn, which re-arms the next alien banner.
+		default.LastTurnBanner = BANNER_LOCAL;
 		class'X2AccessNarrator'.static.Alert(class'UISpecialMissionHUD_TurnCounter'.default.m_strPlayerTurnLabel);
-		break;
-	case eTeam_Alien:
-		class'X2AccessNarrator'.static.Alert(class'UITurnOverlay'.default.m_sAlienTurn);
-		break;
 	}
 
 	return ELR_NoInterrupt;
+}
+
+// The enemy turn banners. The game DOES draw one for the Lost, the Chosen and the Resistance as
+// well as the aliens — XGPlayer.OnBeginTurnVisualized (:866-889) picks eTurnOverlay_Alien, _Chosen,
+// _TheLost or _Resistance and calls UIEndTurn, which shows it. (This file used to say the game
+// draws nothing for the Lost. It does.)
+//
+// WHEN it fires, mirrored: OnBeginTurnVisualized runs for each initiative group's turn begin and
+// acts only on "the first initiative group with valid members" — bSummoningSicknessCleared and
+// GetLivingMembers — and UIEndTurn then draws only when the KIND differs from the last one drawn,
+// which ClaimTurnBanner holds. The group event is submitted only for a group with its sickness
+// cleared; the living-members test is repeated here. An engaged Chosen as the group's lead is the
+// game's own special case and gets the Chosen banner.
+static function EventListenerReturn OnUnitGroupTurnBegun(Object EventData, Object EventSource, XComGameState GameState, Name Event, Object CallbackData)
+{
+	local string Word;
+
+	Word = ClaimTurnBanner(GroupBannerKind(XComGameState_AIGroup(EventData), false));
+	if (Word != "")
+		class'X2AccessNarrator'.static.Alert(Word);
+
+	return ELR_NoInterrupt;
+}
+
+// Which banner this group's turn would draw, or -1 when the game decides nothing for it. The
+// replay narrator passes bReplay because XGPlayer skips the validity test inside the tutorial.
+static function int GroupBannerKind(XComGameState_AIGroup GroupState, bool bReplay)
+{
+	local array<int> LivingIDs;
+	local XComGameState_Unit Lead;
+
+	if (GroupState == none)
+		return -1;
+	if (!bReplay && (!GroupState.bSummoningSicknessCleared || !GroupState.GetLivingMembers(LivingIDs)))
+		return -1;
+
+	switch (GroupState.TeamName)
+	{
+	case eTeam_Alien:
+		if (GroupState.m_arrMembers.Length > 0)
+			Lead = XComGameState_Unit(`XCOMHISTORY.GetGameStateForObjectID(GroupState.m_arrMembers[0].ObjectID));
+		if (Lead != none && Lead.IsChosen() && Lead.IsAlive() && !Lead.IsIncapacitated() && !Lead.bRemovedFromPlay)
+			return BANNER_CHOSEN;
+		return BANNER_ALIEN;
+	case eTeam_TheLost:
+		return BANNER_LOST;
+	case eTeam_Resistance:
+		return BANNER_RESISTANCE;
+	}
+
+	return BANNER_LOCAL;
+}
+
+// The banner kind for a whole player's turn, for the replay narrator, which sees the player's
+// turn-begin frame and has no group event.
+static function int TeamBannerKind(ETeam Team)
+{
+	switch (Team)
+	{
+	case eTeam_Alien:
+		return BANNER_ALIEN;
+	case eTeam_TheLost:
+		return BANNER_LOST;
+	case eTeam_Resistance:
+		return BANNER_RESISTANCE;
+	}
+
+	return BANNER_LOCAL;
+}
+
+// UIEndTurn's own gate: a banner is drawn only when its kind differs from the last one. Returns the
+// banner's text — UITurnOverlay's own strings, which the running game populates — or "" when
+// nothing is drawn (the same kind again, no decision, or the local turn, which has no banner).
+static function string ClaimTurnBanner(int Kind)
+{
+	if (Kind < 0 || Kind == default.LastTurnBanner)
+		return "";
+
+	default.LastTurnBanner = Kind;
+
+	switch (Kind)
+	{
+	case BANNER_ALIEN:
+		return class'UITurnOverlay'.default.m_sAlienTurn;
+	case BANNER_LOST:
+		return class'UITurnOverlay'.default.m_sTheLostTurn;
+	case BANNER_CHOSEN:
+		return class'UITurnOverlay'.default.m_sChosenTurn;
+	case BANNER_RESISTANCE:
+		return class'UITurnOverlay'.default.m_sXComTurn;
+	}
+
+	return "";
+}
+
+static function ResetTurnBanner()
+{
+	default.LastTurnBanner = BANNER_LOCAL;
 }
 
 // ---------------------------------------------------------------------------
@@ -519,6 +640,83 @@ static function EventListenerReturn OnUnitConcealmentBroken(Object EventData, Ob
 		class'X2AccessVocab'.default.UnitRevealed, UnitName(Unit)));
 
 	return ELR_NoInterrupt;
+}
+
+// Concealment ENTERED. Two facts the game draws and the broken pair never covered: the HUD banner
+// for the selected soldier (UITacticalHUD.RealizeConcealmentStatus: "SQUAD CONCEALED" or
+// "CONCEALED"), and the "Concealed" flyover over the instigator
+// (XComGameState_Unit.BuildVisualizationForConcealmentChanged).
+//
+// ⛔ Silent until the orientation line has been given. A mission that BEGINS concealed enters
+// concealment during setup, before the HUD exists, and the orientation line already says it
+// (X2AccessMissionPoll.Brief); a loaded save fires nothing at all, so the line is its only voice.
+static function EventListenerReturn OnSquadConcealmentEntered(Object EventData, Object EventSource, XComGameState GameState, Name Event, Object CallbackData)
+{
+	local XComGameState_Player PlayerState;
+
+	PlayerState = XComGameState_Player(EventData);
+	if (PlayerState == none || PlayerState.GetTeam() != eTeam_XCom)
+		return ELR_NoInterrupt;
+	if (!class'X2AccessMissionPoll'.static.IsBriefed())
+		return ELR_NoInterrupt;
+
+	class'X2AccessNarrator'.static.Alert(SquadConcealedWord());
+
+	return ELR_NoInterrupt;
+}
+
+static function EventListenerReturn OnUnitConcealmentEntered(Object EventData, Object EventSource, XComGameState GameState, Name Event, Object CallbackData)
+{
+	local XComGameState_Unit Unit;
+
+	Unit = XComGameState_Unit(EventData);
+	if (Unit == none || !Unit.IsFriendlyToLocalPlayer())
+		return ELR_NoInterrupt;
+	if (!class'X2AccessMissionPoll'.static.IsBriefed())
+		return ELR_NoInterrupt;
+
+	// A squad entering is the squad event's line. The game's own test for it
+	// (BuildVisualizationForConcealmentChanged): the player's squad flag differs from its previous
+	// version in this very state.
+	if (IsSquadConcealmentChange(GameState))
+		return ELR_NoInterrupt;
+
+	class'X2AccessNarrator'.static.Alert(UnitConcealedLine(Unit));
+
+	return ELR_NoInterrupt;
+}
+
+// True when this game state flips a player's squad-concealed flag either way.
+static function bool IsSquadConcealmentChange(XComGameState GameState)
+{
+	local XComGameState_Player PlayerState, PrevPlayer;
+
+	if (GameState == none)
+		return false;
+
+	foreach GameState.IterateByClassType(class'XComGameState_Player', PlayerState)
+	{
+		PrevPlayer = XComGameState_Player(`XCOMHISTORY.GetGameStateForObjectID(PlayerState.ObjectID, eReturnType_Reference, GameState.HistoryIndex - 1));
+		if (PrevPlayer != none && PrevPlayer.bSquadIsConcealed != PlayerState.bSquadIsConcealed)
+			return true;
+	}
+
+	return false;
+}
+
+// The HUD banner's own word. Shared with the replay narrator.
+static function string SquadConcealedWord()
+{
+	return class'UITacticalHUD'.default.m_strSquadConcealed;
+}
+
+// The flyover word over one soldier, under the name the other lines use.
+static function string UnitConcealedLine(XComGameState_Unit Unit)
+{
+	if (Unit == none || class'X2StatusEffects'.default.ConcealedFriendlyName == "")
+		return "";
+
+	return UnitName(Unit) $ ":" @ class'X2StatusEffects'.default.ConcealedFriendlyName $ ".";
 }
 
 static function EventListenerReturn OnUnitPanicked(Object EventData, Object EventSource, XComGameState GameState, Name Event, Object CallbackData)

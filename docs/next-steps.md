@@ -312,6 +312,39 @@ key set and native cache have not been read live. Confirm the missing-companion 
 resolved through `Object.Localize` even when its script package fails to load; startup failures
 before localization exists are logged, not spoken (`docs/localization.md`).
 
+**Mission-load orientation, concealment entered, reinforcement countdown, objective ticks, enemy
+turn banners, enemy overwatch** (2026-10-30, `X2AccessMissionPoll.uc`, `X2AccessTacticalEvents`
+`OnUnitGroupTurnBegun` / `OnSquadConcealmentEntered` / `OnUnitConcealmentEntered`, `DescribeTargetOverwatch`;
+rules in `surfaces/tactical.md` under "HUD facts with no event") - written from `SrcOrig` with the
+companion NOT compiled and nothing heard. Live checks owed, on a NORMAL mission (Gatecrasher), then
+the tutorial:
+
+1. **Orientation, new mission**: ONE line after the dropship intro when you get control, e.g.
+   `OPERATION: <name>. SQUAD CONCEALED`; none before the intro ends, none a second time at turn 1.
+2. **Orientation, loaded save**: load a mid-mission save, from the main menu AND from the in-game
+   menu (the second is the `TimeSeconds` case): one line, no operation name, concealment word only
+   if concealed. Check `just dev-props "cdo=X2AccessMissionPoll"` shows `bBriefed` true afterwards
+   and that no objective is recited on a save that already has a completed row.
+3. **Concealment entered**: break concealment, then re-enter it (Phantom / a Reaper's Shadow / a new
+   mission with a concealed start). Squad: ONE `SQUAD CONCEALED`. Individual: `<name>: Concealed.`
+   once per soldier. A mission that STARTS concealed must say it once (the orientation line) and not
+   again from the event.
+4. **Reinforcement countdown**: a mission with a timed call (Gatecrasher's pods call reinforcements):
+   `REINFORCEMENTS INCOMING, in 3 turns.` when the panel appears, again at 2 and 1, and nothing when
+   it lands. Confirm `m_kCountdown.bIsVisible` is true while the panel is up.
+5. **Objective ticks**: complete an objective (a pod kill, a hack, an extraction counter row).
+   `<label>, completed.` once; a failed timer row says `failed`. A load must not recite.
+6. **Enemy turn banners**: aliens say `ALIEN ACTIVITY` once per turn, not once per pod; a mission with
+   the Lost says `THE LOST` and an engaged Chosen says `CHOSEN ACTION`; the XCom turn says only
+   `Your Turn`. If the Lost say nothing, the group event did not fire for them: read
+   `LastTurnBanner` on the CDO.
+7. **Enemy overwatch**: an enemy holding overwatch reads `<cover>, <health>, Overwatch` in the
+   markers ring and the Targets stop; confirm against a screenshot that the unit flag really draws
+   the icon for an enemy, since that was never verified.
+8. **Tutorial**: no orientation duplicate, a banner for the alien turn through the replay branch,
+   and the objective list ticks speak.
+9. Shape-count the ring and grep it for a double space (an empty `localized` word is the tell).
+
 **The pod reveal and the reinforcement drop** (2026-09-16, `X2AccessTacticalEvents.OnScamperBegin` /
 `OnSpawnReinforcementsComplete`, builders `BuildRevealLine` / `BuildReinforcementLine`, the replay
 branches `NarrateReveal` / `NarrateReinforcements`; rules in `surfaces/tactical.md` under "Tactical

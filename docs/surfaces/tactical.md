@@ -1348,6 +1348,60 @@ the listener set does not work if any one of them is undone.
       deferred to the reveal.
     - Both are `Combat`, not `Alert`: the reveal often lands seconds after the concealment-broken
       alert for the same move, the drop after "Enemy turn.", and an alert would cut those short.
+- **HUD facts with no event: the orientation line, the reinforcement countdown, objective ticks**
+  (`X2AccessMissionPoll.uc`, polled from `X2AccessReplayNarration.PollReplay`, which native already
+  calls every 100 ms on every world). All three read STATE THE SCREEN KEEPS, so they work on a
+  loaded save (no turn-begin event runs) and in the tutorial (no event runs at all).
+  - ⛔ **A session is a tactical world, and it ends two ways**: the world stops being tactical, OR
+    `WorldInfo.TimeSeconds` runs backwards (it restarts with every level, so a load from the in-game
+    menu replaces one tactical world with another and the first test never sees it).
+    `EndSession` clears every memo and the turn-banner memo.
+  - **The orientation line fires once, when the player first has the keyboard**: HUD inited, rules
+    in `TurnPhase_UnitActions`, a soldier selected, and the visualizer idle (the idle test is skipped
+    in a replay, which never goes idle). It carries only facts the game DRAWS, each under its own
+    condition: the operation name only if `UIMissionIntro` was on the stack (a new mission; the HUD
+    draws no mission name, so a loaded save gets none), the HUD's concealment banner word for the
+    selected soldier (`RealizeConcealmentStatus`: shadow, squad, individual; nothing when not
+    concealed), and each VISIBLE `UISpecialMissionHUD_TurnCounter`. **No turn word**:
+    `UIEndTurn(eTurnOverlay_Local)` draws no banner for the XCom turn, and the counter's "Your
+    Turn" is already one of the counters when it is drawn. Objectives stay on `Ctrl+X`.
+  - ⛔ **The concealment-ENTERED events stand down until the orientation line has been given**
+    (`IsBriefed`): a mission that starts concealed enters concealment during setup, before the HUD
+    exists, and the line says it.
+  - **Reinforcement countdown**: gate is the panel's own flag (`UITacticalHUD.m_kCountdown.bIsVisible`,
+    a child widget whose `Show`/`Hide` the game toggles deliberately), the number is the spawner's
+    `Countdown > 0` (Flash keeps it, script does not), the words are `m_strReinforcementsTitle` /
+    `Body` with the scanner's `TurnWords`. Memo per (group ObjectID, count): spoken when a group's
+    panel appears and each time its count changes. The panel holds ONE group (the first spawner of
+    the block it last saw); with two pending each is spoken under its own identity. Unlike the
+    scanner ring, no spawn-flare gate: the panel is drawn for every kind.
+  - **Objective completed/failed, by polling what the list retains** (`PollObjectives`): the game
+    draws completion as a tick box and a colour only, `XComGameState_ObjectivesList` is rewritten by
+    Kismet with no event, and each row keeps its `ObjectiveDisplayInfo`. Identity is the game's own
+    (`MissionType` + `DisplayLabel`, `GetObjectiveDisplayInfoIndex`); only checkbox and timer rows are
+    spoken (the two kinds that draw a state), only visible rows, and the first read after the
+    orientation line is the silent baseline. The words are `ObjectiveCompleted` / `ObjectiveFailed`,
+    the same pair `Ctrl+X` speaks.
+- **Turn banners** (`OnUnitGroupTurnBegun`, `GroupBannerKind`, `ClaimTurnBanner`). The game DOES draw
+  a banner for the Lost, the Chosen and the Resistance (`XGPlayer.OnBeginTurnVisualized`, :866-889;
+  this file used to say it did not). Mirrored: per initiative GROUP, valid only with
+  `bSummoningSicknessCleared` and living members, an engaged Chosen as the lead picks the Chosen
+  banner, and `UIEndTurn` draws only when the KIND changes, so the memo is one int that starts at
+  "local" (`LastTurnBanner`). Words are `UITurnOverlay.m_sAlienTurn` / `m_sChosenTurn` /
+  `m_sTheLostTurn` / `m_sXComTurn` (the Resistance banner is the one the game labels "RESISTANCE
+  ACTIVITY"). The XCom turn has no banner; its "Your Turn" is an AID and re-arms the memo. The
+  tutorial has no group event, so the replay narrator uses the player's turn-begin frame
+  (`TeamBannerKind`) through the same memo.
+- **Concealment entered** (`SquadConcealmentEntered`, `UnitConcealmentEntered`, both
+  `ELD_OnStateSubmitted`). A squad entering fires the squad event once AND the unit event once per
+  soldier, so the unit handler stands down inside a squad change by the game's own test (the player's
+  squad flag differs from its previous version in the same state). Words: the HUD banner
+  `UITacticalHUD.m_strSquadConcealed` for the squad; `X2StatusEffects.ConcealedFriendlyName` (the
+  flyover word) under the soldier's name for one unit.
+- **Enemy overwatch** (`DescribeTargetOverwatch`): `UIUnitFlag.RealizeOverwatch` sends
+  `ReserveActionPoints.Find('Overwatch') > -1` to Flash for every unit with a flag, with no team
+  gate, so the enemy ring and the Targets stop say it, in the Overwatch ability's own name
+  (`X2AccessHelper.OverwatchWord`). The Flash side of the icon is unverified for enemies.
 - **Replay narration** (`X2AccessReplayNarration.uc`): the tutorial's stand-in for the dead event
   bus. Polled from `Narrator::OnTick` (100 ms, next to the drain), it walks history frames and emits
   ability / damage / death / concealment / turn / reveal / reinforcement lines through

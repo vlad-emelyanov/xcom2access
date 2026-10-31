@@ -496,6 +496,11 @@ private function AddEnemies(TTile Origin, out array<AccessMarker> Entries)
 		class'X2AccessHelper'.static.AppendComma(M.Detail,
 			class'X2AccessTacticalReader'.static.DescribeTargetHealth(UnitState));
 
+		// The overwatch icon on the enemy's flag, under the flag's own condition
+		// (UIUnitFlag.RealizeOverwatch), in the Targets stop's word.
+		class'X2AccessHelper'.static.AppendComma(M.Detail,
+			class'X2AccessTacticalReader'.static.DescribeTargetOverwatch(UnitState));
+
 		InsertByDistance(Origin, M, Entries);
 	}
 }
@@ -733,7 +738,7 @@ private function bool HasSpawnFlare(name VisType)
 // The game's OWN words for this counter, so the ring and the HUD agree in whatever language the
 // player runs — "REINFORCEMENTS" / "INCOMING" in English. Falls back to English only if the
 // localization is missing outright.
-private function string ReinforcementsLabel()
+static function string ReinforcementsLabel()
 {
 	local string Title, Body;
 
@@ -748,7 +753,7 @@ private function string ReinforcementsLabel()
 }
 
 // Always carries the number, because the number is precisely what the sighted counter shows.
-private function string TurnWords(int Turns)
+static function string TurnWords(int Turns)
 {
 	return class'X2AccessVocab'.static.Count(Turns, class'X2AccessVocab'.default.InTurns_One,
 		class'X2AccessVocab'.default.InTurns_Few, class'X2AccessVocab'.default.InTurns_Many);

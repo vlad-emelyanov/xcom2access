@@ -403,7 +403,7 @@ private function string DescribeActions(XComGameState_Unit UnitState)
 
 	// The flag's own test (AS_SetOverwatchIcon), not a guess at what a reserve point means.
 	if (UnitState.ReserveActionPoints.Find('Overwatch') > -1)
-		class'X2AccessHelper'.static.AppendComma(Result, class'X2AccessVocab'.default.Overwatch);
+		class'X2AccessHelper'.static.AppendComma(Result, class'X2AccessHelper'.static.OverwatchWord());
 
 	return Result;
 }

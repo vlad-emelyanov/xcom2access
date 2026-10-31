@@ -722,6 +722,18 @@ static function string DescribeTargetHealth(XComGameState_Unit TargetUnit)
 	return Result;
 }
 
+// The overwatch icon on the target's unit flag. The flag's own test and no team gate:
+// UIUnitFlag.RealizeOverwatch sends ReserveActionPoints.Find('Overwatch') > -1 to Flash for EVERY
+// unit that has a flag (UIUnitFlag.uc:1673-1684), enemies included. Static so the scanner's enemy
+// ring and the Targets stop say it in one word.
+static function string DescribeTargetOverwatch(XComGameState_Unit TargetUnit)
+{
+	if (TargetUnit == none || TargetUnit.ReserveActionPoints.Find('Overwatch') == INDEX_NONE)
+		return "";
+
+	return class'X2AccessHelper'.static.OverwatchWord();
+}
+
 // "3 enemies visible" — how many enemies THIS soldier can see, which is the count of icons on
 // the enemy strip beside the reticle (UITacticalHUD_Enemies, whose own header calls itself
 // "currently visible aliens to the active soldier").
@@ -827,7 +839,7 @@ function BuildEnemyRecords()
 	local XComGameState_Unit ActiveUnit, TargetUnit;
 	local XComGameState_BaseObject Target;
 	local StateObjectReference ShooterRef;
-	local string Recs, Rec, Names;
+	local string Recs, Rec, Names, Health;
 	local int i, Hit, Dist;
 
 	NativeResult = "";
@@ -876,7 +888,12 @@ function BuildEnemyRecords()
 		}
 
 		class'X2AccessWire'.static.AddField(Rec, "cover", DescribeTargetCover(TargetUnit, ShooterRef));
-		class'X2AccessWire'.static.AddField(Rec, "health", DescribeTargetHealth(TargetUnit));
+		// Overwatch rides the health field: it is another thing the target's flag shows, and the
+		// field is already the flag's line, so the native stop needs no new field to carry it.
+		Health = DescribeTargetHealth(TargetUnit);
+		if (TargetUnit != none && !TargetUnit.IsFriendlyToLocalPlayer())
+			AppendComma(Health, DescribeTargetOverwatch(TargetUnit));
+		class'X2AccessWire'.static.AddField(Rec, "health", Health);
 
 		if (Strip.m_arrSSEnemies.Find('ObjectID', Target.ObjectID) != INDEX_NONE)
 			class'X2AccessWire'.static.AddField(Rec, "sight", class'X2AccessVocab'.default.ViaSquadsight);

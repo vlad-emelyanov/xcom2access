@@ -56,6 +56,12 @@ function PollReplay()
 	local XComGameStateHistory History;
 	local int Target, Frame;
 
+	// This function is the companion's 100 ms heartbeat on every world, so the HUD polls ride it
+	// (orientation line, reinforcement countdown, objective ticks). They are not replay
+	// narration; they are here because native already calls this on the cadence they need, and
+	// they read the screen, which a replay drives exactly as a live mission.
+	class'X2AccessMissionPoll'.static.Poll();
+
 	// Deliberately NOT the `REPLAY / `XCOMVISUALIZATIONMGR macros: both dereference the GRI
 	// unconditionally, and native polls this ten times a second everywhere — including the shell,
 	// where there is no tactical GRI at all. That is two "Accessed None" script warnings per poll
@@ -150,6 +156,7 @@ private function NarrateTurnChange(XComGameStateHistory History, XComGameStateCo
 {
 	local XComGameStateContext_TacticalGameRule RuleContext;
 	local XComGameState_Player PlayerState;
+	local string Word;
 
 	RuleContext = XComGameStateContext_TacticalGameRule(Context);
 	if (RuleContext == none || RuleContext.GameRuleType != eGameRule_PlayerTurnBegin)
@@ -162,17 +169,21 @@ private function NarrateTurnChange(XComGameStateHistory History, XComGameStateCo
 	// The spawn memo lives one turn on this path too (see X2AccessTacticalEvents.ResetSpawnNarration).
 	class'X2AccessTacticalEvents'.static.ResetSpawnNarration();
 
-	// XCom and the aliens only — the same rule the live listener applies, and the same reason:
-	// the game gives the Lost, civilians and the Resistance no turn banner either.
-	switch (PlayerState.GetTeam())
+	// The same two decisions the live listeners make, through the same functions: the XCom turn is
+	// the aid line (the game draws no banner for it) and re-arms the banner memo; any other team
+	// is a banner only when its kind differs from the last one drawn. The tutorial has no group
+	// events to mirror, so the player's own turn-begin frame stands in for the first group.
+	if (PlayerState.GetTeam() == eTeam_XCom)
 	{
-	case eTeam_XCom:
+		class'X2AccessTacticalEvents'.static.ResetTurnBanner();
 		class'X2AccessNarrator'.static.Alert(class'UISpecialMissionHUD_TurnCounter'.default.m_strPlayerTurnLabel);
-		break;
-	case eTeam_Alien:
-		class'X2AccessNarrator'.static.Alert(class'UITurnOverlay'.default.m_sAlienTurn);
-		break;
+		return;
 	}
+
+	Word = class'X2AccessTacticalEvents'.static.ClaimTurnBanner(
+		class'X2AccessTacticalEvents'.static.TeamBannerKind(PlayerState.GetTeam()));
+	if (Word != "")
+		class'X2AccessNarrator'.static.Alert(Word);
 }
 
 // The reinforcement drop: a change container whose ChangeInfo is the spawner's own literal for the
@@ -257,11 +268,18 @@ private function NarrateConcealment(XComGameStateHistory History, XComGameState 
 
 	foreach GameState.IterateByClassType(class'XComGameState_Player', PlayerState)
 	{
-		if (PlayerState.GetTeam() != eTeam_XCom || PlayerState.bSquadIsConcealed)
+		if (PlayerState.GetTeam() != eTeam_XCom)
 			continue;
 
 		PrevPlayer = XComGameState_Player(History.GetGameStateForObjectID(PlayerState.ObjectID, , Frame - 1));
-		if (PrevPlayer != none && PrevPlayer.bSquadIsConcealed)
+		if (PrevPlayer == none || PrevPlayer.bSquadIsConcealed == PlayerState.bSquadIsConcealed)
+			continue;
+
+		// The squad flag flipped in this frame: broken, or entered (the HUD banner's word, the
+		// same one the live listener speaks).
+		if (PlayerState.bSquadIsConcealed)
+			class'X2AccessNarrator'.static.Alert(class'X2AccessTacticalEvents'.static.SquadConcealedWord());
+		else
 			class'X2AccessNarrator'.static.Alert(class'X2AccessVocab'.default.SquadConcealmentBroken);
 	}
 }
