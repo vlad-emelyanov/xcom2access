@@ -30,10 +30,9 @@ different branches, spawns different widgets, and ignores keys it would handle i
   from. "Works" with no mode is not a result.
 - Most recon and surface docs were written for mouse mode. A doc's claim about a surface is a
   hypothesis in controller mode until it is measured there.
-- ⚠ **There is no agreed way yet to test mouse mode on this machine**, because the player's profile
-  is set to controller and that setting belongs to the user. Do not flip it, or anything that writes
-  it, without asking. Settle how to test both modes with the user before the first change that could
-  regress mouse mode.
+- **To test mouse mode, an agent backs up `profile.bin`, switches Input Device to mouse in Options,
+  runs the tests and switches it back**, agreed with the user on 2026-10-31. The player's profile stays
+  in controller mode between sessions, so a session ends by confirming `m_bActivateMouse` reads false.
 
 ## What you do yourself
 
