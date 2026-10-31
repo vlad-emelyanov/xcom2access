@@ -28,6 +28,17 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 7. Cover ring (`J`): each announced entry carries `Seen by N, flanked` when enemies would see the tile; silent otherwise; tile-cursor `Backspace` destination speaks the same two clauses.
 After the run, shape-count the speech ring (`grep -P '  '` for double spaces) and confirm none of the new lines interrupt speech.
 
+**Context help on `?`, written from source and never compiled or run** (`src/help_pages.cpp`; pages `Help*` on `X2AccessVocab`). Live checklist, keyboard, spoken in INT then RUS:
+1. Walk every context and press `?`: multiline text entry, hacking, free aim, targeting with a target list, the tactical HUD layer (after Tab), tactical world, the tutorial mission, the Geoscape, the Avenger grid, any menu (main menu, pause, options), and a screen no recipe reads (expect `No navigation help available.`). Each speaks the page for ITS context and only that.
+2. Paging: a second press within 8 s speaks the next page and wraps after the last; a different context or a pause over 8 s restarts at page 1; the first page of a multi-page context ends `Press question mark for more.` and no other page does.
+3. Verify every key a page names does what it says in that context. Unproven by reading: `E`/`Q` and `F1`-`F8` really change the target while targeting; `Ctrl+X` is live on the HUD layer and in the tutorial; `E`/`Q` are DEAD in the tutorial (that page omits them); `Escape` cancels and `Enter` fires in free aim; the Geoscape page's `R`, `Tab` and `Home`; the Avenger page's `Escape`; the multiline dialog page.
+4. The tutorial page: `I` re-reads the tutorial message and the squad brief stays silent there.
+5. Geoscape: the globe reaches the Geoscape context (`GeoScanner::IsActive`) and a menu over it gives the menu pages.
+6. Shape-count the speech ring afterwards for a double space and for an English word inside a Russian page. Controller mode: the claim works there, the pages name KEYBOARD keys only.
+7. The three legacy `NavHelpData` listeners are no longer read by `?`; the generic menu pages answer on those screens. Delete their `NavHelpData` writes when the legacy screens are migrated.
+
+**Per-device help wording (queued).** `?` is context-aware but names keyboard keys only. In controller mode the pad-layer table in `docs/input-map.md` is the content; a second page set (or a device switch in `help_pages.cpp`) is later work.
+
 **Where the 2026-10-31 session stopped.** These were compiled and reviewed, and none has been heard in a mission: the pad layers past the shell, heading, path hazards, sightings and Dark Events. Mouse mode has passed the shell only. Start with the controller-mode entries, then finish the mouse-mode run on the Avenger and in a mission.
 
 **The dark events board** (2026-10-31, written from `SrcOrig`, compiled but never run; `docs/surfaces/strategy.md`, dark events board). Compile the companion first, then open the board from the geoscape's Dark Events button, from the monthly report chain, and with an active event present. Run it in BOTH modes (`m_bActivateMouse` decides the branch; drive mouse mode with `xctl key`, controller mode with `xctl pad`):

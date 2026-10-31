@@ -27,4 +27,7 @@ void Init();
 /// frame. Game thread only.
 void OnTick();
 
+/// A multiline input dialog is up (cached flags, safe from any thread). Help context only.
+bool IsMultiLineActive();
+
 } // namespace TextInput
