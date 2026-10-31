@@ -34,6 +34,9 @@ var config bool bIntroSeen;
 // Level time at the last poll; a smaller value now means a different world.
 var config float LastSeenTime;
 
+// Polls spent waiting for the objective list to fill before the orientation line is given.
+var config int BriefWaits;
+
 // "key~=~S~|~" per objective row, S being 0 pending, 1 completed, 2 failed.
 var config string ObjectiveMemo;
 
@@ -45,6 +48,7 @@ var config string CountdownMemo;
 
 const MEMO_SEP = "~|~";
 const MEMO_EQ = "~=~";
+const BRIEF_WAIT_LIMIT = 30;
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -89,8 +93,17 @@ static function Poll()
 		if (!HudReady(GRI))
 			return;
 
+		// The mission heading is read off the objective list, which fills a moment after the
+		// HUD is ready. Wait for its first populated read (100 ms a poll); a mission that
+		// draws no list at all is briefed without a heading after BRIEF_WAIT_LIMIT polls.
+		if (!ListPopulated(HUD) && default.BriefWaits < BRIEF_WAIT_LIMIT)
+		{
+			default.BriefWaits++;
+			return;
+		}
+
 		default.bBriefed = true;
-		Brief(Stack);
+		Brief(Stack, HUD);
 
 		// A load must not recite history: whatever the list already shows is the baseline.
 		default.bObjBaselined = PollObjectives(HUD, true);
@@ -118,6 +131,7 @@ static function EndSession()
 	default.bIntroSeen = false;
 	default.ObjectiveMemo = "";
 	default.bObjBaselined = false;
+	default.BriefWaits = 0;
 	default.CountdownMemo = "";
 	class'X2AccessTacticalEvents'.static.ResetTurnBanner();
 	class'X2AccessTacticalEvents'.static.ResetSpawnNarration();
@@ -173,6 +187,9 @@ static function int ShownIndex()
 
 // ONE line, once per session: what the HUD shows at a glance and the player cannot see. Only facts
 // the game DRAWS, each under the condition it is drawn under:
+//   the heading         the objective list's header row (UIObjectiveListItem.RefreshType: ShowHeader
+//                       makes eUIODT_ClickableButton, SetLabelButton draws DisplayLabel). Drawn on
+//                       every mission, loaded or new, so it leads the line and is never silent.
 //   the operation name  UIMissionIntro, a new mission's intro screen only (UIMissionIntro.OnInit);
 //                       the HUD draws no mission name, so a loaded save gets none.
 //   concealment         the HUD's concealment banner for the selected soldier
@@ -181,11 +198,11 @@ static function int ShownIndex()
 // The turn is not here: the game draws NO banner for the XCom turn (XComPresentationLayer.UIEndTurn,
 // eTurnOverlay_Local), and the turn counter's "Your Turn" is one of the counters above when it
 // is drawn at all. Objectives stay on Ctrl+X and the Objectives stop.
-static function Brief(UIScreenStack Stack)
+static function Brief(UIScreenStack Stack, UITacticalHUD HUD)
 {
 	local XComGameState_BattleData BattleData;
 	local UISpecialMissionHUD Special;
-	local string Line;
+	local string Line, Heading, OpLine;
 
 	if (default.bIntroSeen)
 	{
@@ -193,11 +210,18 @@ static function Brief(UIScreenStack Stack)
 		if (BattleData != none && BattleData.m_strOpName != "")
 		{
 			if (class'UIMissionIntro'.default.m_strOperationTitle != "")
-				Line = class'UIMissionIntro'.default.m_strOperationTitle @ BattleData.m_strOpName;
+				OpLine = class'UIMissionIntro'.default.m_strOperationTitle @ BattleData.m_strOpName;
 			else
-				Line = BattleData.m_strOpName;
+				OpLine = BattleData.m_strOpName;
 		}
 	}
+
+	// The heading leads. When the operation name already says the same words, say them once.
+	Heading = MissionHeading(HUD);
+	if (Heading != "" && PlainText(OpLine) == Heading)
+		OpLine = "";
+	class'X2AccessHelper'.static.AppendPart(Line, Heading);
+	class'X2AccessHelper'.static.AppendPart(Line, OpLine);
 
 	class'X2AccessHelper'.static.AppendPart(Line, ConcealmentWord(class'X2AccessTileReader'.static.ActiveUnitState()));
 
@@ -210,6 +234,43 @@ static function Brief(UIScreenStack Stack)
 
 	if (Line != "")
 		class'X2AccessNarrator'.static.Alert(Line);
+}
+
+// The list has been filled: it is shown and holds at least one row. UIObjectiveList.
+// RefreshObjectivesDisplay shows it only when an objectives state exists and adds the Title row
+// whenever a regular objective is present, so a populated list always has rows.
+static function bool ListPopulated(UITacticalHUD HUD)
+{
+	return HUD != none && HUD.m_kObjectivesControl != none
+		&& HUD.m_kObjectivesControl.bIsVisible && HUD.m_kObjectivesControl.Items.Length > 0;
+}
+
+// The mission's heading as the objective list draws it: the label of the first header row of the
+// objectives block. A header row is ShowHeader (UIObjectiveListItem.RefreshType makes it
+// eUIODT_ClickableButton) and SetLabelButton pushes DisplayLabel into Flash, so DisplayLabel is
+// the drawn word. Dark-event rows are the other block and are skipped. The list keeps the data
+// the row was built from (Data = NewData ends every Set row), and is driven by the visualization
+// observer, so this reads the same in the tutorial. "" when the list draws no header.
+static function string MissionHeading(UITacticalHUD HUD)
+{
+	local UIObjectiveListItem Item;
+	local string Label;
+	local int i;
+
+	if (!ListPopulated(HUD))
+		return "";
+
+	for (i = 0; i < HUD.m_kObjectivesControl.Items.Length; i++)
+	{
+		Item = HUD.m_kObjectivesControl.Items[i];
+		if (Item == none || Item.Type != eUIODT_ClickableButton || Item.Data.bIsDarkEvent)
+			continue;
+
+		Label = PlainText(Item.Data.DisplayLabel);
+		if (Label != "")
+			return Label;
+	}
+	return "";
 }
 
 // The word the HUD's concealment banner shows for this soldier, in the order
