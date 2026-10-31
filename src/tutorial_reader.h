@@ -37,6 +37,15 @@ namespace TutorialReader {
 /// Register the re-read claim. Call during init, BEFORE the game hooks go live.
 void Init();
 
+/// True while this reader holds the I key: the tutorial mission with its HUD up, or any modal box.
+/// A flag read, safe from the window procedure. The squad brief claims the same key and must stand
+/// down whenever this is true (and in the tutorial mission altogether, see InTutorialMission).
+bool OwnsRereadKey();
+
+/// True on the tutorial mission itself (XComTutorialMgr exists), whatever the HUD is doing. A flag
+/// read, safe from the window procedure.
+bool InTutorialMission();
+
 /// Game-tick pump: poll the tutorial's text surfaces and announce what changed. Throttled
 /// internally. Game thread only (it makes outbound ProcessEvent calls).
 void OnTick();

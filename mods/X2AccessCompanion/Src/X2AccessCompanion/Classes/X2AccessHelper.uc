@@ -201,6 +201,21 @@ static function string DescribeSoldierName(XComGameState_Unit Unit)
 	return NameStr;
 }
 
+// The short spoken name of a unit: surname, else first name, else the full name for a unit that has
+// neither (a MEC, a template-named alien). The squad brief and the arrival line name soldiers this
+// way so a six-soldier roster fits one breath; the rings keep the full name.
+static function string ShortName(XComGameState_Unit Unit)
+{
+	local string NameStr;
+
+	if (Unit == none)
+		return "";
+	NameStr = DescribeSoldierName(Unit);
+	if (NameStr == "")
+		NameStr = Unit.GetName(eNameType_Full);
+	return NameStr;
+}
+
 // The word for the psi-gift markup. That icon has no caption anywhere, so the honest label is
 // the game's own name for what it means — the Psi Operative class — rather than a coinage of
 // ours.
@@ -225,6 +240,28 @@ static function string OverwatchWord()
 		return Template.LocFriendlyName;
 
 	return class'X2AccessVocab'.default.Overwatch;
+}
+
+// The move pips on a friendly unit flag, spoken: UIUnitFlag.RealizeMoves draws one pip per entry of
+// ActionPoints (NumAllActionPoints, every action point TYPE, so a Momentum or move-only point counts)
+// and pads the row to two empties when the unit has fewer. Zero pips is the game's own empty row, so
+// it takes the existing no-actions word. The overwatch icon is a separate flag element and is NOT
+// part of this phrase. Shared by the squad ring, the soldier readout, the squad brief and the
+// arrival line so the four cannot count differently.
+static function string ActionPointWords(XComGameState_Unit UnitState)
+{
+	local int Points;
+
+	if (UnitState == none)
+		return "";
+
+	Points = UnitState.NumAllActionPoints();
+	if (Points <= 0)
+		return class'X2AccessVocab'.default.NoActionsLeft;
+	return class'X2AccessVocab'.static.Count(Points,
+		class'X2AccessVocab'.default.Actions_One,
+		class'X2AccessVocab'.default.Actions_Few,
+		class'X2AccessVocab'.default.Actions_Many);
 }
 
 // The health bar, in the same numbers UIUtilities_Strategy hands the bar itself.

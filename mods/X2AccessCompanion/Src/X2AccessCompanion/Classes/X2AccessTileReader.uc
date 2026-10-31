@@ -574,7 +574,12 @@ private function bool TargetPreviewAlwaysOn()
 //
 // Silent at zero: the game draws no eye, and "Seen by 0" on every step of a quiet map is the
 // noise the DescribeVisibleEnemies rule already forbids. "flanked" can only follow a count.
-private function string DescribeSight(TTile Tile, vector TilePos)
+//
+// Static and public, with an optional ForUnit, because two more surfaces say it about a tile: the
+// arrival line (about the unit that just MOVED, who is not always still the selected one by the time
+// its block completes) and the cover ring (about the entry it announces, from the selected soldier).
+// None of them may word it a second way. ForUnit defaults to the selected soldier.
+static function string DescribeSight(TTile Tile, vector TilePos, optional XComGameState_Unit ForUnit)
 {
 	local XComWorldData WorldData;
 	local XComGameStateHistory History;
@@ -586,7 +591,9 @@ private function string DescribeSight(TTile Tile, vector TilePos)
 	local int i, Count;
 	local string Result;
 
-	UnitState = ActiveUnitState();
+	UnitState = ForUnit;
+	if (UnitState == none)
+		UnitState = ActiveUnitState();
 	if (UnitState == none)
 		return "";
 
@@ -764,7 +771,7 @@ private function string DescribeTargetPreview(TTile Tile, bool bSpeakEmpty)
 // The cursor tile's own cover, from the cover point the game keeps for it. The WORDS are
 // CoverEdgeWords' — shared with the object scanner's cover ring, which names the same edges of
 // the same tiles from the same flags, so the two surfaces cannot drift apart.
-private function string DescribeCoverEdges(vector TilePos, bool bVerbose)
+static function string DescribeCoverEdges(vector TilePos, bool bVerbose)
 {
 	local XComWorldData WorldData;
 	local XComCoverPoint CP;

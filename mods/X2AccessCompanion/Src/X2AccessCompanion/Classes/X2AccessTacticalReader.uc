@@ -237,7 +237,7 @@ function AnnounceBreakdown()
 // Resolution
 // ---------------------------------------------------------------------------
 
-private function UITacticalHUD GetTacticalHUD()
+private static function UITacticalHUD GetTacticalHUD()
 {
 	local UIScreenStack Stack;
 
@@ -288,7 +288,7 @@ private function bool ResolveShot(UITacticalHUD HUD, out AvailableAction Action,
 // LookupShotBreakdown with an EXPLICIT UseAbility, which is the branch that cannot RedScreen
 // on us (the empty-ability branch hunts for the primary weapon's display ability and
 // complains when it finds none). False when the game itself would show no numbers.
-private function bool GetBreakdown(XComGameState_Ability AbilityState,
+private static function bool GetBreakdown(XComGameState_Ability AbilityState,
 	StateObjectReference TargetRef, out ShotBreakdown Breakdown)
 {
 	local X2AbilityTemplate Template;
@@ -306,7 +306,7 @@ private function bool GetBreakdown(XComGameState_Ability AbilityState,
 	return HitChanceOf(Breakdown) > -1;
 }
 
-private function int HitChanceOf(ShotBreakdown Breakdown)
+private static function int HitChanceOf(ShotBreakdown Breakdown)
 {
 	if (Breakdown.bIsMultishot)
 		return Min(Breakdown.MultiShotHitChance, 100);
@@ -392,7 +392,7 @@ private function string DescribeTarget(UITacticalHUD HUD, AvailableAction Action
 	XComGameState_Ability AbilityState, StateObjectReference TargetRef, int TargetIndex,
 	bool bVerbose)
 {
-	local XComGameState_Unit TargetUnit;
+	local XComGameState_Unit TargetUnit, ShooterUnit;
 	local ShotBreakdown Breakdown;
 	local WeaponDamageValue MinDamage, MaxDamage;
 	local int AllowsShield;
@@ -481,6 +481,20 @@ private function string DescribeTarget(UITacticalHUD HUD, AvailableAction Action
 
 	AppendComma(Result, DescribeTargetCover(TargetUnit, AbilityState.OwnerStateObject));
 	AppendComma(Result, DescribeTargetHealth(TargetUnit));
+
+	// How far and which way, FROM THE SHOOTER, last among the target's own facts: two troopers in a
+	// pod read identically up to here and differed only by the index, and the strip's heads carry
+	// this very pair (BuildEnemyRecords, dist and bearing). The words are RangeWords', the
+	// scanner's, so the three surfaces cannot disagree. Units only: a destructible has no tile
+	// of its own to measure to. The blast sentence, when there is one, follows as its own sentence.
+	if (TargetUnit != none)
+	{
+		ShooterUnit = XComGameState_Unit(
+			`XCOMHISTORY.GetGameStateForObjectID(AbilityState.OwnerStateObject.ObjectID));
+		if (ShooterUnit != none)
+			AppendComma(Result, RangeWords(ShooterUnit.TileLocation, TargetUnit.TileLocation));
+	}
+
 	AppendPart(Result, DescribeTargetBlast(HUD, AbilityState, TargetRef, bVerbose));
 	return Result;
 }
@@ -697,6 +711,78 @@ static function string CoverWords(ECoverType Cover)
 	return class'X2AccessVocab'.default.NoCover;
 }
 
+// "17 tiles, 7 north, 13 west" — the distance and the compass offset from one tile to another, in
+// the object scanner's words (the same Chebyshev-plus-height count and the same OffsetWords
+// calibration), so the shot line, the enemy ring and the Targets stop's dist and bearing fields say
+// one thing. Empty offset (same tile) drops its clause; the count stays.
+static function string RangeWords(TTile FromTile, TTile ToTile)
+{
+	local string Result;
+
+	AppendComma(Result, class'X2AccessVocab'.static.Count(TileDistance(FromTile, ToTile),
+		class'X2AccessVocab'.default.Tiles_One,
+		class'X2AccessVocab'.default.Tiles_Few,
+		class'X2AccessVocab'.default.Tiles_Many));
+	AppendComma(Result, class'X2AccessTileReader'.static.OffsetWords(FromTile, ToTile));
+	return Result;
+}
+
+// "hit 73 percent" — the Targets stop's hit words (the shot HUD's own localized caption and the
+// percent template), from the number alone so the stop and the enemy ring cannot word it twice.
+// Empty for a negative number, which is the strip's own "the game shows no figure" answer.
+static function string HitChanceWords(int Hit)
+{
+	if (Hit < 0)
+		return "";
+	return class'UITacticalHUD_ShotHUD'.default.m_sShotChanceLabel
+		@ class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.PercentValue, Hit);
+}
+
+// The hit chance of the selected soldier's DEFAULT shot at this unit, in HitChanceWords, or "" when
+// that soldier cannot target it. The Targets stop reads the strip's own GetHitChanceForObjectRef,
+// which falls back to exactly this lookup when no ability is selected
+// (UITacticalHUD_AbilityContainer.GetDefaultTargetingAbility, SelectReloadLast set) and then runs the
+// same LookupShotBreakdown; this asks the container directly because the ring covers every enemy the
+// SQUAD sees, including the ones the strip has no head for. "Can target" is the container's own
+// answer: an available action whose AvailableTargets holds the unit. A reload that stands in for a
+// shot has no target list, so an empty-ammo soldier is silent rather than quoted a shot he cannot take.
+static function string DescribeTargetHitChance(XComGameState_Unit TargetUnit)
+{
+	local UITacticalHUD HUD;
+	local AvailableAction Action;
+	local XComGameState_Ability AbilityState;
+	local StateObjectReference TargetRef;
+	local ShotBreakdown Breakdown;
+	local int i;
+
+	if (TargetUnit == none)
+		return "";
+	HUD = GetTacticalHUD();
+	if (HUD == none || HUD.m_kAbilityHUD == none)
+		return "";
+	if (!HUD.m_kAbilityHUD.GetDefaultTargetingAbility(TargetUnit.ObjectID, Action, true))
+		return "";
+	if (Action.AvailableCode != 'AA_Success')
+		return "";
+
+	for (i = 0; i < Action.AvailableTargets.Length; i++)
+	{
+		if (Action.AvailableTargets[i].PrimaryTarget.ObjectID == TargetUnit.ObjectID)
+		{
+			TargetRef = Action.AvailableTargets[i].PrimaryTarget;
+			break;
+		}
+	}
+	if (TargetRef.ObjectID <= 0)
+		return "";
+
+	AbilityState = XComGameState_Ability(
+		`XCOMHISTORY.GetGameStateForObjectID(Action.AbilityObjectRef.ObjectID));
+	if (AbilityState == none || !GetBreakdown(AbilityState, TargetRef, Breakdown))
+		return "";
+	return HitChanceWords(HitChanceOf(Breakdown));
+}
+
 // Health, shield and armour — what the target's unit flag shows over its head.
 static function string DescribeTargetHealth(XComGameState_Unit TargetUnit)
 {
@@ -881,11 +967,7 @@ function BuildEnemyRecords()
 
 		Hit = Strip.GetHitChanceForObjectRef(Strip.m_arrTargets[i]);
 		if (Hit >= 0)
-		{
-			class'X2AccessWire'.static.AddField(Rec, "hit",
-				class'UITacticalHUD_ShotHUD'.default.m_sShotChanceLabel @
-				class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.PercentValue, Hit));
-		}
+			class'X2AccessWire'.static.AddField(Rec, "hit", HitChanceWords(Hit));
 
 		class'X2AccessWire'.static.AddField(Rec, "cover", DescribeTargetCover(TargetUnit, ShooterRef));
 		// Overwatch rides the health field: it is another thing the target's flag shows, and the
@@ -1765,7 +1847,7 @@ private function ResolveAimFloor(XComWorldData WorldData, out TTile Tile)
 
 // Chebyshev plus height, matching X2AccessObjectScanner.TileDistance exactly — the scanner and
 // the aim readout describe the same world and must agree about how far away things are.
-private function int TileDistance(TTile A, TTile B)
+private static function int TileDistance(TTile A, TTile B)
 {
 	local int DX, DY;
 

@@ -1509,3 +1509,58 @@ future speech-scrollback key.
 - **Known misses, stated plainly.** An enemy that leaves view because a soldier died, or because smoke
   or fire changed the picture, with no enemy or friendly move to trigger an evaluation, gets no "out
   of view" line. A stationary enemy never speaks "moved".
+
+### Firefight speech: ring clauses, the squad brief, the arrival line (2026-10-31, written from source, never compiled or run)
+
+- **Squad ring (`,`) speaks the move pips and the overwatch icon.** `UIUnitFlag.RealizeMoves`
+  (`:1082-1153`) draws one pip per `NumAllActionPoints()` on EVERY friendly flag, not just the selected
+  soldier's, so the ring's old comment ("action points are deliberately absent") was wrong. The clause
+  goes right after `Selected` and ahead of the status: `X2AccessHelper.ActionPointWords` (`N actions`,
+  `1 action`, or the existing `NoActionsLeft`) plus `DescribeTargetOverwatch` (the flag's
+  `RealizeOverwatch` icon). `X2AccessUnitReader.DescribeActions` now calls the same helper, so the
+  `;` readout, the ring, the brief and the arrival line cannot count differently. Friendly flags only:
+  the enemy ring never gets a count (`RealizeMoves` is gated on `m_bIsFriendly`).
+- **Enemy ring (`.`) speaks the default shot's hit chance.** `X2AccessTacticalReader.
+  DescribeTargetHitChance` asks the ability container's own `GetDefaultTargetingAbility` (the lookup
+  `UITacticalHUD_Enemies.GetHitChanceForObjectRef` falls back to) and runs `LookupShotBreakdown`
+  through the shot readout's `GetBreakdown`; the words are `HitChanceWords`, the Targets stop's. It is
+  silent when no available action lists the enemy among its targets (the `SpottedBySquad` case, an
+  empty-ammo soldier) and with no soldier selected. Placed after the sight clause, before cover. No
+  damage and no ranking: the ring stays in distance order. ⚠ The Targets stop itself still reads the
+  strip, which prefers the SELECTED ability over the default one; when the player has cycled to a
+  different ability the two numbers can differ, by design of the game's own strip.
+- **Target line during targeting ends with distance and bearing.** `DescribeTarget` appends
+  `RangeWords(shooter tile, target tile)` (`17 tiles, 7 north, 13 west`): the scanner's tile count and
+  `OffsetWords`, from the shooter, after the health clause and before the blast sentence. Units only.
+- **`I` is the squad brief** (`X2AccessUnitReader.AnnounceSquad` over `BuildSquadBrief`, claimed in
+  `src/unit_info.cpp`). Phrases, each omitted when empty and joined with `AppendPart`: the enemy count
+  (`X2AccessObjectScanner.IsRingEnemy`, the ONE test the enemy ring uses, so brief and ring cannot
+  count differently; a spoken zero, because a key owes an answer), `Ready:` (squad order, name and
+  pips), `Done:` (no pips; carries the overwatch word, then `StatusWords` with concealment left out),
+  reinforcements (only while `HUD.m_kCountdown.bIsVisible`, the spawner's number, the HUD's words)
+  and the special-mission counters (`X2AccessMissionPoll.CounterWords`, only the panels drawn). ⛔ No
+  turn number: the standard HUD draws none. Nothing about enemies out of sight. Entries inside a list
+  are comma-joined, so a soldier's own status words are space-joined inside the entry.
+  Gate: usable HUD, not targeting, and exclusive with the tutorial reader's re-read (`OwnsRereadKey`,
+  `InTutorialMission`), all flag reads.
+- **The turn-start line** is the same builder, short form (`bTurnStart`): enemy count, then ONLY the
+  soldiers with no action points under `Cannot act:` (`BriefUnable`), then reinforcements and timer.
+  Everyone able: no list. `OnPlayerTurnBegun` only ARMS it (`X2AccessMissionPoll.ArmTurnBrief`); the
+  poll speaks it (`PollTurnBrief`) once the visualizer is idle, the rules are in `TurnPhase_UnitActions`,
+  the unit-action player is the XCom player and some soldier holds a point (or 50 polls have passed,
+  for a turn on which nobody can act). Deferred because the event is not a trustworthy instant:
+  turn-start points are dealt by `SetupUnitActionsForGroupTurnBegin`, a separate step from the
+  `PlayerTurnBegun` submission. A replay never arms it (the tutorial submits no turn state).
+- **The arrival line** (`X2AccessTacticalEvents.NarrateArrival`, on `OnUnitMoveFinished`, after the
+  sightings): `<Short name> arrived, <actions>, <cover edges, spoken even when none>, <sight clause>`.
+  Cover is `X2AccessTileReader.DescribeCoverEdges`, sight is `DescribeSight` (both now static; sight
+  takes the mover so it is right even if the player has already switched soldier). Only a unit the
+  player commands (team XCom, not AI-controlled); silent for panicked, dead, down, evacuated and
+  cosmetic units. Identity is `ArrivedMemo`, `|unit@root|`, the root being `InterruptionHistoryIndex`
+  for a resume state. `UnitMoveFinished` never fires for an interrupt step, so an overwatch-interrupted
+  move speaks once, from its resume state, and a move that dies there speaks nothing (the damage and
+  death lines own it).
+- **Cover ring (`J`) appends the tile's sight clause when an entry is ANNOUNCED** (`FormatMarker`, the
+  cover category only), never during the rebuild: one `DescribeSight` per press. Same fog gate as the
+  cursor (a never-seen tile gets none). The clause describes the chosen entry and reorders nothing;
+  ranking by it stays refused (see the cover section).

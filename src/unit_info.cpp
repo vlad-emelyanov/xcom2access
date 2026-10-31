@@ -3,6 +3,7 @@
 #include "input_arbiter.h"
 #include "narrator.h"
 #include "tactical_hud.h"
+#include "tutorial_reader.h"
 #include "ue3_reflection.h"
 #include "vocab.h"
 #include "log.h"
@@ -45,11 +46,11 @@ bool Call(const char* funcName, std::string* out)
 }
 
 // A pressed key must never be silent, so this says so when the companion is missing entirely —
-// the one case the poll path swallows.
-void Announce()
+// the one case the poll path swallows. funcName is the companion function that answers the key.
+void Announce(const char* funcName)
 {
     std::string line;
-    if (!Call("AnnounceUnit", &line)) {
+    if (!Call(funcName, &line)) {
         Narrator::Say(Narrator::Channel::Aid, Vocab::SurfaceUnavailable(Vocab::SurfaceUnitReader));
         return;
     }
@@ -81,9 +82,29 @@ void Init()
     RegisterClaim({VK_OEM_1, ModNone, active,
         [](const InputArbiter::KeyEvent& e) {
             if (e.down && !e.repeat)
-                Announce();
+                Announce("AnnounceUnit");
         },
         "unit info: selected unit"});
+
+    // I — the squad brief: how many enemies are in view, who can still act and who is done, and the
+    // reinforcement and mission timers when the HUD draws them. One of the two free bare letters; the
+    // other claim on it is the tutorial reader's re-read, so the two gates are EXCLUSIVE by
+    // construction: this one requires the tutorial reader to hold neither the key (a modal box is up,
+    // or the tutorial HUD is) nor the mission, and never fires while the shot HUD is raised, where
+    // the game owns the arrows, Tab and F1-F8 and a brief would only talk over the target. Every
+    // term is a flag read, which is all a claim's activeWhen may do (it runs in the window
+    // procedure). Bare I is unbound in every input section (docs/input-map.md), so it displaces
+    // nothing and needs no leniency argument.
+    RegisterClaim({'I', ModNone,
+        [] {
+            return TacticalHUD::IsUsable() && !TacticalHUD::IsTargeting()
+                && !TutorialReader::OwnsRereadKey() && !TutorialReader::InTutorialMission();
+        },
+        [](const InputArbiter::KeyEvent& e) {
+            if (e.down && !e.repeat)
+                Announce("AnnounceSquad");
+        },
+        "unit info: squad brief"});
 
     LOG_INFO("UnitInfo: claims registered");
 }

@@ -44,6 +44,11 @@ constexpr int kMsgBlade = 2;
 // belongs on the tick, the same discipline as the tile reader and the menu navigator.
 bool gActive = false;
 
+// XComTutorialMgr is present (the tutorial mission itself), refreshed on the tick beside gActive.
+// A flag read for the same reason: the squad brief's key gate runs inside the window procedure and
+// must be exclusive with this reader's, in the tutorial and under a modal alike.
+bool gInTutorial = false;
+
 // What has already been said, so the poll speaks CHANGES and not state.
 std::string gSpokenBox; // title + body of the modal currently announced
 
@@ -662,6 +667,16 @@ void Init()
     LOG_INFO("TutorialReader: claims registered");
 }
 
+bool OwnsRereadKey()
+{
+    return gActive;
+}
+
+bool InTutorialMission()
+{
+    return gInTutorial;
+}
+
 void OnTick()
 {
     static uint64_t sLastMs = 0;
@@ -674,6 +689,7 @@ void OnTick()
     // tutorial" test — every other mission pays one cached pointer revalidation per tick.
     static bool sInTutorial = false;
     const GameUI::TutorialState tut = GameUI::ReadTutorialState();
+    gInTutorial = tut.valid;
 
     // ⛔ THE MODAL IS NOT A TUTORIAL-MISSION SURFACE, and gating it on that manager left it silent
     // on every real mission. UITutorialBox is spawned by X2Action_ShowTutorialPopup for any

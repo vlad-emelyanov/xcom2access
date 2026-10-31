@@ -138,6 +138,156 @@ function AnnounceUnit()
 	NativeResult = DescribeUnit(UnitState);
 }
 
+// ---------------------------------------------------------------------------
+// The squad brief
+// ---------------------------------------------------------------------------
+
+// The on-demand half of the brief (the I key): the whole picture in one breath, whenever asked. A
+// pressed key must never be silent, and BuildSquadBrief always opens with the enemy count (or its
+// zero), so this can only be empty when there is no history to read at all.
+function AnnounceSquad()
+{
+	NativeResult = BuildSquadBrief(false);
+	if (NativeResult == "")
+		NativeResult = class'X2AccessVocab'.default.NoUnitSelected;
+}
+
+// One builder for two callers: the I key (bTurnStart false, everything) and the turn-start line in
+// X2AccessMissionPoll (bTurnStart true, the short form: enemies, then only the soldiers who start the
+// turn unable to act, then reinforcements and the timer). Phrases, each omitted when empty:
+//   enemies          the count of units the enemy ring lists (X2AccessObjectScanner.IsRingEnemy, one
+//                    test for both) and a spoken zero, because a key owes an answer and "nothing in
+//                    view" is the answer a player listens for. Enemies out of sight are not here.
+//   Ready: / Done:   squad order (the HQ squad list, then any other XCom-team unit). A soldier with
+//                    action points is Ready, with the flag's pip count (ActionPointWords); one with
+//                    none is Done, carrying the overwatch word if the flag draws the icon and the
+//                    status words the squad ring speaks (StatusWords, concealment left out: it is
+//                    not a reason to be unable to act). The short form lists only the Done group,
+//                    under its own heading, since Done there means the turn began with no actions.
+//   reinforcements   only while the HUD's countdown panel is visible (the same panel gate
+//                    X2AccessMissionPoll.PollCountdown uses), the spawner's number, the HUD's words.
+//   the timer        only the special-mission counters that are drawn (CounterWords, the same read
+//                    the orientation line uses). No turn number: the standard HUD draws none.
+// Every figure is something a sighted player reads off the screen: the unit flags' pips and icons,
+// the strip, the countdown panel and the counter panels.
+static function string BuildSquadBrief(bool bTurnStart)
+{
+	local XComGameStateHistory History;
+	local XComGameState_HeadquartersXCom XComHQ;
+	local XComGameState_Unit UnitState;
+	local XComGameState_AIReinforcementSpawner Spawner;
+	local UIScreenStack Stack;
+	local UITacticalHUD HUD;
+	local UISpecialMissionHUD Special;
+	local X2CharacterTemplate Template;
+	local array<int> Order;
+	local string Result, Ready, Done, Reinforcements, Status, Entry, ShortName;
+	local int i, EnemyCount;
+
+	History = `XCOMHISTORY;
+
+	foreach History.IterateByClassType(class'XComGameState_Unit', UnitState)
+	{
+		if (class'X2AccessObjectScanner'.static.IsRingEnemy(UnitState))
+			EnemyCount++;
+	}
+	if (EnemyCount == 0)
+		Result = class'X2AccessVocab'.default.BriefNoEnemies;
+	else
+		Result = class'X2AccessVocab'.static.Count(EnemyCount,
+			class'X2AccessVocab'.default.BriefEnemies_One,
+			class'X2AccessVocab'.default.BriefEnemies_Few,
+			class'X2AccessVocab'.default.BriefEnemies_Many);
+
+	XComHQ = XComGameState_HeadquartersXCom(
+		History.GetSingleGameStateObjectForClass(class'XComGameState_HeadquartersXCom', true));
+	if (XComHQ != none)
+	{
+		for (i = 0; i < XComHQ.Squad.Length; i++)
+			Order.AddItem(XComHQ.Squad[i].ObjectID);
+	}
+	foreach History.IterateByClassType(class'XComGameState_Unit', UnitState)
+	{
+		if (UnitState.GetTeam() == eTeam_XCom && Order.Find(UnitState.ObjectID) == INDEX_NONE)
+			Order.AddItem(UnitState.ObjectID);
+	}
+
+	for (i = 0; i < Order.Length; i++)
+	{
+		UnitState = XComGameState_Unit(History.GetGameStateForObjectID(Order[i]));
+		// The squad ring's roster test, clause for clause: yours, alive, still on the map, and not a
+		// GREMLIN, which has no flag and so nothing a sighted player reads.
+		if (UnitState == none || UnitState.GetTeam() != eTeam_XCom || UnitState.IsDead()
+			|| UnitState.bRemovedFromPlay)
+			continue;
+		Template = UnitState.GetMyTemplate();
+		if (Template != none && Template.bIsCosmetic)
+			continue;
+
+		ShortName = class'X2AccessHelper'.static.ShortName(UnitState);
+		if (UnitState.NumAllActionPoints() > 0)
+		{
+			if (!bTurnStart)
+				class'X2AccessHelper'.static.AppendComma(Ready, class'X2AccessVocab'.static.FillS2(
+					class'X2AccessVocab'.default.BriefUnit, ShortName,
+					class'X2AccessHelper'.static.ActionPointWords(UnitState)));
+			continue;
+		}
+
+		Status = "";
+		class'X2AccessHelper'.static.AppendComma(Status,
+			class'X2AccessTacticalReader'.static.DescribeTargetOverwatch(UnitState));
+		class'X2AccessHelper'.static.AppendComma(Status,
+			class'X2AccessObjectScanner'.static.StatusWords(UnitState, true));
+		// The entries of a list are comma-joined, so one soldier's own words must not carry commas.
+		Status = Repl(Status, ", ", " ");
+
+		if (Status == "")
+			Entry = ShortName;
+		else
+			Entry = class'X2AccessVocab'.static.FillS2(class'X2AccessVocab'.default.BriefUnit,
+				ShortName, Status);
+		class'X2AccessHelper'.static.AppendComma(Done, Entry);
+	}
+
+	if (Ready != "")
+		class'X2AccessHelper'.static.AppendPart(Result,
+			class'X2AccessVocab'.static.FillS(class'X2AccessVocab'.default.BriefReady, Ready));
+	if (Done != "")
+		class'X2AccessHelper'.static.AppendPart(Result, class'X2AccessVocab'.static.FillS(
+			bTurnStart ? class'X2AccessVocab'.default.BriefUnable : class'X2AccessVocab'.default.BriefDone,
+			Done));
+
+	Stack = `SCREENSTACK;
+	if (Stack != none)
+	{
+		HUD = UITacticalHUD(Stack.GetFirstInstanceOf(class'UITacticalHUD'));
+		if (HUD != none && HUD.m_kCountdown != none && HUD.m_kCountdown.bIsVisible)
+		{
+			foreach History.IterateByClassType(class'XComGameState_AIReinforcementSpawner', Spawner)
+			{
+				if (Spawner.Countdown <= 0)
+					continue;
+				Reinforcements = class'X2AccessObjectScanner'.static.ReinforcementsLabel();
+				class'X2AccessHelper'.static.AppendComma(Reinforcements,
+					class'X2AccessObjectScanner'.static.TurnWords(Spawner.Countdown));
+				class'X2AccessHelper'.static.AppendPart(Result, Reinforcements);
+			}
+		}
+
+		Special = UISpecialMissionHUD(Stack.GetScreen(class'UISpecialMissionHUD'));
+		if (Special != none)
+		{
+			class'X2AccessHelper'.static.AppendPart(Result,
+				class'X2AccessMissionPoll'.static.CounterWords(Special.m_kGenericTurnCounter));
+			class'X2AccessHelper'.static.AppendPart(Result,
+				class'X2AccessMissionPoll'.static.CounterWords(Special.m_kTurnCounter2));
+		}
+	}
+
+	return Result;
+}
+
 // The HUD graph's Soldier stop: one wire record per FACT the tactical HUD shows about the
 // selected soldier, in spoken order. Called by native once per graph rebuild (the plan's
 // one-call-per-rebuild budget); the graph makes one label node of each record.
@@ -389,17 +539,9 @@ private function string DescribeType(XComGameState_Unit UnitState)
 // a Momentum or move-only point still reads as an action the player has.
 private function string DescribeActions(XComGameState_Unit UnitState)
 {
-	local int Points;
 	local string Result;
 
-	Points = UnitState.NumAllActionPoints();
-	if (Points <= 0)
-		Result = class'X2AccessVocab'.default.NoActionsLeft;
-	else
-		Result = class'X2AccessVocab'.static.Count(Points,
-			class'X2AccessVocab'.default.Actions_One,
-			class'X2AccessVocab'.default.Actions_Few,
-			class'X2AccessVocab'.default.Actions_Many);
+	Result = class'X2AccessHelper'.static.ActionPointWords(UnitState);
 
 	// The flag's own test (AS_SetOverwatchIcon), not a guess at what a reserve point means.
 	if (UnitState.ReserveActionPoints.Find('Overwatch') > -1)

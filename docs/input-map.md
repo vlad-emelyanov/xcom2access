@@ -364,7 +364,12 @@ bindings are generic `X_Key_Press | onrelease X_Key_Release` forwarders into
 `Template.DefaultKeyBinding`, and `T`, `V`, `B`, `N` are live the same way). Second, **`U` is bound in
 `[Engine.PlayerInput]`, not in the tactical block** (`ClearAllWaypoints`), so a tactical-section-only
 grep reports it free and is wrong. Claimed: `H` = shot breakdown (targeting only), `I` = re-read the
-tutorial message (tutorial only). That is the whole supply of bare letters.
+tutorial message (tutorial only) AND the squad brief (tactical world mode and HUD layer, outside the
+tutorial). The two `I` claims are exclusive by construction: the brief's `activeWhen`
+(`src/unit_info.cpp`) requires `TacticalHUD::IsUsable()`, not `IsTargeting()`, and that the tutorial
+reader holds neither the key (`TutorialReader::OwnsRereadKey`, a modal box or the tutorial HUD) nor the
+mission (`InTutorialMission`); all four are flag reads, as a claim's gate must be. Not taken in
+targeting, where the game owns the arrows, Tab and F1-F8. That is the whole supply of bare letters.
 
 **Punctuation is where the budget actually is**, and it costs even less: `;` and `'` carry NO
 `Bindings=` entry in any input section, so they displace nothing and need no leniency argument (the

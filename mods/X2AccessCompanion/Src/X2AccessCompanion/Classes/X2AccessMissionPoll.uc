@@ -46,9 +46,17 @@ var config bool bObjBaselined;
 // "|ObjectID=Countdown|" per pending reinforcement group already spoken at that count.
 var config string CountdownMemo;
 
+// The turn-start brief is owed: PlayerTurnBegun fired for the XCom side and the line that follows
+// "Your Turn" has not been spoken yet. See ArmTurnBrief and PollTurnBrief.
+var config bool bTurnBriefPending;
+
+// Polls spent waiting for the turn's action points to be dealt before the brief is spoken anyway.
+var config int TurnBriefWaits;
+
 const MEMO_SEP = "~|~";
 const MEMO_EQ = "~=~";
 const BRIEF_WAIT_LIMIT = 30;
+const TURN_BRIEF_WAIT_LIMIT = 50;
 
 // ---------------------------------------------------------------------------
 // Entry point
@@ -117,6 +125,7 @@ static function Poll()
 	}
 
 	PollCountdown(HUD);
+	PollTurnBrief(GRI);
 	// Until the list is visible with rows the baseline is retaken silently every poll.
 	if (!default.bObjBaselined)
 		default.bObjBaselined = PollObjectives(HUD, true);
@@ -138,6 +147,8 @@ static function EndSession()
 	default.bObjBaselined = false;
 	default.BriefWaits = 0;
 	default.CountdownMemo = "";
+	default.bTurnBriefPending = false;
+	default.TurnBriefWaits = 0;
 	class'X2AccessTacticalEvents'.static.ResetTurnBanner();
 	class'X2AccessTacticalEvents'.static.ResetSpawnNarration();
 	class'X2AccessTacticalEvents'.static.ResetSightings();
@@ -185,6 +196,90 @@ static function int ShownIndex()
 	if (GRI.VisualizationMgr.LastStateHistoryVisualized <= 0)
 		return -1;
 	return GRI.VisualizationMgr.LastStateHistoryVisualized;
+}
+
+// ---------------------------------------------------------------------------
+// The turn-start brief
+// ---------------------------------------------------------------------------
+
+// Owed from the moment the XCom turn begins (X2AccessTacticalEvents.OnPlayerTurnBegun). It is
+// DEFERRED to this poll because that event is not a trustworthy instant to read action points: the
+// rules submit PlayerTurnBegun from BeginInitiativeTurn, and the only turn-start deal in the rules
+// script is SetupUnitActionsForGroupTurnBegin calling SetupActionsForBeginTurn on each member
+// (X2TacticalGameRuleset.uc, TurnPhase_UnitActions), a separate step. Which of the two comes first
+// for the XCom side was not measured; read on the event, every soldier could be Done. A replay never
+// arms it: the tutorial submits no turn state, and a brief built there would be read from a frame
+// the player has not been shown.
+static function ArmTurnBrief()
+{
+	local XComTacticalGRI GRI;
+
+	GRI = XComTacticalGRI(class'WorldInfo'.static.GetWorldInfo().GRI);
+	if (ReplayRunning(GRI))
+		return;
+
+	default.bTurnBriefPending = true;
+	default.TurnBriefWaits = 0;
+}
+
+// Speak the brief once the points exist. The conditions mirror HudReady: the visualizer idle and the
+// rules in the unit-actions phase. Then two ways out of the wait: some soldier of yours holds an
+// action point (the deal has happened), or TURN_BRIEF_WAIT_LIMIT polls have passed (a turn on which
+// every soldier is unable to act deals nothing, and that is exactly the news the brief carries).
+// Disarmed without speaking when the unit-action player is no longer the XCom player: the turn
+// passed before the brief could be read, and a brief about a turn that is over would be noise.
+static function PollTurnBrief(XComTacticalGRI GRI)
+{
+	local X2TacticalGameRuleset Rules;
+	local XComGameStateHistory History;
+	local XComGameState_Player ActionPlayer;
+	local XComGameState_Unit UnitState;
+	local string Line;
+	local bool bDealt;
+
+	if (!default.bTurnBriefPending)
+		return;
+
+	if (ReplayRunning(GRI))
+	{
+		default.bTurnBriefPending = false;
+		return;
+	}
+
+	if (class'XComGameStateVisualizationMgr'.static.VisualizerBusy())
+		return;
+
+	Rules = `TACTICALRULES;
+	if (Rules == none || Rules.GetStateName() != 'TurnPhase_UnitActions')
+		return;
+
+	History = `XCOMHISTORY;
+	ActionPlayer = XComGameState_Player(History.GetGameStateForObjectID(
+		Rules.GetCachedUnitActionPlayerRef().ObjectID));
+	if (ActionPlayer == none || ActionPlayer.GetTeam() != eTeam_XCom)
+	{
+		default.bTurnBriefPending = false;
+		return;
+	}
+
+	foreach History.IterateByClassType(class'XComGameState_Unit', UnitState)
+	{
+		if (UnitState.GetTeam() == eTeam_XCom && UnitState.IsAlive() && UnitState.NumAllActionPoints() > 0)
+		{
+			bDealt = true;
+			break;
+		}
+	}
+	if (!bDealt && default.TurnBriefWaits < TURN_BRIEF_WAIT_LIMIT)
+	{
+		default.TurnBriefWaits = default.TurnBriefWaits + 1;
+		return;
+	}
+
+	default.bTurnBriefPending = false;
+	Line = class'X2AccessUnitReader'.static.BuildSquadBrief(true);
+	if (Line != "")
+		class'X2AccessNarrator'.static.Alert(Line);
 }
 
 // ---------------------------------------------------------------------------

@@ -539,6 +539,15 @@ var localized string Actions_One;
 var localized string Actions_Few;
 var localized string Actions_Many;
 var localized string Overwatch;
+var localized string BriefEnemies_One;
+var localized string BriefEnemies_Few;
+var localized string BriefEnemies_Many;
+var localized string BriefNoEnemies;
+var localized string BriefReady;
+var localized string BriefDone;
+var localized string BriefUnable;
+var localized string BriefUnit;
+var localized string Arrived;
 var localized string NoHackingScreen;
 var localized string HackInProgress;
 var localized string Hacking;
@@ -755,6 +764,26 @@ static function string FillS(string Template, string S)
 	return Expand(Template, 0, 0, 0, S);
 }
 
+// A template that names two strings, for a phrase whose word order is the language's: a name and
+// the state said about it. Every other Expand clears the second string again.
+static function string FillS2(string Template, string S0, string S1)
+{
+	local XGParamTag Tag;
+
+	if (Template == "")
+		return "";
+	Tag = XGParamTag(`XEXPANDCONTEXT.FindTag("XGParam"));
+	if (Tag == none)
+		return Template;
+	Tag.IntValue0 = 0;
+	Tag.IntValue1 = 0;
+	Tag.IntValue2 = 0;
+	Tag.StrValue0 = S0;
+	Tag.StrValue1 = S1;
+	Tag.StrValue2 = "";
+	return `XEXPAND.ExpandString(Template);
+}
+
 // The game's own expander over its own shared tag object. Every slot a template may name is
 // written, the unused ones cleared, so a stale value from another caller can never leak into a
 // line of ours. A template with no tags comes back unchanged; an empty one stays empty.
@@ -771,5 +800,7 @@ static function string Expand(string Template, int A, int B, int C, string S)
 	Tag.IntValue1 = B;
 	Tag.IntValue2 = C;
 	Tag.StrValue0 = S;
+	Tag.StrValue1 = "";
+	Tag.StrValue2 = "";
 	return `XEXPAND.ExpandString(Template);
 }

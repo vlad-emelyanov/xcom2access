@@ -73,6 +73,12 @@ var config string SightingMemo;
 // (ResetSpawnNarration), like the spawn memo, for the same err-on-the-short-side reason.
 var config string NarratedRevealUnits;
 
+// "|id@root|" per player move whose arrival line has been spoken: the unit and the history index of the
+// move's ROOT state (the state that was interrupted, for a move resumed after an overwatch shot, else
+// the move's own state). An identity, not a text: two soldiers can arrive in words that read alike,
+// and one move must not speak twice if the game reports its end twice. Cleared with the sightings.
+var config string ArrivedMemo;
+
 // The enemy-turn moved-line budget. MovedSpoken counts the "moved" lines spoken in full since the
 // last turn handover; past MOVED_SPOKEN_CAP a plain move speaks nothing and bumps MovedSuppressed,
 // and the next XCom turn-begin says one summary line (FlushMovedSummary) and zeroes it. Both are
@@ -217,6 +223,13 @@ static function EventListenerReturn OnPlayerTurnBegun(Object EventData, Object E
 		// The game's memo returns to "local" with this turn, which re-arms the next alien banner.
 		default.LastTurnBanner = BANNER_LOCAL;
 		class'X2AccessNarrator'.static.Alert(class'UISpecialMissionHUD_TurnCounter'.default.m_strPlayerTurnLabel);
+
+		// The line that follows it: how many enemies are in view and which soldiers start the
+		// turn unable to act. NOT built here: the only place the rules deal turn-start points is
+		// SetupUnitActionsForGroupTurnBegin, a separate step from the PlayerTurnBegun submission,
+		// and which comes first for the XCom side was not measured, so the poll speaks it once
+		// the points exist. A replay never arms it.
+		class'X2AccessMissionPoll'.static.ArmTurnBrief();
 	}
 
 	return ELR_NoInterrupt;
@@ -1082,7 +1095,75 @@ static function EventListenerReturn OnUnitMoveFinished(Object EventData, Object 
 
 	NarrateSightings(Mover.ObjectID, GameState.HistoryIndex, false, false);
 
+	// After the sightings, so the "in view" lines this move produced come first and the arrival
+	// closes the move. A pod reveal the move triggered is spoken later still, at its own block.
+	NarrateArrival(Mover, GameState);
+
 	return ELR_NoInterrupt;
+}
+
+// One line for the soldier whose move just finished: where it stands, what it has left, and the two
+// facts the soldier's own cover shield and the enemy flags show for that tile. Every clause is the
+// tile cursor's or the flag's own words: the cover edges and the sight clause are
+// X2AccessTileReader's (the move key speaks the same two for its destination), the pips are the
+// squad ring's. Cover is spoken verbosely, so a soldier left in the open hears it said.
+//
+// Only a unit the PLAYER commands: team XCom and not AI-controlled. A panicked soldier moves by the
+// game's hand, not the player's, and is silent here (the panic line is the panic event's). A unit
+// that is dead, down, evacuated or cosmetic has no flag to speak for. The unit is re-fetched at the
+// present: the event hands over the state the move was written into, and the action points and tile
+// the player cares about are the ones standing after the block.
+//
+// ARRIVAL IDENTITY. UnitMoveFinished fires from the move's final build state only, never from an
+// interrupt step, so a move cut short by overwatch fires once, from its resume state. The memo keys
+// on the unit and the ROOT of the chain (InterruptionHistoryIndex for a resume), so a chain that
+// reports twice still speaks once, and no text is compared.
+static function NarrateArrival(XComGameState_Unit EventUnit, XComGameState GameState)
+{
+	local XComGameStateHistory History;
+	local XComGameState_Unit Mover;
+	local XComGameStateContext Context;
+	local X2CharacterTemplate Template;
+	local XComWorldData WorldData;
+	local vector TilePos;
+	local string Key, Line;
+	local int RootIndex;
+
+	if (EventUnit == none || GameState == none || !class'X2AccessMissionPoll'.static.IsBriefed())
+		return;
+
+	History = `XCOMHISTORY;
+	Mover = XComGameState_Unit(History.GetGameStateForObjectID(EventUnit.ObjectID));
+	if (Mover == none || Mover.GetTeam() != eTeam_XCom || Mover.ControllingPlayerIsAI())
+		return;
+	if (!Mover.IsAlive() || Mover.IsIncapacitated() || Mover.IsPanicked() || Mover.bRemovedFromPlay)
+		return;
+	Template = Mover.GetMyTemplate();
+	if (Template != none && Template.bIsCosmetic)
+		return;
+
+	RootIndex = GameState.HistoryIndex;
+	Context = GameState.GetContext();
+	if (Context != none && Context.InterruptionStatus == eInterruptionStatus_Resume
+		&& Context.InterruptionHistoryIndex >= 0)
+		RootIndex = Context.InterruptionHistoryIndex;
+	Key = "|" $ string(Mover.ObjectID) $ "@" $ string(RootIndex) $ "|";
+	if (InStr(default.ArrivedMemo, Key) != INDEX_NONE)
+		return;
+	default.ArrivedMemo = default.ArrivedMemo $ Key;
+
+	WorldData = `XWORLD;
+	TilePos = WorldData.GetPositionFromTileCoordinates(Mover.TileLocation);
+
+	Line = class'X2AccessVocab'.static.FillS(class'X2AccessVocab'.default.Arrived,
+		class'X2AccessHelper'.static.ShortName(Mover));
+	class'X2AccessHelper'.static.AppendComma(Line, class'X2AccessHelper'.static.ActionPointWords(Mover));
+	class'X2AccessHelper'.static.AppendComma(Line,
+		class'X2AccessTileReader'.static.DescribeCoverEdges(TilePos, true));
+	class'X2AccessHelper'.static.AppendComma(Line,
+		class'X2AccessTileReader'.static.DescribeSight(Mover.TileLocation, TilePos, Mover));
+
+	class'X2AccessNarrator'.static.Combat(Line $ ".");
 }
 
 // Re-evaluate who the squad can see after one move. An ENEMY mover changes the picture for itself
@@ -1310,6 +1391,7 @@ static function BaselineSightings(int Frame, bool bReplay)
 static function ResetSightings()
 {
 	default.SightingMemo = "";
+	default.ArrivedMemo = "";
 	default.NarratedRevealUnits = "";
 	default.MovedSpoken = 0;
 	default.MovedSuppressed = 0;

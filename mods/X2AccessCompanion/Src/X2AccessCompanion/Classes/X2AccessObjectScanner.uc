@@ -289,7 +289,7 @@ private function string AnnounceCategory(int Category, TTile Origin, int Delta, 
 	SelZ = Entries[Idx].Tile.Z;
 	bSelValid = true;
 
-	Line = FormatMarker(Entries[Idx], Origin, Idx + 1, Entries.Length);
+	Line = FormatMarker(Entries[Idx], Origin, Idx + 1, Entries.Length, Category);
 
 	// Only the ring names the category. A dedicated key already told the player which one they
 	// pressed, and repeating it every time would be a word in front of every reading.
@@ -441,7 +441,6 @@ private function AddEnemies(TTile Origin, out array<AccessMarker> Entries)
 {
 	local XComGameStateHistory History;
 	local XComGameState_Unit UnitState, ActiveUnit;
-	local X2CharacterTemplate Template;
 	local StateObjectReference ShooterRef;
 	local array<StateObjectReference> MineToSee, ViaSquadsight;
 	local AccessMarker M;
@@ -465,15 +464,7 @@ private function AddEnemies(TTile Origin, out array<AccessMarker> Entries)
 
 	foreach History.IterateByClassType(class'XComGameState_Unit', UnitState)
 	{
-		if (UnitState.GetTeam() != eTeam_Alien || UnitState.IsDead())
-			continue;
-		// The squad ring's phantom in its mirror image: a GREMLIN takes its owner's team, so a
-		// mind-controlled or hacked Specialist would put a nameless drone in the ENEMY ring the
-		// same way. The tile reader already refuses cosmetics here (X2AccessTileReader.uc:536).
-		Template = UnitState.GetMyTemplate();
-		if (Template != none && Template.bIsCosmetic)
-			continue;
-		if (!class'X2TacticalVisibilityHelpers'.static.CanXComSquadSeeTarget(UnitState.ObjectID))
+		if (!IsRingEnemy(UnitState))
 			continue;
 
 		M.Key = UnitState.ObjectID;
@@ -489,6 +480,15 @@ private function AddEnemies(TTile Origin, out array<AccessMarker> Entries)
 		class'X2AccessHelper'.static.AppendComma(M.Detail,
 			SightWords(UnitState.ObjectID, ActiveUnit, MineToSee, ViaSquadsight));
 
+		// The hit chance the Targets stop speaks for the same head, right after the sight clause
+		// and ahead of the cover it depends on. Silent for an enemy the selected soldier cannot
+		// target (the SpottedBySquad case above) and with no soldier selected: the clause is the
+		// default shot's number or nothing, never a guess. No damage and no ranking — the ring
+		// stays in distance order.
+		if (ActiveUnit != none)
+			class'X2AccessHelper'.static.AppendComma(M.Detail,
+				class'X2AccessTacticalReader'.static.DescribeTargetHitChance(UnitState));
+
 		// The same words the shot readout uses, from the same functions — see
 		// X2AccessTacticalReader.DescribeTargetCover.
 		class'X2AccessHelper'.static.AppendComma(M.Detail,
@@ -503,6 +503,24 @@ private function AddEnemies(TTile Origin, out array<AccessMarker> Entries)
 
 		InsertByDistance(Origin, M, Entries);
 	}
+}
+
+// The enemy ring's membership, as ONE test so the squad brief's "enemies in view" can never count a
+// different set than the ring lists: a live alien the SQUAD can see (units are never fog-latched).
+// The cosmetic refusal is the squad ring's phantom in its mirror image: a GREMLIN takes its owner's
+// team, so a mind-controlled or hacked Specialist would put a nameless drone in the ENEMY ring the
+// same way. The tile reader already refuses cosmetics here. The Lost ride the ring through AddLost
+// and are not counted by this test.
+static function bool IsRingEnemy(XComGameState_Unit UnitState)
+{
+	local X2CharacterTemplate Template;
+
+	if (UnitState == none || UnitState.GetTeam() != eTeam_Alien || UnitState.IsDead())
+		return false;
+	Template = UnitState.GetMyTemplate();
+	if (Template != none && Template.bIsCosmetic)
+		return false;
+	return class'X2TacticalVisibilityHelpers'.static.CanXComSquadSeeTarget(UnitState.ObjectID);
 }
 
 // "" when the selected soldier sees it themselves, which is the ordinary case and needs no words.
@@ -524,9 +542,11 @@ private function string SightWords(int TargetID, XComGameState_Unit ActiveUnit,
 // No fog gate — they are yours. bIsDestination is false: a soldier's own tile is occupied, so
 // "1 action" about it would answer a question nobody asked.
 //
-// Detail is held to what the unit FLAG shows above their head — status, cover, health, shield,
-// armour. Action points are deliberately absent: the HUD shows those for the selected soldier and
-// the tile cursor answers for a tile, so putting them here would be a third voice on one fact.
+// Detail is held to what the unit FLAG shows above their head — the move pips (UIUnitFlag.RealizeMoves
+// draws one per action point on EVERY friendly flag, not only the selected soldier's), the overwatch
+// icon, status, cover, health, shield, armour. The pips go right after the Selected word and ahead of
+// the status: how many actions a soldier has decides what the rest of the line is worth. The same
+// words ActionPointWords gives the soldier readout, the squad brief and the arrival line.
 private function AddSquad(TTile Origin, out array<AccessMarker> Entries)
 {
 	local XComGameStateHistory History;
@@ -571,6 +591,12 @@ private function AddSquad(TTile Origin, out array<AccessMarker> Entries)
 		M.Detail = "";
 		if (UnitState.ObjectID == ActiveID)
 			class'X2AccessHelper'.static.AppendComma(M.Detail, class'X2AccessVocab'.default.Selected);
+		class'X2AccessHelper'.static.AppendComma(M.Detail,
+			class'X2AccessHelper'.static.ActionPointWords(UnitState));
+		// The overwatch icon on the soldier's own flag (UIUnitFlag.RealizeOverwatch), the Targets
+		// stop's word. Not gated on team: this loop is the friendly flags.
+		class'X2AccessHelper'.static.AppendComma(M.Detail,
+			class'X2AccessTacticalReader'.static.DescribeTargetOverwatch(UnitState));
 		class'X2AccessHelper'.static.AppendComma(M.Detail, StatusWords(UnitState));
 
 		// An EMPTY shooter ref on purpose: IsFlanked with no flanker asks "flanked by anything
@@ -607,7 +633,7 @@ private function AddSquad(TTile Origin, out array<AccessMarker> Entries)
 // all, then everything else. Bleeding out and unconscious are ALSO in the penalty list (both get
 // SetDisplayInfo), so whichever leads is remembered and skipped there rather than said twice.
 // Concealment is not a problem and comes last, after whatever is.
-private function string StatusWords(XComGameState_Unit UnitState)
+static function string StatusWords(XComGameState_Unit UnitState, optional bool bSkipConcealed)
 {
 	local array<UISummary_UnitEffect> Penalties;
 	local string Result, Lead;
@@ -632,7 +658,8 @@ private function string StatusWords(XComGameState_Unit UnitState)
 		class'X2AccessHelper'.static.AppendComma(Result, Penalties[i].Name);
 	}
 
-	if (UnitState.IsConcealed())
+	// The squad brief passes bSkipConcealed: concealment is not a reason a soldier cannot act.
+	if (!bSkipConcealed && UnitState.IsConcealed())
 		class'X2AccessHelper'.static.AppendComma(Result,
 			class'X2StatusEffects'.default.ConcealedFriendlyName);
 
@@ -2229,10 +2256,22 @@ static function string DoorStateOf(XComGameState_InteractiveObject Obj)
 // The spoken line
 // ---------------------------------------------------------------------------
 
-// `<label>, <N> tiles, <compass offset>, <reach>, <i of n>` — the same shape and the same compass
+// <label>, <N> tiles, <compass offset>, <reach>, <i of n> — the same shape and the same compass
 // words the tile cursor uses, so the two surfaces sound like one mod and describe one world.
-private function string FormatMarker(AccessMarker M, TTile Origin, int Position, int Total)
+//
+// A COVER entry also carries the tile's sight clause ("Seen by 1, flanked"), asked HERE and not while
+// the ring is rebuilt, so the price is one tile per press and not one per candidate. The words are the
+// tile cursor's (X2AccessTileReader.DescribeSight), for the selected soldier on that tile; it goes
+// ahead of the reach and position tail so the line still ends the way every ring does. The same fog
+// gate the cursor applies: a never-seen tile is read as nothing but "unexplored", so it gets no
+// sight clause here either (every cover entry is already latched-explored; the test is the contract).
+// No ranking: the clause describes the entry the player chose and reorders nothing.
+private function string FormatMarker(AccessMarker M, TTile Origin, int Position, int Total,
+	optional int Category)
 {
+	local XComWorldData WorldData;
+	local FOWTileStatus FOW;
+	local byte GameplayFlags;
 	local string Result;
 
 	Result = M.Label;
@@ -2241,6 +2280,14 @@ private function string FormatMarker(AccessMarker M, TTile Origin, int Position,
 		class'X2AccessVocab'.default.Tiles_One, class'X2AccessVocab'.default.Tiles_Few,
 		class'X2AccessVocab'.default.Tiles_Many));
 	AppendComma(Result, class'X2AccessTileReader'.static.OffsetWords(Origin, M.Tile));
+	if (Category == CAT_COVER)
+	{
+		WorldData = `XWORLD;
+		WorldData.GetTileFOWValue(M.Tile, FOW, GameplayFlags);
+		if (FOW != eFOWTileStatus_NeverSeen)
+			AppendComma(Result, class'X2AccessTileReader'.static.DescribeSight(M.Tile,
+				WorldData.GetPositionFromTileCoordinates(M.Tile)));
+	}
 	if (M.bIsDestination)
 		AppendComma(Result, ReachWords(M.Tile));
 	if (Total > 1)
