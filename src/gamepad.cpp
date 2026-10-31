@@ -174,6 +174,7 @@ constexpr int kMapCount = static_cast<int>(sizeof(kMap) / sizeof(kMap[0]));
 struct InputState {
     bool held = false;  // physically down, tracked in EVERY layer so an edge is never invented
     bool owned = false; // the press was taken here, so the release is ours too
+    Layer layer = Layer::None; // the layer the press was taken in: a tap or repeat dies with it
     uint64_t nextRepeatMs = 0;
 };
 InputState sInputs[kMapCount];
@@ -271,8 +272,8 @@ Stick sRight{Source::RStickUp, Source::RStickDown, Source::RStickLeft, Source::R
 WORD sPrevButtons = 0;
 bool sPrevLt = false;
 bool sPrevRt = false;
-bool sPrevLeftDir = false;
-bool sPrevRightDir = false;
+Source sPrevLeftDir = Source::Button; // a direction CHANGE counts as a press for Silence
+Source sPrevRightDir = Source::Button;
 bool sLtTapHeld = false;  // LT is down and a tap entry took it: it is a chord modifier
 bool sChordFired = false; // a chord ran while LT was held, so its release is not a tap
 
@@ -621,14 +622,15 @@ void PublishSets(const PadSnapshot& snap, bool ltDown, bool rtDown)
 // game's own pad handling.
 Layer ComputeLayer(uint64_t now, bool foreground)
 {
-    if (now - sLastShellCheckMs >= kShellCheckMs) {
+    if (!foreground)
+        return Layer::None;
+    const bool controller = KeyboardGate::ControllerMode();
+    // The shell scan only decides anything in mouse mode; controller mode skips it.
+    if (!controller && now - sLastShellCheckMs >= kShellCheckMs) {
         sLastShellCheckMs = now;
         void* shell = GameUI::FindMainMenuShell();
         sInShell = shell && GameUI::IsScreenOnStack(shell);
     }
-    if (!foreground)
-        return Layer::None;
-    const bool controller = KeyboardGate::ControllerMode();
     if (!sInShell && !controller)
         return Layer::None;
 
@@ -811,7 +813,7 @@ void OnTick()
     // Not in the None layer: there the pad is vanilla and so is the reader's view of it.
     const bool anyPress = foreground
         && ((snap.buttons & ~sPrevButtons) != 0 || (ltDown && !sPrevLt) || (rtDown && !sPrevRt)
-            || (leftDir && !sPrevLeftDir) || (rightDir && !sPrevRightDir));
+            || (leftDir && sLeft.dir != sPrevLeftDir) || (rightDir && sRight.dir != sPrevRightDir));
     if (layer != Layer::None && anyPress)
         TTS::Silence();
 
@@ -825,6 +827,7 @@ void OnTick()
             s.held = true;
             const bool applies = Applies(m, layer);
             s.owned = applies;
+            s.layer = layer;
             s.nextRepeatMs = now + kRepeatDelayMs;
             sPresses++;
             if (applies) {
@@ -841,7 +844,7 @@ void OnTick()
                 }
             }
         } else if (pressed && s.owned && m.fire == Fire::Press && m.repeats
-            && now >= s.nextRepeatMs) {
+            && s.layer == layer && now >= s.nextRepeatMs) {
             s.nextRepeatMs = now + kRepeatIntervalMs;
             TTS::Silence();
             Send(m, /*down*/ true, /*repeat*/ true);
@@ -849,7 +852,7 @@ void OnTick()
             if (s.owned) {
                 if (m.fire == Fire::Press) {
                     Send(m, /*down*/ false, /*repeat*/ false);
-                } else if (!sChordFired) {
+                } else if (!sChordFired && s.layer == layer) {
                     // The tap: LT went down and came up with no chord between.
                     const bool claimed = Send(m, /*down*/ true, /*repeat*/ false);
                     Send(m, /*down*/ false, /*repeat*/ false);
@@ -869,8 +872,8 @@ void OnTick()
     sPrevButtons = foreground ? snap.buttons : 0;
     sPrevLt = ltDown;
     sPrevRt = rtDown;
-    sPrevLeftDir = leftDir;
-    sPrevRightDir = rightDir;
+    sPrevLeftDir = sLeft.dir;
+    sPrevRightDir = sRight.dir;
 }
 
 void Shutdown()
