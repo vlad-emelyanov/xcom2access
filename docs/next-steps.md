@@ -61,10 +61,11 @@ Controller (`input-map.md`), so the same keys are still unrun in mouse mode. ⚠
 failed to leave `UIShellDifficulty` once, after Enter on a difficulty row, cause not found.
 
 **Mouse-mode agent test: still unrun** (2026-10-31). A run was staged (profile in mouse mode, `X2Access.nopad`
-marker, `dev-harness.md`) and blocked: after the machine rebooted, every launch, with or without the
-ASI and with `-nosound`, died 12 s in, right after the Wwise banner in `Launch.log`
-(`0xc0000409` in `ucrtbase.dll`). The default playback device was the LG monitor's HDMI audio. Not
-tried: another default device (changing it was refused as outside the task). The mouse-mode profile is
+marker, `dev-harness.md`) and blocked: every launch died 12 s in, right after the Wwise banner in
+`Launch.log`, with or without the ASI and with `-nosound`. Cause found 2026-10-31: NO MOUSE WAS CONNECTED. The
+game calls `IDirectInput8::CreateDevice(GUID_SysMouse)`, gets `DIERR_DEVICENOTREG` (0x80040154), never checks it and
+dereferences the null device (`XCom2.exe+0xaa6b6c`; `docs/engine-notes.md`, a launch with no mouse). The audio-device
+guess was wrong. Fix: reconnect the USB mouse (the Logitech receiver, VID 046D PID C52B) and relaunch. The mouse-mode profile is
 saved as `profile.bin.mouse-test-run2-20261031` in the backup folder; the live profile and marker were put back to controller mode.
 The checks still owed in mouse mode: load-game rows and Enter on the right row, `KeyboardGate` never logging
 `controller mode`, Avenger Tab/arrows/Escape/rooms, the HUD (Commands stop, ability names, E/Q, shot and Escape,

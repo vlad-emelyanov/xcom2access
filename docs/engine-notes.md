@@ -420,3 +420,16 @@ and note that a rule with no measurement under it any more is a rule to delete, 
   (https://robojumper.github.io/too-real/). Highlander event reference:
   https://x2communitycore.github.io/X2WOTCCommunityHighlander/
 
+
+## A launch with no mouse connected dies 12 s in (measured 2026-10-31)
+
+Symptom: `XCom2.exe` dies about 12 s after launch, 0.2 s after the Wwise banner and before the D3D11 adapter line,
+every time, with the ASI, without it and with `-nosound`. The engine's own crash handler catches it, so the Application
+log has no Event 1000 and the minidump is 0 bytes. Measured by attaching Frida about 4 s after a direct launch with
+`Process.setExceptionHandler` only (a spawn-suspended run with `Interceptor` hooks changes the timing and dies at a
+different, unrelated first-chance throw): access violation, read of address 0, at `XCom2.exe+0xaa6b6c`, `rax=0x80040154`,
+the stack `0xaa6b6c < 0x171f5c < 0x4d94b0 < 0x15f370`. The code is `IDirectInput8->CreateDevice(GUID_SysMouse, &dev)`
+(`call [rax+0x18]`, `rdx` = 6F1D2B60-D5A0-11CF-BFC7-444553540000) followed by an unchecked `[dev]->vtable+0x58`.
+`0x80040154` is `DIERR_DEVICENOTREG`: DirectInput found no mouse. `Win32_PointingDevice` was empty and every
+`HID-compliant mouse` in Device Manager was status Unknown (not present). Needs a mouse connected, like the
+monitor-must-be-connected rule in memory. Earlier `0xc0000409`/audio-device theories came from a different crash and a guess.
