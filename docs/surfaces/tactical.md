@@ -1466,3 +1466,36 @@ future speech-scrollback key.
   one that MUST be there: `X2MissionNarrativeTemplate.KeyBindingMarkups` resolves only
   RMB/ENTER/TAB/Q/E/P and `%KEY:LMB%` is substituted solely by `UIUtilities_Input.InsertPCIcons`,
   which the blade path never calls — so it reaches speech raw.
+
+### Orientation heading, path hazards, enemy sightings (2026-10-30, written from source, never compiled or run)
+
+- **The orientation line leads with the objective list's header row.** The "mission heading" the list
+  draws is the label of the first non-dark-event row with `ShowHeader` (`UIObjectiveListItem.RefreshType`
+  makes it `eUIODT_ClickableButton`, `SetLabelButton` pushes `DisplayLabel`); `MissionType` is the
+  mission's `sType` key and is NEVER drawn. `X2AccessMissionPoll.MissionHeading` reads it. ⛔ The
+  list fills a moment after the HUD is ready, so the line waits for the first populated read
+  (`ListPopulated`, 100 ms a poll) and gives up after `BRIEF_WAIT_LIMIT` polls rather than never
+  speak on a mission with no list. A new mission's operation name is dropped when it repeats the
+  heading. Works in the tutorial: the list is driven by the visualization observer, which a replay
+  fires.
+- **Path hazards: fire, poison, acid, no concealment gate.** `XComPathingPawn` pins
+  `HazardMarkerDefinitions` icons (`DefaultGameCore.ini:1997-1999`) from the native
+  `UpdateHazardMarkerInfo(ActiveUnitState)`, called unconditionally (`XComPathingPawn.uc:723`, `:800`),
+  so unlike the two concealment markers the hazard clause is not concealment-gated. The marker arrays
+  are private and the update native, so `DescribePathHazards` MIRRORS the condition (a path tile past
+  the start holds the effect and `IsImmuneToWorldHazard` is false for the mover) and says so. Smoke
+  has an icon definition but harms nobody; not spoken. `KillZoneMarkers` and `LaserScopeMarkers` are
+  native-only with no script primitive: NOT claimed. Computed on the preview press, never per tick.
+- **Sightings use the move's FINAL build state and the block COMPLETED window.** `UnitMoveFinished`
+  (`MoveAbility_BuildGameState`, `X2Ability_DefaultAbilitySet.uc:286`) is not fired for interrupt
+  steps; at block completion the walk is on screen. Claim is on (unit, tile) in `SightingMemo`:
+  absent is "in view", another tile on the mover itself is "moved", unseen is "out of view" (name
+  only, no position). ⛔ Visibility is asked for the move's FRAME (`GetVisibilityInfo` with the
+  history index), because submission runs ahead of visualization and the latest state is the end of
+  a big enemy turn. Stand-downs: a unit the pod reveal named this turn (`NarratedRevealUnits`,
+  claimed in `BuildRevealLine`, so the scamper stays out of the cutscene), a unit the drop named
+  (`WasSpawnNarrated`), and a unit whose reveal is already in the history after the move
+  (`IsRevealPending`). Friendly moves speak nothing. An enemy mover examines only itself; a friendly
+  mover examines every enemy. The orientation line baselines the memo.
+- **Tutorial and replay:** no event fires, so `X2AccessReplayNarration.NarrateMovement` calls the
+  same `NarrateSightings` for each shown move frame with `bReplay` set (no latest-state fallback).

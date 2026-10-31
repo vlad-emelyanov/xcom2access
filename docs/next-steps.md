@@ -18,6 +18,11 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**Heading, path hazards and sightings, written from source, never compiled** (2026-10-30; `docs/surfaces/tactical.md`, last section). Compile the companion first, then on Gatecrasher (normal mission) and once in the tutorial:
+1. Load a mission: the orientation line must lead with the objective heading (`ListPopulated` can stay false on a map whose list never fills; the log shows no wait counter, so time it). Check that `ShowHeader` rows exist on that map; if the heading is empty the line falls through to the old content.
+2. Path hazards: preview a move through fire, poison and acid (and a Fortress or immune unit: the clause must stay silent). Unverified: that `IsImmuneToWorldHazard` takes the effect class name (`X2Effect_ApplyFireToWorld`) and matches what the native marker update tests; whether the game pins smoke; whether noise is shown to a revealed unit (existing assumption); killzone and laser-scope markers are unclaimed until the private arrays are read natively.
+3. Sightings: walk into a pod while concealed (expect `X in view` with distance and bearing and no reveal); watch a patrol cross the view (`moved`, `out of view`); trigger a pod reveal and confirm no `in view` or `moved` line interleaves with the reveal and scamper. Unverified: `GetVisibilityInfo` with an old history index answers for a frame the manager has not cached (the code falls back to the present, live only), and `bVisibleGameplay` equals what the unit flag shows; reveal lookahead of 64 frames is enough; a large enemy turn queues a tolerable number of lines. Tutorial: the replay path should speak the same lines per shown move.
+
 **Controller on the shell menus** (2026-10-30, `src/gamepad.cpp`; map in `input-map.md`). Run end to
 end on the virtual pad (`/pad`): main menu, Load Game, settings, New Game and difficulty, in stick and
 D-pad, including hold-to-repeat; A answered a dialog. By hand with a physical pad: scrolling the main
