@@ -58,6 +58,11 @@ Endpoints:
   script-level delivery. It needs a connected pad to merge into. `tools/xctl.ps1 pad A,DDown` drives it
   anywhere; prove a press by `/status` (screen stack) and `/props` (a soldier index), not by the
   counters.
+- `/pad?hide=1|0` — tells the ENGINE no pad is connected (1) or restores it (0); the mod's own layer is
+  unaffected. For mouse-mode runs: a physical pad showing activity flips the game out of mouse mode.
+  The marker file `Binaries/Win64/scripts/X2Access.nopad` does the same from the first poll of a
+  launch. ⛔ It persists across launches like `X2Access.devserver`, so DELETE it when the mouse run
+  ends, or the player's real pad is dead to the game.
 - `/flashqueue[?index=N]` — what panels PUSHED into Scaleform, captured in flight by
   `src/flash_shadow.cpp`. For the whole retains-nothing family this is the only place the words
   ever existed, so it is the endpoint that answers "what does this screen actually say" for a

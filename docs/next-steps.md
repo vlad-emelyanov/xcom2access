@@ -26,6 +26,16 @@ were already in controller mode: this machine's profile has the Input Device opt
 Controller (`input-map.md`), so the same keys are still unrun in mouse mode. ⚠ Pad B and Escape both
 failed to leave `UIShellDifficulty` once, after Enter on a difficulty row, cause not found.
 
+**Mouse-mode agent test: still unrun** (2026-10-31). A run was staged (profile in mouse mode, `X2Access.nopad`
+marker, `dev-harness.md`) and blocked: after the machine rebooted, every launch, with or without the
+ASI and with `-nosound`, died 12 s in, right after the Wwise banner in `Launch.log`
+(`0xc0000409` in `ucrtbase.dll`). The default playback device was the LG monitor's HDMI audio. Not
+tried: another default device (changing it was refused as outside the task). The mouse-mode profile is
+saved as `profile.bin.mouse-test-run2-20261031` in the backup folder; the live profile and marker were put back to controller mode.
+The checks still owed in mouse mode: load-game rows and Enter on the right row, `KeyboardGate` never logging
+`controller mode`, Avenger Tab/arrows/Escape/rooms, the HUD (Commands stop, ability names, E/Q, shot and Escape,
+grenade Enter), end turn and enemy-turn narration.
+
 **Controller-mode fixes written from source, never run** (2026-10-30). Three changes, each unreachable in
 mouse mode by construction (except the ability-name call, which can fire once in mouse mode before the first UpdateData, harmlessly), none exercised. Run in controller mode on a normal mission (Gatecrasher):
 1. Ability names (`recipe_tactical.cpp`, `X2AccessTacticalReader.BuildAbilityBarNames`, which is
