@@ -71,6 +71,14 @@ The checks still owed in mouse mode: load-game rows and Enter on the right row, 
 `controller mode`, Avenger Tab/arrows/Escape/rooms, the HUD (Commands stop, ability names, E/Q, shot and Escape,
 grenade Enter), end turn and enemy-turn narration.
 
+**Mouse-mode agent test, second attempt (2026-10-31, a53f52b): shell only.** Proved mouse mode from facts:
+`UIMovie.MouseActive` true on the live movie, no `KeyboardGate: controller mode` line, `/pad` layer `menu` in the shell,
+`bAllowAllInput` false. Load Game rows spoke with no "unavailable" and Enter on row 1 (Mission 3 Turn 12) loaded THAT save.
+Everything past the load is unrun: two loads of it died at `Kismet: LNA pt. II -- Restore map state`
+(one crash, one vanished process), and later launches hung or crashed at the main menu. Cause is likely the machine, not
+the mod: ZoomText (`Zt.exe`) held 27 GB private memory, commit charge stood at 57 of 64 GB and Windows logged low
+virtual memory three times. Restart ZoomText (or reboot) and rerun checks a-e.
+
 **Controller-mode fixes written from source, never run** (2026-10-30). Three changes, each unreachable in
 mouse mode by construction (except the ability-name call, which can fire once in mouse mode before the first UpdateData, harmlessly), none exercised. Run in controller mode on a normal mission (Gatecrasher):
 1. Ability names (`recipe_tactical.cpp`, `X2AccessTacticalReader.BuildAbilityBarNames`, which is
