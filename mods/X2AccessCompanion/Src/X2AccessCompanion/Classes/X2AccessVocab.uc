@@ -605,6 +605,7 @@ var localized string BondmateOnSquad;
 
 var localized string BreaksConcealment;
 var localized string Noise;
+var localized string PathHazards;
 
 var localized string HeightUp;
 var localized string HeightDown;
