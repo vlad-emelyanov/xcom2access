@@ -45,6 +45,7 @@ priority, or out of scope — is `../ui-inventory.md`, and what is still owed on
 | Avatar project meter (the stop, and the change watch) | `game_ui_strategy.cpp` (`ReadDoomMeter`), `doom_meter.cpp` (the watch; words via Flash capture) | `X2AccessGeoScanner.DescribeDoom` / `DescribeDoomTimer`, `geoscape tray` stop 3 | strategy.md | `geoscape-recon.md` §4.5 |
 | Skyranger briefing | `dropship.cpp` | `X2AccessDropshipReader.uc` | strategy.md | `dropship-briefing-recon.md` |
 | Modals / alerts | `flash_shadow.cpp` (UIAlert words) | `X2AccessPopupReader.uc`, `popup` | strategy.md | `popup-inventory.md` |
+| Dark events board (`UIAdventOperations`) — a branch of the popup recipe: one stop per card, the pending and active views, reveal | `game_ui_popup.cpp` (the click handler's one call) | `X2AccessPopupReader.DescribeAdventOps`, `popup` (`BuildAdventOperations`) | strategy.md | — (built from `SrcOrig`; never run) |
 | Mission blade (`UIMission` + 16 subclasses) | `game_ui_popup.cpp` | `X2AccessMissionReader.uc`, `mission blade` | — | `mission-blade-recon.md` |
 | Skyranger-arrived prompt (`UISkyrangerArrives`) | `game_ui_strategy.cpp` (finder only) | `X2AccessSkyrangerReader.uc`, `skyranger arrives` | strategy.md | — (built from `SrcOrig` alone; recon owed with the first live pass) |
 | Commlink / toasts | `transient_reader.cpp` | `X2AccessTransientReader.uc` | strategy.md | `popup-inventory.md` |

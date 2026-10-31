@@ -155,6 +155,25 @@ int32_t MissionBladeMissionId(void* screen)
     return static_cast<int32_t>(ReadU32Raw(screen, kUIMissionMissionRefOffset));
 }
 
+// ---- the dark events board (UIAdventOperations) ----
+
+bool RevealDarkEvent(void* screen, int index)
+{
+    if (!screen || index < 0)
+        return false;
+    // OnRevealClicked(int Idx): the handler a mouse click on a locked card ends in (OnMouseEvent
+    // parses the card's index out of the Flash path, then calls this) and the one the controller's
+    // X reaches with -1. It checks bSecretEvent and the player's means itself, so a card that
+    // cannot be revealed is a no-op here exactly as it is for a click. The block is padded because
+    // the generated _Params struct carries the function's locals after Idx.
+    struct {
+        int32_t Idx;
+        int32_t pad[15];
+    } params{};
+    params.Idx = index;
+    return CallNamedFunction(screen, "OnRevealClicked", &params);
+}
+
 // ---- UIAlert's words, read back out of its Flash panel ----
 //
 // See the header for why this is the one deliberate exception to "verification only, never the

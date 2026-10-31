@@ -51,6 +51,17 @@ void* FindMissionBladeScreen();
 /// mission (no widget respawn), so the screen pointer alone would serve stale words.
 int32_t MissionBladeMissionId(void* screen);
 
+// ---- the dark events board (UIAdventOperations) ----
+//
+// The words come from X2AccessPopupReader's DescribeAdventOps; the keys are the screen's own
+// (Y flips pending and active, B or Enter leaves). The one thing no key reaches per card is
+// revealing a SPECIFIC hidden event: the controller's X reveals the first affordable one and the
+// mouse click names a card, so the click's handler is called directly.
+
+/// UIAdventOperations.OnRevealClicked(index) — what a mouse click on a locked card runs. A no-op
+/// for a card that is open or unaffordable (the handler's own checks). Game thread only.
+bool RevealDarkEvent(void* screen, int index);
+
 // ---- UIAlert: the 118-variant strategy alert, read back out of Flash ----
 //
 // ⛔ This is the ONE place in the project that reads the speech text out of the movie, and it is

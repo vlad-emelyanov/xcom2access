@@ -292,6 +292,12 @@ inline constexpr Word PopupNoText{"PopupNoText"};
 inline std::string PopupContinue() { return GameString("UIUtilities_Text", "m_strGenericContinue", RoleButton); }
 inline constexpr Word PopupDismiss{"PopupDismiss"};
 
+// The dark events board's own verbs (UIAdventOperations). The companion carries the live words;
+// these are the class defaults for the rare read that came back empty, never a copy of the label.
+inline std::string AdventShowActive() { return GameString("UIAdventOperations", "m_strShowActiveButton", RoleButton); }
+inline std::string AdventShowPending() { return GameString("UIAdventOperations", "m_strShowPendingButton", RoleButton); }
+inline std::string AdventReveal() { return GameString("UIAdventOperations", "m_strReveal", RoleButton); }
+
 // The mission blade family (docs/mission-blade-recon.md). Every blade carries its own localized
 // heading (the mission-type title plus the region) and the recipe reads that, so the fallback is
 // reached only when the companion answered nothing for a recognised blade.

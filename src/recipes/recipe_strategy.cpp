@@ -2506,6 +2506,151 @@ std::unique_ptr<GraphRender> BuildGeoscape()
 
 constexpr const char* kPopupReaderClass = "X2AccessPopupReader";
 
+// ---- the dark events board (UIAdventOperations), a branch of the popup recipe ----
+//
+// The page the player opens each month. It is not a modal with a message, so the popup recipe's
+// message-and-buttons shape does not fit; it is still the popup recipe's screen (one reader per
+// surface), so the branch lives here and BuildPopup hands over on the class name.
+//
+// LAYOUT, in the screen's own order: a heading stop (the title, the help line, then the two
+// countdowns when the screen draws them), ONE STOP PER CARD (title, then status, summary and
+// quote for an open card; cost, unlock caption and the reveal verb for a hidden one), then the
+// actions stop. No column headings are drawn, so this is cards, not a sheet.
+//
+// ⛔ A HIDDEN card reads only what UpdateDarkEventCardLocked is handed: the concealed title the
+// game's own getter answers, the cost and the unlock caption. The companion never asks the
+// template for its real words, so nothing here can leak them.
+//
+// THE TWO INPUT MODES take different branches in the screen and one graph serves both, because
+// every action below goes through the screen's OWN input handler or the handler a click ends in,
+// never through a widget only one mode has:
+//  - Mouse and keyboard: Back and the flip button are NavHelp buttons reachable only by mouse,
+//    and Escape has no branch in the screen, so a keyboard player has no key at all. The recipe
+//    sends the controller commands (B, Y) the screen handles in either mode.
+//  - Controller: B closes, Y flips (only while an active event exists), X reveals the FIRST
+//    affordable hidden card, and in the resistance report A or Enter continues. Per-card
+//    reveal calls the click's handler with that card's index — the mouse path — so a player
+//    standing on a card reveals THAT card, never another.
+// No selection exists on this screen (the cards are not focusable), so there is nothing to set
+// before an action; OnRevealClicked takes the index itself.
+std::unique_ptr<GraphRender> BuildAdventOperations(const std::vector<WireRecord>& words,
+    const WireRecord& header)
+{
+    const WireRecord* advent = FindRecord(words, "advent");
+    const std::string mode = advent ? RecField(*advent, "mode") : std::string();
+    // The mode rides in every id: a flip replaces the whole card list, and the differ must see
+    // new nodes (and so speak) rather than the same ones.
+    const std::string key = "advent/" + mode + "/";
+
+    GraphBuilder b;
+    int added = 0;
+    auto addLine = [&](const std::string& id, const std::string& text) {
+        if (text.empty())
+            return;
+        b.AddLabel(ControlId::Structural(key + id), [text]() { return text; });
+        added++;
+    };
+
+    // Heading. The title rides as a context so a replaced page still speaks it.
+    b.BeginStop("header");
+    const std::string title = RecField(header, "title");
+    const bool titled = !title.empty();
+    if (titled)
+        b.PushContext(title, "", /*positions*/ false);
+    if (advent) {
+        addLine("help", RecField(*advent, "help"));
+        addLine("facility", JoinPhrases(JoinPhrases(RecField(*advent, "fac_label"),
+                                            RecField(*advent, "fac_value")),
+                                RecField(*advent, "fac_est")));
+        addLine("retaliation", JoinPhrases(JoinPhrases(RecField(*advent, "ret_label"),
+                                               RecField(*advent, "ret_value")),
+                                   RecField(*advent, "ret_est")));
+    }
+    if (added == 0) {
+        b.AddLabel(ControlId::Structural(key + "none"),
+            []() { return std::string(Vocab::PopupNoText); });
+    }
+    if (titled)
+        b.PopContext();
+
+    // One stop per card, in the order BuildScreen drew them.
+    for (const WireRecord& rec : words) {
+        if (RecField(rec, "kind") != "card")
+            continue;
+        const std::string index = RecField(rec, "index");
+        const std::string state = RecField(rec, "state");
+        const std::string base = "card/" + index + "/" + state + "/";
+        b.BeginStop("card/" + index);
+        // Empty-label context: a card is a few lines of prose and a control, and a position
+        // stamp on a sentence ("status, 2 of 4") is noise (the mission blade's pattern).
+        b.PushContext("", "", /*positions*/ false);
+        int before = added;
+        addLine(base + "title", RecField(rec, "title"));
+        if (state == "locked") {
+            addLine(base + "cost", RecField(rec, "cost"));
+            addLine(base + "unlock", RecField(rec, "unlock"));
+            if (RecField(rec, "canreveal") == "1") {
+                std::string label = RecField(rec, "reveal");
+                if (label.empty())
+                    label = Vocab::AdventReveal();
+                NodeVtable vt;
+                vt.Type = &ButtonType();
+                vt.Announcements.emplace_back(NodeAnnouncement::Static(label));
+                vt.Announcements.back().Kind = AnnouncementKinds::Label;
+                // Read gScreen at activation: the handler runs from the input drain, a frame or
+                // more after this render. The handler checks affordability itself.
+                vt.OnActivate = [idx = atoi(index.c_str())]() {
+                    GameUI::RevealDarkEvent(gScreen, idx);
+                };
+                b.AddItem(ControlId::Structural(key + base + "reveal"), std::move(vt));
+                added++;
+            }
+        } else {
+            addLine(base + "status", RecField(rec, "status"));
+            addLine(base + "summary", RecField(rec, "summary"));
+            addLine(base + "quote", JoinPhrases(RecField(rec, "quote"), RecField(rec, "author")));
+        }
+        if (added == before) {
+            // A card with no readable word is still a card the screen draws; say so.
+            b.AddLabel(ControlId::Structural(key + base + "none"),
+                []() { return std::string(Vocab::PopupNoText); });
+        }
+        b.PopContext();
+    }
+
+    // The verbs the screen offers: flip between pending and active events (only while an active
+    // event exists, which the companion reports), and the way out.
+    struct Action {
+        std::string id;
+        std::string label;
+        int cmd;
+    };
+    std::vector<Action> actions;
+    if (advent && RecField(*advent, "canflip") == "1") {
+        std::string label = RecField(*advent, "flip");
+        if (label.empty())
+            label = mode == "active" ? Vocab::AdventShowPending() : Vocab::AdventShowActive();
+        actions.push_back({"flip", label, GameUI::kCmdButtonY});
+    }
+    if (mode == "report")
+        actions.push_back({"continue", Vocab::PopupContinue(), GameUI::kCmdEnter});
+    else
+        actions.push_back({"back", Vocab::ReportBack(), GameUI::kCmdButtonB});
+
+    b.BeginStop("actions");
+    b.StartRow();
+    for (const Action& action : actions) {
+        NodeVtable vt;
+        vt.Type = &ButtonType();
+        vt.Announcements.emplace_back(NodeAnnouncement::Static(action.label));
+        vt.Announcements.back().Kind = AnnouncementKinds::Label;
+        vt.OnActivate = [cmd = action.cmd]() { GameUI::SendScreenCommand(gScreen, cmd); };
+        b.AddItem(ControlId::Structural(key + "action/" + action.id), std::move(vt));
+    }
+    b.EndRow();
+    return b.Build();
+}
+
 std::unique_ptr<GraphRender> BuildPopup()
 {
     // Nothing joins gFocus here — Flash-driven throughout: no panel the game will accept focus on.
@@ -2515,6 +2660,8 @@ std::unique_ptr<GraphRender> BuildPopup()
 
     const WireRecord* header = FindRecord(words, "popup");
     const std::string screenClass = header ? RecField(*header, "class") : std::string();
+    if (header && screenClass == "UIAdventOperations")
+        return BuildAdventOperations(words, *header);
 
     // Message lines: the companion's own, plus — for UIAlert — the ones native reads back out of
     // the Flash panel, because that screen retains none (see GameUI::ReadAlertText).

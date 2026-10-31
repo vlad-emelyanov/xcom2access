@@ -178,6 +178,9 @@ inline constexpr int kCmdButtonA = 300;
 // The controller's Y button, for the same reason: UICharacterPool_ListPools answers DELETE on
 // FXS_BUTTON_Y alone (its rows' DELETE buttons look up a list index the button does not have).
 inline constexpr int kCmdButtonY = 303;
+// The controller's B (FXS_BUTTON_B). UIAdventOperations closes on this and on nothing keyboard:
+// its OnUnrealCommand has no FXS_KEY_ESCAPE branch, so the key the screen itself offers is B.
+inline constexpr int kCmdButtonB = 301;
 
 /// Feed one input command to a row (UIMechaListItem.OnUnrealCommand with the release action —
 /// the phase the game's own handlers act on). Game thread only. The return is whether the CALL

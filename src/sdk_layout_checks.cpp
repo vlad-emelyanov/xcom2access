@@ -1018,6 +1018,13 @@ static_assert(offsetof(AUIStrategyMap_HUD, CachedDoom) == 0x4C4, "doom meter cac
 // dereferenced natively.
 static_assert(offsetof(AUIMission, MissionRef) == 0x600, "UIMission::MissionRef");
 
+// The dark events board's one outbound call: OnRevealClicked(int Idx), the handler the mouse
+// click and the controller's X both end in. Idx is the only parameter (the rest of the generated
+// struct is locals); the hand-rolled block in game_ui_popup.cpp is padded past the struct's
+// first locals and writes Idx at 0.
+static_assert(offsetof(AUIAdventOperations_execOnRevealClicked_Params, Idx) == 0x0,
+    "dark events OnRevealClicked params");
+
 // ---- the Chosen dossier and the bond screens (docs/chosen-bond-recon.md §2) ----
 //
 // UIChosenInfo keeps only the tab index and the array it populated Flash from — the wire-cache

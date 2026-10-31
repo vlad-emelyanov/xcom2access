@@ -18,6 +18,14 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**The dark events board** (2026-10-31, written from `SrcOrig`, never compiled or run; `docs/surfaces/strategy.md`, dark events board). Compile the companion first, then open the board from the geoscape's Dark Events button, from the monthly report chain, and with an active event present. Run it in BOTH modes (`m_bActivateMouse` decides the branch; drive mouse mode with `xctl key`, controller mode with `xctl pad`):
+1. Reading, both modes: the heading stop speaks the title, the help line and, when drawn, the facility and retaliation countdowns in weeks; each card is its own Tab stop; an open card reads title, `Status: Preparing`, summary and quote with its author; no asset path, no markup and no double space in the ring. Confirm the card count equals what a sighted screenshot shows.
+2. Hidden cards: the stop reads ONLY the concealed title and the cost (plus the unlock caption and a reveal button when affordable). It must never speak a real event name or text; check the ring for the template's real name after a reveal only.
+3. Reveal, both modes: Enter on the reveal button on a SPECIFIC card (not the first affordable) reveals that card; intel is spent, the card re-reads as an open card and the stop re-announces. Controller: X still reveals the first affordable one, and the recipe's button must agree with it when only one card is affordable. Unaffordable: no button.
+4. Flip: with an active event in play the actions stop offers the flip, labelled by the game's own word; Enter flips, the card list is replaced and the new stops speak. With no active event no flip exists. Keyboard mode: confirm the Y command really reaches `FlipScreenMode` (the screen's `OnUnrealCommand` runs it on `FXS_BUTTON_Y` regardless of `ISCONTROLLERACTIVE`).
+5. Leaving: the Back button sends `FXS_BUTTON_B` (the screen has no Escape branch; what a physical Escape does here, close, nothing or the pause menu, is unmeasured). In the resistance report chain the button is Continue and must land on the Resistance Orders page.
+6. Unverified guesses: that the screen's localized vars (`m_strReveal`, `m_strUnlockButton`, `m_strShowActiveButton`) are populated on the instance and not only on a subclass (the double-space tell); that `DifferenceInDays` over `STRATEGYRULES.GameTime` compiles from the companion; that the Chosen-origin badge on a card (`bIsChosen`, an icon the board draws) has no words we can speak, so it is not read yet.
+
 **Heading, path hazards and sightings, written from source, never compiled** (2026-10-30; `docs/surfaces/tactical.md`, last section). Compile the companion first, then on Gatecrasher (normal mission) and once in the tutorial:
 1. Load a mission: the orientation line must lead with the objective heading (`ListPopulated` can stay false on a map whose list never fills; the log shows no wait counter, so time it). Check that `ShowHeader` rows exist on that map; if the heading is empty the line falls through to the old content.
 2. Path hazards: preview a move through fire, poison and acid (and a Fortress or immune unit: the clause must stay silent). Unverified: that `IsImmuneToWorldHazard` takes the effect class name (`X2Effect_ApplyFireToWorld`) and matches what the native marker update tests; whether the game pins smoke; whether noise is shown to a revealed unit (existing assumption); killzone and laser-scope markers are unclaimed until the private arrays are read natively.
@@ -738,8 +746,8 @@ knowledge gain of a campaign the warning stop must lead, its ACCEPT must dismiss
 Continue must appear only after — the wire cache is discriminated on `bShowChosenWarningPopup`,
 and if the Continue never appears that discriminator is the suspect; (d) when a Chosen levelled up
 the level-up popups come first and the columns must still read once they are dismissed. The page
-after this one, `UIAdventOperations`, is the popup recipe's and reads its headings only — its
-dark-event rows are the next hole in the chain, with `UIRewardsRecap`.
+after this one, `UIAdventOperations`, is the popup recipe's and now reads its cards (see the dark
+events entry under Live-run debt); `UIRewardsRecap` is the remaining hole in the chain.
 
 **The mission bookends** (2026-09-03, built, never run — `mission-summary-recon.md`; the
 `mission summary` and `chosen summary` recipes, both Flash-capture-only, no companion). This is

@@ -599,17 +599,189 @@ private function DescribeSitRep(UISitRepInformation Popup)
 	}
 }
 
-// The ADVENT operations / dark event status popup. Only the screen's own headings are read here:
-// the per-event rows are Flash-only and would need the dark-event states walked, which belongs
-// with the geoscape work rather than in the popup family.
+// The ADVENT operations / dark event board (UIAdventOperations), the page the player opens each
+// month. The screen retains no row text (the cards are pushed straight into Flash), but it
+// retains what the cards were BUILT from: ChosenDarkEvents and ActiveDarkEvents hold the
+// references BuildDarkEventPanel wrote for every card it drew, and TitleHelp holds the heading
+// line. So this re-runs the screen's own getters over those references and says exactly what
+// BuildDarkEventPanel handed Flash, no more.
+//
+// PARITY. A hidden (secret) dark event is drawn as UpdateDarkEventCardLocked: the concealed title
+// GetDisplayName answers while bSecretEvent is set, the reveal cost, and the unlock caption and
+// button only when the player can pay. It is NOT drawn its summary or quote, so none is read.
+// GetDisplayName and GetCost both answer the concealed words themselves, which is the whole gate:
+// the template's real name and text are never asked for. Nothing here reads an expiry, a
+// remaining duration or a doom tick, because the board draws none (only the facility and
+// retaliation countdowns in weeks, which the title panel does draw).
+//
+// Records, in the order the recipe lays them out:
+//   kind=popup    class, title                  (as every popup)
+//   kind=advent   mode (report, active, pending), help, canflip, flip,
+//                 fac_label, fac_value, fac_est, ret_label, ret_value, ret_est
+//   kind=card     index, state (locked, open), title, cost, unlock, canreveal, reveal,
+//                 status, summary, quote, author
 private function DescribeAdventOps(UIAdventOperations Popup)
 {
+	local XComGameState_HeadquartersAlien AlienHQ;
+	local XComGameState_HeadquartersXCom XComHQ;
+	local StateObjectReference CardRef;
+	local string Mode;
+	local int Idx, Total;
+	local bool bActive;
+
 	if (Popup == none)
 		return;
 
 	PushHeader("UIAdventOperations", Popup.m_strTitle);
-	PushLine(Popup.m_strTitleHelp);
-	PushLine(Popup.m_strStatusLabel);
+
+	AlienHQ = class'UIUtilities_Strategy'.static.GetAlienHQ();
+	XComHQ = class'UIUtilities_Strategy'.static.GetXComHQ();
+	if (AlienHQ == none)
+		return;
+
+	if (Popup.bResistanceReport)
+		Mode = "report";
+	else if (Popup.bShowActiveEvents)
+		Mode = "active";
+	else
+		Mode = "pending";
+
+	DescribeAdventTitlePanel(Popup, AlienHQ, Mode);
+
+	// The same two sources and the same guard BuildScreen walks: pending cards are
+	// ChosenDarkEvents, active cards ActiveDarkEvents, and the resistance report shows no active
+	// cards at all.
+	bActive = Popup.bShowActiveEvents;
+	if (!bActive)
+		Total = AlienHQ.ChosenDarkEvents.Length;
+	else if (!Popup.bResistanceReport)
+		Total = AlienHQ.ActiveDarkEvents.Length;
+	else
+		Total = 0;
+
+	for (Idx = 0; Idx < Total; Idx++)
+	{
+		// The screen's own cache first (what it drew from), the headquarters list when the
+		// cache is shorter than the card count. BuildScreen rewrites the cache entry for every
+		// card it draws, so the two agree whenever both exist.
+		if (bActive)
+		{
+			if (Idx < Popup.ActiveDarkEvents.Length)
+				CardRef = Popup.ActiveDarkEvents[Idx];
+			else
+				CardRef = AlienHQ.ActiveDarkEvents[Idx];
+		}
+		else
+		{
+			if (Idx < Popup.ChosenDarkEvents.Length)
+				CardRef = Popup.ChosenDarkEvents[Idx];
+			else
+				CardRef = AlienHQ.ChosenDarkEvents[Idx];
+		}
+		DescribeAdventCard(Popup, XComHQ, CardRef, Idx, bActive);
+	}
+}
+
+// The title panel: the screen's own heading line, the two countdowns BuildTitlePanel draws in
+// weeks, and the facts the recipe needs to offer the flip. The weeks arithmetic is the screen's
+// own (whole weeks, a week, then the imminent word).
+private function DescribeAdventTitlePanel(UIAdventOperations Popup, XComGameState_HeadquartersAlien AlienHQ, string Mode)
+{
+	local XComGameStateHistory History;
+	local XComGameState_MissionCalendar CalendarState;
+	local TDateTime RetalDate;
+	local string Rec;
+	local bool bCanFlip;
+
+	History = `XCOMHISTORY;
+	CalendarState = XComGameState_MissionCalendar(History.GetSingleGameStateObjectForClass(class'XComGameState_MissionCalendar'));
+
+	bCanFlip = !Popup.bResistanceReport && AlienHQ.ActiveDarkEvents.Length > 0;
+
+	Rec = "kind=advent";
+	Rec $= FLD_SEP $ "mode=" $ Mode;
+	class'X2AccessWire'.static.AddField(Rec, "help", Popup.TitleHelp);
+	if (bCanFlip)
+	{
+		Rec $= FLD_SEP $ "canflip=1";
+		class'X2AccessWire'.static.AddField(Rec, "flip",
+			Popup.bShowActiveEvents ? Popup.m_strShowPendingButton : Popup.m_strShowActiveButton);
+	}
+
+	// Alien facility countdown: the screen draws it only under this exact condition.
+	if (AlienHQ.bHasSeenFacility && AlienHQ.bBuildingFacility && AlienHQ.AIMode != "Lose")
+	{
+		class'X2AccessWire'.static.AddField(Rec, "fac_label", Popup.m_strAlienFacility);
+		class'X2AccessWire'.static.AddField(Rec, "fac_value", WeeksText(Popup,
+			class'X2StrategyGameRulesetDataStructures'.static.DifferenceInDays(AlienHQ.FacilityBuildEndTime, `STRATEGYRULES.GameTime) / 7));
+		class'X2AccessWire'.static.AddField(Rec, "fac_est", Popup.m_strEstimated);
+	}
+
+	// Retaliation countdown: drawn only once the player has seen a retaliation mission and the
+	// calendar has one scheduled.
+	if (AlienHQ.bHasSeenRetaliation && CalendarState != none
+		&& CalendarState.GetNextDateForMissionSource('MissionSource_Retaliation', RetalDate))
+	{
+		class'X2AccessWire'.static.AddField(Rec, "ret_label", Popup.m_strRetaliation);
+		class'X2AccessWire'.static.AddField(Rec, "ret_value", WeeksText(Popup,
+			class'X2StrategyGameRulesetDataStructures'.static.DifferenceInDays(RetalDate, `STRATEGYRULES.GameTime) / 7));
+		class'X2AccessWire'.static.AddField(Rec, "ret_est", Popup.m_strEstimated);
+	}
+
+	Push(Rec);
+}
+
+// Whole weeks the way BuildTitlePanel words them, without the colour tags.
+private function string WeeksText(UIAdventOperations Popup, int Weeks)
+{
+	if (Weeks > 1)
+		return string(Weeks) @ Popup.m_strWeeks;
+	if (Weeks == 1)
+		return string(Weeks) @ Popup.m_strWeek;
+	return Popup.m_strImminent;
+}
+
+// One card, as BuildDarkEventPanel drew it. State objects are re-fetched by ObjectID, never held.
+private function DescribeAdventCard(UIAdventOperations Popup, XComGameState_HeadquartersXCom XComHQ,
+	StateObjectReference CardRef, int Idx, bool bActive)
+{
+	local XComGameState_DarkEvent DarkEvent;
+	local array<StrategyCostScalar> CostScalars;
+	local string Rec;
+
+	DarkEvent = XComGameState_DarkEvent(`XCOMHISTORY.GetGameStateForObjectID(CardRef.ObjectID));
+	if (DarkEvent == none)
+		return;
+
+	Rec = "kind=card" $ FLD_SEP $ "index=" $ string(Idx);
+
+	if (DarkEvent.bSecretEvent)
+	{
+		// The locked card: concealed title, reveal cost, and the unlock caption and button only
+		// when the reveal is affordable (the same test, the same cost scalars).
+		Rec $= FLD_SEP $ "state=locked";
+		class'X2AccessWire'.static.AddField(Rec, "title", DarkEvent.GetDisplayName());
+		class'X2AccessWire'.static.AddField(Rec, "cost", DarkEvent.GetCost());
+		CostScalars.Length = 0;
+		if (XComHQ != none && XComHQ.CanAffordAllStrategyCosts(DarkEvent.RevealCost, CostScalars))
+		{
+			class'X2AccessWire'.static.AddField(Rec, "unlock", Popup.m_strUnlockButton);
+			Rec $= FLD_SEP $ "canreveal=1";
+			class'X2AccessWire'.static.AddField(Rec, "reveal", Popup.m_strReveal);
+		}
+	}
+	else
+	{
+		Rec $= FLD_SEP $ "state=open";
+		class'X2AccessWire'.static.AddField(Rec, "title", DarkEvent.GetDisplayName());
+		class'X2AccessWire'.static.AddField(Rec, "status",
+			Popup.m_strStatusLabel @ (bActive ? Popup.m_strActive : Popup.m_strPreparing));
+		class'X2AccessWire'.static.AddField(Rec, "summary", DarkEvent.GetSummary());
+		class'X2AccessWire'.static.AddField(Rec, "quote", DarkEvent.GetQuote());
+		class'X2AccessWire'.static.AddField(Rec, "author", DarkEvent.GetQuoteAuthor());
+	}
+
+	Push(Rec);
 }
 
 // ---------------------------------------------------------------------------------------

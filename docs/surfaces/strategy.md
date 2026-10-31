@@ -294,6 +294,45 @@ speech is serial.
 - **Tick order is load-bearing in one place**: `Dropship` runs after `TransientReader`, so the
   arrival block queues behind Central rather than over him.
 
+## The dark events board (`UIAdventOperations`)
+
+The page the player opens each month (`XComHQPresentationLayer.UIAdventOperations`, which the
+geoscape button, the report chain and the Avenger HUD hotlink all spawn). It stays the popup
+recipe's screen — `BuildPopup` hands over on the class name — so there is one reader per surface.
+Built from source and never run (`next-steps.md`, dark events board).
+
+- **Parity gate is the getter, not a flag.** A hidden event is drawn by `UpdateDarkEventCardLocked`:
+  the concealed title, the reveal cost, and an unlock caption plus a button only when the reveal
+  is affordable. `GetDisplayName` and `GetCost` answer the concealed words while `bSecretEvent`
+  holds, so the reader never asks the template for anything and cannot leak a name; the summary
+  and quote are not drawn on a locked card and are not read. No expiry hours or doom tick: the
+  board draws neither, only the facility and retaliation countdowns in whole weeks.
+- **Words are re-derived from what the screen retained.** Rows push straight into Flash, but
+  `ChosenDarkEvents` / `ActiveDarkEvents` keep the references each card was built from and
+  `TitleHelp` keeps the heading line, so the companion re-runs the screen's own getters over them
+  (no Flash capture needed). The two lists and the resistance-report guard mirror `BuildScreen`
+  exactly: pending cards are the first list, active cards the second, and the report shows no
+  active cards.
+- **Layout is cards, not a sheet.** The board draws no column headings: a heading stop, one stop
+  per card in the screen's order, then an actions stop. Cards carry an empty-label context so a
+  sentence is never stamped "2 of 4"; the mode is in every node id so a flip is heard as new nodes.
+- ⛔ **A key must not depend on a mouse-only widget, and the two modes take different branches.**
+  The screen's `OnUnrealCommand` handles `FXS_BUTTON_B` (close), `FXS_BUTTON_Y` (flip, only while
+  an active event exists), `FXS_BUTTON_X` (reveal the FIRST affordable event) and Enter/A only in
+  the resistance report; it has NO `FXS_KEY_ESCAPE` branch. On mouse and keyboard the back and flip
+  buttons are NavHelp buttons reachable only by mouse, so a keyboard player has no key. The recipe
+  therefore sends the controller commands the screen handles in either mode (B, Y, Enter in the
+  report), which is also how the controller path runs.
+- **Per-card reveal calls the click's handler.** `OnRevealClicked(idx)` is what a mouse click on a
+  locked card ends in (`OnMouseEvent` parses the index from the Flash path) and what X reaches with
+  -1. There is no selection on this screen (the cards are not focusable), so the usual
+  set-selection-first rule has nothing to set; the index is the argument. The handler re-checks
+  `bSecretEvent` and affordability itself. The one hand-rolled block is pinned in
+  `sdk_layout_checks.cpp`.
+- Not read: the Chosen-origin badge (`bIsChosen`, an icon with no word of the game's we know), the
+  card image, and the `FavoredChosenDarkEvent` side effect `BuildDarkEventPanel` fires, which is
+  the game's own and not ours to repeat.
+
 ## Movie subtitles (`src/movie_subtitles.cpp`)
 
 The OTHER subtitle system, and nothing else in this project touches it: the text the engine draws

@@ -164,7 +164,7 @@ gamepad button; the picker picks only for a controller), re-provided.
 |---|---|---|
 | `UIStrategyMap` | the geoscape | ◐ — tray built (`geo_scanner`); map-item details beyond the tray unmeasured |
 | `UIResistance` | region contact/outpost screen — `XComHQPresentationLayer.UIResistance()` exists, but its only caller (`XComGameState_WorldRegion.DisplaySelectionPrompt`) is commented out in vanilla and the Highlander alike; the region pin's own two verbs are the geoscape tray's stop 2 (`customize-recon.md` §4) | 🚫 dead |
-| `UIAdventOperations` | dark events | ✅ popup recipe |
+| `UIAdventOperations` | dark events | ◐ popup recipe, cards read + reveal + flip (2026-10-31, unexercised live; `surfaces/strategy.md`, dark events board) |
 | `UIResistanceReport` | monthly council report — the report card | ◐ built — `monthly report` recipe + `X2AccessReportReader` (2026-09-03, unexercised live; `resistance-report-recon.md`) |
 | `UIResistanceReport_ChosenEvents` | the report's Chosen page (knowledge, activities, planned actions) | ◐ built — `chosen activity` recipe + `X2AccessChosenReader` (2026-09-03, unexercised live; `resistance-report-recon.md`) |
 | `UIResistanceReport_FactionEvents` | empty `BuildScreen`, and its presentation-layer opener has no caller in the shipped sources | 🚫 dead |
