@@ -46,10 +46,18 @@ Endpoints:
   press is ignored). `&mode=kernel` injects into the arbiter's own queue via
   `InputArbiter::InjectSynthetic`, driving ONLY our layer, working with the game backgrounded, and
   reporting per key whether a claim took it. `&hold=` and `&gap=` are milliseconds.
-- `/pad[?press=A,DDown&hold=&gap=]` — a virtual controller, merged into what `XInputGetState` returns,
-  so the mod AND the game read it exactly as they would a physical press, with the window in the
-  background. Bare, it prints the controller layer's state. Names: `A B X Y LB RB LT RT Start Back L3
-  R3 DUp DDown DLeft DRight LUp LDown LLeft LRight`. It needs a connected pad to merge into.
+- `/pad[?press=A,DDown&hold=&gap=&engine=]` — a virtual controller. The press is merged into what
+  `XInputGetState` returns, read by the mod's own pad layer, and, outside what that layer acts on,
+  delivered to the game as `XComInputBase.InputEvent(FXS_BUTTON_*, PRESS)` then `RELEASE` on the live
+  input object (`DevServer` -> `Gamepad`, game tick). The last part is what makes it work in a
+  mission and on the Avenger: the engine's own XInput poll is not reliable across launches
+  (`docs/input-map.md`, the controller). Bare, it prints the controller layer's state, including how
+  many times the ENGINE called the filter, from how many threads, and how many of those carried a
+  virtual press: a count that stands still while `presses` rises is the failing launch. Names: `A B X
+  Y LB RB LT RT Start Back L3 R3 DUp DDown DLeft DRight LUp LDown LLeft LRight`. `engine=0` skips the
+  script-level delivery. It needs a connected pad to merge into. `tools/xctl.ps1 pad A,DDown` drives it
+  anywhere; prove a press by `/status` (screen stack) and `/props` (a soldier index), not by the
+  counters.
 - `/flashqueue[?index=N]` — what panels PUSHED into Scaleform, captured in flight by
   `src/flash_shadow.cpp`. For the whole retains-nothing family this is the only place the words
   ever existed, so it is the endpoint that answers "what does this screen actually say" for a

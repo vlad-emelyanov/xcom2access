@@ -41,6 +41,11 @@ bool CompanionPackageLoaded();
 /// `params` must match the UFunction's parameter layout. Game thread only.
 bool CallScriptFunction(void* obj, const char* funcName, void* params);
 
+/// The local player's input object (an XComInputBase: XComTacticalInput, XComHeadquartersInput or
+/// XComShellInput), reached WorldInfo -> local PlayerController -> PlayerInput, or null while no
+/// world or controller is up. One per map: never hold the result across frames. Game thread only.
+void* FindLocalPlayerInput();
+
 /// The whole CDO-reader pattern in one call: find the companion CDO, ProcessEvent the entry
 /// point, read the payload back — the sequence every narrate-only surface used to hand-roll.
 /// `params` may be null for a no-parameter function (a zeroed block is supplied, because

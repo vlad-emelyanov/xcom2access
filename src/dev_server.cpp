@@ -858,7 +858,8 @@ std::string Route(const Request& req, int& status)
             return OnGameThread([] { return Gamepad::DevStatus(); });
         const std::string bad = Gamepad::DevQueuePresses(press,
             static_cast<unsigned>(QueryInt(req.query, "hold", 80)),
-            static_cast<unsigned>(QueryInt(req.query, "gap", 150)));
+            static_cast<unsigned>(QueryInt(req.query, "gap", 150)),
+            QueryInt(req.query, "engine", 1) != 0);
         if (!bad.empty()) {
             status = 400;
             return "[pad] unrecognised input: " + bad + "\n"

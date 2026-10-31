@@ -2794,6 +2794,30 @@ bool CallScriptFunction(void* obj, const char* funcName, void* params)
     return CallNamedFunction(obj, funcName, params);
 }
 
+// PlayerController.PlayerInput, pinned in sdk_layout_checks.cpp.
+constexpr int32_t kPlayerControllerInputOffset = 0x4C0;
+
+void* FindLocalPlayerInput()
+{
+    // The same route the console bridge takes, so nothing is cached across frames: the world, its
+    // local controller, and the input object that controller owns. One per map, replaced on a
+    // travel, which is why callers re-resolve instead of holding what this returns.
+    struct {
+        void* ReturnValue;
+    } world{};
+    if (!CallStaticNative("WorldInfo", "GetWorldInfo", &world) || !world.ReturnValue)
+        return nullptr;
+    struct {
+        void* ReturnValue;
+    } pc{};
+    if (!CallNamedFunction(world.ReturnValue, "GetALocalPlayerController", &pc) || !pc.ReturnValue)
+        return nullptr;
+    void* input = ReadPtrRaw(pc.ReturnValue, kPlayerControllerInputOffset);
+    if (!input || !IsKindOfRaw(input, "XComInputBase"))
+        return nullptr;
+    return input;
+}
+
 bool CallCompanion(const char* className, const char* funcName, void* params,
     std::string* result)
 {

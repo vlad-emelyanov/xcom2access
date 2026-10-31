@@ -1241,4 +1241,20 @@ static_assert(offsetof(AUICharacterPool_ListPools, m_strTitle) == 0x46C,
 static_assert(offsetof(AUIX2PanelHeader, Title) == 0x3D8, "UIX2PanelHeader::Title");
 static_assert(offsetof(AUIX2PanelHeader, Label) == 0x3E8, "UIX2PanelHeader::Label");
 
+// ---- the input object: PlayerController -> PlayerInput, and the XComInputBase gate bits ----
+// FindLocalPlayerInput reads the pointer at 0x4C0. bAllowAllInput and UIMovie.MouseActive are
+// bitfields and cannot be offsetof'd: the first sits in the dword at 0x20C (mask 0x80, confirmed by
+// /props on the live class), pinned by the float after it; the second in the dword at 0x214 (mask
+// 0x04), pinned by UI_RES_X after it.
+static_assert(offsetof(APlayerController, PlayerInput) == 0x4C0, "PlayerController::PlayerInput");
+static_assert(offsetof(UXComInputBase, fAutoBaseY) == 0x210,
+    "XComInputBase flag dword (bAllowAllInput, mask 0x80) sits at 0x20C, before fAutoBaseY");
+static_assert(offsetof(UUIMovie, UI_RES_X) == 0x218,
+    "UIMovie flag dword (MouseActive, mask 0x04) sits at 0x214, before UI_RES_X");
+// XComInputBase.InputEvent(int cmd, optional int ActionMask): both slots are hand-rolled, the
+// optional one included.
+static_assert(offsetof(UXComInputBase_execInputEvent_Params, Cmd) == 0x0
+        && offsetof(UXComInputBase_execInputEvent_Params, Actionmask) == 0x4,
+    "XComInputBase.InputEvent params");
+
 } // namespace

@@ -31,7 +31,8 @@ void Shutdown();
 /// physical press would be, so a test needs no hands on the pad. Names: A B X Y LB RB LT RT Start
 /// Back L3 R3 DUp DDown DLeft DRight LUp LDown LLeft LRight. Any thread. Empty on success, else
 /// the name that was not recognised.
-std::string DevQueuePresses(const std::string& commaSeparatedNames, unsigned holdMs, unsigned gapMs);
+std::string DevQueuePresses(const std::string& commaSeparatedNames, unsigned holdMs, unsigned gapMs,
+    bool engineEvents = true);
 
 /// One-paragraph state dump. Game thread only.
 std::string DevStatus();

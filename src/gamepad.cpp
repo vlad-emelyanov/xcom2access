@@ -3,6 +3,7 @@
 #include "input_arbiter.h"
 #include "log.h"
 #include "menu_navigator.h"
+#include "script_call.h"
 #include "tts.h"
 
 #define WIN32_LEAN_AND_MEAN
@@ -128,6 +129,8 @@ struct DevStep {
     BYTE rt = 0;
     uint32_t holdMs = 0;
     uint32_t gapMs = 0;
+    int cmd = 0;          // UIUtilities_Input FXS_* command for the script-level stand-in
+    bool engineOnly = false; // the mod's own layer has no mapping for it, so the game must get it
 };
 std::mutex sDevMutex;
 std::deque<DevStep> sDevQueue;
@@ -136,8 +139,14 @@ std::atomic<SHORT> sDevLx{0};
 std::atomic<SHORT> sDevLy{0};
 std::atomic<BYTE> sDevLt{0};
 std::atomic<BYTE> sDevRt{0};
+std::atomic<uint64_t> sFilterCalls{0};
+std::atomic<uint64_t> sFilterVirtual{0}; // calls that carried a virtual press
+std::atomic<DWORD> sFilterLastThread{0};
+std::atomic<DWORD> sFilterThreadA{0};
+std::atomic<DWORD> sFilterThreadB{0};
 std::atomic<DWORD> sDevPacket{0}; // moved on every change, so the engine notices a virtual press
 bool sDevHolding = false;
+int sDevHeldCmd = 0;      // the command whose release is still owed to the game
 uint32_t sDevGapMs = 0;
 uint64_t sDevNextMs = 0;
 #endif
@@ -167,6 +176,20 @@ DWORD WINAPI FilteredGetState(DWORD user, XINPUT_STATE* state)
     if (result != ERROR_SUCCESS || !state)
         return result;
     ApplyVirtualPad(state);
+#ifdef X2ACCESS_DEVSERVER
+    {
+        const DWORD tid = GetCurrentThreadId();
+        sFilterCalls.fetch_add(1, std::memory_order_relaxed);
+        sFilterLastThread.store(tid, std::memory_order_relaxed);
+        DWORD zero = 0;
+        if (!sFilterThreadA.compare_exchange_strong(zero, tid) && sFilterThreadA.load() != tid) {
+            zero = 0;
+            sFilterThreadB.compare_exchange_strong(zero, tid);
+        }
+        if (sDevButtons.load(std::memory_order_relaxed))
+            sFilterVirtual.fetch_add(1, std::memory_order_relaxed);
+    }
+#endif
 
     const bool layer = sLayerOwnsPad.load(std::memory_order_acquire);
     WORD hidden = sLatchedButtons.load(std::memory_order_acquire);
@@ -380,11 +403,35 @@ void ClearVirtualPad()
     sDevPacket.fetch_add(1, std::memory_order_relaxed);
 }
 
+// ⛔ The engine does not poll XInputGetState in this build (measured: docs/input-map.md, "Virtual
+// pad"), so a virtual press the game must see is delivered where XInput's result ends up: the live
+// input object's own InputEvent, a press then a release, the same pair a pad hands it. Done when
+// the mod's layer does not itself act on the press: a mapped input in the shell is the mod's, and
+// delivering it to the game as well would act twice.
+bool DevEngineEvent(int cmd, int actionMask)
+{
+    void* input = GameUI::FindLocalPlayerInput();
+    if (!input)
+        return false;
+    struct {
+        int32_t Cmd;
+        int32_t ActionMask;
+    } params{cmd, actionMask};
+    return GameUI::CallScriptFunction(input, "InputEvent", &params);
+}
+
+constexpr int kActionPress = 1;    // UIUtilities_Input.FXS_ACTION_PRESS
+constexpr int kActionRelease = 32; // UIUtilities_Input.FXS_ACTION_RELEASE
+
 void PumpVirtualPad(uint64_t now)
 {
     if (now < sDevNextMs)
         return;
     if (sDevHolding) {
+        if (sDevHeldCmd) {
+            DevEngineEvent(sDevHeldCmd, kActionRelease);
+            sDevHeldCmd = 0;
+        }
         ClearVirtualPad();
         sDevHolding = false;
         sDevNextMs = now + sDevGapMs;
@@ -397,6 +444,14 @@ void PumpVirtualPad(uint64_t now)
             return;
         step = sDevQueue.front();
         sDevQueue.pop_front();
+    }
+    // The mod's layer acts on what it maps while it owns the pad; everything else is the game's.
+    const bool modActs = sLayerOwnsPad.load(std::memory_order_acquire) && !step.engineOnly;
+    if (step.cmd && !modActs) {
+        const bool sent = DevEngineEvent(step.cmd, kActionPress);
+        sDevHeldCmd = sent ? step.cmd : 0;
+        LOG_DEBUG("Gamepad: virtual press cmd %d -> InputEvent %s", step.cmd,
+            sent ? "sent" : "NOT sent (no input object)");
     }
     sDevButtons.store(step.buttons, std::memory_order_relaxed);
     sDevLx.store(step.lx, std::memory_order_relaxed);
@@ -494,7 +549,7 @@ void Shutdown()
 }
 
 #ifdef X2ACCESS_DEVSERVER
-std::string DevQueuePresses(const std::string& names, unsigned holdMs, unsigned gapMs)
+std::string DevQueuePresses(const std::string& names, unsigned holdMs, unsigned gapMs, bool engineEvents)
 {
     std::deque<DevStep> steps;
     size_t pos = 0;
@@ -510,28 +565,41 @@ std::string DevQueuePresses(const std::string& names, unsigned holdMs, unsigned 
         DevStep step;
         step.holdMs = holdMs;
         step.gapMs = gapMs;
-        if (name == "B") step.buttons = XINPUT_GAMEPAD_B;
-        else if (name == "Start") step.buttons = XINPUT_GAMEPAD_START;
-        else if (name == "Back") step.buttons = XINPUT_GAMEPAD_BACK;
-        else if (name == "L3") step.buttons = XINPUT_GAMEPAD_LEFT_THUMB;
-        else if (name == "R3") step.buttons = XINPUT_GAMEPAD_RIGHT_THUMB;
-        else if (name == "LUp") step.ly = 30000;
-        else if (name == "LDown") step.ly = -30000;
-        else if (name == "LRight") step.lx = 30000;
-        else if (name == "LLeft") step.lx = -30000;
-        else if (name == "LT") step.lt = 255;
-        else if (name == "RT") step.rt = 255;
-        else {
-            bool found = false;
-            for (const Mapping& m : kMap) {
-                if (m.source == Source::Button && name == m.name) {
-                    step.buttons = m.button;
-                    found = true;
-                }
+        // UIUtilities_Input.FXS_* commands; the left stick stands in as its virtual direction keys.
+        struct Named { const char* name; WORD button; int cmd; bool engineOnly; };
+        static const Named kNamed[] = {
+            {"A", XINPUT_GAMEPAD_A, 300, false}, {"B", XINPUT_GAMEPAD_B, 301, true},
+            {"X", XINPUT_GAMEPAD_X, 302, false}, {"Y", XINPUT_GAMEPAD_Y, 303, false},
+            {"LB", XINPUT_GAMEPAD_LEFT_SHOULDER, 330, false},
+            {"RB", XINPUT_GAMEPAD_RIGHT_SHOULDER, 331, false},
+            {"Start", XINPUT_GAMEPAD_START, 321, true}, {"Back", XINPUT_GAMEPAD_BACK, 320, true},
+            {"L3", XINPUT_GAMEPAD_LEFT_THUMB, 311, true}, {"R3", XINPUT_GAMEPAD_RIGHT_THUMB, 313, true},
+            {"DUp", XINPUT_GAMEPAD_DPAD_UP, 350, false}, {"DRight", XINPUT_GAMEPAD_DPAD_RIGHT, 352, false},
+            {"DDown", XINPUT_GAMEPAD_DPAD_DOWN, 354, false}, {"DLeft", XINPUT_GAMEPAD_DPAD_LEFT, 356, false},
+        };
+        bool found = false;
+        for (const Named& n : kNamed) {
+            if (name == n.name) {
+                step.buttons = n.button;
+                step.cmd = n.cmd;
+                step.engineOnly = n.engineOnly;
+                found = true;
             }
-            if (!found)
-                return name;
         }
+        if (!found) {
+            found = true;
+            if (name == "LUp") { step.ly = 30000; step.cmd = 370; }
+            else if (name == "LDown") { step.ly = -30000; step.cmd = 371; }
+            else if (name == "LLeft") { step.lx = -30000; step.cmd = 372; }
+            else if (name == "LRight") { step.lx = 30000; step.cmd = 373; }
+            else if (name == "LT") { step.lt = 255; step.cmd = 332; }
+            else if (name == "RT") { step.rt = 255; step.cmd = 333; }
+            else found = false;
+        }
+        if (!found)
+            return name;
+        if (!engineEvents)
+            step.cmd = 0; // XInput only: for measuring what the engine does with the pad itself
         steps.push_back(step);
     }
     std::lock_guard<std::mutex> lock(sDevMutex);
@@ -541,16 +609,21 @@ std::string DevQueuePresses(const std::string& names, unsigned holdMs, unsigned 
 
 std::string DevStatus()
 {
-    char line[256];
+    char line[512];
     int connected = 0;
     for (bool slot : sSlotConnected)
         connected += slot ? 1 : 0;
     snprintf(line, sizeof(line),
         "filter %s, pads %d, in shell %d, foreground %d, layer owns pad %d, presses %llu, "
-        "taken by claims %llu\n",
+        "taken by claims %llu, engine filter calls %llu (virtual %llu), threads %lu/%lu, last %lu\n",
         sIatSlot ? "installed" : "NOT installed", connected, sInShell,
         InputArbiter::IsGameForeground(), sLayerOwnsPad.load(),
-        static_cast<unsigned long long>(sPresses), static_cast<unsigned long long>(sTaken));
+        static_cast<unsigned long long>(sPresses), static_cast<unsigned long long>(sTaken),
+        static_cast<unsigned long long>(sFilterCalls.load()),
+        static_cast<unsigned long long>(sFilterVirtual.load()),
+        static_cast<unsigned long>(sFilterThreadA.load()),
+        static_cast<unsigned long>(sFilterThreadB.load()),
+        static_cast<unsigned long>(sFilterLastThread.load()));
     return line;
 }
 #endif
