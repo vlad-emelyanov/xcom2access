@@ -433,3 +433,10 @@ the stack `0xaa6b6c < 0x171f5c < 0x4d94b0 < 0x15f370`. The code is `IDirectInput
 `0x80040154` is `DIERR_DEVICENOTREG`: DirectInput found no mouse. `Win32_PointingDevice` was empty and every
 `HID-compliant mouse` in Device Manager was status Unknown (not present). Needs a mouse connected, like the
 monitor-must-be-connected rule in memory. Earlier `0xc0000409`/audio-device theories came from a different crash and a guess.
+
+Fix (`src/no_mouse.cpp`, installed from the init thread right after the logger): swap the exe's `DirectInput8Create`
+import for a wrapper, then patch slot 3 (`CreateDevice`) of the returned `IDirectInput8W` vtable. Only when `GUID_SysMouse`
+FAILS does it hand back a static do-nothing `IDirectInputDevice8W` (derived from the header's interface, so the 32-entry
+table cannot be miscounted) and log `NoMouse: no mouse device, stub in place`; a real mouse takes the untouched path. The game
+asks for the wide interface (IID BF798031). Whether the game also makes a keyboard device the same unchecked way was not
+checked; not extended. Pinned in `docs/build.md` only as a normal source file, no build change.

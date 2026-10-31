@@ -1,4 +1,5 @@
 #include "log.h"
+#include "no_mouse.h"
 #include "game_build.h"
 #include "dev_server.h"
 #include "tts.h"
@@ -59,6 +60,9 @@ static void InitThread() {
     // between the retail builds, so the first question any "it does not speak" report has to
     // answer is which executable it was — and the reporter cannot be expected to know that.
     LOG_INFO("Game build: %s", GameBuild::Fingerprint());
+
+    // 1b. A machine with no mouse crashes the game 12 s in; wrap DirectInput before the engine gets there.
+    NoMouse::Install();
 
     // 2. TTS (Prism linked statically)
     //
@@ -149,6 +153,7 @@ static void ShutdownAll() {
     // pointer write into a UFunction, which is what makes them legal under the loader lock.
     MouseGate::ForceRestore();
     FlashShadow::ForceRestore();
+    NoMouse::Shutdown();
     Gamepad::Shutdown(); // the same: one pointer write, into the exe's import table
     DevServer::Stop(); // before the hooks: the pump it depends on goes away with them
     Hooks::Shutdown();

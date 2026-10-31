@@ -1138,7 +1138,7 @@ static function bool IsSightingEnemy(XComGameState_Unit Unit)
 static function EvaluateSighting(int UnitID, int Frame, int MoverID, bool bReplay, bool bSilent)
 {
 	local XComGameState_Unit Cur;
-	local string Old, Tile, Line;
+	local string Old, Tile;
 	local bool bVisible;
 
 	Cur = XComGameState_Unit(`XCOMHISTORY.GetGameStateForObjectID(UnitID, , Frame));
@@ -1319,18 +1319,18 @@ static function ResetSightings()
 static function string SightingMemoEntry(int UnitID)
 {
 	local string Rest;
-	local int At, Stop;
+	local int At, EndAt;
 
 	At = InStr(default.SightingMemo, "|" $ string(UnitID) $ "@");
 	if (At == INDEX_NONE)
 		return "";
 
 	Rest = Mid(default.SightingMemo, At + 1);
-	Stop = InStr(Rest, "|");
-	if (Stop == INDEX_NONE)
+	EndAt = InStr(Rest, "|");
+	if (EndAt == INDEX_NONE)
 		return "";
 
-	return Left(Rest, Stop);
+	return Left(Rest, EndAt);
 }
 
 // Replace (or, with "", remove) one unit's entry. Entries share their pipes: "|a|b|".

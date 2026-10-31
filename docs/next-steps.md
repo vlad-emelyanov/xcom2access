@@ -65,7 +65,7 @@ marker, `dev-harness.md`) and blocked: every launch died 12 s in, right after th
 `Launch.log`, with or without the ASI and with `-nosound`. Cause found 2026-10-31: NO MOUSE WAS CONNECTED. The
 game calls `IDirectInput8::CreateDevice(GUID_SysMouse)`, gets `DIERR_DEVICENOTREG` (0x80040154), never checks it and
 dereferences the null device (`XCom2.exe+0xaa6b6c`; `docs/engine-notes.md`, a launch with no mouse). The audio-device
-guess was wrong. Fix: reconnect the USB mouse (the Logitech receiver, VID 046D PID C52B) and relaunch. The mouse-mode profile is
+guess was wrong. Fixed by `src/no_mouse.cpp`. The mouse-mode profile is
 saved as `profile.bin.mouse-test-run2-20261031` in the backup folder; the live profile and marker were put back to controller mode.
 The checks still owed in mouse mode: load-game rows and Enter on the right row, `KeyboardGate` never logging
 `controller mode`, Avenger Tab/arrows/Escape/rooms, the HUD (Commands stop, ability names, E/Q, shot and Escape,
