@@ -46,6 +46,8 @@ Endpoints:
   press is ignored). `&mode=kernel` injects into the arbiter's own queue via
   `InputArbiter::InjectSynthetic`, driving ONLY our layer, working with the game backgrounded, and
   reporting per key whether a claim took it. `&hold=` and `&gap=` are milliseconds.
+  Punctuation names: `Comma Period Semicolon Slash Quote Minus Equals LBracket RBracket Backslash`;
+  a shifted glyph is a chord (`Shift+Slash` is `?`).
 - `/pad[?press=A,DDown&hold=&gap=&engine=]` — a virtual controller. The press is merged into what
   `XInputGetState` returns, read by the mod's own pad layer, and, outside what that layer acts on,
   delivered to the game as `XComInputBase.InputEvent(FXS_BUTTON_*, PRESS)` then `RELEASE` on the live

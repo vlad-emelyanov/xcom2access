@@ -472,6 +472,9 @@ const NamedKey kNamedKeys[] = {
     {"space", VK_SPACE, false}, {"tab", VK_TAB, false},
     {"backspace", VK_BACK, false}, {"back", VK_BACK, false},
     {"comma", VK_OEM_COMMA, false}, {"period", VK_OEM_PERIOD, false},
+    {"semicolon", VK_OEM_1, false}, {"slash", VK_OEM_2, false}, {"quote", VK_OEM_7, false},
+    {"minus", VK_OEM_MINUS, false}, {"equals", VK_OEM_PLUS, false},
+    {"lbracket", VK_OEM_4, false}, {"rbracket", VK_OEM_6, false}, {"backslash", VK_OEM_5, false},
 };
 
 bool ParseKeySpec(std::string token, KeySpec& out)
@@ -830,7 +833,8 @@ std::string Route(const Request& req, int& status)
             status = 400;
             return "usage: /input?keys=Down,Down,Enter[&mode=kernel][&hold=ms][&gap=ms]\n"
                    "  names: Up Down Left Right Home End PageUp PageDown Insert Delete Enter\n"
-                   "         Esc Space Tab Backspace Comma Period F1-F24 A-Z 0-9\n"
+                   "         Esc Space Tab Backspace Comma Period Semicolon Slash Quote Minus\n"
+                   "         Equals LBracket RBracket Backslash F1-F24 A-Z 0-9\n"
                    "  modifiers: Ctrl+ Shift+ Alt+ (repeatable, e.g. Ctrl+Shift+Left;\n"
                    "             a space separates too, since \"+\" is a space in a query)\n";
         }
