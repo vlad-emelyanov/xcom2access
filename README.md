@@ -188,7 +188,7 @@ stand down the moment the shot HUD goes up, and so on.
 
 | Key         | Action               |
 |-------------|----------------------|
-| Shift+/ (?) | Read navigation help |
+| Shift+/ (?) | Read help for the current screen; press again for more pages |
 
 **Menus and screens** — while a screen the mod reads is open
 

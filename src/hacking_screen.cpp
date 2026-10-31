@@ -167,4 +167,9 @@ void OnTick()
     }
 }
 
+bool IsActive()
+{
+    return Active();
+}
+
 } // namespace HackingScreen

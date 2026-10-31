@@ -55,7 +55,7 @@ objectives), UnrealScript reads it and pushes; input and speech are always C++.*
     down fires the bare F4 binding instead (`docs/input-map.md`).
   - ⛔ **A GLOBAL claim — no `activeWhen`, live on every screen in every layer — has to earn the
     WHOLE keyboard, not just the screens it was tested on.** `src/input.cpp` holds exactly one
-    (`?`, navigation help). F2-F4 are live Avenger keys and F1-F8 the shot HUD's target hotkeys,
+    (`?`, context help, `src/help_pages.cpp`). F2-F4 are live Avenger keys and F1-F8 the shot HUD's target hotkeys,
     which is why the retired F-key scaffolding was never free (`docs/input-map.md`).
 - **Speech**: `src/tts.cpp` wraps **Prism** (same library and pin as CyberAccess, so a speech bug
   reproduces across both mods). All speech goes through it. Speak the focused item only;

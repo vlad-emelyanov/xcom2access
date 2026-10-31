@@ -79,6 +79,16 @@ def main() -> int:
         if russian[key] and Counter(TAG.findall(reference)) != Counter(TAG.findall(russian[key])):
             errors.append(f"RUS: placeholder mismatch in {key}")
 
+    # Help pages: every page the table names must be declared (so it has INT, RUS and a native
+    # word), and every Help* word must be listed, or no key can reach it.
+    table = (ROOT / "src/help_pages.cpp").read_text(encoding="utf-8")
+    listed = set(re.findall(r"Vocab::(Help\w+)", table))
+    declared_help = {key for key in declared if key.startswith("Help")}
+    if not listed <= declared_help:
+        errors.append(f"help_pages.cpp names undeclared words: {sorted(listed - declared_help)}")
+    if declared_help - listed:
+        errors.append(f"help words in no help_pages.cpp context: {sorted(declared_help - listed)}")
+
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1

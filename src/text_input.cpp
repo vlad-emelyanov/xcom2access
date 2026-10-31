@@ -324,4 +324,9 @@ void OnTick()
     Flush();
 }
 
+bool IsMultiLineActive()
+{
+    return gScreen && gMultiLine;
+}
+
 } // namespace TextInput

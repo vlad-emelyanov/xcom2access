@@ -1,9 +1,7 @@
 #include "input.h"
 #include "input_arbiter.h"
-#include "hooks.h"
-#include "narrator.h"
+#include "help_pages.h"
 #include "log.h"
-#include "vocab.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -45,30 +43,18 @@ void Init()
 {
     using namespace InputArbiter;
 
-    // ⛔ KNOWN GAP, and it is the answer this key gives that is wrong, not the key itself.
-    // NavHelpData comes off the v1 sentinel path, and exactly three classes ever write it —
-    // UIScreenListener_MainMenu, _Difficulty and _NarrativeContent, each from its own OnInit.
-    // No recipe writes it, no tactical or strategy surface writes it, and NOTHING clears it: the
-    // listeners are CDOs, so the string outlives the screen that filled it. Two consequences.
-    // On those three screens the answer is right (the listener's OnInit runs whether or not a
-    // recipe owns the surface, so this is deliberately NOT gated on MenuNavigator::IsAttached).
-    // Everywhere else it is either the honest fallback below or — once the shell has been
-    // visited — the MAIN MENU's nav help, recited in the middle of a mission. A help key that
-    // describes a different screen is worse than one that says nothing.
+    // ? (Shift+Slash) speaks help for the CURRENT CONTEXT, one page per press (src/help_pages.cpp:
+    // the context is computed from the same published gates the claims use, and the pages are
+    // X2AccessVocab words). It is global because help must exist wherever a player is lost; the
+    // context decides what it says, and a screen no recipe reads gets the honest "no help".
     //
-    // The fix is not more producers: the claim registry already knows what works here, because
-    // every Claim carries a description written as help text ("tile cursor: north", "scanner:
-    // re-announce selection"). Enumerating the ACTIVE ones answers the question the player is
-    // actually asking, on every surface, and stays correct as claims are added. That needs a
-    // DescribeActiveClaims in input_arbiter.cpp; until it exists the legacy read stands, since
-    // the three screens it does cover would otherwise lose the help they have.
-    RegisterClaim({VK_OEM_2, ModShift, nullptr, OnPress([] {
-        std::string navHelp = Hooks::ReadListenerProperty("NavHelpData");
-        // Aid, through the Narrator: an on-demand read, queued in order and labelled as such in
-        // the scrollback ring.
-        Narrator::Say(Narrator::Channel::Aid,
-            !navHelp.empty() ? navHelp : std::string(Vocab::NavHelpUnavailable));
-    }), "?: navigation help"});
+    // The retired answer was NavHelpData, a string only three legacy listeners ever wrote (the
+    // main menu, difficulty and narrative content screens) and nothing ever cleared, so it was
+    // either right on those three screens or the main menu's help recited mid-mission. There is
+    // no way to prove from here that the string belongs to the screen on top, so it is no longer
+    // read at all: a generic menu page is short, a wrong one is worse.
+    RegisterClaim({VK_OEM_2, ModShift, nullptr, OnPress([] { HelpPages::Speak(); }),
+        "?: context help"});
 
     LOG_INFO("Input: hotkey claims registered");
 }

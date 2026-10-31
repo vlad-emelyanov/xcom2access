@@ -38,4 +38,7 @@ void Init();
 /// to call many times per frame. Game thread only (it makes outbound ProcessEvent calls).
 void OnTick();
 
+/// The hacking overlay is up and the hack has not started (cached flags). Help context only.
+bool IsActive();
+
 } // namespace HackingScreen

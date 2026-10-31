@@ -379,11 +379,15 @@ free, earmarked for the vantage read.
 
 ⛔ **A GLOBAL claim — no `activeWhen`, live on every screen in every layer — has to earn the WHOLE
 keyboard, not just the screens it was tested on.** `src/input.cpp` holds exactly one (`?`,
-navigation help). The retired F1-F4 / Ctrl+Shift+S scaffolding was never free: **F2/F3/F4 are live
+context help). The retired F1-F4 / Ctrl+Shift+S scaffolding was never free: **F2/F3/F4 are live
 game keys in the Avenger** (`UIFacilityStaffContainer.OnUnrealCommand` maps `FXS_KEY_F2..F4` to
 "activate staff slot 0..2" with no `` `ISCONTROLLERACTIVE `` gate), and F1-F8 are the shot HUD's
 target hotkeys (`UITacticalHUD.uc:432`). The dev harness answers what a key answered (`/health`,
 `/speech`, `/log`).
+
+## Help pages: a claim is not finished until `?` says it
+
+`?` speaks context help from `src/help_pages.cpp`, one `Help*` page per press (words on `X2AccessVocab`, INT and RUS). ⛔ **A new tactical, Avenger or Geoscape claim, or a changed gate, must be added to its context's help page in the same change**, checked against this file: a key the help does not name is a key a blind player cannot learn from the game, and a page naming a key the context no longer has is worse than silence. Contexts, most specific first: multiline text entry, hacking, a non-ambient recipe (Geoscape or menu), free aim, targeting with a target list, a focused HUD layer, tactical world (the tutorial swaps one page), the Geoscape, the Avenger grid. A context is computed from the same published flags the claims gate on, never from engine memory. The pages name keyboard keys only; the pad has its own table above.
 
 ## The strategy layer
 

@@ -111,6 +111,7 @@ add_library(X2Access SHARED
     src/dllmain.cpp
     src/tts.cpp
     src/input.cpp
+    src/help_pages.cpp
     src/input_arbiter.cpp
     src/gamepad.cpp
     src/no_mouse.cpp
