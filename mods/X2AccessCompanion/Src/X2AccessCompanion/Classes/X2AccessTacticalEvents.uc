@@ -1125,7 +1125,7 @@ static function EvaluateSighting(int UnitID, int Frame, int MoverID, bool bRepla
 		SetSightingMemo(UnitID, "");
 		// A death is the death line's; only a unit that is still there and merely unseen is
 		// spoken, and the line carries no position.
-		if (!bSilent && Cur.IsAlive() && !WasRevealedThisTurn(UnitID))
+		if (!bSilent && Cur.IsAlive() && !Cur.bRemovedFromPlay && !WasRevealedThisTurn(UnitID))
 			SpeakSighting(class'X2AccessVocab'.default.SightedLeft, Cur, false);
 		return;
 	}

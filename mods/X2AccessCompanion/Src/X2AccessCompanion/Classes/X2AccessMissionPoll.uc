@@ -98,7 +98,7 @@ static function Poll()
 		// draws no list at all is briefed without a heading after BRIEF_WAIT_LIMIT polls.
 		if (!ListPopulated(HUD) && default.BriefWaits < BRIEF_WAIT_LIMIT)
 		{
-			default.BriefWaits++;
+			default.BriefWaits = default.BriefWaits + 1;
 			return;
 		}
 
