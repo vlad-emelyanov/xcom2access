@@ -111,6 +111,7 @@ static function EndSession()
 	default.bIntroSeen = false;
 	default.ObjectiveMemo = "";
 	default.CountdownMemo = "";
+	class'X2AccessTacticalEvents'.static.ResetTurnBanner();
 	class'X2AccessTacticalEvents'.static.ResetSpawnNarration();
 }
 
