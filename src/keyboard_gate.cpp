@@ -27,9 +27,16 @@ constexpr uint32_t kMouseActiveMask = 0x04;
 
 constexpr uint64_t kPollMs = 300;
 
+// A new movie starts with MouseActive false and the profile's choice lands about a second later
+// (measured 1.15 s in a launch saved in mouse mode), so controller mode must be steady this long
+// before the first write on an input object. A mouse player's bit is then never touched at all.
+constexpr uint64_t kSettleMs = 2000;
+
 std::atomic<bool> sControllerMode{false};
 uint64_t sNextPollMs = 0;
 bool sWeSetIt = false;
+uint64_t sControllerSinceMs = 0; // 0 = not seen in controller mode on this input object
+void* sSeenInput = nullptr;
 void* sLoggedFor = nullptr; // compared, never dereferenced: which input object we last announced
 
 bool ReadDword(const void* base, int32_t offset, uint32_t* out)
@@ -81,10 +88,18 @@ void OnTick()
 
     const bool mouseActive = (movieFlags & kMouseActiveMask) != 0;
     sControllerMode.store(!mouseActive, std::memory_order_relaxed);
+    if (input != sSeenInput) {
+        sSeenInput = input;
+        sControllerSinceMs = 0;
+    }
+    if (mouseActive)
+        sControllerSinceMs = 0;
+    else if (!sControllerSinceMs)
+        sControllerSinceMs = now;
     const bool allowed = (inputFlags & kAllowAllInputMask) != 0;
 
     if (!mouseActive) {
-        if (allowed)
+        if (allowed || now - sControllerSinceMs < kSettleMs)
             return;
         if (!WriteDword(input, kInputFlagsOffset, inputFlags | kAllowAllInputMask))
             return;

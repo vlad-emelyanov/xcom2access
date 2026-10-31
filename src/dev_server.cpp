@@ -854,6 +854,11 @@ std::string Route(const Request& req, int& status)
     // queue is our own memory, so a press needs no game-thread job; the tick plays it out.
     if (req.path == "/pad") {
         const std::string press = UrlDecode(QueryParam(req.query, "press"));
+        const std::string hide = QueryParam(req.query, "hide");
+        if (!hide.empty()) {
+            Gamepad::DevSetHideFromEngine(hide != "0");
+            return std::string("engine pad ") + (hide != "0" ? "hidden\n" : "visible\n");
+        }
         if (press.empty())
             return OnGameThread([] { return Gamepad::DevStatus(); });
         const std::string bad = Gamepad::DevQueuePresses(press,
@@ -1082,6 +1087,16 @@ void Start(const std::string& asiDir)
         return;
 
     gAsiStamp = AsiStamp();
+
+    // A marker file hides the pad from the engine from the first poll: a pad showing activity
+    // flips the game into controller mode at startup, which a mouse-mode run cannot allow.
+    {
+        std::ifstream nopad(asiDir + "\\X2Access.nopad");
+        if (nopad) {
+            Gamepad::DevSetHideFromEngine(true);
+            LOG_INFO("Dev server: engine told no pad is connected (X2Access.nopad)");
+        }
+    }
 
     const std::string marker = asiDir + "\\X2Access.devserver";
     {

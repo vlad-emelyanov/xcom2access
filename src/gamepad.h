@@ -34,6 +34,11 @@ void Shutdown();
 std::string DevQueuePresses(const std::string& commaSeparatedNames, unsigned holdMs, unsigned gapMs,
     bool engineEvents = true);
 
+/// Tell the ENGINE no pad is connected (the mod still reads the real and virtual pad). A pad that
+/// shows activity flips the game out of mouse mode on its own, so a mouse-mode test needs this.
+/// Any thread.
+void DevSetHideFromEngine(bool hide);
+
 /// One-paragraph state dump. Game thread only.
 std::string DevStatus();
 #endif

@@ -139,6 +139,7 @@ std::atomic<SHORT> sDevLx{0};
 std::atomic<SHORT> sDevLy{0};
 std::atomic<BYTE> sDevLt{0};
 std::atomic<BYTE> sDevRt{0};
+std::atomic<bool> sHideFromEngine{false}; // the engine is told no pad is connected
 std::atomic<uint64_t> sFilterCalls{0};
 std::atomic<uint64_t> sFilterVirtual{0}; // calls that carried a virtual press
 std::atomic<DWORD> sFilterLastThread{0};
@@ -172,6 +173,10 @@ void ApplyVirtualPad(XINPUT_STATE* state)
 // What the engine calls instead of XInputGetState.
 DWORD WINAPI FilteredGetState(DWORD user, XINPUT_STATE* state)
 {
+#ifdef X2ACCESS_DEVSERVER
+    if (sHideFromEngine.load(std::memory_order_relaxed))
+        return ERROR_DEVICE_NOT_CONNECTED;
+#endif
     const DWORD result = sRealGetState(user, state);
     if (result != ERROR_SUCCESS || !state)
         return result;
@@ -607,6 +612,11 @@ std::string DevQueuePresses(const std::string& names, unsigned holdMs, unsigned 
     return {};
 }
 
+void DevSetHideFromEngine(bool hide)
+{
+    sHideFromEngine.store(hide);
+}
+
 std::string DevStatus()
 {
     char line[512];
@@ -614,9 +624,9 @@ std::string DevStatus()
     for (bool slot : sSlotConnected)
         connected += slot ? 1 : 0;
     snprintf(line, sizeof(line),
-        "filter %s, pads %d, in shell %d, foreground %d, layer owns pad %d, presses %llu, "
+        "filter %s%s, pads %d, in shell %d, foreground %d, layer owns pad %d, presses %llu, "
         "taken by claims %llu, engine filter calls %llu (virtual %llu), threads %lu/%lu, last %lu\n",
-        sIatSlot ? "installed" : "NOT installed", connected, sInShell,
+        sIatSlot ? "installed" : "NOT installed", sHideFromEngine.load() ? " (engine told: no pad)" : "", connected, sInShell,
         InputArbiter::IsGameForeground(), sLayerOwnsPad.load(),
         static_cast<unsigned long long>(sPresses), static_cast<unsigned long long>(sTaken),
         static_cast<unsigned long long>(sFilterCalls.load()),
