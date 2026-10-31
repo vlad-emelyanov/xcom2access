@@ -56,6 +56,12 @@ function PollReplay()
 	local XComGameStateHistory History;
 	local int Target, Frame;
 
+	// This function is the companion's 100 ms heartbeat on every world, so the HUD polls ride it
+	// (orientation line, reinforcement countdown, objective ticks). They are not replay
+	// narration; they are here because native already calls this on the cadence they need, and
+	// they read the screen, which a replay drives exactly as a live mission.
+	class'X2AccessMissionPoll'.static.Poll();
+
 	// Deliberately NOT the `REPLAY / `XCOMVISUALIZATIONMGR macros: both dereference the GRI
 	// unconditionally, and native polls this ten times a second everywhere — including the shell,
 	// where there is no tactical GRI at all. That is two "Accessed None" script warnings per poll
