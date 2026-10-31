@@ -47,7 +47,7 @@ static FString* FindStringPropertyRaw(UObject* obj, const char* propName) {
                 if (!fieldName)
                     continue;
 
-                if (strcmp(fieldName, propName) != 0)
+                if (_stricmp(fieldName, propName) != 0)
                     continue;
 
                 UProperty* prop = reinterpret_cast<UProperty*>(field);
@@ -92,7 +92,7 @@ static int32_t ArrayElementSizeRaw(UObject* obj, const char* propName) {
                     continue;
 
                 const char* fieldName = entry->GetAnsiName();
-                if (!fieldName || strcmp(fieldName, propName) != 0)
+                if (!fieldName || _stricmp(fieldName, propName) != 0)
                     continue;
 
                 UProperty* inner = reinterpret_cast<UArrayProperty*>(field)->Inner;
