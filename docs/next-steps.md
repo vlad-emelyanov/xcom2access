@@ -1417,3 +1417,12 @@ anything that activates a row: an A sent after this Escape landed on a save and 
    whose var blocks the beta leaves alone — but building against the beta makes drifting into one
    easy and silent. Re-check before the next release, or change what the notes ask players to
    install.
+
+## Pad hiding on the DirectInput path
+
+The "hide a mapped press from the game" guarantee in `src/gamepad.cpp` rests on the engine reading
+`XInputGetState`. It does so in some launches and not in others (`docs/input-map.md`, the
+controller), and its pad loop prefers a DirectInput device when one exists. Unproven: that a
+PHYSICAL pad is hidden from the game in a launch on the DirectInput path. Measure with a real press
+in the shell and a Frida hook on the device's `GetDeviceState`; if it leaks, the same vtable slot is
+the place to filter.

@@ -112,6 +112,27 @@ reached the engine and died in script. `bAllowAllInput` overrides the gate in bo
 `UIMovie.ActivateMouse` changes `MouseActive` in memory only, so it writes no profile, but a new
 movie seeds from the profile again and the HUD's mode branches have already run.
 
+⛔ **The keyboard is kept on in controller mode by `src/keyboard_gate.cpp`** (measured live
+2026-10-30: Escape, `E`, `Q` and Enter all work with the gate lifted, in the shell, the Avenger and
+a mission). On the game tick, throttled to 300 ms, it resolves the input object (WorldInfo, local
+controller, `PlayerController.PlayerInput`, +0x4C0; one per map, never held across frames), reads the
+2D movie through `Get2DMovie` and sets `bAllowAllInput` (dword +0x20C, mask 0x80) while
+`UIMovie.MouseActive` (dword +0x214, mask 0x04) is false. In mouse mode it WRITES NOTHING: the
+gate already lets the keyboard through, and a bit it set itself is cleared only when mouse mode
+arrives and `UIOptionsPCScreen` is not on the stack, because Options raises the bit on entry and
+lowers it on exit and must not lose it (it is lowered on exit, and the next poll raises it again).
+The first set per input object is logged (`KeyboardGate: controller mode`). The offsets are pinned in
+`sdk_layout_checks.cpp`. Mouse events cross the gate too: a mouse range event reaches
+`ScreenStack.OnInput`, while the 3D handling (`:531`) stays gated by `IsMouseActive`.
+
+⛔ **Enter is not the grenade's advance button.** In controller mode a grenade, cone or line ability
+starts its targeting on `GetAdvanceButtonInputCode` (A, `FXS_BUTTON_A`) and only a second press
+confirms it (`UITacticalHUD_AbilityContainer.OnUnrealCommand`, `AbilityRequiresTargetingActivation`).
+Enter is the accept key of the second step, so it reached the game with no targeting method to
+accept and did nothing. `tactical_hud.cpp` therefore claims Enter while targeting is raised AND the
+game is in controller mode, and sends the live input object `InputEvent(FXS_BUTTON_A)` as a press and
+a release. Mouse mode has no such branch and Enter stays the game's.
+
 `src/gamepad.cpp`. A pad acts as a second keyboard on the shell: each mapped input runs the existing
 claim for a key, and every recipe works on a pad without knowing one exists.
 
@@ -145,6 +166,30 @@ return.
 import table at runtime, so it needs no per-build address. While the layer owns the pad, EVERY
 mapped input is hidden, not only those with a live claim: an unclaimed X or Y on the settings screen
 is save-and-exit or reset-to-defaults, and the engine can poll between a press and our tick.
+
+⚠ **The engine does not always poll the pad (measured 2026-10-30).** In one launch the filter ran four
+times and never again, Frida saw no engine call to any `xinput1_4` export, and a DirectInput device
+the engine owns failed `Acquire` (`E_ACCESSDENIED`) every frame, so a virtual press reached the mod
+(`presses` rose) and the game did nothing, on the Avenger and in a mission. Another launch of the
+same build called the filter about 35 times a second, `XInputSetState` from `XCom2.exe` every frame,
+and acted on a virtual press. Its pad loop (`0x140aa95e0`) takes a slot from DirectInput when a
+device exists and from `XInputGetState` only otherwise, and it asks XInput again only while the slot
+last answered connected. So the "hide a mapped press from the game" guarantee holds only in a launch
+where the engine reads XInput: there one `DDown` moved one row, not two, and a physical pad on the
+DirectInput path would not be hidden at all. Unproven for a physical pad; owed in `next-steps.md`.
+The dev harness cannot rely on the engine's pad, so it also delivers a virtual press at the script
+level (below).
+
+**Virtual pad past the shell.** `/pad` queues a press that the dev build plays three ways: merged into
+`XInputGetState`, read by the mod's own layer, and, unless the mod's layer acts on that input itself,
+delivered as `XComInputBase.InputEvent(cmd, FXS_ACTION_PRESS)` then `FXS_ACTION_RELEASE` on the live
+input object, on the game tick. The command table is `UIUtilities_Input` (A 300, B 301, X 302, Y 303,
+Start 321, Back 320, L3 311, R3 313, bumpers 330/331, triggers 332/333, D-pad 350/352/354/356, left
+stick 370-373). The layer acts on every mapped input while it owns the pad, so in the shell `A` goes
+through the mod's claims only and `B`, Start and Back go to the game only. Where the engine does read
+XInput, `PreProcessEventMatching` drops the second copy of the same press, which is why alternating
+`/pad RB` and a real `E` stepped one soldier each time. `engine=0` on `/pad` plays the XInput half
+alone, for measuring what the engine does by itself. The release-build pad is unchanged.
 
 **Scope is one predicate**, `LayerOwnsPad`: `UIFinalShell` on the stack, the game window in front,
 and a menu recipe holding input, with 400 ms of grace for the detach gap between two screens.

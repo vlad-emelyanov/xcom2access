@@ -1,6 +1,7 @@
 #include "tactical_hud.h"
 #include "free_aim.h"
 #include "game_ui.h"
+#include "keyboard_gate.h"
 #include "input_arbiter.h"
 #include "menu_navigator.h"
 #include "narrator.h"
@@ -136,6 +137,22 @@ void Init()
     // block binds no command to H at all, so claiming it costs the player nothing.
     RegisterClaim({'H', ModNone, active, OnPress("AnnounceBreakdown"),
         "shot HUD: hit chance breakdown"});
+
+    // Enter, in controller mode only. With MouseActive false the game starts a grenade, cone or
+    // line ability's targeting on the ADVANCE button (A) and only then lets a second press confirm
+    // it (UITacticalHUD_AbilityContainer.OnUnrealCommand, AbilityRequiresTargetingActivation):
+    // the keyboard's Enter is the accept key, not the advance one, so it reached the game and did
+    // nothing, and the throw could never start. The game's A takes both steps and is the plain
+    // accept everywhere else, so Enter is sent as A. In mouse mode the branch does not exist and
+    // Enter stays the game's own.
+    RegisterClaim({VK_RETURN, ModNone,
+        [] { return gTargeting && KeyboardGate::ControllerMode(); },
+        [](const KeyEvent& e) {
+            constexpr int kButtonA = 300; // UIUtilities_Input.FXS_BUTTON_A
+            if (e.down && !e.repeat)
+                KeyboardGate::SendCommandTap(kButtonA);
+        },
+        "shot HUD: Enter confirms as the A button (controller mode)"});
 
     LOG_INFO("TacticalHUD: claims registered");
 }

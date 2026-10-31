@@ -113,6 +113,7 @@ add_library(X2Access SHARED
     src/input.cpp
     src/input_arbiter.cpp
     src/gamepad.cpp
+    src/keyboard_gate.cpp
     src/log.cpp
     src/hooks.cpp
     # Which retail build of the exe we are inside, and where its globals are: there is a Steam

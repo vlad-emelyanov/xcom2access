@@ -4,6 +4,7 @@
 #include "event_dispatch.h"
 #include "input_arbiter.h"
 #include "gamepad.h"
+#include "keyboard_gate.h"
 #include "menu_navigator.h"
 #include "tile_reader.h"
 #include "avenger.h"
@@ -98,6 +99,8 @@ static void RegisterEventHandlers() {
             InputArbiter::OnTick();
             // The controller feeds the same claims, so its presses drain on the next pass.
             Gamepad::OnTick();
+            // Controller mode drops the keyboard in the engine; keep it alive.
+            KeyboardGate::OnTick();
             // After input (so this frame's key operations have spoken), the navigator's
             // attach/detach poll and frame differ.
             MenuNavigator::OnTick();
