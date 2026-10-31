@@ -496,6 +496,11 @@ private function AddEnemies(TTile Origin, out array<AccessMarker> Entries)
 		class'X2AccessHelper'.static.AppendComma(M.Detail,
 			class'X2AccessTacticalReader'.static.DescribeTargetHealth(UnitState));
 
+		// The overwatch icon on the enemy's flag, under the flag's own condition
+		// (UIUnitFlag.RealizeOverwatch), in the Targets stop's word.
+		class'X2AccessHelper'.static.AppendComma(M.Detail,
+			class'X2AccessTacticalReader'.static.DescribeTargetOverwatch(UnitState));
+
 		InsertByDistance(Origin, M, Entries);
 	}
 }

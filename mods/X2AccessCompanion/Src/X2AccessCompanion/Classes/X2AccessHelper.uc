@@ -213,6 +213,20 @@ static function string PsiWord()
 	return Psi != none ? Psi.DisplayName : "";
 }
 
+// The word for the overwatch icon on a unit flag (UIUnitFlag.AS_SetOverwatchIcon). The icon has no
+// caption, so the word is the game's own name for what it means, the Overwatch ability, and only an
+// ability template that has lost its name falls to ours.
+static function string OverwatchWord()
+{
+	local X2AbilityTemplate Template;
+
+	Template = class'X2AbilityTemplateManager'.static.GetAbilityTemplateManager().FindAbilityTemplate('Overwatch');
+	if (Template != none && Template.LocFriendlyName != "")
+		return Template.LocFriendlyName;
+
+	return class'X2AccessVocab'.default.Overwatch;
+}
+
 // The health bar, in the same numbers UIUtilities_Strategy hands the bar itself.
 static function string DescribeSoldierHealth(XComGameState_Unit Unit)
 {
