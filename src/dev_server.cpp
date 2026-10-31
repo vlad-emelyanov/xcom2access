@@ -869,7 +869,8 @@ std::string Route(const Request& req, int& status)
             status = 400;
             return "[pad] unrecognised input: " + bad + "\n"
                    "  names: A B X Y LB RB LT RT Start Back L3 R3\n"
-                   "         DUp DDown DLeft DRight LUp LDown LLeft LRight\n";
+                   "         DUp DDown DLeft DRight LUp LDown LLeft LRight RUp RDown RLeft RRight\n"
+                   "  join inputs held together with +, e.g. LT+DUp (at most three)\n";
         }
         return "queued\n";
     }
@@ -979,7 +980,7 @@ std::string Route(const Request& req, int& status)
            "  GET  /status              screen stack, gates, navigator + tile-reader state\n"
            "  GET  /tutorial            tutorial replay state + active world messages\n"
            "  GET  /input?keys=A,B      synthetic keys (&mode=kernel drives only our layer)\n"
-           "  GET  /pad[?press=A,DDown]  virtual controller, or its layer state\n"
+           "  GET  /pad[?press=A,LT+DUp]  virtual controller, or its layer state\n"
            "  POST /exec  <command>     run a console command, return what it printed\n"
            "  GET  /gui[?depth=N]       widget tree of a screen: class, state, text\n"
            "  GET  /props[?filter=]     one object's properties: offset, type, live value\n"

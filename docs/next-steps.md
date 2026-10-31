@@ -18,6 +18,35 @@ surface's own `surfaces/*.md`) — this file loses the entry rather than gaining
 
 ## Live-run debt
 
+**The controller layers past the shell** (written offline, never run in game; `src/gamepad.cpp`, map in
+`input-map.md`). Menu, Hud, World, Targeting and AntFarm are all unrun, in controller mode only by
+construction. Run on the virtual pad (`/pad`, bare for the layer name) on a normal mission (Gatecrasher):
+World D-pad / left stick step the cursor once per press; A twice moves; `LT` alone enters the HUD layer
+and B leaves it; every LT chord (`LT+DUp` floor up, `LT+DDown` floor down, `LT+DLeft` recenter,
+`LT+DRight` re-announce selection, `LT+A` re-announce tile, `LT+X` objectives, `LT+Y` target preview)
+fires its claim and a chord's release does not also tap Tab; the right stick walks the object scanner;
+RB / LB, X, Y, RT, Start, Back reach the game in World; Targeting leaves everything to the game except
+`LT` (re-announce shot) and `LT+Y` (breakdown); the Avenger grid enters the layer on `LT`; the Geoscape
+right stick cycles the scanner's items and categories. Check mouse mode changes nothing past the shell
+(no layer, no hidden inputs, `/pad` says none). After a run, count the speech ring: every press should
+have cut the previous line.
+
+## Checks that need the physical pad
+
+Not reachable from the virtual pad, which cannot show what the engine's own device path does.
+
+1. Does A confirm Reaper's Shadow targeting? Targeting hands A to the game, and the shot-HUD claim sends
+   Enter as `FXS_BUTTON_A` only for Enter.
+2. Does a physical press on the DirectInput path leak past the filter? The filter sees only XInput. If the
+   engine reads the pad through DirectInput, World-layer `A` double-fires (it arms the mod's move AND calls
+   the game's right-mouse path) and the D-pad also yaws the camera or changes the floor. Measure as in
+   "Pad hiding on the DirectInput path" below, in the World layer.
+3. LT chord feel: the tap-versus-chord split, the 128 trigger threshold, and holding LT while pressing the
+   D-pad on a real trigger's travel.
+4. The right stick's frozen-while-asleep rule: a sleeping pad reports frozen sticks, so each stick arms
+   only after being seen near centre. Wake a sleeping pad and confirm the right stick does not fire
+   Ctrl+PageUp until it has moved.
+
 **Controller on the shell menus** (2026-10-30, `src/gamepad.cpp`; map in `input-map.md`). Run end to
 end on the virtual pad (`/pad`): main menu, Load Game, settings, New Game and difficulty, in stick and
 D-pad, including hold-to-repeat; A answered a dialog. By hand with a physical pad: scrolling the main
