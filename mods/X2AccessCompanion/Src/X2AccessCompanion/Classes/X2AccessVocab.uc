@@ -467,6 +467,12 @@ var localized string UnitRevealed;
 var localized string UnitEvacuated;
 var localized string EnemySighted;
 var localized string NewEnemyType;
+var localized string SightedInView;
+var localized string SightedMoved;
+var localized string SightedLeft;
+var localized string EnemiesMoved_One;
+var localized string EnemiesMoved_Few;
+var localized string EnemiesMoved_Many;
 var localized string ReinforcementsTransport;
 var localized string ReinforcementsPsiGate;
 var localized string ReinforcementsDrop;
@@ -605,6 +611,7 @@ var localized string BondmateOnSquad;
 
 var localized string BreaksConcealment;
 var localized string Noise;
+var localized string PathHazards;
 
 var localized string HeightUp;
 var localized string HeightDown;

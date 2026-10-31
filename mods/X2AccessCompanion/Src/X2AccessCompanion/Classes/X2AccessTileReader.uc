@@ -362,6 +362,7 @@ function CursorMoveTo()
 		// The path-marker warnings, BEFORE the commit prompt — a blind player must hear "breaks
 		// concealment" while the second press is still theirs to withhold.
 		class'X2AccessHelper'.static.AppendComma(Desc, DescribePathRisks(PathingPawn, UnitState));
+		class'X2AccessHelper'.static.AppendComma(Desc, DescribePathHazards(PathingPawn, UnitState));
 		AppendPart(Desc, DescribeCoverEdges(WorldData.GetPositionFromTileCoordinates(Dest), true));
 		// Who would see the soldier there and whether the cover holds — the eye markers and the
 		// red shield the game draws on this very destination while the puck sits on it.
@@ -992,6 +993,58 @@ private function string DescribePathRisks(XComPathingPawn PathingPawn, XComGameS
 	if (bNoise)
 		class'X2AccessHelper'.static.AppendComma(Result, class'X2AccessVocab'.default.Noise);
 	return Result;
+}
+
+// The world-hazard icons the path preview pins on the route: acid, fire and poison
+// (X2WaypointStaticMeshComponent.HazardMarkerDefinitions, DefaultGameCore.ini:1997-1999, filled by
+// XComPathingPawn.UpdateHazardMarkerInfo(ActiveUnitState) at XComPathingPawn.uc:723 and :800).
+// The marker arrays are private and the update is native, so the draw condition is MIRRORED, not
+// read: a path tile past the unit's own holds the effect (XComWorldData.TileContainsFire/Poison/
+// Acid) and the moving unit is not immune to it (XComGameState_Unit.IsImmuneToWorldHazard, the one
+// per-unit hazard test script can reach). Unlike the two concealment markers this carries NO
+// concealment gate: the script calls UpdateHazardMarkerInfo unconditionally, and the icon is the
+// unit's own warning that the step hurts. Smoke has an icon definition too but is not spoken: it
+// harms nobody, and whether the game pins it is unverified (docs/next-steps.md). The killzone and
+// laser-scope markers (UpdateKillZoneMarkers, UpdateLaserScopeMarkers) are native-only and have no
+// script primitive to mirror, so they are NOT claimed here. One mention per kind, computed on the
+// preview press only, never per tick.
+private function string DescribePathHazards(XComPathingPawn PathingPawn, XComGameState_Unit UnitState)
+{
+	local XComWorldData WorldData;
+	local array<TTile> Tiles;
+	local string Kinds;
+	local bool bFire, bPoison, bAcid;
+	local int i;
+
+	if (UnitState == none || PathingPawn == none)
+		return "";
+
+	WorldData = `XWORLD;
+	Tiles = PathingPawn.PathTiles;
+	for (i = 1; i < Tiles.Length; i++)
+	{
+		if (!bFire && WorldData.TileContainsFire(Tiles[i])
+			&& !UnitState.IsImmuneToWorldHazard('X2Effect_ApplyFireToWorld'))
+			bFire = true;
+		if (!bPoison && WorldData.TileContainsPoison(Tiles[i])
+			&& !UnitState.IsImmuneToWorldHazard('X2Effect_ApplyPoisonToWorld'))
+			bPoison = true;
+		if (!bAcid && WorldData.TileContainsAcid(Tiles[i])
+			&& !UnitState.IsImmuneToWorldHazard('X2Effect_ApplyAcidToWorld'))
+			bAcid = true;
+		if (bFire && bPoison && bAcid)
+			break;
+	}
+
+	if (bFire)
+		class'X2AccessHelper'.static.AppendComma(Kinds, class'X2AccessVocab'.default.Fire);
+	if (bPoison)
+		class'X2AccessHelper'.static.AppendComma(Kinds, class'X2AccessVocab'.default.Poison);
+	if (bAcid)
+		class'X2AccessHelper'.static.AppendComma(Kinds, class'X2AccessVocab'.default.Acid);
+	if (Kinds == "")
+		return "";
+	return class'X2AccessVocab'.static.FillS(class'X2AccessVocab'.default.PathHazards, Kinds);
 }
 
 // Offset from the active unit in compass words ("3 north, 2 east, 1 up"). Always spoken — it
