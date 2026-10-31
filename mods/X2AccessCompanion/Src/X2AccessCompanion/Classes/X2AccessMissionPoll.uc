@@ -105,6 +105,11 @@ static function Poll()
 		default.bBriefed = true;
 		Brief(Stack, HUD);
 
+		// Whoever the squad can already see is the baseline for the sighting lines (a load, or
+		// the tutorial's first frame, must not recite them). In a replay the frame is the one the
+		// player has been shown, never the script's end.
+		class'X2AccessTacticalEvents'.static.BaselineSightings(ShownIndex(), ReplayRunning(GRI));
+
 		// A load must not recite history: whatever the list already shows is the baseline.
 		default.bObjBaselined = PollObjectives(HUD, true);
 		PollCountdown(HUD);
@@ -135,6 +140,7 @@ static function EndSession()
 	default.CountdownMemo = "";
 	class'X2AccessTacticalEvents'.static.ResetTurnBanner();
 	class'X2AccessTacticalEvents'.static.ResetSpawnNarration();
+	class'X2AccessTacticalEvents'.static.ResetSightings();
 }
 
 // True once the orientation line has been given. The concealment-ENTERED events stand down until

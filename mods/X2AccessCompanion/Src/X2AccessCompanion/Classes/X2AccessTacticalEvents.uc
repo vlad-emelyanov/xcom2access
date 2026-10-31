@@ -61,6 +61,18 @@ var config string NarratedDamageUnits;
 // ClaimSpawnNarration / WasSpawnNarrated, where the reasoning lives.
 var config string NarratedSpawnUnits;
 
+// The sightings memo: "|id@x,y,z|" per enemy the squad could see at the last evaluation, at the
+// tile it stood on. Shared pipes, so the whole memo is "|a|b|c|". It is the identity the sighting
+// lines claim on: a unit absent from it has just come into view, a unit present at another tile
+// has moved, a unit present that can no longer be seen has left. Cleared when a mission session
+// ends (ResetSightings); the orientation line baselines it, so a load recites nothing.
+var config string SightingMemo;
+
+// "|id|" per unit a pod reveal named THIS TURN. The reveal line and the scamper that follows it
+// own those units; the sighting lines stand down for them. Cleared on every turn handover
+// (ResetSpawnNarration), like the spawn memo, for the same err-on-the-short-side reason.
+var config string NarratedRevealUnits;
+
 // The turn-banner memo: which banner the game last drew, as one of the BANNER_ kinds. The game
 // draws a banner only when the kind CHANGES (XComPresentationLayer.UIEndTurn compares against
 // m_lastTurnOverlay, which starts at "local"), so this is the same one-int memo and 0 is the
@@ -73,6 +85,9 @@ const BANNER_ALIEN = 1;
 const BANNER_LOST = 2;
 const BANNER_CHOSEN = 3;
 const BANNER_RESISTANCE = 4;
+
+// How many history frames past a move to search for the pod reveal it triggered.
+const REVEAL_LOOKAHEAD = 64;
 
 static function array<X2DataTemplate> CreateTemplates()
 {
@@ -126,6 +141,16 @@ static function CHEventListenerTemplate CreateTacticalNarrationListener()
 	// after the cutscene; the words belong during it.
 	Template.AddCHEvent('ScamperBegin', OnScamperBegin, ELD_OnVisualizationBlockStarted, 60);
 	Template.AddCHEvent('SpawnReinforcementsComplete', OnSpawnReinforcementsComplete, ELD_OnVisualizationBlockStarted, 60);
+
+	// Enemies coming into view, moving in view and leaving view. 'UnitMoveFinished' is fired by
+	// X2Ability_DefaultAbilitySet.MoveAbility_BuildGameState (:286) only for a move's FINAL build
+	// state, never for an interrupt step, and by the special movers (Archon, Cyberus, teleports)
+	// by hand. Watched at block COMPLETED, the one window for this: the walk IS the block, so
+	// completion is the instant the unit has arrived and a sighted player has seen where it stands,
+	// and a line at block START would name a position the picture has not reached. It is also
+	// after the move's own reveal chain has been submitted, which is what lets the line check
+	// whether a pod reveal is about to claim the unit (BuildSightingLine).
+	Template.AddCHEvent('UnitMoveFinished', OnUnitMoveFinished, ELD_OnVisualizationBlockCompleted, 40);
 
 	// Structural.
 	Template.AddCHEvent('PlayerTurnBegun', OnPlayerTurnBegun, ELD_OnStateSubmitted, 50);
@@ -831,6 +856,11 @@ static function string BuildRevealLine(XComGameStateContext_RevealAI RevealConte
 
 	History = `XCOMHISTORY;
 
+	// The pod is claimed for the sighting lines first, named or not: the scamper that follows the
+	// reveal is part of the cutscene, and "in view" or "moved" lines may not interleave with it.
+	for (i = 0; i < RevealContext.RevealedUnitObjectIDs.Length; i++)
+		ClaimRevealed(RevealContext.RevealedUnitObjectIDs[i]);
+
 	for (i = 0; i < RevealContext.RevealedUnitObjectIDs.Length; i++)
 	{
 		Unit = XComGameState_Unit(History.GetGameStateForObjectID(RevealContext.RevealedUnitObjectIDs[i], , HistoryIndex));
@@ -992,6 +1022,297 @@ static function bool WasSpawnNarrated(int UnitID)
 static function ResetSpawnNarration()
 {
 	default.NarratedSpawnUnits = "";
+	default.NarratedRevealUnits = "";
+}
+
+// ---------------------------------------------------------------------------
+// Sightings: enemies coming into view, moving in view, leaving view
+// ---------------------------------------------------------------------------
+//
+// What a sighted player is shown: the enemy's unit flag appears over a unit the squad can see
+// (UIUnitFlagManager), the enemy strip gains a head (UITacticalHUD_Enemies.RealizeTargets, on block
+// complete), and the camera or the player's eye follows a visible unit walking. Nothing is shown
+// for a unit the squad cannot see, so every line here is gated on the squad's own gameplay
+// visibility (GameRulesCache_VisibilityInfo.bVisibleGameplay, the flag the game's own
+// SeqEvent_UnitSawObject keys "became visible" on) read AT THE FRAME the move belongs to, and the
+// left-view line carries only the name the player already had, never a position.
+//
+// TUTORIAL AND REPLAY: no event fires there, so X2AccessReplayNarration walks the move frames it
+// has been shown and calls the same NarrateSightings with bReplay set. In a replay the history
+// holds the whole script, so the "latest state" fallback is refused and a reveal check looks only
+// at frames the replay itself will narrate.
+
+static function EventListenerReturn OnUnitMoveFinished(Object EventData, Object EventSource, XComGameState GameState, Name Event, Object CallbackData)
+{
+	local XComGameState_Unit Mover;
+
+	Mover = XComGameState_Unit(EventData);
+	if (Mover == none || GameState == none)
+		return ELR_NoInterrupt;
+
+	NarrateSightings(Mover.ObjectID, GameState.HistoryIndex, false, false);
+
+	return ELR_NoInterrupt;
+}
+
+// Re-evaluate who the squad can see after one move. An ENEMY mover changes the picture for itself
+// only, so only it is examined (a big enemy turn costs one unit per move, not the roster); a
+// friendly mover can reveal or hide anyone, so every enemy is. bSilent records without speaking,
+// which is how the orientation line baselines the memo. Frame is the history frame of the move, or
+// -1 for "now" (only the baseline passes that).
+static function NarrateSightings(int MoverID, int Frame, bool bReplay, bool bSilent)
+{
+	local XComGameStateHistory History;
+	local XComGameState_Unit Mover, Unit;
+
+	if (!class'X2AccessMissionPoll'.static.IsBriefed() && !bSilent)
+		return;
+
+	History = `XCOMHISTORY;
+
+	Mover = XComGameState_Unit(History.GetGameStateForObjectID(MoverID, , Frame));
+	if (Mover != none && IsSightingEnemy(Mover))
+	{
+		EvaluateSighting(Mover.ObjectID, Frame, MoverID, bReplay, bSilent);
+		return;
+	}
+
+	// Silent baseline (MoverID -1) and friendly movers examine everyone; any other mover (a
+	// civilian, a unit the squad does not fight) changes nothing the squad sees.
+	if (!bSilent && (Mover == none || !Mover.IsFriendlyToLocalPlayer()))
+		return;
+
+	foreach History.IterateByClassType(class'XComGameState_Unit', Unit)
+	{
+		if (IsSightingEnemy(Unit))
+			EvaluateSighting(Unit.ObjectID, Frame, MoverID, bReplay, bSilent);
+	}
+}
+
+// Hostile and drawn: the enemy strip's population (aliens and the Lost), no cosmetic gremlins.
+static function bool IsSightingEnemy(XComGameState_Unit Unit)
+{
+	local X2CharacterTemplate Template;
+
+	if (Unit == none || Unit.IsFriendlyToLocalPlayer())
+		return false;
+	if (Unit.GetTeam() != eTeam_Alien && Unit.GetTeam() != eTeam_TheLost)
+		return false;
+
+	Template = Unit.GetMyTemplate();
+	return Template != none && !Template.bIsCosmetic;
+}
+
+// One enemy against the memo. The unit is re-fetched by ObjectID at the frame being described,
+// never taken from the event payload or an earlier loop, so it is the version the picture shows.
+static function EvaluateSighting(int UnitID, int Frame, int MoverID, bool bReplay, bool bSilent)
+{
+	local XComGameState_Unit Cur;
+	local string Old, Tile, Line;
+	local bool bVisible;
+
+	Cur = XComGameState_Unit(`XCOMHISTORY.GetGameStateForObjectID(UnitID, , Frame));
+	if (Cur == none)
+		return;
+
+	Old = SightingMemoEntry(UnitID);
+
+	bVisible = Cur.IsAlive() && !Cur.bRemovedFromPlay && EnemyVisibleAtFrame(UnitID, Frame, bReplay);
+	if (!bVisible)
+	{
+		if (Old == "")
+			return;
+		SetSightingMemo(UnitID, "");
+		// A death is the death line's; only a unit that is still there and merely unseen is
+		// spoken, and the line carries no position.
+		if (!bSilent && Cur.IsAlive() && !WasRevealedThisTurn(UnitID))
+			SpeakSighting(class'X2AccessVocab'.default.SightedLeft, Cur, false);
+		return;
+	}
+
+	Tile = string(UnitID) $ "@" $ string(Cur.TileLocation.X) $ "," $ string(Cur.TileLocation.Y)
+		$ "," $ string(Cur.TileLocation.Z);
+	if (Old == Tile)
+		return;
+
+	SetSightingMemo(UnitID, Tile);
+	if (bSilent || WasRevealedThisTurn(UnitID))
+		return;
+
+	if (Old == "")
+	{
+		// Seen for the first time: the pod reveal and the reinforcement drop each speak their own
+		// units, so stand down for a unit either has named, or whose reveal is already in the
+		// history ahead of this move and will be spoken as the camera pans.
+		if (WasSpawnNarrated(UnitID) || IsRevealPending(UnitID, Frame))
+			return;
+		SpeakSighting(class'X2AccessVocab'.default.SightedInView, Cur, true);
+	}
+	else if (UnitID == MoverID)
+	{
+		// It was visible before and is visible now at another tile, and it is the unit whose move
+		// just finished. A tile change with any other cause is recorded and not spoken.
+		SpeakSighting(class'X2AccessVocab'.default.SightedMoved, Cur, true);
+	}
+}
+
+// "Muton in view, 8 tiles, 3 north, 7 east" — the object scanner's enemy words (name, tile count,
+// compass offset), measured from the selected soldier. Short on purpose: a big enemy turn queues
+// one of these per visible move and every one is spoken.
+static function SpeakSighting(string Template, XComGameState_Unit Unit, bool bWithPlace)
+{
+	local XComGameState_Unit Active;
+	local string Line;
+	local int Dist, DX, DY, DZ;
+
+	Line = class'X2AccessVocab'.static.FillS(Template, Unit.GetName(eNameType_Full));
+
+	Active = class'X2AccessTileReader'.static.ActiveUnitState();
+	if (bWithPlace && Active != none)
+	{
+		DX = Abs(Active.TileLocation.X - Unit.TileLocation.X);
+		DY = Abs(Active.TileLocation.Y - Unit.TileLocation.Y);
+		DZ = Abs(Active.TileLocation.Z - Unit.TileLocation.Z);
+		Dist = Max(DX, DY) + DZ;
+		class'X2AccessHelper'.static.AppendComma(Line, class'X2AccessVocab'.static.Count(Dist,
+			class'X2AccessVocab'.default.Tiles_One, class'X2AccessVocab'.default.Tiles_Few,
+			class'X2AccessVocab'.default.Tiles_Many));
+		class'X2AccessHelper'.static.AppendComma(Line,
+			class'X2AccessTileReader'.static.OffsetWords(Active.TileLocation, Unit.TileLocation));
+	}
+
+	class'X2AccessNarrator'.static.Combat(Line $ ".");
+}
+
+// Can any soldier see the enemy at this history frame? The game's own per-pair visibility, asked
+// for the frame, so a move that finished a few seconds behind the history is judged on what the
+// picture showed then. When the manager holds no record for any pair (a frame it never cached) a
+// live read falls back to the present, which is the answer every other line here is gated on; a
+// replay answers "no", since its present is the script's future.
+static function bool EnemyVisibleAtFrame(int EnemyID, int Frame, bool bReplay)
+{
+	local XComGameStateHistory History;
+	local X2GameRulesetVisibilityManager VisMgr;
+	local XComGameState_Unit Viewer, ShownViewer;
+	local X2CharacterTemplate Template;
+	local GameRulesCache_VisibilityInfo Info;
+	local bool bFound;
+
+	History = `XCOMHISTORY;
+	VisMgr = `TACTICALRULES.VisibilityMgr;
+
+	if (VisMgr != none)
+	{
+		foreach History.IterateByClassType(class'XComGameState_Unit', Viewer)
+		{
+			if (Viewer.GetTeam() != eTeam_XCom)
+				continue;
+			ShownViewer = XComGameState_Unit(History.GetGameStateForObjectID(Viewer.ObjectID, , Frame));
+			if (ShownViewer == none || !ShownViewer.IsAlive() || ShownViewer.bRemovedFromPlay)
+				continue;
+			Template = ShownViewer.GetMyTemplate();
+			if (Template != none && Template.bIsCosmetic)
+				continue;
+
+			if (VisMgr.GetVisibilityInfo(ShownViewer.ObjectID, EnemyID, Info, Frame))
+			{
+				bFound = true;
+				if (Info.bVisibleGameplay)
+					return true;
+			}
+		}
+	}
+
+	if (!bFound && !bReplay)
+		return class'X2TacticalVisibilityHelpers'.static.CanXComSquadSeeTarget(EnemyID);
+
+	return false;
+}
+
+// True when a pod reveal naming this unit sits in the history AFTER the move's frame. Submission
+// runs ahead of visualization, so the reveal a move triggers is already recorded when the move's
+// block completes, and the reveal line (spoken at the pan) will name the unit.
+static function bool IsRevealPending(int UnitID, int Frame)
+{
+	local XComGameStateHistory History;
+	local XComGameState FrameState;
+	local XComGameStateContext_RevealAI RevealContext;
+	local int i, LastFrame;
+
+	History = `XCOMHISTORY;
+	LastFrame = Min(History.GetCurrentHistoryIndex(), Frame + REVEAL_LOOKAHEAD);
+
+	for (i = Frame + 1; i <= LastFrame; i++)
+	{
+		FrameState = History.GetGameStateFromHistory(i);
+		if (FrameState == none)
+			continue;
+		RevealContext = XComGameStateContext_RevealAI(FrameState.GetContext());
+		if (RevealContext != none && RevealContext.RevealAIEvent == eRevealAIEvent_Begin
+			&& RevealContext.RevealedUnitObjectIDs.Find(UnitID) != INDEX_NONE)
+			return true;
+	}
+
+	return false;
+}
+
+// Record who is visible right now without speaking, so the first move of a session (a load, the
+// tutorial) recites nothing the player already knew. Called by the orientation line.
+static function BaselineSightings(int Frame, bool bReplay)
+{
+	NarrateSightings(-1, Frame, bReplay, true);
+}
+
+static function ResetSightings()
+{
+	default.SightingMemo = "";
+	default.NarratedRevealUnits = "";
+}
+
+// The memo entry "id@x,y,z" for one unit, or "".
+static function string SightingMemoEntry(int UnitID)
+{
+	local string Rest;
+	local int At, Stop;
+
+	At = InStr(default.SightingMemo, "|" $ string(UnitID) $ "@");
+	if (At == INDEX_NONE)
+		return "";
+
+	Rest = Mid(default.SightingMemo, At + 1);
+	Stop = InStr(Rest, "|");
+	if (Stop == INDEX_NONE)
+		return "";
+
+	return Left(Rest, Stop);
+}
+
+// Replace (or, with "", remove) one unit's entry. Entries share their pipes: "|a|b|".
+static function SetSightingMemo(int UnitID, string Entry)
+{
+	local string Old;
+
+	Old = SightingMemoEntry(UnitID);
+	if (Old != "")
+		default.SightingMemo = Repl(default.SightingMemo, "|" $ Old $ "|", "|");
+
+	if (Entry == "")
+		return;
+
+	if (default.SightingMemo == "")
+		default.SightingMemo = "|";
+	default.SightingMemo = default.SightingMemo $ Entry $ "|";
+}
+
+static function ClaimRevealed(int UnitID)
+{
+	if (!WasRevealedThisTurn(UnitID))
+		default.NarratedRevealUnits = default.NarratedRevealUnits $ "|" $ string(UnitID) $ "|";
+}
+
+static function bool WasRevealedThisTurn(int UnitID)
+{
+	return InStr(default.NarratedRevealUnits, "|" $ string(UnitID) $ "|") != INDEX_NONE;
 }
 
 // ---------------------------------------------------------------------------

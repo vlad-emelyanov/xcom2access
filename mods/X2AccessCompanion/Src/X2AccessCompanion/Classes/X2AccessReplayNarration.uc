@@ -141,6 +141,7 @@ private function NarrateFrame(XComGameStateHistory History, int Frame)
 	NarrateReinforcements(GameState, Context);
 	NarrateReveal(Context, Frame);
 	NarrateAbility(History, Context, Frame);
+	NarrateMovement(Context, Frame);
 
 	// Order matters: the shot, then what it did, then who it killed. A frame carries all three at
 	// once, so reading the units after the ability is what keeps "X shoots Y" ahead of "Y takes 4
@@ -233,6 +234,23 @@ private function NarrateAbility(XComGameStateHistory History, XComGameStateConte
 	Line = class'X2AccessTacticalEvents'.static.BuildAbilityLine(AbilityState, AbilityContext);
 	if (Line != "")
 		class'X2AccessNarrator'.static.Combat(Line);
+}
+
+// A finished move, the replay's UnitMoveFinished: the move ability context that is not an
+// interrupt step and carries a path. The live listener fires once per final build state, and this
+// is the frame that build produced. The sighting lines judge the frame the player has been shown.
+private function NarrateMovement(XComGameStateContext Context, int Frame)
+{
+	local XComGameStateContext_Ability AbilityContext;
+
+	AbilityContext = XComGameStateContext_Ability(Context);
+	if (AbilityContext == none || AbilityContext.InterruptionStatus == eInterruptionStatus_Interrupt)
+		return;
+	if (AbilityContext.InputContext.MovementPaths.Length == 0)
+		return;
+
+	class'X2AccessTacticalEvents'.static.NarrateSightings(
+		AbilityContext.InputContext.SourceObject.ObjectID, Frame, true, false);
 }
 
 // Damage and deaths, read off the unit versions the frame itself carries — a delta frame holds
