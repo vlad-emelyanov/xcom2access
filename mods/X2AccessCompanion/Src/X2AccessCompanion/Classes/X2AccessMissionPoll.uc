@@ -37,6 +37,9 @@ var config float LastSeenTime;
 // "key~=~S~|~" per objective row, S being 0 pending, 1 completed, 2 failed.
 var config string ObjectiveMemo;
 
+// The objective baseline has been taken: the list was visible with rows.
+var config bool bObjBaselined;
+
 // "|ObjectID=Countdown|" per pending reinforcement group already spoken at that count.
 var config string CountdownMemo;
 
@@ -72,17 +75,17 @@ static function Poll()
 	if (Stack == none)
 		return;
 
+	// The intro is a timed screen shown during the dropship cinematic, before the HUD is
+	// usable; seeing it is the only way to tell a new mission from a loaded one.
+	if (!default.bBriefed && Stack.GetFirstInstanceOf(class'UIMissionIntro') != none)
+		default.bIntroSeen = true;
+
 	HUD = UITacticalHUD(Stack.GetFirstInstanceOf(class'UITacticalHUD'));
 	if (HUD == none || !HUD.bIsInited)
 		return;
 
 	if (!default.bBriefed)
 	{
-		// The intro is a timed screen shown during the dropship cinematic, before the HUD is
-		// usable; seeing it is the only way to tell a new mission from a loaded one.
-		if (Stack.GetFirstInstanceOf(class'UIMissionIntro') != none)
-			default.bIntroSeen = true;
-
 		if (!HudReady(GRI))
 			return;
 
@@ -90,13 +93,17 @@ static function Poll()
 		Brief(Stack);
 
 		// A load must not recite history: whatever the list already shows is the baseline.
-		PollObjectives(HUD, true);
+		default.bObjBaselined = PollObjectives(HUD, true);
 		PollCountdown(HUD);
 		return;
 	}
 
 	PollCountdown(HUD);
-	PollObjectives(HUD, false);
+	// Until the list is visible with rows the baseline is retaken silently every poll.
+	if (!default.bObjBaselined)
+		default.bObjBaselined = PollObjectives(HUD, true);
+	else
+		PollObjectives(HUD, false);
 }
 
 // Forget the session. The first call after the last tactical world is the only one that does any
@@ -110,6 +117,7 @@ static function EndSession()
 	default.bBriefed = false;
 	default.bIntroSeen = false;
 	default.ObjectiveMemo = "";
+	default.bObjBaselined = false;
 	default.CountdownMemo = "";
 	class'X2AccessTacticalEvents'.static.ResetTurnBanner();
 	class'X2AccessTacticalEvents'.static.ResetSpawnNarration();
@@ -228,7 +236,9 @@ static function string CounterWords(UISpecialMissionHUD_TurnCounter Counter)
 	if (Counter == none || !Counter.bIsInited || Counter.bIsRemoved || !Counter.bIsVisible)
 		return "";
 
-	class'X2AccessHelper'.static.AppendPart(Result, PlainText(Counter.m_sLabel));
+	// The turn counter's own Your Turn label is the XCom turn line OnPlayerTurnBegun speaks.
+	if (PlainText(Counter.m_sLabel) != PlainText(class'UISpecialMissionHUD_TurnCounter'.default.m_strPlayerTurnLabel))
+		class'X2AccessHelper'.static.AppendPart(Result, PlainText(Counter.m_sLabel));
 
 	class'X2AccessHelper'.static.AppendJoined(Tail, PlainText(Counter.m_sSubLabel), " ");
 	class'X2AccessHelper'.static.AppendJoined(Tail, PlainText(Counter.m_sCounter), " ");
@@ -303,16 +313,16 @@ static function PollCountdown(UITacticalHUD HUD)
 // state are spoken — checkbox and timer — and only rows currently visible (a collapsed group
 // hides its members). bBaseline records without speaking: the first read after a load is the
 // state the player already knew.
-static function PollObjectives(UITacticalHUD HUD, bool bBaseline)
+static function bool PollObjectives(UITacticalHUD HUD, bool bBaseline)
 {
 	local UIObjectiveList List;
 	local UIObjectiveListItem Item;
 	local string Key, NewMemo, Label, Line;
-	local int i, State, OldState;
+	local int i, RowState, OldRowState;
 
 	List = HUD.m_kObjectivesControl;
-	if (List == none || !List.bIsVisible)
-		return;
+	if (List == none || !List.bIsVisible || List.Items.Length == 0)
+		return false;
 
 	for (i = 0; i < List.Items.Length; i++)
 	{
@@ -321,24 +331,24 @@ static function PollObjectives(UITacticalHUD HUD, bool bBaseline)
 			|| Item.Data.bIsDarkEvent)
 			continue;
 
-		State = 0;
+		RowState = 0;
 		if (Item.Data.ShowCompleted)
-			State = 1;
+			RowState = 1;
 		else if (Item.Data.ShowFailed)
-			State = 2;
+			RowState = 2;
 
 		Key = Item.Data.MissionType $ "/" $ Item.Data.DisplayLabel;
-		NewMemo $= Key $ MEMO_EQ $ string(State) $ MEMO_SEP;
+		NewMemo $= MEMO_SEP $ Key $ MEMO_EQ $ string(RowState);
 
-		if (bBaseline || State == 0)
+		if (bBaseline || RowState == 0)
 			continue;
 		if (Item.Type != eUIODT_Checkbox && Item.Type != eUIODT_Timer)
 			continue;
 		if (!Item.bIsVisible)
 			continue;
 
-		OldState = MemoState(Key);
-		if (OldState == State)
+		OldRowState = MemoState(Key);
+		if (OldRowState == RowState)
 			continue;
 
 		Label = PlainText(Item.Data.DisplayLabel);
@@ -346,31 +356,28 @@ static function PollObjectives(UITacticalHUD HUD, bool bBaseline)
 			continue;
 
 		Line = Label;
-		class'X2AccessHelper'.static.AppendComma(Line, State == 1
+		class'X2AccessHelper'.static.AppendComma(Line, RowState == 1
 			? class'X2AccessVocab'.default.ObjectiveCompleted
 			: class'X2AccessVocab'.default.ObjectiveFailed);
 		class'X2AccessNarrator'.static.Alert(Line);
 	}
 
 	default.ObjectiveMemo = NewMemo;
+	return true;
 }
 
 // The remembered state of one row, 0 when the row was not in the memo.
 static function int MemoState(string Key)
 {
 	local int At;
-	local string Tail;
 
-	At = InStr(default.ObjectiveMemo, Key $ MEMO_EQ);
+	// Every entry is wrapped in separators on both sides of its key, so a key that is a suffix
+	// or prefix of another cannot match.
+	At = InStr(default.ObjectiveMemo, MEMO_SEP $ Key $ MEMO_EQ);
 	if (At == INDEX_NONE)
 		return 0;
 
-	// A key may be a PREFIX of a longer key ("A/x" and "A/xy"), so the match must start an entry.
-	if (At > 0 && Mid(default.ObjectiveMemo, At - Len(MEMO_SEP), Len(MEMO_SEP)) != MEMO_SEP)
-		return 0;
-
-	Tail = Mid(default.ObjectiveMemo, At + Len(Key) + Len(MEMO_EQ), 1);
-	return int(Tail);
+	return int(Mid(default.ObjectiveMemo, At + Len(MEMO_SEP) + Len(Key) + Len(MEMO_EQ), 1));
 }
 
 // ---------------------------------------------------------------------------
