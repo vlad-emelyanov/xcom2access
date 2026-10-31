@@ -766,8 +766,13 @@ private function DescribeAdventCard(UIAdventOperations Popup, XComGameState_Head
 		if (XComHQ != none && XComHQ.CanAffordAllStrategyCosts(DarkEvent.RevealCost, CostScalars))
 		{
 			class'X2AccessWire'.static.AddField(Rec, "unlock", Popup.m_strUnlockButton);
-			Rec $= FLD_SEP $ "canreveal=1";
-			class'X2AccessWire'.static.AddField(Rec, "reveal", Popup.m_strReveal);
+			// OnRevealClicked always indexes ChosenDarkEvents, so a card in the active list
+			// must not offer the verb: its index would reveal a different pending card.
+			if (!bActive)
+			{
+				Rec $= FLD_SEP $ "canreveal=1";
+				class'X2AccessWire'.static.AddField(Rec, "reveal", Popup.m_strReveal);
+			}
 		}
 	}
 	else

@@ -1024,6 +1024,8 @@ static_assert(offsetof(AUIMission, MissionRef) == 0x600, "UIMission::MissionRef"
 // first locals and writes Idx at 0.
 static_assert(offsetof(AUIAdventOperations_execOnRevealClicked_Params, Idx) == 0x0,
     "dark events OnRevealClicked params");
+static_assert(sizeof(AUIAdventOperations_execOnRevealClicked_Params) <= 64,
+    "dark events OnRevealClicked block (64 bytes in game_ui_popup.cpp) must cover the struct");
 
 // ---- the Chosen dossier and the bond screens (docs/chosen-bond-recon.md §2) ----
 //
