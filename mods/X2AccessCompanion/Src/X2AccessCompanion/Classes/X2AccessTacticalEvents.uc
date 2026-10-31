@@ -135,7 +135,12 @@ static function CHEventListenerTemplate CreateTacticalNarrationListener()
 	Template.AddCHEvent('UnitGroupTurnBegun', OnUnitGroupTurnBegun, ELD_OnStateSubmitted, 50);
 	Template.AddCHEvent('SquadConcealmentBroken', OnSquadConcealmentBroken, ELD_OnStateSubmitted, 50);
 	Template.AddCHEvent('UnitConcealmentBroken', OnUnitConcealmentBroken, ELD_OnStateSubmitted, 45);
-
+	// The ENTERED pair. A squad entering fires the squad event once AND the unit event once per
+	// soldier (XComGameState_Player.SetSquadConcealmentNewGameState calls SetIndividualConcealment on
+	// each), so the unit handler stands down inside a squad change, the way the game's own
+	// BuildVisualizationForConcealmentChanged gives the squad ONE instigator flyover.
+	Template.AddCHEvent('SquadConcealmentEntered', OnSquadConcealmentEntered, ELD_OnStateSubmitted, 50);
+	Template.AddCHEvent('UnitConcealmentEntered', OnUnitConcealmentEntered, ELD_OnStateSubmitted, 45);
 	Template.AddCHEvent('UnitPanicked', OnUnitPanicked, ELD_OnStateSubmitted, 45);
 	Template.AddCHEvent('ShieldsExpended', OnShieldsExpended, ELD_OnStateSubmitted, 40);
 	Template.AddCHEvent('UnitEvacuated', OnUnitEvacuated, ELD_OnStateSubmitted, 40);
@@ -635,6 +640,83 @@ static function EventListenerReturn OnUnitConcealmentBroken(Object EventData, Ob
 		class'X2AccessVocab'.default.UnitRevealed, UnitName(Unit)));
 
 	return ELR_NoInterrupt;
+}
+
+// Concealment ENTERED. Two facts the game draws and the broken pair never covered: the HUD banner
+// for the selected soldier (UITacticalHUD.RealizeConcealmentStatus: "SQUAD CONCEALED" or
+// "CONCEALED"), and the "Concealed" flyover over the instigator
+// (XComGameState_Unit.BuildVisualizationForConcealmentChanged).
+//
+// ⛔ Silent until the orientation line has been given. A mission that BEGINS concealed enters
+// concealment during setup, before the HUD exists, and the orientation line already says it
+// (X2AccessMissionPoll.Brief); a loaded save fires nothing at all, so the line is its only voice.
+static function EventListenerReturn OnSquadConcealmentEntered(Object EventData, Object EventSource, XComGameState GameState, Name Event, Object CallbackData)
+{
+	local XComGameState_Player PlayerState;
+
+	PlayerState = XComGameState_Player(EventData);
+	if (PlayerState == none || PlayerState.GetTeam() != eTeam_XCom)
+		return ELR_NoInterrupt;
+	if (!class'X2AccessMissionPoll'.static.IsBriefed())
+		return ELR_NoInterrupt;
+
+	class'X2AccessNarrator'.static.Alert(SquadConcealedWord());
+
+	return ELR_NoInterrupt;
+}
+
+static function EventListenerReturn OnUnitConcealmentEntered(Object EventData, Object EventSource, XComGameState GameState, Name Event, Object CallbackData)
+{
+	local XComGameState_Unit Unit;
+
+	Unit = XComGameState_Unit(EventData);
+	if (Unit == none || !Unit.IsFriendlyToLocalPlayer())
+		return ELR_NoInterrupt;
+	if (!class'X2AccessMissionPoll'.static.IsBriefed())
+		return ELR_NoInterrupt;
+
+	// A squad entering is the squad event's line. The game's own test for it
+	// (BuildVisualizationForConcealmentChanged): the player's squad flag differs from its previous
+	// version in this very state.
+	if (IsSquadConcealmentChange(GameState))
+		return ELR_NoInterrupt;
+
+	class'X2AccessNarrator'.static.Alert(UnitConcealedLine(Unit));
+
+	return ELR_NoInterrupt;
+}
+
+// True when this game state flips a player's squad-concealed flag either way.
+static function bool IsSquadConcealmentChange(XComGameState GameState)
+{
+	local XComGameState_Player PlayerState, PrevPlayer;
+
+	if (GameState == none)
+		return false;
+
+	foreach GameState.IterateByClassType(class'XComGameState_Player', PlayerState)
+	{
+		PrevPlayer = XComGameState_Player(`XCOMHISTORY.GetGameStateForObjectID(PlayerState.ObjectID, eReturnType_Reference, GameState.HistoryIndex - 1));
+		if (PrevPlayer != none && PrevPlayer.bSquadIsConcealed != PlayerState.bSquadIsConcealed)
+			return true;
+	}
+
+	return false;
+}
+
+// The HUD banner's own word. Shared with the replay narrator.
+static function string SquadConcealedWord()
+{
+	return class'UITacticalHUD'.default.m_strSquadConcealed;
+}
+
+// The flyover word over one soldier, under the name the other lines use.
+static function string UnitConcealedLine(XComGameState_Unit Unit)
+{
+	if (Unit == none || class'X2StatusEffects'.default.ConcealedFriendlyName == "")
+		return "";
+
+	return UnitName(Unit) $ ":" @ class'X2StatusEffects'.default.ConcealedFriendlyName $ ".";
 }
 
 static function EventListenerReturn OnUnitPanicked(Object EventData, Object EventSource, XComGameState GameState, Name Event, Object CallbackData)

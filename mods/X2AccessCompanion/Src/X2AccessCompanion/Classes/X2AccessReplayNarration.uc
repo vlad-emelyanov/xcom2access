@@ -268,11 +268,18 @@ private function NarrateConcealment(XComGameStateHistory History, XComGameState 
 
 	foreach GameState.IterateByClassType(class'XComGameState_Player', PlayerState)
 	{
-		if (PlayerState.GetTeam() != eTeam_XCom || PlayerState.bSquadIsConcealed)
+		if (PlayerState.GetTeam() != eTeam_XCom)
 			continue;
 
 		PrevPlayer = XComGameState_Player(History.GetGameStateForObjectID(PlayerState.ObjectID, , Frame - 1));
-		if (PrevPlayer != none && PrevPlayer.bSquadIsConcealed)
+		if (PrevPlayer == none || PrevPlayer.bSquadIsConcealed == PlayerState.bSquadIsConcealed)
+			continue;
+
+		// The squad flag flipped in this frame: broken, or entered (the HUD banner's word, the
+		// same one the live listener speaks).
+		if (PlayerState.bSquadIsConcealed)
+			class'X2AccessNarrator'.static.Alert(class'X2AccessTacticalEvents'.static.SquadConcealedWord());
+		else
 			class'X2AccessNarrator'.static.Alert(class'X2AccessVocab'.default.SquadConcealmentBroken);
 	}
 }
