@@ -1520,39 +1520,45 @@ future speech-scrollback key.
   `RealizeOverwatch` icon). `X2AccessUnitReader.DescribeActions` now calls the same helper, so the
   `;` readout, the ring, the brief and the arrival line cannot count differently. Friendly flags only:
   the enemy ring never gets a count (`RealizeMoves` is gated on `m_bIsFriendly`).
-- **Enemy ring (`.`) speaks the default shot's hit chance.** `X2AccessTacticalReader.
-  DescribeTargetHitChance` asks the ability container's own `GetDefaultTargetingAbility` (the lookup
-  `UITacticalHUD_Enemies.GetHitChanceForObjectRef` falls back to) and runs `LookupShotBreakdown`
-  through the shot readout's `GetBreakdown`; the words are `HitChanceWords`, the Targets stop's. It is
-  silent when no available action lists the enemy among its targets (the `SpottedBySquad` case, an
-  empty-ammo soldier) and with no soldier selected. Placed after the sight clause, before cover. No
-  damage and no ranking: the ring stays in distance order. ⚠ The Targets stop itself still reads the
-  strip, which prefers the SELECTED ability over the default one; when the player has cycled to a
-  different ability the two numbers can differ, by design of the game's own strip.
+- **Enemy ring (`.`) speaks the Targets stop's hit chance.** `X2AccessTacticalReader.
+  DescribeTargetHitChance` picks the ability in `UITacticalHUD_Enemies.GetHitChanceForObjectRef`'s
+  order (the targeting method's ability when the reticle is on the unit, else the selected ability,
+  else `GetDefaultTargetingAbility`) and runs `LookupShotBreakdown`; the words are `HitChanceWords`.
+  It is silent when that ability is not an `AA_Success` action on the bar listing the enemy as a target
+  (the `SpottedBySquad` case, an empty-ammo soldier), with no soldier selected, and when the ability's
+  owner is not the selected soldier: `m_arrAbilities` belongs to the previous soldier until the
+  container refreshes, and a wrong number is worse than none. Placed after the sight clause, before cover. No
+  damage and no ranking: the ring stays in distance order. 
 - **Target line during targeting ends with distance and bearing.** `DescribeTarget` appends
   `RangeWords(shooter tile, target tile)` (`17 tiles, 7 north, 13 west`): the scanner's tile count and
   `OffsetWords`, from the shooter, after the health clause and before the blast sentence. Units only.
 - **`I` is the squad brief** (`X2AccessUnitReader.AnnounceSquad` over `BuildSquadBrief`, claimed in
   `src/unit_info.cpp`). Phrases, each omitted when empty and joined with `AppendPart`: the enemy count
-  (`X2AccessObjectScanner.IsRingEnemy`, the ONE test the enemy ring uses, so brief and ring cannot
-  count differently; a spoken zero, because a key owes an answer), `Ready:` (squad order, name and
+  (`X2AccessObjectScanner.IsVisibleHostile`: the ring's aliens plus the visible Lost, the same
+  inclusion `AddLost` uses, so brief and ring cannot count differently; a spoken zero, because a key
+  owes an answer), `Ready:` (squad order, name and
   pips), `Done:` (no pips; carries the overwatch word, then `StatusWords` with concealment left out),
   reinforcements (only while `HUD.m_kCountdown.bIsVisible`, the spawner's number, the HUD's words)
   and the special-mission counters (`X2AccessMissionPoll.CounterWords`, only the panels drawn). ⛔ No
-  turn number: the standard HUD draws none. Nothing about enemies out of sight. Entries inside a list
-  are comma-joined, so a soldier's own status words are space-joined inside the entry.
+  turn number: the standard HUD draws none. Nothing about enemies out of sight. `Ready:` entries are
+  comma-joined; `Done:` entries are `AppendJoined` with a semicolon, since a soldier's status words
+  carry commas of their own.
   Gate: usable HUD, not targeting, and exclusive with the tutorial reader's re-read (`OwnsRereadKey`,
   `InTutorialMission`), all flag reads.
 - **The turn-start line** is the same builder, short form (`bTurnStart`): enemy count, then ONLY the
   soldiers with no action points under `Cannot act:` (`BriefUnable`), then reinforcements and timer.
-  Everyone able: no list. `OnPlayerTurnBegun` only ARMS it (`X2AccessMissionPoll.ArmTurnBrief`); the
-  poll speaks it (`PollTurnBrief`) once the visualizer is idle, the rules are in `TurnPhase_UnitActions`,
-  the unit-action player is the XCom player and some soldier holds a point (or 50 polls have passed,
-  for a turn on which nobody can act). Deferred because the event is not a trustworthy instant:
-  turn-start points are dealt by `SetupUnitActionsForGroupTurnBegin`, a separate step from the
-  `PlayerTurnBegun` submission. A replay never arms it (the tutorial submits no turn state).
+  Everyone able: no list. `OnPlayerTurnBegun` only ARMS it (`X2AccessMissionPoll.ArmTurnBrief`),
+  storing the history index; the poll speaks it (`PollTurnBrief`) once the visualizer is idle, the rules
+  are in `TurnPhase_UnitActions`, the unit-action player is the XCom player and a frame newer than the
+  stored index holds an `eGameRule_UnitGroupTurnBegin` context for the XCom player (or 50 polls have
+  passed). ⛔ NOT keyed on `NumAllActionPoints() > 0`: nothing clears points at end of turn
+  (`GiveStandardActionPoints` is the only clear), so last turn's leftovers read as a fresh deal.
+  Skipped on the mission's first turn (`PlayerTurnCount <= 1`) and before the orientation line; a load
+  fires no `PlayerTurnBegun`. A replay never arms it (the tutorial submits no turn state). Unverified:
+  that the XCom side has a group turn-begin frame at all; if not, the 50-poll limit speaks it.
 - **The arrival line** (`X2AccessTacticalEvents.NarrateArrival`, on `OnUnitMoveFinished`, after the
-  sightings): `<Short name> arrived, <actions>, <cover edges, spoken even when none>, <sight clause>`.
+  sightings): `<Short name> arrived, <actions>, <cover edges, spoken even when none>, <sight clause>`; the closing
+  period is added only when the line does not already end in a terminator.
   Cover is `X2AccessTileReader.DescribeCoverEdges`, sight is `DescribeSight` (both now static; sight
   takes the mover so it is right even if the player has already switched soldier). Only a unit the
   player commands (team XCom, not AI-controlled); silent for panicked, dead, down, evacuated and

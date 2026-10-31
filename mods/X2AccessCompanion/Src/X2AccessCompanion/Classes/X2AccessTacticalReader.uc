@@ -738,47 +738,85 @@ static function string HitChanceWords(int Hit)
 		@ class'X2AccessVocab'.static.Fill1(class'X2AccessVocab'.default.PercentValue, Hit);
 }
 
-// The hit chance of the selected soldier's DEFAULT shot at this unit, in HitChanceWords, or "" when
-// that soldier cannot target it. The Targets stop reads the strip's own GetHitChanceForObjectRef,
-// which falls back to exactly this lookup when no ability is selected
-// (UITacticalHUD_AbilityContainer.GetDefaultTargetingAbility, SelectReloadLast set) and then runs the
-// same LookupShotBreakdown; this asks the container directly because the ring covers every enemy the
-// SQUAD sees, including the ones the strip has no head for. "Can target" is the container's own
-// answer: an available action whose AvailableTargets holds the unit. A reload that stands in for a
-// shot has no target list, so an empty-ammo soldier is silent rather than quoted a shot he cannot take.
+// The hit chance the Targets stop would show for this unit, in HitChanceWords, or "" when the
+// selected soldier cannot target it with that ability. The ability is chosen in the order
+// UITacticalHUD_Enemies.GetHitChanceForObjectRef chooses it: the targeting method's own ability when
+// the reticle is on this unit, else the ability selected on the bar, else the default targeting
+// ability for the unit (GetDefaultTargetingAbility, SelectReloadLast set). The breakdown is the same
+// LookupShotBreakdown call, hidden breakdowns answer nothing, and there is no cooldown refusal of
+// ours (the game has none; a cooling ability is not AA_Success and drops out below).
+//
+// "Can target" is the container's own answer: an action in m_arrAbilities that is AA_Success and lists
+// the unit among its AvailableTargets. Two guards against a stale bar: the ability's OWNER must be
+// the selected soldier (m_arrAbilities belongs to the previous soldier until the container
+// refreshes), and the ability must still be on the bar. A wrong number is worse than none, so either
+// failure is silent.
 static function string DescribeTargetHitChance(XComGameState_Unit TargetUnit)
 {
 	local UITacticalHUD HUD;
-	local AvailableAction Action;
+	local X2TargetingMethod Method;
+	local XComGameState_Unit ActiveUnit;
 	local XComGameState_Ability AbilityState;
+	local AvailableAction Action, DefaultAction;
 	local StateObjectReference TargetRef;
 	local ShotBreakdown Breakdown;
-	local int i;
+	local X2AbilityTemplate Template;
+	local bool bFromMethod;
+	local int i, j;
 
 	if (TargetUnit == none)
 		return "";
+	ActiveUnit = class'X2AccessTileReader'.static.ActiveUnitState();
 	HUD = GetTacticalHUD();
-	if (HUD == none || HUD.m_kAbilityHUD == none)
-		return "";
-	if (!HUD.m_kAbilityHUD.GetDefaultTargetingAbility(TargetUnit.ObjectID, Action, true))
-		return "";
-	if (Action.AvailableCode != 'AA_Success')
+	if (ActiveUnit == none || HUD == none || HUD.m_kAbilityHUD == none)
 		return "";
 
-	for (i = 0; i < Action.AvailableTargets.Length; i++)
+	Method = HUD.GetTargetingMethod();
+	if (Method != none && Method.GetTargetedObjectID() == TargetUnit.ObjectID)
 	{
-		if (Action.AvailableTargets[i].PrimaryTarget.ObjectID == TargetUnit.ObjectID)
+		AbilityState = Method.Ability;
+		bFromMethod = true;
+		TargetRef.ObjectID = TargetUnit.ObjectID;
+	}
+	else
+	{
+		AbilityState = HUD.m_kAbilityHUD.GetCurrentSelectedAbility();
+		if (AbilityState == none
+			&& HUD.m_kAbilityHUD.GetDefaultTargetingAbility(TargetUnit.ObjectID, DefaultAction, true))
+			AbilityState = XComGameState_Ability(
+				`XCOMHISTORY.GetGameStateForObjectID(DefaultAction.AbilityObjectRef.ObjectID));
+	}
+	if (AbilityState == none || AbilityState.OwnerStateObject.ObjectID != ActiveUnit.ObjectID)
+		return "";
+
+	if (!bFromMethod)
+	{
+		for (i = 0; i < HUD.m_kAbilityHUD.m_arrAbilities.Length; i++)
 		{
-			TargetRef = Action.AvailableTargets[i].PrimaryTarget;
+			Action = HUD.m_kAbilityHUD.m_arrAbilities[i];
+			if (Action.AbilityObjectRef.ObjectID != AbilityState.ObjectID
+				|| Action.AvailableCode != 'AA_Success')
+				continue;
+			for (j = 0; j < Action.AvailableTargets.Length; j++)
+			{
+				if (Action.AvailableTargets[j].PrimaryTarget.ObjectID == TargetUnit.ObjectID)
+				{
+					TargetRef = Action.AvailableTargets[j].PrimaryTarget;
+					break;
+				}
+			}
 			break;
 		}
+		if (TargetRef.ObjectID <= 0)
+			return "";
 	}
-	if (TargetRef.ObjectID <= 0)
-		return "";
 
-	AbilityState = XComGameState_Ability(
-		`XCOMHISTORY.GetGameStateForObjectID(Action.AbilityObjectRef.ObjectID));
-	if (AbilityState == none || !GetBreakdown(AbilityState, TargetRef, Breakdown))
+	Template = AbilityState.GetMyTemplate();
+	if (Template == none || Template.AbilityToHitCalc == none)
+		return "";
+	AbilityState.LookupShotBreakdown(AbilityState.OwnerStateObject, TargetRef,
+		AbilityState.GetReference(), Breakdown);
+	if (Breakdown.HideShotBreakdown)
 		return "";
 	return HitChanceWords(HitChanceOf(Breakdown));
 }

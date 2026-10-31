@@ -229,7 +229,7 @@ static function EventListenerReturn OnPlayerTurnBegun(Object EventData, Object E
 		// SetupUnitActionsForGroupTurnBegin, a separate step from the PlayerTurnBegun submission,
 		// and which comes first for the XCom side was not measured, so the poll speaks it once
 		// the points exist. A replay never arms it.
-		class'X2AccessMissionPoll'.static.ArmTurnBrief();
+		class'X2AccessMissionPoll'.static.ArmTurnBrief(PlayerState.ObjectID);
 	}
 
 	return ELR_NoInterrupt;
@@ -1163,7 +1163,10 @@ static function NarrateArrival(XComGameState_Unit EventUnit, XComGameState GameS
 	class'X2AccessHelper'.static.AppendComma(Line,
 		class'X2AccessTileReader'.static.DescribeSight(Mover.TileLocation, TilePos, Mover));
 
-	class'X2AccessNarrator'.static.Combat(Line $ ".");
+	// The terminator only where the line does not already end in one (a game word may).
+	if (!class'X2AccessHelper'.static.EndsPhrase(Line))
+		Line $= ".";
+	class'X2AccessNarrator'.static.Combat(Line);
 }
 
 // Re-evaluate who the squad can see after one move. An ENEMY mover changes the picture for itself

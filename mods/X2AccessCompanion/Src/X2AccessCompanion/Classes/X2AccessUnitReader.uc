@@ -155,8 +155,8 @@ function AnnounceSquad()
 // One builder for two callers: the I key (bTurnStart false, everything) and the turn-start line in
 // X2AccessMissionPoll (bTurnStart true, the short form: enemies, then only the soldiers who start the
 // turn unable to act, then reinforcements and the timer). Phrases, each omitted when empty:
-//   enemies          the count of units the enemy ring lists (X2AccessObjectScanner.IsRingEnemy, one
-//                    test for both) and a spoken zero, because a key owes an answer and "nothing in
+//   enemies          the count of units the enemy key's ring lists, the Lost included
+//                    (X2AccessObjectScanner.IsVisibleHostile, one test for both) and a spoken zero, because a key owes an answer and "nothing in
 //                    view" is the answer a player listens for. Enemies out of sight are not here.
 //   Ready: / Done:   squad order (the HQ squad list, then any other XCom-team unit). A soldier with
 //                    action points is Ready, with the flag's pip count (ActionPointWords); one with
@@ -188,7 +188,7 @@ static function string BuildSquadBrief(bool bTurnStart)
 
 	foreach History.IterateByClassType(class'XComGameState_Unit', UnitState)
 	{
-		if (class'X2AccessObjectScanner'.static.IsRingEnemy(UnitState))
+		if (class'X2AccessObjectScanner'.static.IsVisibleHostile(UnitState))
 			EnemyCount++;
 	}
 	if (EnemyCount == 0)
@@ -239,15 +239,15 @@ static function string BuildSquadBrief(bool bTurnStart)
 			class'X2AccessTacticalReader'.static.DescribeTargetOverwatch(UnitState));
 		class'X2AccessHelper'.static.AppendComma(Status,
 			class'X2AccessObjectScanner'.static.StatusWords(UnitState, true));
-		// The entries of a list are comma-joined, so one soldier's own words must not carry commas.
-		Status = Repl(Status, ", ", " ");
 
 		if (Status == "")
 			Entry = ShortName;
 		else
 			Entry = class'X2AccessVocab'.static.FillS2(class'X2AccessVocab'.default.BriefUnit,
 				ShortName, Status);
-		class'X2AccessHelper'.static.AppendComma(Done, Entry);
+		// Entries of the Done list are separated by a semicolon: a soldier's own status words
+		// carry commas, and AppendJoined leaves a game string that ends in a terminator alone.
+		class'X2AccessHelper'.static.AppendJoined(Done, Entry, "; ");
 	}
 
 	if (Ready != "")

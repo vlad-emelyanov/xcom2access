@@ -510,7 +510,7 @@ private function AddEnemies(TTile Origin, out array<AccessMarker> Entries)
 // The cosmetic refusal is the squad ring's phantom in its mirror image: a GREMLIN takes its owner's
 // team, so a mind-controlled or hacked Specialist would put a nameless drone in the ENEMY ring the
 // same way. The tile reader already refuses cosmetics here. The Lost ride the ring through AddLost
-// and are not counted by this test.
+// and are counted by IsVisibleHostile, not by this test.
 static function bool IsRingEnemy(XComGameState_Unit UnitState)
 {
 	local X2CharacterTemplate Template;
@@ -521,6 +521,20 @@ static function bool IsRingEnemy(XComGameState_Unit UnitState)
 	if (Template != none && Template.bIsCosmetic)
 		return false;
 	return class'X2TacticalVisibilityHelpers'.static.CanXComSquadSeeTarget(UnitState.ObjectID);
+}
+
+// A visible Lost unit: AddLost's inclusion, as one test. A Lost has a flag like any enemy.
+static function bool IsVisibleLost(XComGameState_Unit UnitState)
+{
+	return UnitState != none && UnitState.GetTeam() == eTeam_TheLost && !UnitState.IsDead()
+		&& class'X2TacticalVisibilityHelpers'.static.CanXComSquadSeeTarget(UnitState.ObjectID);
+}
+
+// Everything the enemy key's ring can list: the ring's aliens plus the Lost. The squad brief counts
+// with this, so "No enemies in view" can never sit beside a swarm the ring would name.
+static function bool IsVisibleHostile(XComGameState_Unit UnitState)
+{
+	return IsRingEnemy(UnitState) || IsVisibleLost(UnitState);
 }
 
 // "" when the selected soldier sees it themselves, which is the ordinary case and needs no words.
@@ -1155,9 +1169,7 @@ private function AddLost(TTile Origin, out array<AccessMarker> Entries)
 
 	foreach History.IterateByClassType(class'XComGameState_Unit', UnitState)
 	{
-		if (UnitState.GetTeam() != eTeam_TheLost || UnitState.IsDead())
-			continue;
-		if (!class'X2TacticalVisibilityHelpers'.static.CanXComSquadSeeTarget(UnitState.ObjectID))
+		if (!IsVisibleLost(UnitState))
 			continue;
 
 		D = TileDistance(Origin, UnitState.TileLocation);

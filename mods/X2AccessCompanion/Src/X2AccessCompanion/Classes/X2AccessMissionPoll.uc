@@ -53,6 +53,10 @@ var config bool bTurnBriefPending;
 // Polls spent waiting for the turn's action points to be dealt before the brief is spoken anyway.
 var config int TurnBriefWaits;
 
+// The history index when the brief was armed: the deal is only believed once a unit-group-turn-begin
+// frame newer than this exists (see PollTurnBrief).
+var config int TurnBriefIndex;
+
 const MEMO_SEP = "~|~";
 const MEMO_EQ = "~=~";
 const BRIEF_WAIT_LIMIT = 30;
@@ -210,21 +214,60 @@ static function int ShownIndex()
 // for the XCom side was not measured; read on the event, every soldier could be Done. A replay never
 // arms it: the tutorial submits no turn state, and a brief built there would be read from a frame
 // the player has not been shown.
-static function ArmTurnBrief()
+//
+// Skipped on the mission's FIRST turn and whenever the orientation line has not been given yet: the
+// orientation line has just spoken, and a brief behind it is noise. PlayerTurnCount is read from the
+// latest state (the turn-begin state is already submitted when the listener runs) and is 1 on the
+// first turn. A loaded save fires no PlayerTurnBegun at all, so a load is skipped by construction.
+static function ArmTurnBrief(int PlayerID)
 {
 	local XComTacticalGRI GRI;
+	local XComGameState_Player PlayerState;
 
 	GRI = XComTacticalGRI(class'WorldInfo'.static.GetWorldInfo().GRI);
-	if (ReplayRunning(GRI))
+	if (ReplayRunning(GRI) || !default.bBriefed)
+		return;
+
+	PlayerState = XComGameState_Player(`XCOMHISTORY.GetGameStateForObjectID(PlayerID));
+	if (PlayerState != none && PlayerState.PlayerTurnCount <= 1)
 		return;
 
 	default.bTurnBriefPending = true;
 	default.TurnBriefWaits = 0;
+	default.TurnBriefIndex = `XCOMHISTORY.GetCurrentHistoryIndex();
+}
+
+// True once the XCom group's turn-begin has been submitted after the brief was armed. That frame
+// (eGameRule_UnitGroupTurnBegin, built by SetupUnitActionsForGroupTurnBegin) is the one that deals
+// the turn's points: NumAllActionPoints is NOT a usable signal on its own, because nothing clears a
+// soldier's points at the end of a turn, so last turn's leftovers would read as a fresh deal.
+static function bool GroupTurnBeginSubmitted()
+{
+	local XComGameStateHistory History;
+	local XComGameState FrameState;
+	local XComGameStateContext_TacticalGameRule RuleContext;
+	local XComGameState_Player Owner;
+	local int i;
+
+	History = `XCOMHISTORY;
+	for (i = History.GetCurrentHistoryIndex(); i > default.TurnBriefIndex; i--)
+	{
+		FrameState = History.GetGameStateFromHistory(i);
+		if (FrameState == none)
+			continue;
+		RuleContext = XComGameStateContext_TacticalGameRule(FrameState.GetContext());
+		if (RuleContext == none || RuleContext.GameRuleType != eGameRule_UnitGroupTurnBegin)
+			continue;
+		Owner = XComGameState_Player(History.GetGameStateForObjectID(RuleContext.PlayerRef.ObjectID));
+		if (Owner != none && Owner.GetTeam() == eTeam_XCom)
+			return true;
+	}
+	return false;
 }
 
 // Speak the brief once the points exist. The conditions mirror HudReady: the visualizer idle and the
-// rules in the unit-actions phase. Then two ways out of the wait: some soldier of yours holds an
-// action point (the deal has happened), or TURN_BRIEF_WAIT_LIMIT polls have passed (a turn on which
+// rules in the unit-actions phase. Then two ways out of the wait: the XCom group's turn-begin frame
+// has been submitted since arming (the deal has happened), or TURN_BRIEF_WAIT_LIMIT polls have passed (a turn on which
 // every soldier is unable to act deals nothing, and that is exactly the news the brief carries).
 // Disarmed without speaking when the unit-action player is no longer the XCom player: the turn
 // passed before the brief could be read, and a brief about a turn that is over would be noise.
@@ -233,7 +276,6 @@ static function PollTurnBrief(XComTacticalGRI GRI)
 	local X2TacticalGameRuleset Rules;
 	local XComGameStateHistory History;
 	local XComGameState_Player ActionPlayer;
-	local XComGameState_Unit UnitState;
 	local string Line;
 	local bool bDealt;
 
@@ -262,14 +304,7 @@ static function PollTurnBrief(XComTacticalGRI GRI)
 		return;
 	}
 
-	foreach History.IterateByClassType(class'XComGameState_Unit', UnitState)
-	{
-		if (UnitState.GetTeam() == eTeam_XCom && UnitState.IsAlive() && UnitState.NumAllActionPoints() > 0)
-		{
-			bDealt = true;
-			break;
-		}
-	}
+	bDealt = GroupTurnBeginSubmitted();
 	if (!bDealt && default.TurnBriefWaits < TURN_BRIEF_WAIT_LIMIT)
 	{
 		default.TurnBriefWaits = default.TurnBriefWaits + 1;
