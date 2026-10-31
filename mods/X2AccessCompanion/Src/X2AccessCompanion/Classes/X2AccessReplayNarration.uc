@@ -176,6 +176,7 @@ private function NarrateTurnChange(XComGameStateHistory History, XComGameStateCo
 	// events to mirror, so the player's own turn-begin frame stands in for the first group.
 	if (PlayerState.GetTeam() == eTeam_XCom)
 	{
+		class'X2AccessTacticalEvents'.static.FlushMovedSummary();
 		class'X2AccessTacticalEvents'.static.ResetTurnBanner();
 		class'X2AccessNarrator'.static.Alert(class'UISpecialMissionHUD_TurnCounter'.default.m_strPlayerTurnLabel);
 		return;

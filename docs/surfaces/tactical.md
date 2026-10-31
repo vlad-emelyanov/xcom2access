@@ -1499,3 +1499,13 @@ future speech-scrollback key.
   mover examines every enemy. The orientation line baselines the memo.
 - **Tutorial and replay:** no event fires, so `X2AccessReplayNarration.NarrateMovement` calls the
   same `NarrateSightings` for each shown move frame with `bReplay` set (no latest-state fallback).
+- **Enemy-turn budget.** Only the first three "moved" lines of an enemy turn speak in full
+  (`MovedSpoken`, reset on every turn handover). Each later one speaks nothing and bumps
+  `MovedSuppressed`; the next XCom turn-begin says "N more enemies moved in view." through
+  `FlushMovedSummary` (`EnemiesMoved_One/Few/Many`) before the turn line, on both the event and the
+  replay path. "In view" and "out of view" lines, the Chosen and any unit a reveal named are never
+  counted. `ResetSightings` zeroes both. In a replay `IsRevealPending` stops at `ShownIndex`, never at
+  the script's end.
+- **Known misses, stated plainly.** An enemy that leaves view because a soldier died, or because smoke
+  or fire changed the picture, with no enemy or friendly move to trigger an evaluation, gets no "out
+  of view" line. A stationary enemy never speaks "moved".

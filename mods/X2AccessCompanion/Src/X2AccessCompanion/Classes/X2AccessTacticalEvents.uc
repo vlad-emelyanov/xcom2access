@@ -73,6 +73,13 @@ var config string SightingMemo;
 // (ResetSpawnNarration), like the spawn memo, for the same err-on-the-short-side reason.
 var config string NarratedRevealUnits;
 
+// The enemy-turn moved-line budget. MovedSpoken counts the "moved" lines spoken in full since the
+// last turn handover; past MOVED_SPOKEN_CAP a plain move speaks nothing and bumps MovedSuppressed,
+// and the next XCom turn-begin says one summary line (FlushMovedSummary) and zeroes it. Both are
+// value-typed. Came into view, left view, the Chosen and any unit a reveal named are never counted.
+var config int MovedSpoken;
+var config int MovedSuppressed;
+
 // The turn-banner memo: which banner the game last drew, as one of the BANNER_ kinds. The game
 // draws a banner only when the kind CHANGES (XComPresentationLayer.UIEndTurn compares against
 // m_lastTurnOverlay, which starts at "local"), so this is the same one-int memo and 0 is the
@@ -88,6 +95,9 @@ const BANNER_RESISTANCE = 4;
 
 // How many history frames past a move to search for the pod reveal it triggered.
 const REVEAL_LOOKAHEAD = 64;
+
+// Moved lines spoken in full per enemy turn phase; each one past this is counted, not spoken.
+const MOVED_SPOKEN_CAP = 3;
 
 static function array<X2DataTemplate> CreateTemplates()
 {
@@ -201,6 +211,9 @@ static function EventListenerReturn OnPlayerTurnBegun(Object EventData, Object E
 	// player — OnUnitGroupTurnBegun mirrors that.
 	if (PlayerState.GetTeam() == eTeam_XCom)
 	{
+		// What the enemy turn withheld is owed before the turn line.
+		FlushMovedSummary();
+
 		// The game's memo returns to "local" with this turn, which re-arms the next alien banner.
 		default.LastTurnBanner = BANNER_LOCAL;
 		class'X2AccessNarrator'.static.Alert(class'UISpecialMissionHUD_TurnCounter'.default.m_strPlayerTurnLabel);
@@ -1023,6 +1036,23 @@ static function ResetSpawnNarration()
 {
 	default.NarratedSpawnUnits = "";
 	default.NarratedRevealUnits = "";
+	default.MovedSpoken = 0;
+}
+
+// Says the one summary line for the moved lines the enemy turn withheld, then zeroes the count.
+// Both narration paths call it at the XCom turn-begin, before the turn line.
+static function FlushMovedSummary()
+{
+	local int N;
+
+	N = default.MovedSuppressed;
+	default.MovedSuppressed = 0;
+	if (N <= 0)
+		return;
+
+	class'X2AccessNarrator'.static.Combat(class'X2AccessVocab'.static.Count(N,
+		class'X2AccessVocab'.default.EnemiesMoved_One, class'X2AccessVocab'.default.EnemiesMoved_Few,
+		class'X2AccessVocab'.default.EnemiesMoved_Many) $ ".");
 }
 
 // ---------------------------------------------------------------------------
@@ -1040,7 +1070,7 @@ static function ResetSpawnNarration()
 // TUTORIAL AND REPLAY: no event fires there, so X2AccessReplayNarration walks the move frames it
 // has been shown and calls the same NarrateSightings with bReplay set. In a replay the history
 // holds the whole script, so the "latest state" fallback is refused and a reveal check looks only
-// at frames the replay itself will narrate.
+// at frames the replay itself will narrate (up to the shown index, never the script's end).
 
 static function EventListenerReturn OnUnitMoveFinished(Object EventData, Object EventSource, XComGameState GameState, Name Event, Object CallbackData)
 {
@@ -1144,14 +1174,24 @@ static function EvaluateSighting(int UnitID, int Frame, int MoverID, bool bRepla
 		// Seen for the first time: the pod reveal and the reinforcement drop each speak their own
 		// units, so stand down for a unit either has named, or whose reveal is already in the
 		// history ahead of this move and will be spoken as the camera pans.
-		if (WasSpawnNarrated(UnitID) || IsRevealPending(UnitID, Frame))
+		if (WasSpawnNarrated(UnitID) || IsRevealPending(UnitID, Frame, bReplay))
 			return;
 		SpeakSighting(class'X2AccessVocab'.default.SightedInView, Cur, true);
 	}
 	else if (UnitID == MoverID)
 	{
 		// It was visible before and is visible now at another tile, and it is the unit whose move
-		// just finished. A tile change with any other cause is recorded and not spoken.
+		// just finished. A tile change with any other cause is recorded and not spoken. Only the
+		// first MOVED_SPOKEN_CAP of these per enemy turn speak in full; the Chosen never counts.
+		if (!Cur.IsChosen())
+		{
+			if (default.MovedSpoken >= MOVED_SPOKEN_CAP)
+			{
+				default.MovedSuppressed = default.MovedSuppressed + 1;
+				return;
+			}
+			default.MovedSpoken = default.MovedSpoken + 1;
+		}
 		SpeakSighting(class'X2AccessVocab'.default.SightedMoved, Cur, true);
 	}
 }
@@ -1232,7 +1272,7 @@ static function bool EnemyVisibleAtFrame(int EnemyID, int Frame, bool bReplay)
 // True when a pod reveal naming this unit sits in the history AFTER the move's frame. Submission
 // runs ahead of visualization, so the reveal a move triggers is already recorded when the move's
 // block completes, and the reveal line (spoken at the pan) will name the unit.
-static function bool IsRevealPending(int UnitID, int Frame)
+static function bool IsRevealPending(int UnitID, int Frame, bool bReplay)
 {
 	local XComGameStateHistory History;
 	local XComGameState FrameState;
@@ -1240,7 +1280,11 @@ static function bool IsRevealPending(int UnitID, int Frame)
 	local int i, LastFrame;
 
 	History = `XCOMHISTORY;
-	LastFrame = Min(History.GetCurrentHistoryIndex(), Frame + REVEAL_LOOKAHEAD);
+	LastFrame = History.GetCurrentHistoryIndex();
+	// A replay holds the whole script: stop at the frame it has shown, never at the script's end.
+	if (bReplay)
+		LastFrame = Min(LastFrame, class'X2AccessMissionPoll'.static.ShownIndex());
+	LastFrame = Min(LastFrame, Frame + REVEAL_LOOKAHEAD);
 
 	for (i = Frame + 1; i <= LastFrame; i++)
 	{
@@ -1267,6 +1311,8 @@ static function ResetSightings()
 {
 	default.SightingMemo = "";
 	default.NarratedRevealUnits = "";
+	default.MovedSpoken = 0;
+	default.MovedSuppressed = 0;
 }
 
 // The memo entry "id@x,y,z" for one unit, or "".
